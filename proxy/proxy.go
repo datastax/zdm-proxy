@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cloud-gate/utils"
 	"encoding/binary"
 	"flag"
 	"fmt"
@@ -25,18 +26,26 @@ var (
 	astraSession       *gocql.Session
 )
 
+type TableStatus string
+
 const (
 	CQLHeaderLength = 9
 	CQLOpcodeByte   = 4
 	CQLQueryOpcode  = 7
 	CQLVersionByte  = 0
+
+	WAITING = TableStatus("waiting")
+	MIGRATING  = TableStatus("migrating")
+	MIGRATED = TableStatus("migrated")
+
+	QUEUE_SIZE = 0xffff
 )
 
 func main() {
 	parseFlags()
 
 	var err error
-	astraSession, err = connectToCluster(astra_hostname, astra_username, astra_password, astra_port)
+	astraSession, err = utils.ConnectToCluster(astra_hostname, astra_username, astra_password, astra_port)
 	if err != nil {
 		log.Panicf("Unable to connect to Astra cluster (%s:%d, %s, %s)",
 			astra_hostname, astra_port, astra_username, astra_password)
@@ -45,6 +54,20 @@ func main() {
 
 	listen()
 }
+
+var tableStatuses map[string]TableStatus
+func checkTable(table string) TableStatus {
+	return tableStatuses[table]
+}
+
+// Channel is closed once the migration status is MIGRATED
+var tableQueues map[string]chan string
+
+// Able to consume from table?
+var tableWaiting map[string]bool
+
+// Signals to restart consumption of queries for a table
+var tableStarts map[string]chan struct{}
 
 
 func parseFlags() {
@@ -139,7 +162,7 @@ func parseQuery(b []byte) {
 	trimmed := b[CQLHeaderLength:]
 
 	// Find length of query body
-	queryLen := binary.BigEndian.Uint32(trimmed[0:4])
+	queryLen := binary.BigEndian.Uint32(trimmed[:4])
 
 	// Splice out query body
 	query := string(trimmed[4 : 4+queryLen])
@@ -150,34 +173,96 @@ func parseQuery(b []byte) {
 	
 	// Check if keyword is a write (add more later)
 	// Figure out what to do with responses from writes
+	var err error
 	switch keyword {
 	case "USE":
-		fallthrough
+		// TODO: Make sure this is the correct approach for USE
+		runQuery(query)
 	case "INSERT":
-		fallthrough
+		err = handleInsertQuery(query)
 	case "UPDATE":
-		err := astraSession.Query(query).Exec()
-		if err != nil {
-			panic(err)
+		err = handleUpdateQuery(query)
+	}
+
+	if err != nil {
+		panic(err)
+	}
+}
+
+func runQuery(query string) {
+	err := astraSession.Query(query).Exec()
+	if err != nil {
+		panic(err)
+	}
+}
+
+func handleInsertQuery(query string) error {
+	// TODO: Clean this up
+	split := strings.Split(query, " ")
+	tableName := split[2]
+	tableName = tableName[:strings.IndexRune(tableName, '(')]
+
+	if strings.Contains(tableName, ".") {
+		sepIndex := strings.IndexRune(tableName, '.')
+		tableName = tableName[sepIndex+1:]
+	}
+
+	addToQueue(tableName, query)
+	return nil
+}
+
+func handleUpdateQuery(query string) error {
+	// TODO: See if there's a better way to about doing this
+	split := strings.Split(query, " ")
+	tableName := split[1]
+
+	if strings.Contains(tableName, ".") {
+		sepIndex := strings.IndexRune(tableName, '.')
+		tableName = tableName[sepIndex+1:]
+	}
+
+	if checkTable(tableName) != MIGRATED {
+		stopTable(tableName)
+	}
+
+	addToQueue(tableName, query)
+	return nil
+}
+
+func addToQueue(table string, query string) {
+	queue, ok := tableQueues[table]
+	if !ok {
+		queue = make(chan string)
+		tableQueues[table] = queue
+		go runQueue(table)
+	}
+
+	queue <- query
+}
+
+func runQueue(table string) {
+	for {
+		select {
+		case query := <-tableQueues[table]:
+			if tableWaiting[table] {
+				<-tableStarts[table]
+			}
+
+			runQuery(query)
 		}
 	}
 }
 
-func connectToCluster(hostname string, username string, password string, port int) (*gocql.Session, error) {
-	cluster := gocql.NewCluster(hostname)
-	cluster.Authenticator = gocql.PasswordAuthenticator{
-		Username: username,
-		Password: password,
-	}
-	cluster.Port = port
-
-	session, err := cluster.CreateSession()
-	if err != nil {
-		return nil, err
-	}
-
-	fmt.Printf("Connection established with Cluster (%s:%d, %s, %s)",
-		hostname, port, username, password)
-
-	return session, nil
+func stopTable(table string) {
+	tableWaiting[table] = true
 }
+
+// Start Table query consumption once migration of a table has completed
+func startTable(table string) {
+	tableWaiting[table] = false
+	tableStarts[table] <- struct{}{}
+}
+
+// Always add queries to queue for a table, take off queue to run
+// After we've hit an UPDATE WHERE if the table isn't migrated, then stop running the queue until it is
+
