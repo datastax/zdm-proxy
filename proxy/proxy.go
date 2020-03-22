@@ -1,4 +1,4 @@
-package proxy
+package main
 
 import (
 	"encoding/binary"
@@ -45,6 +45,15 @@ func main() {
 
 	listen()
 }
+
+type proxyStats struct {
+	Reads int
+	Writes int
+
+	Error error
+}
+
+
 
 func parseFlags() {
 	flag.StringVar(&source_hostname, "source_hostname", "127.0.0.1", "Source Hostname")

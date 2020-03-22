@@ -1,1 +1,5 @@
-package cloud_gate
+package main
+
+func main() {
+
+}
