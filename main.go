@@ -39,6 +39,7 @@ func main() {
 	}
 
 	p.Listen()
+	defer p.Shutdown()
 }
 
 func parseFlags() {
