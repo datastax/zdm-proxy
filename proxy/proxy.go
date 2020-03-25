@@ -7,6 +7,7 @@ import (
 	"github.com/gocql/gocql"
 	"net"
 	"strings"
+	"sync"
 )
 
 type TableStatus string
@@ -17,61 +18,63 @@ const (
 	CQLQueryOpcode  = 7
 	CQLVersionByte  = 0
 
-	WAITING = TableStatus("waiting")
-	MIGRATING  = TableStatus("migrating")
-	MIGRATED = TableStatus("migrated")
-	)
+	WAITING   = TableStatus("waiting")
+	MIGRATING = TableStatus("migrating")
+	MIGRATED  = TableStatus("migrated")
+)
 
 type CQLProxy struct {
-	SourceHostname    string
-	SourceUsername    string
-	SourcePassword    string
-	SourcePort        int
-	sourceHostString  string
+	SourceHostname   string
+	SourceUsername   string
+	SourcePassword   string
+	SourcePort       int
+	sourceHostString string
 
-	AstraHostname     string
-	AstraUsername     string
-	AstraPassword     string
-	AstraPort         int
+	AstraHostname string
+	AstraUsername string
+	AstraPassword string
+	AstraPort     int
 
-	ListenPort        int
-	astraSession      *gocql.Session
+	ListenPort   int
+	astraSession *gocql.Session
 
 	// Channel is closed once the migration status is MIGRATED
 	tableQueues map[string]chan string
+	queueSizes  map[string]int
 
-	// Able to consume from table?
+	// Currently consuming from table?
 	tableWaiting map[string]bool
 
-	// Signals to restart consumption of queries for a table\
+	// Signals to restart consumption of queries for a table
 	tableStarts map[string]chan struct{}
+
+	// Lock for maps/metrics
+	// TODO: create more locks to improve performance
+	lock sync.Mutex
+
+	// Metrics
+	PacketCount int
+	Reads       int
+	Writes      int
 }
 
 // Temporary map & method until proper methods are created by the migration team
 var tableStatuses map[string]TableStatus
+
 func checkTable(table string) TableStatus {
 	return tableStatuses[table]
 }
 
-func (p *CQLProxy) connect() error {
-	session, err := utils.ConnectToCluster(p.AstraHostname, p.AstraUsername, p.AstraPassword, p.AstraPort)
-	if err != nil {
-		return err
-	}
-	p.astraSession = session
-
-	return nil
-}
-
+// TODO: Handle case where connection closes, instead of panicking
 func (p *CQLProxy) Listen() {
-	// Attempt to connect to astra database using given credentials, if not connected
+	// Attempt to connect to astra database using given credentials
 	// TODO: Maybe move where this happens?
-	if p.astraSession == nil {
-		err := p.connect()
-		if err != nil {
-			panic(err)
-		}
+	err := p.connect()
+	if err != nil {
+		panic(err)
 	}
+
+	p.clear()
 
 	// Let's operating system assign a random port to listen on if ListenPort isn't set (value == 0)
 	l, err := net.Listen("tcp", fmt.Sprintf(":%d", p.ListenPort))
@@ -139,6 +142,7 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 			}
 		}
 
+		p.PacketCount++
 	}
 }
 
@@ -156,7 +160,7 @@ func (p *CQLProxy) parseQuery(b []byte) {
 	// Get keyword of the query
 	// Currently only supports queries of the type "KEYWORD -------------"
 	keyword := strings.ToUpper(query[0:strings.IndexRune(query, ' ')])
-	
+
 	// Check if keyword is a write (add more later)
 	// Figure out what to do with responses from writes
 	// Add delete keyword + others
@@ -181,7 +185,7 @@ func (p *CQLProxy) parseQuery(b []byte) {
 	}
 }
 
-func (p *CQLProxy) runQuery(query string) {
+func (p *CQLProxy) executeQuery(query string) {
 	err := p.astraSession.Query(query).Exec()
 	if err != nil {
 		panic(err)
@@ -199,7 +203,7 @@ func (p *CQLProxy) handleInsertQuery(query string) error {
 		tableName = tableName[sepIndex+1:]
 	}
 
-	p.addToQueue(tableName, query)
+	p.addQueryToTableQueue(tableName, query)
 	return nil
 }
 
@@ -217,41 +221,85 @@ func (p *CQLProxy) handleUpdateQuery(query string) error {
 		p.stopTable(tableName)
 	}
 
-	p.addToQueue(tableName, query)
+	p.addQueryToTableQueue(tableName, query)
 	return nil
 }
 
-func (p *CQLProxy) addToQueue(table string, query string) {
+func (p *CQLProxy) addQueryToTableQueue(table string, query string) {
+	p.lock.Lock()
 	queue, ok := p.tableQueues[table]
 	if !ok {
+		// TODO: Maybe move queue creation to startup so that we never need a lock for the map
+		// Multiple readers & no writers for map doesn't need a lock
 		queue = make(chan string)
 		p.tableQueues[table] = queue
-		go p.runQueue(table)
+		go p.consumeQueue(table)
 	}
 
 	queue <- query
+	p.queueSizes[table]++
+	p.lock.Unlock()
 }
 
-func (p *CQLProxy) runQueue(table string) {
+func (p *CQLProxy) consumeQueue(table string) {
+	// TODO: fix lock logic as not everything needs to be within lock
+	p.lock.Lock()
+	queue := p.tableQueues[table]
+	p.lock.Unlock()
 	for {
 		select {
-		case query := <-p.tableQueues[table]:
+		case query := <-queue:
+			p.lock.Lock()
 			if p.tableWaiting[table] {
 				<-p.tableStarts[table]
 			}
 
-			p.runQuery(query)
+			p.executeQuery(query)
+
+			p.queueSizes[table]--
+			p.Writes++
+			p.lock.Unlock()
 		}
 	}
 }
 
 func (p *CQLProxy) stopTable(table string) {
+	p.lock.Lock()
 	p.tableWaiting[table] = true
+	p.lock.Unlock()
 }
 
 // Start Table query consumption once migration of a table has completed
 func (p *CQLProxy) startTable(table string) {
+	p.lock.Lock()
 	p.tableWaiting[table] = false
 	p.tableStarts[table] <- struct{}{}
+	p.lock.Unlock()
 }
 
+func (p *CQLProxy) connect() error {
+	session, err := utils.ConnectToCluster(p.AstraHostname, p.AstraUsername, p.AstraPassword, p.AstraPort)
+	if err != nil {
+		return err
+	}
+	p.astraSession = session
+
+	p.sourceHostString = fmt.Sprintf("%s:%d", p.SourceUsername, p.SourcePort)
+
+	return nil
+}
+
+func (p *CQLProxy) Shutdown() {
+	p.astraSession.Close()
+}
+
+func (p *CQLProxy) clear() {
+	p.tableQueues = make(map[string]chan string)
+	p.queueSizes = make(map[string]int)
+	p.tableWaiting = make(map[string]bool)
+	p.tableStarts = make(map[string]chan struct{})
+	p.PacketCount = 0
+	p.Reads = 0
+	p.Writes = 0
+	p.lock = sync.Mutex{}
+}
