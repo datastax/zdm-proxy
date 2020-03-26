@@ -4,9 +4,11 @@
 package main
 
 import (
-	"flag"
-
+	"bufio"
 	"cloud-gate/proxy"
+	"flag"
+	"fmt"
+	"os"
 )
 
 var (
@@ -38,6 +40,10 @@ func main() {
 		ListenPort: listen_port,
 	}
 
+	// for testing purposes. to delete
+	go doTesting(&p)
+
+	//TODO: p.Listen blocks, must handle in order to integrate with migration service. Potentially have listen start goroutine.
 	p.Listen()
 	defer p.Shutdown()
 }
@@ -53,4 +59,15 @@ func parseFlags() {
 	flag.IntVar(&astra_port, "astra_port", 9042, "Astra Port")
 	flag.IntVar(&listen_port, "listen_port", 0, "Listening Port")
 	flag.Parse()
+}
+
+//function for testing purposes. Will be deleted later. toggles status for table 'codebase' upon user input
+func doTesting(p *proxy.CQLProxy){
+	for{
+		reader := bufio.NewReader(os.Stdin)
+		fmt.Print("Enter text: ")
+		text , _ := reader.ReadString('\n')
+		fmt.Println("entered:", text)
+		p.DoTestToggle()
+	}
 }

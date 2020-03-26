@@ -231,7 +231,7 @@ func (p *CQLProxy) addQueryToTableQueue(table string, query string) {
 	if !ok {
 		// TODO: Maybe move queue creation to startup so that we never need a lock for the map
 		// Multiple readers & no writers for map doesn't need a lock
-		queue = make(chan string)
+		queue = make(chan string, 1000)
 		p.tableQueues[table] = queue
 		go p.consumeQueue(table)
 	}
@@ -249,11 +249,11 @@ func (p *CQLProxy) consumeQueue(table string) {
 	for {
 		select {
 		case query := <-queue:
-			p.lock.Lock()
+
 			if p.tableWaiting[table] {
 				<-p.tableStarts[table]
 			}
-
+			p.lock.Lock()
 			p.executeQuery(query)
 
 			p.queueSizes[table]--
@@ -284,7 +284,7 @@ func (p *CQLProxy) connect() error {
 	}
 	p.astraSession = session
 
-	p.sourceHostString = fmt.Sprintf("%s:%d", p.SourceUsername, p.SourcePort)
+	p.sourceHostString = fmt.Sprintf("%s:%d", p.SourceHostname, p.SourcePort)
 
 	return nil
 }
@@ -298,8 +298,21 @@ func (p *CQLProxy) clear() {
 	p.queueSizes = make(map[string]int)
 	p.tableWaiting = make(map[string]bool)
 	p.tableStarts = make(map[string]chan struct{})
+	//TODO: initialization must take in SCHEME to initialize channels for each table
+	p.tableStarts["codebase"] = make(chan struct{})
 	p.PacketCount = 0
 	p.Reads = 0
 	p.Writes = 0
 	p.lock = sync.Mutex{}
+}
+
+// function for testing purposes. Can be called from main to toggle table status for CODEBASE
+func (p *CQLProxy) DoTestToggle() {
+	if !p.tableWaiting["codebase"] {
+		fmt.Println("------ stopping codebase queue!")
+		p.stopTable("codebase")
+	} else {
+		fmt.Println("------ starting codebase queue!")
+		p.startTable("codebase")
+	}
 }
