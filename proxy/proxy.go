@@ -4,10 +4,12 @@ import (
 	"cloud-gate/utils"
 	"encoding/binary"
 	"fmt"
-	"github.com/gocql/gocql"
 	"net"
 	"strings"
 	"sync"
+
+	"github.com/gocql/gocql"
+	log "github.com/sirupsen/logrus"
 )
 
 type TableStatus string
@@ -38,14 +40,13 @@ type CQLProxy struct {
 	ListenPort   int
 	astraSession *gocql.Session
 
-	// Channel is closed once the migration status is MIGRATED
 	tableQueues map[string]chan string
 	queueSizes  map[string]int
 
 	// Currently consuming from table?
 	tableWaiting map[string]bool
 
-	// Signals to restart consumption of queries for a table
+	// Signals to restart consumption of queries for a particular table
 	tableStarts map[string]chan struct{}
 
 	// Lock for maps/metrics
@@ -60,9 +61,12 @@ type CQLProxy struct {
 
 // Temporary map & method until proper methods are created by the migration team
 var tableStatuses map[string]TableStatus
-
 func checkTable(table string) TableStatus {
 	return tableStatuses[table]
+}
+
+func init() {
+	log.SetLevel(log.DebugLevel)
 }
 
 // TODO: Handle case where connection closes, instead of panicking
@@ -85,7 +89,7 @@ func (p *CQLProxy) Listen() {
 
 	defer l.Close()
 	port := l.Addr().(*net.TCPAddr).Port
-	fmt.Println("Listening on port ", port)
+	log.Infof("Listening on port %d", port)
 
 	for {
 		conn, err := l.Accept()
@@ -107,7 +111,7 @@ func (p *CQLProxy) handleRequest(conn net.Conn) {
 	go p.forward(conn, dst)
 	go p.forward(dst, conn)
 
-	fmt.Println("Connection established with ", p.sourceHostString)
+	log.Debugf("Connection established with %s", p.sourceHostString)
 }
 
 func (p *CQLProxy) forward(src, dst net.Conn) {
@@ -123,14 +127,14 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 		if err != nil {
 			panic(err)
 		}
-		fmt.Printf("Read %d bytes\n", bytesRead)
+		log.Debugf("Read %d bytes", bytesRead)
 
 		b := buf[:bytesRead]
 		bytesWritten, err := dst.Write(b)
 		if err != nil {
 			panic(err)
 		}
-		fmt.Printf("Wrote %d bytes\n", bytesWritten)
+		log.Debugf("Wrote %d bytes", bytesWritten)
 
 		// Parse only if it's a request from the client:
 		// 		First bit of version field is a 0 (< 0x80) (Big Endian)

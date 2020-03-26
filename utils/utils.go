@@ -1,9 +1,13 @@
 package utils
 
 import (
-	"fmt"
 	"github.com/gocql/gocql"
+	log "github.com/sirupsen/logrus"
 )
+
+func init() {
+	log.SetLevel(log.DebugLevel)
+}
 
 func ConnectToCluster(hostname string, username string, password string, port int) (*gocql.Session, error) {
 	cluster := gocql.NewCluster(hostname)
@@ -18,7 +22,7 @@ func ConnectToCluster(hostname string, username string, password string, port in
 		return nil, err
 	}
 
-	fmt.Printf("Connection established with Cluster (%s:%d, %s, %s)",
+	log.Infof("Connection established with Cluster (%s:%d, %s, %s)",
 		hostname, port, username, password)
 
 	return session, nil
