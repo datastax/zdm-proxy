@@ -1,6 +1,3 @@
-// Use package main for testing purposes (so that we can run these),
-// However, we should probably create a controller package or something
-// for the final product
 package main
 
 import (
@@ -9,6 +6,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+
+	log "github.com/sirupsen/logrus"
 )
 
 var (
@@ -22,10 +21,24 @@ var (
 	astra_password string
 	astra_port     int
 	listen_port    int
+
+	debug bool
+	test bool
 )
 
-func main() {
+func init() {
 	parseFlags()
+
+	if debug {
+		log.SetLevel(log.DebugLevel)
+	} else {
+		log.SetLevel(log.InfoLevel)
+	}
+
+}
+
+// Method mainly to test the proxy service for now
+func main() {
 	p := proxy.CQLProxy{
 		SourceHostname: source_hostname,
 		SourceUsername: source_username,
@@ -41,13 +54,15 @@ func main() {
 	}
 
 	// for testing purposes. to delete
-	go doTesting(&p)
+	if test {
+		go doTesting(&p)
+	}
 
-	//TODO: p.Listen blocks, must handle in order to integrate with migration service. Potentially have listen start goroutine.
 	p.Listen()
 
 	}
 
+// Most of these will change to environment variables rather than flags
 func parseFlags() {
 	flag.StringVar(&source_hostname, "source_hostname", "127.0.0.1", "Source Hostname")
 	flag.StringVar(&source_username, "source_username", "", "Source Username")
@@ -58,6 +73,8 @@ func parseFlags() {
 	flag.StringVar(&astra_password, "astra_password", "", "Astra Password")
 	flag.IntVar(&astra_port, "astra_port", 9042, "Astra Port")
 	flag.IntVar(&listen_port, "listen_port", 0, "Listening Port")
+	flag.BoolVar(&debug, "debug", false, "Debug Mode")
+	flag.BoolVar(&test, "test", false, "Test Mode")
 	flag.Parse()
 }
 

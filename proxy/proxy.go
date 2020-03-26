@@ -65,10 +65,6 @@ func checkTable(table string) TableStatus {
 	return tableStatuses[table]
 }
 
-func init() {
-	log.SetLevel(log.DebugLevel)
-}
-
 // TODO: Handle case where connection closes, instead of panicking
 func (p *CQLProxy) Listen() {
 	p.clear()

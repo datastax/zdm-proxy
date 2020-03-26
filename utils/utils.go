@@ -5,10 +5,6 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-func init() {
-	log.SetLevel(log.DebugLevel)
-}
-
 func ConnectToCluster(hostname string, username string, password string, port int) (*gocql.Session, error) {
 	cluster := gocql.NewCluster(hostname)
 	cluster.Authenticator = gocql.PasswordAuthenticator{
