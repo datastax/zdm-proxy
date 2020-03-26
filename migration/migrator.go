@@ -28,6 +28,9 @@ var (
 	// StatusMap map of statuses
 	StatusMap map[string]string
 
+	// MigrationComplete boolean flag for migration complete
+	MigrationComplete bool
+
 	// Flag parameters
 	keyspace            string
 	sourceHost          string
@@ -181,6 +184,7 @@ func migrate(keyspace string) {
 	wg.Wait()
 
 	logAndPrint("COMPLETED MIGRATION\n")
+	MigrationComplete = true
 }
 
 func createTable(table *gocql.TableMetadata) error {
