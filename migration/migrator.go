@@ -23,8 +23,10 @@ var (
 	httpServer    *http.Server
 	sourceSession *gocql.Session
 	destSession   *gocql.Session
-	statusMap     map[string]string
 	directory     string
+
+	// StatusMap map of statuses
+	StatusMap map[string]string
 
 	// Flag parameters
 	keyspace            string
@@ -64,7 +66,7 @@ func main() {
 	connectionRouter.HandleFunc("/status", status).Methods(http.MethodGet)
 	connectionRouter.HandleFunc("/abort", abort).Methods(http.MethodGet)
 
-	statusMap = make(map[string]string)
+	StatusMap = make(map[string]string)
 
 	sourceCluster := gocql.NewCluster(sourceHost)
 	sourceCluster.Authenticator = gocql.PasswordAuthenticator{
@@ -183,7 +185,7 @@ func migrate(keyspace string) {
 
 func createTable(table *gocql.TableMetadata) error {
 	logAndPrint(fmt.Sprintf("MIGRATING TABLE SCHEMA: %s... \n", table.Name))
-	statusMap[table.Name] = "MIGRATING SCHEMA"
+	StatusMap[table.Name] = "MIGRATING SCHEMA"
 
 	query := fmt.Sprintf("CREATE TABLE %s.%s (", keyspace, table.Name)
 
@@ -203,7 +205,7 @@ func createTable(table *gocql.TableMetadata) error {
 	if err != nil {
 		handleError(err)
 	}
-
+	logAndPrint(fmt.Sprintf("COMPLETED MIGRATING TABLE SCHEMA: %s\n", table.Name))
 	return nil
 }
 
@@ -226,16 +228,16 @@ func migrateTable(table *gocql.TableMetadata) error {
 // Exports a table CSV from the source cluster into DIRECTORY
 func unloadTable(table *gocql.TableMetadata) error {
 	logAndPrint(fmt.Sprintf("UNLOADING TABLE: %s...\n", table.Name))
-	statusMap[table.Name] = "UNLOAD IN PROGRESS"
+	StatusMap[table.Name] = "UNLOAD IN PROGRESS"
 
 	cmdArgs := []string{"unload", "-port", strconv.Itoa(sourcePort), "-k", table.Keyspace, "-t", table.Name, "-url", directory + table.Name, "-logDir", directory}
 	_, err := exec.Command(dsbulkPath, cmdArgs...).Output()
 	if err != nil {
-		statusMap[table.Name] = fmt.Sprintf("MIGRATION FAILED ERROR: %s", err)
+		StatusMap[table.Name] = fmt.Sprintf("MIGRATION FAILED ERROR: %s", err)
 		return err
 	}
 
-	statusMap[table.Name] = "UNLOAD COMPLETED"
+	StatusMap[table.Name] = "UNLOAD COMPLETED"
 	logAndPrint(fmt.Sprintf("COMPLETED UNLOADING TABLE: %s\n", table.Name))
 	return nil
 }
@@ -244,16 +246,16 @@ func unloadTable(table *gocql.TableMetadata) error {
 // into the target cluster
 func loadTable(table *gocql.TableMetadata) error {
 	logAndPrint(fmt.Sprintf("LOADING TABLE: %s...\n", table.Name))
-	statusMap[table.Name] = "LOAD IN PROGRESS"
+	StatusMap[table.Name] = "LOAD IN PROGRESS"
 
 	cmdArgs := []string{"load", "-h", destinationHost, "-port", strconv.Itoa(destinationPort), "-k", table.Keyspace, "-t", table.Name, "-url", directory + table.Name, "-logDir", directory}
 	_, err := exec.Command(dsbulkPath, cmdArgs...).Output()
 	if err != nil {
-		statusMap[table.Name] = fmt.Sprintf("MIGRATION FAILED ERROR: %s", err)
+		StatusMap[table.Name] = fmt.Sprintf("MIGRATION FAILED ERROR: %s", err)
 		return err
 	}
 
-	statusMap[table.Name] = "MIGRATION COMPLETED"
+	StatusMap[table.Name] = "MIGRATION COMPLETED"
 	logAndPrint(fmt.Sprintf("COMPLETED LOADING TABLE: %s\n", table.Name))
 	return nil
 }
@@ -261,7 +263,7 @@ func loadTable(table *gocql.TableMetadata) error {
 // Loads table names into the status map for monitoring
 func loadTableNames(tables map[string]*gocql.TableMetadata) error {
 	for _, tableData := range tables {
-		statusMap[tableData.Name] = "WAITING"
+		StatusMap[tableData.Name] = "WAITING"
 	}
 
 	return nil
@@ -346,7 +348,7 @@ func abort(w http.ResponseWriter, r *http.Request) {
 
 // API Handler for fetching the migration status
 func status(w http.ResponseWriter, _ *http.Request) {
-	marshaledStatus, err := json.Marshal(statusMap)
+	marshaledStatus, err := json.Marshal(StatusMap)
 
 	if err != nil {
 		w.WriteHeader(500)
