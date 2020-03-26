@@ -67,14 +67,15 @@ func checkTable(table string) TableStatus {
 
 // TODO: Handle case where connection closes, instead of panicking
 func (p *CQLProxy) Listen() {
+	p.clear()
+
 	// Attempt to connect to astra database using given credentials
 	// TODO: Maybe move where this happens?
 	err := p.connect()
 	if err != nil {
 		panic(err)
 	}
-
-	p.clear()
+	defer p.Shutdown()
 
 	// Let's operating system assign a random port to listen on if ListenPort isn't set (value == 0)
 	l, err := net.Listen("tcp", fmt.Sprintf(":%d", p.ListenPort))
@@ -231,6 +232,7 @@ func (p *CQLProxy) addQueryToTableQueue(table string, query string) {
 	if !ok {
 		// TODO: Maybe move queue creation to startup so that we never need a lock for the map
 		// Multiple readers & no writers for map doesn't need a lock
+		// Finalize queue size to use
 		queue = make(chan string, 1000)
 		p.tableQueues[table] = queue
 		go p.consumeQueue(table)

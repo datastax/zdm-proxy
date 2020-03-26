@@ -45,8 +45,8 @@ func main() {
 
 	//TODO: p.Listen blocks, must handle in order to integrate with migration service. Potentially have listen start goroutine.
 	p.Listen()
-	defer p.Shutdown()
-}
+
+	}
 
 func parseFlags() {
 	flag.StringVar(&source_hostname, "source_hostname", "127.0.0.1", "Source Hostname")
@@ -63,7 +63,7 @@ func parseFlags() {
 
 //function for testing purposes. Will be deleted later. toggles status for table 'codebase' upon user input
 func doTesting(p *proxy.CQLProxy){
-	for{
+	for {
 		reader := bufio.NewReader(os.Stdin)
 		fmt.Print("Enter text: ")
 		text , _ := reader.ReadString('\n')
