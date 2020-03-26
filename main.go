@@ -23,7 +23,7 @@ var (
 	listen_port    int
 
 	debug bool
-	test bool
+	test  bool
 )
 
 func init() {
@@ -39,6 +39,10 @@ func init() {
 
 // Method mainly to test the proxy service for now
 func main() {
+	// Channel for migration service to send a signal through, directing the proxy to forward all traffic directly
+	// to the Astra DB
+	migrationCompleteChannel := make(chan struct{})
+
 	p := proxy.CQLProxy{
 		SourceHostname: source_hostname,
 		SourceUsername: source_username,
@@ -51,6 +55,8 @@ func main() {
 		AstraPort:     astra_port,
 
 		ListenPort: listen_port,
+
+		MigrationCompleteChan: migrationCompleteChannel,
 	}
 
 	// for testing purposes. to delete
@@ -60,7 +66,7 @@ func main() {
 
 	p.Listen()
 
-	}
+}
 
 // Most of these will change to environment variables rather than flags
 func parseFlags() {
@@ -79,11 +85,11 @@ func parseFlags() {
 }
 
 //function for testing purposes. Will be deleted later. toggles status for table 'codebase' upon user input
-func doTesting(p *proxy.CQLProxy){
+func doTesting(p *proxy.CQLProxy) {
 	for {
 		reader := bufio.NewReader(os.Stdin)
 		fmt.Print("Enter text: ")
-		text , _ := reader.ReadString('\n')
+		text, _ := reader.ReadString('\n')
 		fmt.Println("entered:", text)
 		p.DoTestToggle()
 	}

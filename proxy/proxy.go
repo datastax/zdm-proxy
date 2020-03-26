@@ -36,6 +36,7 @@ type CQLProxy struct {
 	AstraUsername string
 	AstraPassword string
 	AstraPort     int
+	astraHostString string
 
 	ListenPort   int
 	astraSession *gocql.Session
@@ -54,6 +55,15 @@ type CQLProxy struct {
 	// TODO: (maybe) create more locks to improve performance
 	lock sync.Mutex
 
+	// TODO: Find a way to set this variable on startup
+	//  Maybe save it as an environment variable that is read when the proxy starts up
+	//  Or check if there are still credentials for a user DB as environment variables and
+	//  if there isn't then we can assume migration has already happened / doesn't need to happen
+	migrationComplete bool
+
+	// When signal received on this channel, sets the migrationComplete variable to true
+	MigrationCompleteChan chan struct{}
+
 	// Metrics
 	PacketCount int
 	Reads       int
@@ -64,6 +74,21 @@ type CQLProxy struct {
 var tableStatuses map[string]TableStatus
 func checkTable(table string) TableStatus {
 	return tableStatuses[table]
+}
+
+// TODO: Maybe also save migration complete as an environment variable so it can be loaded
+//  if the proxy crashes/restarts
+func (p *CQLProxy) migrationCheck()  {
+	if !p.migrationComplete {
+		for {
+			select {
+			case <-p.MigrationCompleteChan:
+				log.Infof("Migration Complete. Directing all new connections to Astra Database.")
+				p.migrationComplete = true
+				return
+			}
+		}
+	}
 }
 
 // TODO: Handle case where connection closes, instead of panicking
@@ -77,6 +102,9 @@ func (p *CQLProxy) Listen() {
 		panic(err)
 	}
 	defer p.Shutdown()
+
+	// Begin migration completion loop
+	go p.migrationCheck()
 
 	// Let's operating system assign a random port to listen on if ListenPort isn't set (value == 0)
 	l, err := net.Listen("tcp", fmt.Sprintf(":%d", p.ListenPort))
@@ -99,7 +127,14 @@ func (p *CQLProxy) Listen() {
 }
 
 func (p *CQLProxy) handleRequest(conn net.Conn) {
-	dst, err := net.Dial("tcp", p.sourceHostString)
+	var hostname string
+	if p.migrationComplete {
+		hostname = p.astraHostString
+	} else {
+		hostname = p.sourceHostString
+	}
+
+	dst, err := net.Dial("tcp", hostname)
 	if err != nil {
 		panic(err)
 	}
@@ -111,13 +146,17 @@ func (p *CQLProxy) handleRequest(conn net.Conn) {
 	log.Debugf("Connection established with %s", p.sourceHostString)
 }
 
+// TODO: Handle case where the migration is completed when there is an active connection
+//  Close connection and reopen new one with the Astra DB as dst?
+//  We'd have to get out of the blocking that happens on src.Read then
 func (p *CQLProxy) forward(src, dst net.Conn) {
 	defer src.Close()
 	defer dst.Close()
 
 	// TODO: Finalize buffer size
 	// 	Right now just using 0xffff as a placeholder, but the maximum request
-	// 	that could be sent through the CQL wire protocol is 256mb, so we should probably accommodate that
+	// 	that could be sent through the CQL wire protocol is 256mb, so we should accommodate that, unless there's
+	// 	an issue with that
 	buf := make([]byte, 0xffff)
 	for {
 		bytesRead, err := src.Read(buf)
@@ -133,14 +172,20 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 		}
 		log.Debugf("Wrote %d bytes", bytesWritten)
 
-		// Parse only if it's a request from the client:
-		// 		First bit of version field is a 0 (< 0x80)
-		// AND
-		// Parse only if it's a query:
-		// 		OPCode is 0x07
-		if b[CQLVersionByte] < 0x80 {
-			if b[CQLOpcodeByte] == CQLQueryOpcode {
-				go p.parseQuery(b)
+		// We only want to mirror writes if the migration is not complete,
+		// OR if the migration is complete, but this connection is still directly connected to the
+		// user's DB (ex: migration is finished while the user is actively connected to the proxy)
+		// TODO: Can possibly get rid of the !p.migrationComplete part of the condition
+		if !p.migrationComplete || dst.RemoteAddr().String() == p.sourceHostString {
+			// Parse only if it's a request from the client:
+			// 		First bit of version field is a 0 (< 0x80)
+			// AND
+			// Parse only if it's a query:
+			// 		OPCode is 0x07
+			if b[CQLVersionByte] < 0x80 {
+				if b[CQLOpcodeByte] == CQLQueryOpcode {
+					go p.parseQuery(b)
+				}
 			}
 		}
 
@@ -148,7 +193,7 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 	}
 }
 
-// Not close to being done (I don't think)
+// TODO: Deal with more cases
 func (p *CQLProxy) parseQuery(b []byte) {
 	// Trim off header portion of the query
 	trimmed := b[CQLHeaderLength:]
@@ -164,8 +209,8 @@ func (p *CQLProxy) parseQuery(b []byte) {
 	keyword := strings.ToUpper(query[0:strings.IndexRune(query, ' ')])
 
 	// Check if keyword is a write (add more later)
-	// Figure out what to do with responses from writes
-	// Add delete keyword + others
+	// TODO: Figure out what to do with responses from writes
+	// 	Add delete keyword + others
 	var err error
 	switch keyword {
 	case "USE":
@@ -194,6 +239,7 @@ func (p *CQLProxy) executeQuery(query string) {
 	}
 }
 
+// Extract table name from insert query & add query to proper queue
 func (p *CQLProxy) handleInsertQuery(query string) error {
 	// TODO: Clean this up
 	split := strings.Split(query, " ")
@@ -209,6 +255,7 @@ func (p *CQLProxy) handleInsertQuery(query string) error {
 	return nil
 }
 
+// Extract table name from update query & add query to proper queue
 func (p *CQLProxy) handleUpdateQuery(query string) error {
 	// TODO: See if there's a better way to go about doing this
 	split := strings.Split(query, " ")
@@ -250,20 +297,23 @@ func (p *CQLProxy) addQueryToTableQueue(table string, query string) {
 }
 
 func (p *CQLProxy) consumeQueue(table string) {
-	// TODO: fix lock logic as not everything needs to be within lock
+	// TODO: Get rid of this locking once we add queue creation at startup
 	p.lock.Lock()
 	queue := p.tableQueues[table]
 	p.lock.Unlock()
 	for {
 		select {
 		case query := <-queue:
+			p.lock.Lock()
+			waiting := p.tableWaiting[table]
+			p.lock.Unlock()
 
-			if p.tableWaiting[table] {
+			if waiting {
 				<-p.tableStarts[table]
 			}
+
 			p.lock.Lock()
 			p.executeQuery(query)
-
 			p.queueSizes[table]--
 			p.Writes++
 			p.lock.Unlock()
@@ -293,6 +343,7 @@ func (p *CQLProxy) connect() error {
 	p.astraSession = session
 
 	p.sourceHostString = fmt.Sprintf("%s:%d", p.SourceHostname, p.SourcePort)
+	p.astraHostString = fmt.Sprintf("%s:%d", p.AstraHostname, p.AstraPort)
 
 	return nil
 }
@@ -314,6 +365,7 @@ func (p *CQLProxy) clear() {
 	p.Writes = 0
 	p.lock = sync.Mutex{}
 }
+
 
 // function for testing purposes. Can be called from main to toggle table status for CODEBASE
 func (p *CQLProxy) DoTestToggle() {
