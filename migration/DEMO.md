@@ -32,6 +32,6 @@ docker run --name cassandra-dest -p 9043:9042 -d cassandra
 `curl localhost:8080/status`
 
 # Running the Go script
-`go run main.go -k test -dport 9043`
+`go run migrator.go -k test -dport 9043`
 
 # Show logs
