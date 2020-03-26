@@ -40,17 +40,18 @@ type CQLProxy struct {
 	ListenPort   int
 	astraSession *gocql.Session
 
+	// TODO: Make maps support multiple keyspaces (ex: map[string]map[string]chan string)
 	tableQueues map[string]chan string
 	queueSizes  map[string]int
 
-	// Currently consuming from table?
+	// Should we wait on this table (do we need to wait for migration to finish before we run anymore queries)
 	tableWaiting map[string]bool
 
 	// Signals to restart consumption of queries for a particular table
 	tableStarts map[string]chan struct{}
 
 	// Lock for maps/metrics
-	// TODO: create more locks to improve performance
+	// TODO: (maybe) create more locks to improve performance
 	lock sync.Mutex
 
 	// Metrics
@@ -114,9 +115,9 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 	defer src.Close()
 	defer dst.Close()
 
-	// What buffer size should we use?
-	// Right now just using 0xffff as a placeholder, but the maximum request
-	// that could be sent through the CQL wire protocol is 256mb
+	// TODO: Finalize buffer size
+	// 	Right now just using 0xffff as a placeholder, but the maximum request
+	// 	that could be sent through the CQL wire protocol is 256mb, so we should probably accommodate that
 	buf := make([]byte, 0xffff)
 	for {
 		bytesRead, err := src.Read(buf)
@@ -133,7 +134,7 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 		log.Debugf("Wrote %d bytes", bytesWritten)
 
 		// Parse only if it's a request from the client:
-		// 		First bit of version field is a 0 (< 0x80) (Big Endian)
+		// 		First bit of version field is a 0 (< 0x80)
 		// AND
 		// Parse only if it's a query:
 		// 		OPCode is 0x07
@@ -169,11 +170,11 @@ func (p *CQLProxy) parseQuery(b []byte) {
 	switch keyword {
 	case "USE":
 		// TODO: DEAL with the USE case
-		// We cannot change the keyspace for a session dynamically, must change it before session
-		// creation, thus we might have to do some weird stuff here, not exactly sure.
-		// Maybe we can keep track of the current keyspace we're in?
-		// --- But then there would be issues with all of the queuing and stuff if there's changes in keyspaces
-		// Need to talk about this more.
+		//  We cannot change the keyspace for a session dynamically, must change it before session
+		//  creation, thus we might have to do some weird stuff here, not exactly sure.
+		//  Maybe we can keep track of the current keyspace we're in?
+		//  --- But then there would be issues with all of the queuing and stuff if there's changes in keyspaces
+		//  Need to talk about this more.
 		break
 	case "INSERT":
 		err = p.handleInsertQuery(query)
@@ -218,6 +219,11 @@ func (p *CQLProxy) handleUpdateQuery(query string) error {
 		tableName = tableName[sepIndex+1:]
 	}
 
+	// If we're doing an UPDATE and if the table isn't fully migrated, then the UPDATE query
+	// may not be correct on the Astra DB as all the rows may not be fully imported. Thus,
+	// if we reach an UPDATE query and the table isn't fully migrated, we stop running
+	// queries on this table, keeping a queue of all the queries that come in, and then running them
+	// in order once the table is finished being migrated
 	if checkTable(tableName) != MIGRATED {
 		p.stopTable(tableName)
 	}
@@ -230,9 +236,9 @@ func (p *CQLProxy) addQueryToTableQueue(table string, query string) {
 	p.lock.Lock()
 	queue, ok := p.tableQueues[table]
 	if !ok {
-		// TODO: Maybe move queue creation to startup so that we never need a lock for the map
-		// Multiple readers & no writers for map doesn't need a lock
-		// Finalize queue size to use
+		// TODO: Move queue creation to startup so that we never need a lock for the map
+		//  Multiple readers & no writers for map doesn't need a lock
+		//  Finalize queue size to use
 		queue = make(chan string, 1000)
 		p.tableQueues[table] = queue
 		go p.consumeQueue(table)
@@ -300,7 +306,8 @@ func (p *CQLProxy) clear() {
 	p.queueSizes = make(map[string]int)
 	p.tableWaiting = make(map[string]bool)
 	p.tableStarts = make(map[string]chan struct{})
-	//TODO: initialization must take in SCHEME to initialize channels for each table
+	//TODO: create a loop to initialize all the channels in the beginning
+	// once the migration service sends over the list of tables
 	p.tableStarts["codebase"] = make(chan struct{})
 	p.PacketCount = 0
 	p.Reads = 0
