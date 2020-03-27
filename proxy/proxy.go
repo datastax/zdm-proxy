@@ -15,10 +15,10 @@ import (
 type TableStatus string
 
 const (
-	CQLHeaderLength = 9
-	CQLOpcodeByte   = 4
-	CQLQueryOpcode  = 7
-	CQLVersionByte  = 0
+	cqlHeaderLength = 9
+	cqlOpcodeByte   = 4
+	cqlQueryOpcode  = 7
+	cqlVersionByte  = 0
 
 	WAITING   = TableStatus("waiting")
 	MIGRATING = TableStatus("migrating")
@@ -182,8 +182,8 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 			// AND
 			// Parse only if it's a query:
 			// 		OPCode is 0x07
-			if b[CQLVersionByte] < 0x80 {
-				if b[CQLOpcodeByte] == CQLQueryOpcode {
+			if b[cqlVersionByte] < 0x80 {
+				if b[cqlOpcodeByte] == cqlQueryOpcode {
 					go p.parseQuery(b)
 				}
 			}
@@ -196,7 +196,7 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 // TODO: Deal with more cases
 func (p *CQLProxy) parseQuery(b []byte) {
 	// Trim off header portion of the query
-	trimmed := b[CQLHeaderLength:]
+	trimmed := b[cqlHeaderLength:]
 
 	// Find length of query body
 	queryLen := binary.BigEndian.Uint32(trimmed[:4])
