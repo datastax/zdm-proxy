@@ -281,6 +281,8 @@ func (p *CQLProxy) handleUpdateQuery(query string) error {
 
 func (p *CQLProxy) addQueryToTableQueue(table string, query string) {
 	p.lock.Lock()
+	defer p.lock.Unlock()
+
 	queue, ok := p.tableQueues[table]
 	if !ok {
 		// TODO: Move queue creation to startup so that we never need a lock for the map
@@ -293,7 +295,6 @@ func (p *CQLProxy) addQueryToTableQueue(table string, query string) {
 
 	queue <- query
 	p.queueSizes[table]++
-	p.lock.Unlock()
 }
 
 func (p *CQLProxy) consumeQueue(table string) {
@@ -301,6 +302,7 @@ func (p *CQLProxy) consumeQueue(table string) {
 	p.lock.Lock()
 	queue := p.tableQueues[table]
 	p.lock.Unlock()
+
 	for {
 		select {
 		case query := <-queue:
@@ -312,6 +314,7 @@ func (p *CQLProxy) consumeQueue(table string) {
 				<-p.tableStarts[table]
 			}
 
+			// TODO: Ensure we really need to lock the executeQuery method
 			p.lock.Lock()
 			p.executeQuery(query)
 			p.queueSizes[table]--
@@ -323,16 +326,18 @@ func (p *CQLProxy) consumeQueue(table string) {
 
 func (p *CQLProxy) stopTable(table string) {
 	p.lock.Lock()
+	defer p.lock.Unlock()
+
 	p.tableWaiting[table] = true
-	p.lock.Unlock()
 }
 
 // Start Table query consumption once migration of a table has completed
 func (p *CQLProxy) startTable(table string) {
 	p.lock.Lock()
+	defer p.lock.Unlock()
+
 	p.tableWaiting[table] = false
 	p.tableStarts[table] <- struct{}{}
-	p.lock.Unlock()
 }
 
 func (p *CQLProxy) connect() error {
@@ -344,7 +349,6 @@ func (p *CQLProxy) connect() error {
 
 	p.sourceHostString = fmt.Sprintf("%s:%d", p.SourceHostname, p.SourcePort)
 	p.astraHostString = fmt.Sprintf("%s:%d", p.AstraHostname, p.AstraPort)
-
 	return nil
 }
 
