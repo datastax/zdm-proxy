@@ -26,7 +26,8 @@ var (
 	test  bool
 )
 
-func init() {
+// Method mainly to test the proxy service for now
+func main() {
 	parseFlags()
 
 	if debug {
@@ -35,10 +36,6 @@ func init() {
 		log.SetLevel(log.InfoLevel)
 	}
 
-}
-
-// Method mainly to test the proxy service for now
-func main() {
 	// Channel for migration service to send a signal through, directing the proxy to forward all traffic directly
 	// to the Astra DB
 	migrationCompleteChannel := make(chan struct{})
