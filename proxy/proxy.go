@@ -5,6 +5,8 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -79,6 +81,7 @@ func checkTable(table string) TableStatus {
 // TODO: Maybe also save migration complete as an environment variable so it can be loaded
 //  if the proxy crashes/restarts
 func (p *CQLProxy) migrationCheck()  {
+	p.loadMigrationStatus()
 	if !p.migrationComplete {
 		for {
 			select {
@@ -89,6 +92,14 @@ func (p *CQLProxy) migrationCheck()  {
 			}
 		}
 	}
+}
+
+func (p *CQLProxy) loadMigrationStatus() {
+	envVar := os.Getenv("migration_complete")
+	status, err := strconv.ParseBool(envVar)
+	p.migrationComplete = status && err == nil
+
+	log.Debugf("Migration Complete: %s", strconv.FormatBool(p.migrationComplete))
 }
 
 // TODO: Handle case where connection closes, instead of panicking
