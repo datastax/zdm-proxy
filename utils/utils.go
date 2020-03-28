@@ -18,8 +18,7 @@ func ConnectToCluster(hostname string, username string, password string, port in
 		return nil, err
 	}
 
-	log.Infof("Connection established with Cluster (%s:%d, %s, %s)",
-		hostname, port, username, password)
+	log.Debugf("Connection established with Cluster: %s:%d", hostname, port)
 
 	return session, nil
 }
