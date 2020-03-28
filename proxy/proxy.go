@@ -247,7 +247,7 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 			// 		OPCode is 0x07
 			if b[cqlVersionByte] < 0x80 {
 				if b[cqlOpcodeByte] == cqlQueryOpcode {
-					go p.parseQuery(b)
+					p.parseQuery(b)
 				}
 			}
 		}
