@@ -14,7 +14,6 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-type TableStatus string
 
 const (
 	cqlHeaderLength = 9
@@ -26,7 +25,31 @@ const (
 	MIGRATING = TableStatus("MIGRATING")
 	MIGRATED  = TableStatus("MIGRATED")
 	ERROR     = TableStatus("ERROR")
+
+	// TODO: Finalize queue size to use
+	queueSize = 1000
 )
+
+// These three migration/table structs will be transferred over to the migrator package
+type TableStatus string
+
+type Table struct {
+	Name     string
+	Keyspace string
+	Status   TableStatus
+	Error    error
+
+	Priority int
+}
+
+type MigrationStatus struct {
+	Tables map[string]map[string]Table
+
+	PercentComplete int
+	Speed           int
+
+	Lock sync.Mutex
+}
 
 type CQLProxy struct {
 	SourceHostname   string
@@ -41,7 +64,7 @@ type CQLProxy struct {
 	AstraPort       int
 	astraHostString string
 
-	ListenPort   int
+	Port   int
 	astraSession *gocql.Session
 
 	// TODO: Make maps support multiple keyspaces (ex: map[string]map[string]chan string)
@@ -60,8 +83,20 @@ type CQLProxy struct {
 
 	migrationComplete bool
 
-	// When signal received on this channel, sets the migrationComplete variable to true
+	// Channel that signals that the migrator has finished the migration process.
+	// TODO: Maybe change to error channel so that the migrator can signal whether there were errors during the
+	// 	migration process?
 	MigrationCompleteChan chan struct{}
+
+	// Channel that signals that the migrator has begun the unloading/loading process
+	MigrationStartChan chan *MigrationStatus
+	migrationStatus *MigrationStatus
+
+	// Is the proxy ready to process queries from user?
+	ready bool
+
+	// Channel signalling that the proxy is now ready to process queries
+	readyChan chan struct{}
 
 	// Metrics
 	PacketCount int
@@ -81,11 +116,21 @@ func checkTable(table string)TableStatus {
 
 func (p *CQLProxy) migrationCheck() {
 	p.loadMigrationStatus()
+	defer close(p.MigrationCompleteChan)
+
 	if !p.migrationComplete {
+		log.Info("Waiting for migration start signal.")
 		for {
 			select {
+			case status := <-p.MigrationStartChan:
+				p.migrationStatus = status
+				p.initQueues()
+				p.ready = true
+				p.readyChan <- struct{}{}
+				log.Info("Proxy ready to begin processing write queries.")
+				// Maybe close MigrationStartChan here?
 			case <-p.MigrationCompleteChan:
-				log.Infof("Migration Complete. Directing all new connections to Astra Database.")
+				log.Info("Migration Complete. Directing all new connections to Astra Database.")
 				p.migrationComplete = true
 				return
 			}
@@ -101,12 +146,21 @@ func (p *CQLProxy) loadMigrationStatus() {
 	log.Debugf("Migration Complete: %s", strconv.FormatBool(p.migrationComplete))
 }
 
+func (p *CQLProxy) initQueues() {
+	for _, tables := range p.migrationStatus.Tables {
+		for tableName := range tables {
+			p.tableQueues[tableName] = make(chan string, queueSize)
+			p.tableStarts[tableName] = make(chan struct{})
+		}
+	}
+	log.Debug("Proxy queues initialized")
+}
+
 // TODO: Handle case where connection closes, instead of panicking
 func (p *CQLProxy) Listen() {
 	p.clear()
 
 	// Attempt to connect to astra database using given credentials
-	// TODO: Maybe move where this happens?
 	err := p.connect()
 	if err != nil {
 		panic(err)
@@ -116,8 +170,8 @@ func (p *CQLProxy) Listen() {
 	// Begin migration completion loop
 	go p.migrationCheck()
 
-	// Let's operating system assign a random port to listen on if ListenPort isn't set (value == 0)
-	l, err := net.Listen("tcp", fmt.Sprintf(":%d", p.ListenPort))
+	// Let's operating system assign a random port to listen on if Port isn't set (value == 0)
+	l, err := net.Listen("tcp", fmt.Sprintf(":%d", p.Port))
 	if err != nil {
 		panic(err)
 	}
@@ -204,6 +258,11 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 
 // TODO: Deal with more cases
 func (p *CQLProxy) parseQuery(b []byte) {
+	// If the proxy isn't fully set up yet, don't parse queries until it is
+	if !p.ready {
+		<-p.readyChan
+	}
+
 	// Trim off header portion of the query
 	trimmed := b[cqlHeaderLength:]
 
@@ -300,11 +359,11 @@ func (p *CQLProxy) addQueryToTableQueue(table string, query string) {
 
 	queue, ok := p.tableQueues[table]
 	if !ok {
-		// TODO: Move queue creation to startup so that we never need a lock for the map
-		//  Multiple readers & no writers for map doesn't need a lock
-		//  Finalize queue size to use
-		queue = make(chan string, 1000)
+		// TODO: Remove once we verify that the queue creation works w/ the migration service
+		// 	aka the queue should never be nil and ok should always be true
+		queue = make(chan string, queueSize)
 		p.tableQueues[table] = queue
+		p.tableStarts[table] = make(chan struct{})
 		go p.consumeQueue(table)
 	}
 
@@ -377,12 +436,11 @@ func (p *CQLProxy) clear() {
 	p.queueSizes = make(map[string]int)
 	p.tableWaiting = make(map[string]bool)
 	p.tableStarts = make(map[string]chan struct{})
-	//TODO: create a loop to initialize all the channels in the beginning
-	// once the migration service sends over the list of tables
-	p.tableStarts["codebase"] = make(chan struct{})
 	p.PacketCount = 0
 	p.Reads = 0
 	p.Writes = 0
+	p.ready = false
+	p.readyChan = make(chan struct{})
 	p.lock = sync.Mutex{}
 }
 

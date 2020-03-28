@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"sync"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -36,9 +37,12 @@ func main() {
 		log.SetLevel(log.InfoLevel)
 	}
 
+	// Channel for migrator to communicate with proxy when the migration process has begun
+	migrationStartChan := make(chan *proxy.MigrationStatus, 1)
+
 	// Channel for migration service to send a signal through, directing the proxy to forward all traffic directly
 	// to the Astra DB
-	migrationCompleteChannel := make(chan struct{})
+	migrationCompleteChan := make(chan struct{})
 
 	p := proxy.CQLProxy{
 		SourceHostname: source_hostname,
@@ -51,15 +55,28 @@ func main() {
 		AstraPassword: astra_password,
 		AstraPort:     astra_port,
 
-		ListenPort: listen_port,
+		Port: listen_port,
 
-		MigrationCompleteChan: migrationCompleteChannel,
+		MigrationStartChan:    migrationStartChan,
+		MigrationCompleteChan: migrationCompleteChan,
 	}
 
 	// for testing purposes. to delete
 	if test {
 		go doTesting(&p)
 	}
+
+	tables := make(map[string]map[string]proxy.Table)
+	tables["codebase"] = make(map[string]proxy.Table)
+	tables["codebase"]["tasks"] = proxy.Table{
+		Name:     "tasks",
+		Keyspace: "codebase",
+		Status:   proxy.WAITING,
+		Error:    nil,
+	}
+
+	p.MigrationStartChan <- &proxy.MigrationStatus{Tables: tables,
+		Lock: sync.Mutex{}}
 
 	p.Listen()
 
