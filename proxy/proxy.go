@@ -22,9 +22,10 @@ const (
 	cqlQueryOpcode  = 7
 	cqlVersionByte  = 0
 
-	WAITING   = TableStatus("waiting")
-	MIGRATING = TableStatus("migrating")
-	MIGRATED  = TableStatus("migrated")
+	WAITING   = TableStatus("WAITING")
+	MIGRATING = TableStatus("MIGRATING")
+	MIGRATED  = TableStatus("MIGRATED")
+	ERROR     = TableStatus("ERROR")
 )
 
 type CQLProxy struct {
@@ -34,10 +35,10 @@ type CQLProxy struct {
 	SourcePort       int
 	sourceHostString string
 
-	AstraHostname string
-	AstraUsername string
-	AstraPassword string
-	AstraPort     int
+	AstraHostname   string
+	AstraUsername   string
+	AstraPassword   string
+	AstraPort       int
 	astraHostString string
 
 	ListenPort   int
@@ -57,10 +58,6 @@ type CQLProxy struct {
 	// TODO: (maybe) create more locks to improve performance
 	lock sync.Mutex
 
-	// TODO: Find a way to set this variable on startup
-	//  Maybe save it as an environment variable that is read when the proxy starts up
-	//  Or check if there are still credentials for a user DB as environment variables and
-	//  if there isn't then we can assume migration has already happened / doesn't need to happen
 	migrationComplete bool
 
 	// When signal received on this channel, sets the migrationComplete variable to true
@@ -70,17 +67,19 @@ type CQLProxy struct {
 	PacketCount int
 	Reads       int
 	Writes      int
+
+	WriteFails int
+	ReadFails  int
 }
 
 // Temporary map & method until proper methods are created by the migration team
 var tableStatuses map[string]TableStatus
-func checkTable(table string) TableStatus {
+
+func checkTable(table string)TableStatus {
 	return tableStatuses[table]
 }
 
-// TODO: Maybe also save migration complete as an environment variable so it can be loaded
-//  if the proxy crashes/restarts
-func (p *CQLProxy) migrationCheck()  {
+func (p *CQLProxy) migrationCheck() {
 	p.loadMigrationStatus()
 	if !p.migrationComplete {
 		for {
@@ -134,7 +133,6 @@ func (p *CQLProxy) Listen() {
 		}
 		go p.handleRequest(conn)
 	}
-
 }
 
 func (p *CQLProxy) handleRequest(conn net.Conn) {
@@ -243,11 +241,17 @@ func (p *CQLProxy) parseQuery(b []byte) {
 	}
 }
 
-func (p *CQLProxy) executeQuery(query string) {
+// TODO: Error handling (possibly retry query / retry connect if connection closed)
+func (p *CQLProxy) executeQuery(query string) error {
 	err := p.astraSession.Query(query).Exec()
 	if err != nil {
-		panic(err)
+		p.lock.Lock()
+		defer p.lock.Unlock()
+
+		p.WriteFails++
+		return err
 	}
+	return nil
 }
 
 // Extract table name from insert query & add query to proper queue
@@ -325,9 +329,10 @@ func (p *CQLProxy) consumeQueue(table string) {
 				<-p.tableStarts[table]
 			}
 
-			// TODO: Ensure we really need to lock the executeQuery method
-			p.lock.Lock()
+			// Driver is async, so we don't need a lock around query execution
 			p.executeQuery(query)
+
+			p.lock.Lock()
 			p.queueSizes[table]--
 			p.Writes++
 			p.lock.Unlock()
@@ -380,7 +385,6 @@ func (p *CQLProxy) clear() {
 	p.Writes = 0
 	p.lock = sync.Mutex{}
 }
-
 
 // function for testing purposes. Can be called from main to toggle table status for CODEBASE
 func (p *CQLProxy) DoTestToggle() {
