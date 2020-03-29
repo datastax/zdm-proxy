@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gocql/gocql"
 	log "github.com/sirupsen/logrus"
@@ -304,10 +305,6 @@ func (p *CQLProxy) parseQuery(b []byte) {
 func (p *CQLProxy) executeQuery(query string) error {
 	err := p.astraSession.Query(query).Exec()
 	if err != nil {
-		p.lock.Lock()
-		defer p.lock.Unlock()
-
-		p.WriteFails++
 		return err
 	}
 	return nil
@@ -389,7 +386,21 @@ func (p *CQLProxy) consumeQueue(table string) {
 			}
 
 			// Driver is async, so we don't need a lock around query execution
-			p.executeQuery(query)
+			err := p.executeQuery(query)
+			if err != nil {
+				log.Debugf("Query %s failed, retrying", query)
+				err = p.retry(query, 5)
+				// TODO: Figure out exactly what to do if we're unable to write
+				// 	If it's a bad query, no issue, but if it's a good query that isn't working for some reason
+				// 	we need to figure out what to do
+				if err != nil {
+					log.Error(err)
+
+					p.lock.Lock()
+					p.WriteFails++
+					p.lock.Unlock()
+				}
+			}
 
 			p.lock.Lock()
 			p.queueSizes[table]--
@@ -397,6 +408,23 @@ func (p *CQLProxy) consumeQueue(table string) {
 			p.lock.Unlock()
 		}
 	}
+}
+
+// TODO: Make better
+func (p *CQLProxy) retry(query string, attempts int) error {
+	var err error
+	for i := 1; i <= attempts; i++ {
+		log.Debugf("Retrying %s attempt #%d", query, i)
+
+		err = p.executeQuery(query)
+		if err == nil {
+			break
+		}
+
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	return err
 }
 
 func (p *CQLProxy) stopTable(table string) {
