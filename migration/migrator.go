@@ -169,27 +169,32 @@ func migrate(keyspace string) {
 		handleError(err)
 	}
 
+	var wgSchema sync.WaitGroup
+	wgSchema.Add(len(tables))
 	for _, table := range tables {
 		// if we already migrated schema, skip this
-		if val, ok := chk.schema[table.Name]; !(ok && val) {
-			err = createTable(table)
-			if err != nil {
-				handleError(err)
+		go func(table *gocql.TableMetadata) {
+			defer wgSchema.Done()
+			if val, ok := chk.schema[table.Name]; !(ok && val) {
+				err = createTable(table)
+				if err != nil {
+					handleError(err)
+				}
+				// edit checkpoint file to include that we successfully migrated the table schema at this time
+				chk.schema[table.Name] = true
+				writeCheckpoint(chk, keyspace)
 			}
-			// edit checkpoint file to include that we successfully migrated the table schema at this time
-			chk.schema[table.Name] = true
-			writeCheckpoint(chk, keyspace)
-		}
-		Status.Tables[table.Name].Status = "SCHEMA MIGRATION COMPLETED"
+			Status.Tables[table.Name].Status = "SCHEMA MIGRATION COMPLETED"
+		}(table)
 	}
+	wgSchema.Wait()
 
-	var wg sync.WaitGroup
-	var m sync.Mutex
-	wg.Add(len(tables))
+	var wgTables sync.WaitGroup
+	wgTables.Add(len(tables))
 	for _, table := range tables {
 		// if we already migrated table, skip this
 		go func(table *gocql.TableMetadata) {
-			defer wg.Done()
+			defer wgTables.Done()
 			if val, ok := chk.tables[table.Name]; !(ok && val) {
 				err = migrateTable(table)
 				if err != nil {
@@ -197,14 +202,12 @@ func migrate(keyspace string) {
 				}
 				// edit checkpoint file to include that we successfully migrated table data at this time
 				chk.tables[table.Name] = true
-				m.Lock()
 				writeCheckpoint(chk, keyspace)
-				m.Unlock()
 			}
 			Status.Tables[table.Name].Status = "MIGRATION COMPLETED"
 		}(table)
 	}
-	wg.Wait()
+	wgTables.Wait()
 
 	logAndPrint("COMPLETED MIGRATION\n")
 	Status.PercentComplete = 100
@@ -320,8 +323,12 @@ func getTables(keyspace string) (map[string]*gocql.TableMetadata, error) {
 	return md.Tables, nil
 }
 
+var chkLock sync.Mutex
+
 func writeCheckpoint(chk *checkpoint, keyspace string) {
 	// overwrites keyspace.chk with the given checkpoint data
+	chkLock.Lock()
+	defer chkLock.Unlock()
 	chk.timestamp = time.Now()
 	schemas := ""
 	tables := ""
@@ -352,6 +359,8 @@ func writeCheckpoint(chk *checkpoint, keyspace string) {
 }
 
 func readCheckpoint(keyspace string) *checkpoint {
+	chkLock.Lock()
+	defer chkLock.Unlock()
 	data, err := ioutil.ReadFile(fmt.Sprintf("%s.chk", keyspace))
 
 	chk := checkpoint{
@@ -388,6 +397,7 @@ func logAndPrint(s string) {
 	fmt.Printf(msg)
 
 	logLock.Lock()
+	defer logLock.Unlock()
 	f, err := os.OpenFile(fmt.Sprintf("%slog.txt", directory),
 		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
@@ -397,7 +407,6 @@ func logAndPrint(s string) {
 	if _, err := f.WriteString(msg); err != nil {
 		handleError(err)
 	}
-	logLock.Unlock()
 }
 
 func handleError(err error) {
