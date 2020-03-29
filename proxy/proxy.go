@@ -45,7 +45,7 @@ type Table struct {
 }
 
 type MigrationStatus struct {
-	Tables map[string]map[string]Table
+	Tables map[string]Table
 
 	PercentComplete int
 	Speed           int
@@ -152,11 +152,9 @@ func (p *CQLProxy) loadMigrationStatus() {
 }
 
 func (p *CQLProxy) initQueues() {
-	for _, tables := range p.migrationStatus.Tables {
-		for tableName := range tables {
+	for tableName := range p.migrationStatus.Tables {
 			p.tableQueues[tableName] = make(chan string, queueSize)
 			p.tableStarts[tableName] = make(chan struct{})
-		}
 	}
 	log.Debug("Proxy queues initialized.")
 }
@@ -216,9 +214,6 @@ func (p *CQLProxy) handleRequest(conn net.Conn) {
 	log.Debugf("Connection established with %s", p.sourceHostString)
 }
 
-// TODO: Handle case where the migration is completed when there is an active connection
-//  Close connection and reopen new one with the Astra DB as dst?
-//  We'd have to get out of the blocking that happens on src.Read then
 func (p *CQLProxy) forward(src, dst net.Conn) {
 	defer src.Close()
 	defer dst.Close()

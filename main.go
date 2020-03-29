@@ -67,9 +67,8 @@ func main() {
 		go doTesting(&p)
 	}
 
-	tables := make(map[string]map[string]proxy.Table)
-	tables["codebase"] = make(map[string]proxy.Table)
-	tables["codebase"]["tasks"] = proxy.Table{
+	tables := make(map[string]proxy.Table)
+	tables["tasks"] = proxy.Table{
 		Name:     "tasks",
 		Keyspace: "codebase",
 		Status:   proxy.WAITING,
