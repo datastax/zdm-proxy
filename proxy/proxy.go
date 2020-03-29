@@ -4,6 +4,7 @@ import (
 	"cloud-gate/utils"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"strconv"
@@ -174,7 +175,6 @@ func (p *CQLProxy) Start() {
 	go p.migrationCheck()
 }
 
-// TODO: Handle case where connection closes, instead of panicking
 func (p *CQLProxy) Listen() {
 	// Let's operating system assign a random port to listen on if Port isn't set (value == 0)
 	l, err := net.Listen("tcp", fmt.Sprintf(":%d", p.Port))
@@ -189,7 +189,8 @@ func (p *CQLProxy) Listen() {
 	for {
 		conn, err := l.Accept()
 		if err != nil {
-			panic(err)
+			log.Error(err)
+			continue
 		}
 		go p.handleRequest(conn)
 	}
@@ -230,7 +231,10 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 	for {
 		bytesRead, err := src.Read(buf)
 		if err != nil {
-			panic(err)
+			if err != io.EOF {
+				log.Debugf("%s disconnected", src.RemoteAddr())
+			}
+			return
 		}
 		log.Debugf("Read %d bytes", bytesRead)
 
