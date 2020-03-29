@@ -61,6 +61,7 @@ func main() {
 		MigrationCompleteChan: migrationCompleteChan,
 	}
 
+
 	// for testing purposes. to delete
 	if test {
 		go doTesting(&p)
@@ -78,8 +79,15 @@ func main() {
 	p.MigrationStartChan <- &proxy.MigrationStatus{Tables: tables,
 		Lock: sync.Mutex{}}
 
+	p.Start()
+	waitForProxy(p)
 	p.Listen()
 
+}
+
+func waitForProxy(p proxy.CQLProxy) {
+	<-p.ReadyChan
+	log.Info("Coordinator received proxy ready signal.")
 }
 
 // Most of these will change to environment variables rather than flags

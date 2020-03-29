@@ -96,7 +96,9 @@ type CQLProxy struct {
 	ready bool
 
 	// Channel signalling that the proxy is now ready to process queries
-	readyChan chan struct{}
+	// TODO: Change ready channel to signal to coordinator when it can redirect envoy to point to this proxy
+	// 	so that we can guarantee there won't be any queries sent to this until it is fully ready to accept them
+	ReadyChan chan struct{}
 
 	// Metrics
 	PacketCount int
@@ -119,15 +121,16 @@ func (p *CQLProxy) migrationCheck() {
 	defer close(p.MigrationCompleteChan)
 
 	if !p.migrationComplete {
-		log.Info("Waiting for migration start signal.")
+		log.Info("Proxy waiting for migration start signal.")
 		for {
 			select {
 			case status := <-p.MigrationStartChan:
+				log.Info("Proxy received migration info.")
 				p.migrationStatus = status
 				p.initQueues()
 				p.ready = true
-				p.readyChan <- struct{}{}
-				log.Info("Proxy ready to begin processing write queries.")
+				p.ReadyChan <- struct{}{}
+				log.Info("Proxy sent ready signal.")
 				// Maybe close MigrationStartChan here?
 			case <-p.MigrationCompleteChan:
 				log.Info("Migration Complete. Directing all new connections to Astra Database.")
@@ -153,11 +156,10 @@ func (p *CQLProxy) initQueues() {
 			p.tableStarts[tableName] = make(chan struct{})
 		}
 	}
-	log.Debug("Proxy queues initialized")
+	log.Debug("Proxy queues initialized.")
 }
 
-// TODO: Handle case where connection closes, instead of panicking
-func (p *CQLProxy) Listen() {
+func (p *CQLProxy) Start() {
 	p.clear()
 
 	// Attempt to connect to astra database using given credentials
@@ -169,7 +171,10 @@ func (p *CQLProxy) Listen() {
 
 	// Begin migration completion loop
 	go p.migrationCheck()
+}
 
+// TODO: Handle case where connection closes, instead of panicking
+func (p *CQLProxy) Listen() {
 	// Let's operating system assign a random port to listen on if Port isn't set (value == 0)
 	l, err := net.Listen("tcp", fmt.Sprintf(":%d", p.Port))
 	if err != nil {
@@ -178,7 +183,7 @@ func (p *CQLProxy) Listen() {
 
 	defer l.Close()
 	port := l.Addr().(*net.TCPAddr).Port
-	log.Infof("Listening on port %d", port)
+	log.Infof("Proxy listening for packets on port %d", port)
 
 	for {
 		conn, err := l.Accept()
@@ -258,11 +263,6 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 
 // TODO: Deal with more cases
 func (p *CQLProxy) parseQuery(b []byte) {
-	// If the proxy isn't fully set up yet, don't parse queries until it is
-	if !p.ready {
-		<-p.readyChan
-	}
-
 	// Trim off header portion of the query
 	trimmed := b[cqlHeaderLength:]
 
@@ -440,7 +440,7 @@ func (p *CQLProxy) clear() {
 	p.Reads = 0
 	p.Writes = 0
 	p.ready = false
-	p.readyChan = make(chan struct{})
+	p.ReadyChan = make(chan struct{})
 	p.lock = sync.Mutex{}
 }
 
