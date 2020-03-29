@@ -1,13 +1,10 @@
 package main
 
 import (
-	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
-	"net/http"
 	"os"
 	"os/exec"
 	"strconv"
@@ -16,20 +13,52 @@ import (
 	"time"
 
 	"github.com/gocql/gocql"
-	"github.com/gorilla/mux"
 )
 
+// TableStatus is the string status of a single table
+// WAITING, MIGRATING SCHEMA, SCHEMA MIGRATION COMPLETED, UNLOADING DATA,
+// UNLOADING COMPLETED, LOADING DATA, MIGRATION COMPLETED, ERRORED
+type TableStatus string
+
+// Table represents status of migration of a single table
+type Table struct {
+	Name     string
+	Status   TableStatus
+	Error    error
+	Priority int
+}
+
+// MigrationStatus represents status of migration
+type MigrationStatus struct {
+	Tables          map[string]*Table
+	PercentComplete int
+	Speed           int
+	Lock            *sync.Mutex
+}
+
+func newMigrationStatus() *MigrationStatus {
+	var status MigrationStatus
+	status.Tables = make(map[string]*Table)
+	status.Lock = new(sync.Mutex)
+	return &status
+}
+
+// checkpoint is used to save the progress of migration,
+// and restart migration in case of failure
+type checkpoint struct {
+	timestamp time.Time
+	schema    map[string]bool // set of table names representing successfully migrated schemas
+	tables    map[string]bool // set of table names representing successfully migrated table data
+	complete  bool
+}
+
 var (
-	httpServer    *http.Server
 	sourceSession *gocql.Session
 	destSession   *gocql.Session
 	directory     string
 
-	// StatusMap map of statuses
-	StatusMap map[string]string
-
-	// MigrationComplete boolean flag for migration complete
-	MigrationComplete bool
+	// Status is the status of migration
+	Status *MigrationStatus
 
 	// Flag parameters
 	keyspace            string
@@ -65,11 +94,7 @@ func main() {
 	directory = fmt.Sprintf("./migration-%s/", strconv.FormatInt(time.Now().Unix(), 10))
 	os.Mkdir(directory, 0755)
 
-	connectionRouter := mux.NewRouter()
-	connectionRouter.HandleFunc("/status", status).Methods(http.MethodGet)
-	connectionRouter.HandleFunc("/abort", abort).Methods(http.MethodGet)
-
-	StatusMap = make(map[string]string)
+	Status = newMigrationStatus()
 
 	sourceCluster := gocql.NewCluster(sourceHost)
 	sourceCluster.Authenticator = gocql.PasswordAuthenticator{
@@ -79,7 +104,7 @@ func main() {
 	sourceCluster.Port = sourcePort
 
 	destCluster := gocql.NewCluster(destinationHost)
-	sourceCluster.Authenticator = gocql.PasswordAuthenticator{
+	destCluster.Authenticator = gocql.PasswordAuthenticator{
 		Username: destinationUsername,
 		Password: destinationPassword,
 	}
@@ -99,26 +124,9 @@ func main() {
 	defer destSession.Close()
 
 	go migrate(keyspace)
-	httpServer = &http.Server{
-		Addr:           ":8080",
-		Handler:        connectionRouter,
-		ReadTimeout:    10 * time.Second,
-		WriteTimeout:   10 * time.Second,
-		MaxHeaderBytes: 1 << 20,
+	for {
 	}
-	err = httpServer.ListenAndServe()
-	if err != nil {
-		handleError(err)
-	}
-}
-
-func contains(arr []string, s string) bool {
-	for _, elem := range arr {
-		if elem == s {
-			return true
-		}
-	}
-	return false
+	fmt.Println(Status)
 }
 
 // Migrates a keyspace from the source cluster to the Astra cluster
@@ -134,8 +142,20 @@ func migrate(keyspace string) {
 				destSession.Query(query).Exec()
 			}
 		}
+
+		// clear the checkpoint
 		os.Remove(fmt.Sprintf("./%s.chk", keyspace))
 		chk = readCheckpoint(keyspace)
+	}
+
+	if chk.complete {
+		Status.PercentComplete = 100
+		Status.Speed = 0
+		for _, table := range Status.Tables {
+			table.Status = "MIGRATION COMPLETED"
+			table.Error = nil
+		}
+		return
 	}
 
 	tables, err := getTables(keyspace)
@@ -159,6 +179,7 @@ func migrate(keyspace string) {
 			chk.schema[table.Name] = true
 			writeCheckpoint(chk, keyspace)
 		}
+		Status.Tables[table.Name].Status = "SCHEMA MIGRATION COMPLETED"
 	}
 
 	var wg sync.WaitGroup
@@ -179,17 +200,21 @@ func migrate(keyspace string) {
 				writeCheckpoint(chk, keyspace)
 				m.Unlock()
 			}
+			Status.Tables[table.Name].Status = "MIGRATION COMPLETED"
 		}(table)
 	}
 	wg.Wait()
 
 	logAndPrint("COMPLETED MIGRATION\n")
-	MigrationComplete = true
+	Status.PercentComplete = 100
+
+	logAndPrint(strconv.Itoa(Status.PercentComplete) + "\n")
+	chk.complete = true
 }
 
 func createTable(table *gocql.TableMetadata) error {
 	logAndPrint(fmt.Sprintf("MIGRATING TABLE SCHEMA: %s... \n", table.Name))
-	StatusMap[table.Name] = "MIGRATING SCHEMA"
+	Status.Tables[table.Name].Status = "MIGRATING SCHEMA"
 
 	query := fmt.Sprintf("CREATE TABLE %s.%s (", keyspace, table.Name)
 
@@ -207,8 +232,11 @@ func createTable(table *gocql.TableMetadata) error {
 	err := destSession.Query(query).Exec()
 
 	if err != nil {
-		handleError(err)
+		Status.Tables[table.Name].Status = "ERRORED"
+		Status.Tables[table.Name].Error = err
+		return err
 	}
+
 	logAndPrint(fmt.Sprintf("COMPLETED MIGRATING TABLE SCHEMA: %s\n", table.Name))
 	return nil
 }
@@ -232,16 +260,17 @@ func migrateTable(table *gocql.TableMetadata) error {
 // Exports a table CSV from the source cluster into DIRECTORY
 func unloadTable(table *gocql.TableMetadata) error {
 	logAndPrint(fmt.Sprintf("UNLOADING TABLE: %s...\n", table.Name))
-	StatusMap[table.Name] = "UNLOAD IN PROGRESS"
+	Status.Tables[table.Name].Status = "UNLOADING DATA"
 
 	cmdArgs := []string{"unload", "-port", strconv.Itoa(sourcePort), "-k", table.Keyspace, "-t", table.Name, "-url", directory + table.Name, "-logDir", directory}
 	_, err := exec.Command(dsbulkPath, cmdArgs...).Output()
 	if err != nil {
-		StatusMap[table.Name] = fmt.Sprintf("MIGRATION FAILED ERROR: %s", err)
+		Status.Tables[table.Name].Status = "ERRORED"
+		Status.Tables[table.Name].Error = err
 		return err
 	}
 
-	StatusMap[table.Name] = "UNLOAD COMPLETED"
+	Status.Tables[table.Name].Status = "UNLOADING COMPLETED"
 	logAndPrint(fmt.Sprintf("COMPLETED UNLOADING TABLE: %s\n", table.Name))
 	return nil
 }
@@ -250,16 +279,16 @@ func unloadTable(table *gocql.TableMetadata) error {
 // into the target cluster
 func loadTable(table *gocql.TableMetadata) error {
 	logAndPrint(fmt.Sprintf("LOADING TABLE: %s...\n", table.Name))
-	StatusMap[table.Name] = "LOAD IN PROGRESS"
+	Status.Tables[table.Name].Status = "LOADING DATA"
 
 	cmdArgs := []string{"load", "-h", destinationHost, "-port", strconv.Itoa(destinationPort), "-k", table.Keyspace, "-t", table.Name, "-url", directory + table.Name, "-logDir", directory}
 	_, err := exec.Command(dsbulkPath, cmdArgs...).Output()
 	if err != nil {
-		StatusMap[table.Name] = fmt.Sprintf("MIGRATION FAILED ERROR: %s", err)
+		Status.Tables[table.Name].Status = "ERRORED"
+		Status.Tables[table.Name].Error = err
 		return err
 	}
 
-	StatusMap[table.Name] = "MIGRATION COMPLETED"
 	logAndPrint(fmt.Sprintf("COMPLETED LOADING TABLE: %s\n", table.Name))
 	return nil
 }
@@ -267,7 +296,12 @@ func loadTable(table *gocql.TableMetadata) error {
 // Loads table names into the status map for monitoring
 func loadTableNames(tables map[string]*gocql.TableMetadata) error {
 	for _, tableData := range tables {
-		StatusMap[tableData.Name] = "WAITING"
+		Status.Tables[tableData.Name] = &(Table{
+			Name:     tableData.Name,
+			Status:   "WAITING",
+			Error:    nil,
+			Priority: 0,
+		})
 	}
 
 	return nil
@@ -282,12 +316,6 @@ func getTables(keyspace string) (map[string]*gocql.TableMetadata, error) {
 	}
 
 	return md.Tables, nil
-}
-
-type checkpoint struct {
-	timestamp time.Time
-	schema    map[string]bool // set of table names representing successfully migrated schemas
-	tables    map[string]bool // set of table names representing successfully migrated table data
 }
 
 func writeCheckpoint(chk *checkpoint, keyspace string) {
@@ -342,26 +370,6 @@ func readCheckpoint(keyspace string) *checkpoint {
 		}
 	}
 	return &chk
-}
-
-// API Handler for aborting the migration
-func abort(w http.ResponseWriter, r *http.Request) {
-	httpServer.Shutdown(context.Background())
-	// TODO: stop dsbulk somehow, do what we need to do (save or wipe checkpoints)?
-}
-
-// API Handler for fetching the migration status
-func status(w http.ResponseWriter, _ *http.Request) {
-	marshaledStatus, err := json.Marshal(StatusMap)
-
-	if err != nil {
-		w.WriteHeader(500)
-		w.Write([]byte(`{"error": "could not load migration status"}`))
-		return
-	}
-
-	w.WriteHeader(200)
-	w.Write(marshaledStatus)
 }
 
 var logLock sync.Mutex
