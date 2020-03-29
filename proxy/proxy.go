@@ -350,12 +350,23 @@ func (p *CQLProxy) handleTruncateQuery(query string) error {
 
 func (p *CQLProxy) handleDeleteQuery(query string) error {
 	split := strings.Split(query, " ")
+
+	// Query must be invalid, don't run
+	if len(split) < 5 {
+		return nil
+	}
+
 	var tableName string
 	for i, v := range split {
 		if v == "FROM" {
 			tableName = split[i+1]
 			break
 		}
+	}
+
+	// Invalid query, don't run
+	if tableName == "" {
+		return nil
 	}
 
 	if strings.Contains(tableName, ".") {
@@ -375,6 +386,12 @@ func (p *CQLProxy) handleDeleteQuery(query string) error {
 func (p *CQLProxy) handleInsertQuery(query string) error {
 	// TODO: Clean this up
 	split := strings.Split(query, " ")
+
+	// Query must be invalid, ignore
+	if len(split) < 5 {
+		return nil
+	}
+
 	tableName := split[2]
 	tableName = tableName[:strings.IndexRune(tableName, '(')]
 
@@ -391,6 +408,10 @@ func (p *CQLProxy) handleInsertQuery(query string) error {
 func (p *CQLProxy) handleUpdateQuery(query string) error {
 	// TODO: See if there's a better way to go about doing this
 	split := strings.Split(query, " ")
+	if len(split) < 6 {
+		return nil
+	}
+
 	tableName := split[1]
 
 	if strings.Contains(tableName, ".") {
