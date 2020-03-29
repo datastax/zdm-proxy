@@ -155,6 +155,7 @@ func migrate(keyspace string) {
 			table.Status = "MIGRATION COMPLETED"
 			table.Error = nil
 		}
+		logAndPrint("COMPLETED MIGRATION\n")
 		return
 	}
 
@@ -208,8 +209,9 @@ func migrate(keyspace string) {
 	logAndPrint("COMPLETED MIGRATION\n")
 	Status.PercentComplete = 100
 
-	logAndPrint(strconv.Itoa(Status.PercentComplete) + "\n")
+	fmt.Println(Status)
 	chk.complete = true
+	writeCheckpoint(chk, keyspace)
 }
 
 func createTable(table *gocql.TableMetadata) error {
@@ -337,6 +339,11 @@ func writeCheckpoint(chk *checkpoint, keyspace string) {
 	}
 
 	str := fmt.Sprintf("%s\n\n%s\n%s", chk.timestamp.Format(time.RFC3339), schemas, tables)
+
+	if chk.complete {
+		str += "c:\n"
+	}
+
 	content := []byte(str)
 	err := ioutil.WriteFile(fmt.Sprintf("%s.chk", keyspace), content, 0644)
 	if err != nil {
@@ -367,6 +374,8 @@ func readCheckpoint(keyspace string) *checkpoint {
 			chk.schema[tableName] = true
 		} else if entry[0] == 'd' {
 			chk.tables[tableName] = true
+		} else if entry[0] == 'c' {
+			chk.complete = true
 		}
 	}
 	return &chk
