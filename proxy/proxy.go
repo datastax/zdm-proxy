@@ -98,8 +98,6 @@ type CQLProxy struct {
 	ready bool
 
 	// Channel signalling that the proxy is now ready to process queries
-	// TODO: Change ready channel to signal to coordinator when it can redirect envoy to point to this proxy
-	// 	so that we can guarantee there won't be any queries sent to this until it is fully ready to accept them
 	ReadyChan chan struct{}
 
 	// Metrics
@@ -293,6 +291,8 @@ func (p *CQLProxy) parseQuery(b []byte) {
 		err = p.handleInsertQuery(query)
 	case "UPDATE":
 		err = p.handleUpdateQuery(query)
+	case "DELETE":
+		err = p.handleDeleteQuery(query)
 	}
 
 	if err != nil {
@@ -306,6 +306,29 @@ func (p *CQLProxy) executeQuery(query string) error {
 	if err != nil {
 		return err
 	}
+	return nil
+}
+
+func (p *CQLProxy) handleDeleteQuery(query string) error {
+	split := strings.Split(query, " ")
+	var tableName string
+	for i, v := range split {
+		if v == "FROM" {
+			tableName = split[i+1]
+			break
+		}
+	}
+
+	if strings.Contains(tableName, ".") {
+		sepIndex := strings.IndexRune(tableName, '.')
+		tableName = tableName[sepIndex+1:]
+	}
+
+	if checkTable(tableName) != MIGRATED {
+		p.stopTable(tableName)
+	}
+
+	p.addQueryToTableQueue(tableName, query)
 	return nil
 }
 
