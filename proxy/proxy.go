@@ -293,6 +293,8 @@ func (p *CQLProxy) parseQuery(b []byte) {
 		err = p.handleUpdateQuery(query)
 	case "DELETE":
 		err = p.handleDeleteQuery(query)
+	case "TRUNCATE":
+		err = p.handleTruncateQuery(query)
 	}
 
 	if err != nil {
@@ -306,6 +308,43 @@ func (p *CQLProxy) executeQuery(query string) error {
 	if err != nil {
 		return err
 	}
+	return nil
+}
+
+func (p *CQLProxy) handleTruncateQuery(query string) error {
+	split := strings.Split(strings.ToUpper(query), " ")
+	// Invalid query, don't run
+	// TODO: maybe return an error or something, if necessary
+	if len(split) < 2 {
+		return nil
+	}
+
+	var tableName string
+	// Two possibilities for a TRUNCATE query:
+	//    TRUNCATE keyspace.table;
+	// OR
+	//	  TRUNCATE TABLE keyspace.table;
+	if split[1] == "TABLE" {
+		tableName = split[2]
+	} else {
+		tableName = split[1]
+	}
+
+	// Remove semicolon if it is attached to the table name from the query
+	if i := strings.IndexRune(tableName, ';'); i != -1 {
+		tableName = tableName[:i]
+	}
+
+	if strings.Contains(tableName, ".") {
+		sepIndex := strings.IndexRune(tableName, '.')
+		tableName = tableName[sepIndex+1:]
+	}
+
+	if checkTable(tableName) != MIGRATED {
+		p.stopTable(tableName)
+	}
+
+	p.addQueryToTableQueue(tableName, query)
 	return nil
 }
 
