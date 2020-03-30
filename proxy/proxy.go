@@ -297,12 +297,12 @@ func (p *CQLProxy) parseQuery(b []byte) {
 		err = p.handleTruncateQuery(query)
 	}
 
+	// TODO: Maybe add errors if needed, and don't just panic
 	if err != nil {
 		panic(err)
 	}
 }
 
-// TODO: Error handling (possibly retry query / retry connect if connection closed)
 func (p *CQLProxy) executeQuery(query string) error {
 	err := p.astraSession.Query(query).Exec()
 	if err != nil {
@@ -319,25 +319,15 @@ func (p *CQLProxy) handleTruncateQuery(query string) error {
 		return nil
 	}
 
-	var tableName string
 	// Two possibilities for a TRUNCATE query:
 	//    TRUNCATE keyspace.table;
 	// OR
 	//	  TRUNCATE TABLE keyspace.table;
+	var tableName string
 	if split[1] == "TABLE" {
-		tableName = split[2]
+		tableName = extractTableName(split[2])
 	} else {
-		tableName = split[1]
-	}
-
-	// Remove semicolon if it is attached to the table name from the query
-	if i := strings.IndexRune(tableName, ';'); i != -1 {
-		tableName = tableName[:i]
-	}
-
-	if strings.Contains(tableName, ".") {
-		sepIndex := strings.IndexRune(tableName, '.')
-		tableName = tableName[sepIndex+1:]
+		tableName = extractTableName(split[1])
 	}
 
 	if checkTable(tableName) != MIGRATED {
@@ -359,7 +349,7 @@ func (p *CQLProxy) handleDeleteQuery(query string) error {
 	var tableName string
 	for i, v := range split {
 		if v == "FROM" {
-			tableName = split[i+1]
+			tableName = extractTableName(split[i+1])
 			break
 		}
 	}
@@ -369,11 +359,7 @@ func (p *CQLProxy) handleDeleteQuery(query string) error {
 		return nil
 	}
 
-	if strings.Contains(tableName, ".") {
-		sepIndex := strings.IndexRune(tableName, '.')
-		tableName = tableName[sepIndex+1:]
-	}
-
+	// Wait for migration of table to be finished before processing anymore queries
 	if checkTable(tableName) != MIGRATED {
 		p.stopTable(tableName)
 	}
@@ -392,13 +378,7 @@ func (p *CQLProxy) handleInsertQuery(query string) error {
 		return nil
 	}
 
-	tableName := split[2]
-	tableName = tableName[:strings.IndexRune(tableName, '(')]
-
-	if strings.Contains(tableName, ".") {
-		sepIndex := strings.IndexRune(tableName, '.')
-		tableName = tableName[sepIndex+1:]
-	}
+	tableName := extractTableName(split[2])
 
 	p.addQueryToTableQueue(tableName, query)
 	return nil
@@ -408,22 +388,15 @@ func (p *CQLProxy) handleInsertQuery(query string) error {
 func (p *CQLProxy) handleUpdateQuery(query string) error {
 	// TODO: See if there's a better way to go about doing this
 	split := strings.Split(query, " ")
+
+	// Query must be invalid, ignore
 	if len(split) < 6 {
 		return nil
 	}
 
-	tableName := split[1]
+	tableName := extractTableName(split[1])
 
-	if strings.Contains(tableName, ".") {
-		sepIndex := strings.IndexRune(tableName, '.')
-		tableName = tableName[sepIndex+1:]
-	}
-
-	// If we're doing an UPDATE and if the table isn't fully migrated, then the UPDATE query
-	// may not be correct on the Astra DB as all the rows may not be fully imported. Thus,
-	// if we reach an UPDATE query and the table isn't fully migrated, we stop running
-	// queries on this table, keeping a queue of all the queries that come in, and then running them
-	// in order once the table is finished being migrated
+	// Wait for migration of table to be finished before processing anymore queries
 	if checkTable(tableName) != MIGRATED {
 		p.stopTable(tableName)
 	}
@@ -502,13 +475,14 @@ func (p *CQLProxy) retry(query string, attempts int) error {
 		if err == nil {
 			break
 		}
-
+		// This is an arbitrary duration for now, probably want to change in future
 		time.Sleep(500 * time.Millisecond)
 	}
 
 	return err
 }
 
+// Stop consuming queries for a given table
 func (p *CQLProxy) stopTable(table string) {
 	p.lock.Lock()
 	defer p.lock.Unlock()
@@ -516,7 +490,7 @@ func (p *CQLProxy) stopTable(table string) {
 	p.tableWaiting[table] = true
 }
 
-// Start Table query consumption once migration of a table has completed
+// Restart consuming queries for a given table
 func (p *CQLProxy) startTable(table string) {
 	p.lock.Lock()
 	defer p.lock.Unlock()
@@ -525,6 +499,7 @@ func (p *CQLProxy) startTable(table string) {
 	p.tableStarts[table] <- struct{}{}
 }
 
+// TODO: Maybe add a couple retries, or let the caller deal with that?
 func (p *CQLProxy) connect() error {
 	session, err := utils.ConnectToCluster(p.AstraHostname, p.AstraUsername, p.AstraPassword, p.AstraPort)
 	if err != nil {
@@ -552,6 +527,27 @@ func (p *CQLProxy) clear() {
 	p.ready = false
 	p.ReadyChan = make(chan struct{})
 	p.lock = sync.Mutex{}
+}
+
+// Given a FROM argument, extract the table name
+// ex: table, keyspace.table, keyspace.table;, keyspace.table(, etc..
+func extractTableName(s string) string {
+	// Remove semicolon if it is attached to the table name from the query
+	if i := strings.IndexRune(s, ';'); i != -1 {
+		s = s[:i]
+	}
+
+	// Remove keyspace if table in format keyspace.table
+	if i := strings.IndexRune(s, '.'); i != -1 {
+		s = s[i+1:]
+	}
+
+	// Remove column names if part of an INSERT query: ex: TABLE(col, col)
+	if i := strings.IndexRune(s, '('); i != -1 {
+		s = s[:i]
+	}
+
+	return s
 }
 
 // function for testing purposes. Can be called from main to toggle table status for CODEBASE
