@@ -67,6 +67,7 @@ type CQLProxy struct {
 	astraHostString string
 
 	Port   int
+	listener net.Listener
 	astraSession *gocql.Session
 
 	// TODO: Make maps support multiple keyspaces (ex: map[string]map[string]chan string)
@@ -100,6 +101,10 @@ type CQLProxy struct {
 	// Channel signalling that the proxy is now ready to process queries
 	ReadyChan chan struct{}
 
+	connectionsToSource int
+	ShutdownChan chan struct{}
+	shutdown chan struct{}
+
 	// Metrics
 	PacketCount int
 	Reads       int
@@ -117,8 +122,15 @@ func checkTable(table string)TableStatus {
 }
 
 func (p *CQLProxy) migrationCheck() {
-	p.loadMigrationStatus()
+	defer close(p.MigrationStartChan)
 	defer close(p.MigrationCompleteChan)
+	defer close(p.ShutdownChan)
+
+	envVar := os.Getenv("migration_complete")
+	status, err := strconv.ParseBool(envVar)
+	p.migrationComplete = status && err == nil
+
+	log.Debugf("Migration Complete: %s", strconv.FormatBool(p.migrationComplete))
 
 	if !p.migrationComplete {
 		log.Info("Proxy waiting for migration start signal.")
@@ -131,22 +143,18 @@ func (p *CQLProxy) migrationCheck() {
 				p.ready = true
 				p.ReadyChan <- struct{}{}
 				log.Info("Proxy sent ready signal.")
-				// Maybe close MigrationStartChan here?
+
 			case <-p.MigrationCompleteChan:
 				log.Info("Migration Complete. Directing all new connections to Astra Database.")
 				p.migrationComplete = true
+
+			case <-p.ShutdownChan:
+				log.Info("Proxy shutting down...")
+				p.Shutdown()
 				return
 			}
 		}
 	}
-}
-
-func (p *CQLProxy) loadMigrationStatus() {
-	envVar := os.Getenv("migration_complete")
-	status, err := strconv.ParseBool(envVar)
-	p.migrationComplete = status && err == nil
-
-	log.Debugf("Migration Complete: %s", strconv.FormatBool(p.migrationComplete))
 }
 
 func (p *CQLProxy) initQueues() {
@@ -165,9 +173,7 @@ func (p *CQLProxy) Start() {
 	if err != nil {
 		panic(err)
 	}
-	defer p.Shutdown()
 
-	// Begin migration completion loop
 	go p.migrationCheck()
 }
 
@@ -177,6 +183,7 @@ func (p *CQLProxy) Listen() {
 	if err != nil {
 		panic(err)
 	}
+	p.listener = l
 
 	defer l.Close()
 	port := l.Addr().(*net.TCPAddr).Port
@@ -185,8 +192,14 @@ func (p *CQLProxy) Listen() {
 	for {
 		conn, err := l.Accept()
 		if err != nil {
-			log.Error(err)
-			continue
+			// TODO: Is there a better way to do this?
+			select {
+			case <-p.shutdown:
+				return
+			default:
+				log.Error(err)
+				continue
+			}
 		}
 		go p.handleRequest(conn)
 	}
@@ -202,19 +215,28 @@ func (p *CQLProxy) handleRequest(conn net.Conn) {
 
 	dst, err := net.Dial("tcp", hostname)
 	if err != nil {
-		panic(err)
+		log.Error(err)
+		return
+	}
+
+	if hostname == p.sourceHostString {
+		p.incrementSource()
 	}
 
 	// Begin two way packet forwarding
 	go p.forward(conn, dst)
 	go p.forward(dst, conn)
 
-	log.Debugf("Connection established with %s", p.sourceHostString)
+	log.Debugf("Connection established with %s", conn.RemoteAddr())
 }
 
 func (p *CQLProxy) forward(src, dst net.Conn) {
 	defer src.Close()
 	defer dst.Close()
+
+	if dst.RemoteAddr().String() == p.sourceHostString {
+		defer p.decrementSource()
+	}
 
 	// TODO: Finalize buffer size
 	// 	Right now just using 0xffff as a placeholder, but the maximum request
@@ -234,7 +256,8 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 		b := buf[:bytesRead]
 		bytesWritten, err := dst.Write(b)
 		if err != nil {
-			panic(err)
+			log.Error(err)
+			continue
 		}
 		log.Debugf("Wrote %d bytes", bytesWritten)
 
@@ -255,7 +278,9 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 			}
 		}
 
+		p.lock.Lock()
 		p.PacketCount++
+		p.lock.Unlock()
 	}
 }
 
@@ -499,6 +524,25 @@ func (p *CQLProxy) startTable(table string) {
 	p.tableStarts[table] <- struct{}{}
 }
 
+func (p *CQLProxy) incrementSource() {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+
+	p.connectionsToSource++
+}
+
+func (p *CQLProxy) decrementSource() {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+
+	p.connectionsToSource--
+
+	if p.migrationComplete && p.connectionsToSource == 0 {
+		log.Debug("No more connections to client database.")
+		// Send signal to coordinator saying that it can redirect envoy to point directly to Astra
+	}
+}
+
 // TODO: Maybe add a couple retries, or let the caller deal with that?
 func (p *CQLProxy) connect() error {
 	session, err := utils.ConnectToCluster(p.AstraHostname, p.AstraUsername, p.AstraPassword, p.AstraPort)
@@ -513,6 +557,8 @@ func (p *CQLProxy) connect() error {
 }
 
 func (p *CQLProxy) Shutdown() {
+	p.shutdown <- struct{}{}
+	p.listener.Close()
 	p.astraSession.Close()
 }
 
@@ -521,11 +567,14 @@ func (p *CQLProxy) clear() {
 	p.queueSizes = make(map[string]int)
 	p.tableWaiting = make(map[string]bool)
 	p.tableStarts = make(map[string]chan struct{})
+	p.connectionsToSource = 0
 	p.PacketCount = 0
 	p.Reads = 0
 	p.Writes = 0
 	p.ready = false
 	p.ReadyChan = make(chan struct{})
+	p.ShutdownChan = make(chan struct{})
+	p.shutdown = make(chan struct{})
 	p.lock = sync.Mutex{}
 }
 
@@ -548,15 +597,4 @@ func extractTableName(s string) string {
 	}
 
 	return s
-}
-
-// function for testing purposes. Can be called from main to toggle table status for CODEBASE
-func (p *CQLProxy) DoTestToggle() {
-	if !p.tableWaiting["codebase"] {
-		fmt.Println("------ stopping codebase queue!")
-		p.stopTable("codebase")
-	} else {
-		fmt.Println("------ starting codebase queue!")
-		p.startTable("codebase")
-	}
 }
