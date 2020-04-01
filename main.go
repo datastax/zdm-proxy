@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"cloud-gate/proxy"
 	"flag"
-	"fmt"
 	"os"
 	"sync"
 
@@ -61,27 +60,14 @@ func main() {
 		MigrationCompleteChan: migrationCompleteChan,
 	}
 
-
 	// for testing purposes. to delete
 	if test {
 		go doTesting(&p)
 	}
 
-	tables := make(map[string]proxy.Table)
-	tables["tasks"] = proxy.Table{
-		Name:     "tasks",
-		Keyspace: "codebase",
-		Status:   proxy.WAITING,
-		Error:    nil,
-	}
-
-	p.MigrationStartChan <- &proxy.MigrationStatus{Tables: tables,
-		Lock: sync.Mutex{}}
-
 	p.Start()
 	waitForProxy(p)
 	p.Listen()
-
 }
 
 func waitForProxy(p proxy.CQLProxy) {
@@ -108,10 +94,25 @@ func parseFlags() {
 //function for testing purposes. Will be deleted later. toggles status for table 'codebase' upon user input
 func doTesting(p *proxy.CQLProxy) {
 	for {
-		reader := bufio.NewReader(os.Stdin)
-		fmt.Print("Enter text: ")
-		text, _ := reader.ReadString('\n')
-		fmt.Println("entered:", text)
-		p.DoTestToggle()
+		scanner := bufio.NewScanner(os.Stdin)
+		for scanner.Scan() {
+			switch scanner.Text(){
+			case "start":
+				tables := make(map[string]proxy.Table)
+				tables["tasks"] = proxy.Table{
+					Name:     "tasks",
+					Keyspace: "codebase",
+					Status:   proxy.WAITING,
+					Error:    nil,
+				}
+
+				p.MigrationStartChan <- &proxy.MigrationStatus{Tables: tables,
+					Lock: sync.Mutex{}}
+			case "complete":
+				p.MigrationCompleteChan <- struct{}{}
+			case "shutdown":
+				p.ShutdownChan <- struct{}{}
+			}
+		}
 	}
 }
