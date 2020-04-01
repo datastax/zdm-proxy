@@ -114,13 +114,6 @@ type CQLProxy struct {
 	ReadFails  int
 }
 
-// Temporary map & method until proper methods are created by the migration team
-var tableStatuses map[string]TableStatus
-
-func checkTable(table string)TableStatus {
-	return tableStatuses[table]
-}
-
 func (p *CQLProxy) migrationCheck() {
 	defer close(p.MigrationStartChan)
 	defer close(p.MigrationCompleteChan)
@@ -355,7 +348,7 @@ func (p *CQLProxy) handleTruncateQuery(query string) error {
 		tableName = extractTableName(split[1])
 	}
 
-	if checkTable(tableName) != MIGRATED {
+	if p.tableStatus(tableName) != MIGRATED {
 		p.stopTable(tableName)
 	}
 
@@ -385,7 +378,7 @@ func (p *CQLProxy) handleDeleteQuery(query string) error {
 	}
 
 	// Wait for migration of table to be finished before processing anymore queries
-	if checkTable(tableName) != MIGRATED {
+	if p.tableStatus(tableName) != MIGRATED {
 		p.stopTable(tableName)
 	}
 
@@ -421,8 +414,9 @@ func (p *CQLProxy) handleUpdateQuery(query string) error {
 
 	tableName := extractTableName(split[1])
 
+
 	// Wait for migration of table to be finished before processing anymore queries
-	if checkTable(tableName) != MIGRATED {
+	if p.tableStatus(tableName) != MIGRATED {
 		p.stopTable(tableName)
 	}
 
@@ -505,6 +499,14 @@ func (p *CQLProxy) retry(query string, attempts int) error {
 	}
 
 	return err
+}
+
+func (p *CQLProxy) tableStatus(tableName string) TableStatus {
+	table := p.migrationStatus.Tables[tableName]
+	p.lock.Lock()
+	status := table.Status
+	p.lock.Unlock()
+	return status
 }
 
 // Stop consuming queries for a given table
