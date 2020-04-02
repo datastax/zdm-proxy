@@ -248,16 +248,23 @@ func createTable(table *gocql.TableMetadata) error {
 		query += fmt.Sprintf("PRIMARY KEY (%s),", column.Name)
 	}
 
-	query += ");"
-	// query += ") "
+	query += ") "
 
-	//compaction
-	// cQuery:= `SELECT compaction FROM system_schema.tables
-	//				WHERE keyspace_name = ? and table_name = ?;`
-	// cMap := make(map[string]interface{})
-	// cString := ""
-	// itr := Session.Query(cQuery, keyspace, table.Name).Iter()
-	// query += fmt.Sprintf(WITH compaction = %s;)
+	// compaction
+	cQuery := `SELECT compaction FROM system_schema.tables
+					WHERE keyspace_name = ? and table_name = ?;`
+	cMap := make(map[string]interface{})
+	cString := "{"
+	itr := sourceSession.Query(cQuery, keyspace, table.Name).Iter()
+	itr.MapScan(cMap)
+
+	compactionMap := (cMap["compaction"]).(map[string]string)
+
+	for key, value := range compactionMap {
+		cString += fmt.Sprintf("'%s': '%s', ", key, value)
+	}
+	cString = cString[0:(len(cString)-2)] + "}"
+	query += fmt.Sprintf("WITH compaction = %s;", cString)
 
 	err := destSession.Query(query).Exec()
 
