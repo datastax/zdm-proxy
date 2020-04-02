@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -32,7 +33,7 @@ type Table struct {
 type MigrationStatus struct {
 	Tables          map[string]*Table
 	PercentComplete int
-	Speed           int
+	Speed           float64
 	Lock            *sync.Mutex
 }
 
@@ -58,8 +59,8 @@ var (
 	directory     string
 
 	// Status is the status of migration
-	Status *MigrationStatus
-
+	Status          *MigrationStatus
+	progressPerStep int
 	// Flag parameters
 	keyspace            string
 	sourceHost          string
@@ -148,9 +149,11 @@ func migrate(keyspace string) {
 		chk = readCheckpoint(keyspace)
 	}
 
+	begin := time.Now()
+
 	if chk.complete {
 		Status.PercentComplete = 100
-		Status.Speed = 0
+		Status.Speed = -1
 		for _, table := range Status.Tables {
 			table.Status = "MIGRATION COMPLETED"
 			table.Error = nil
@@ -163,6 +166,9 @@ func migrate(keyspace string) {
 	if err != nil {
 		handleError(err)
 	}
+
+	// Each table load/unload
+	progressPerStep = 100 / len(tables) / 2
 
 	err = loadTableNames(tables)
 	if err != nil {
@@ -212,6 +218,16 @@ func migrate(keyspace string) {
 	logAndPrint("COMPLETED MIGRATION\n")
 	Status.PercentComplete = 100
 
+	// calculate total file size of migrated data
+	var size int64
+	for table := range tables {
+		dSize, _ := dirSize(directory + table)
+		size += dSize
+	}
+
+	// calculate average speed in megabytes per second
+	Status.Speed = (float64(size) / 1024 / 1024) / (float64(time.Now().UnixNano()-begin.UnixNano()) / 1000000000)
+
 	fmt.Println(Status)
 	chk.complete = true
 	writeCheckpoint(chk, keyspace)
@@ -233,6 +249,15 @@ func createTable(table *gocql.TableMetadata) error {
 	}
 
 	query += ");"
+	// query += ") "
+
+	//compaction
+	// cQuery:= `SELECT compaction FROM system_schema.tables
+	//				WHERE keyspace_name = ? and table_name = ?;`
+	// cMap := make(map[string]interface{})
+	// cString := ""
+	// itr := Session.Query(cQuery, keyspace, table.Name).Iter()
+	// query += fmt.Sprintf(WITH compaction = %s;)
 
 	err := destSession.Query(query).Exec()
 
@@ -253,12 +278,13 @@ func migrateTable(table *gocql.TableMetadata) error {
 	if err != nil {
 		return err
 	}
+	Status.PercentComplete += progressPerStep
 
 	err = loadTable(table)
 	if err != nil {
 		return err
 	}
-
+	Status.PercentComplete += progressPerStep
 	return nil
 }
 
@@ -411,4 +437,18 @@ func logAndPrint(s string) {
 
 func handleError(err error) {
 	log.Fatal(err)
+}
+
+func dirSize(path string) (int64, error) {
+	var size int64
+	err := filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			size += info.Size()
+		}
+		return err
+	})
+	return size, err
 }
