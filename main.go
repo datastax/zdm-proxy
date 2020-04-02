@@ -66,14 +66,18 @@ func main() {
 	}
 
 	p.Start()
-	waitForProxy(p)
-	p.Listen()
+
+	for {
+		select {
+		case <-p.ReadyChan:
+			log.Info("Coordinator received proxy ready signal.")
+			p.Listen()
+		case <-p.ReadyForRedirect:
+			log.Info("Coordinate received signal that there are no more connections to Client Database.")
+		}
+	}
 }
 
-func waitForProxy(p proxy.CQLProxy) {
-	<-p.ReadyChan
-	log.Info("Coordinator received proxy ready signal.")
-}
 
 // Most of these will change to environment variables rather than flags
 func parseFlags() {

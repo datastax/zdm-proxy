@@ -87,8 +87,6 @@ type CQLProxy struct {
 	migrationComplete bool
 
 	// Channel that signals that the migrator has finished the migration process.
-	// TODO: Maybe change to error channel so that the migrator can signal whether there were errors during the
-	// 	migration process?
 	MigrationCompleteChan chan struct{}
 
 	// Channel that signals that the migrator has begun the unloading/loading process
@@ -101,9 +99,16 @@ type CQLProxy struct {
 	// Channel signalling that the proxy is now ready to process queries
 	ReadyChan chan struct{}
 
+	// Number of open connections to the Client's Database
 	connectionsToSource int
+
+	// Channel to signal when the Proxy should stop all forwarding and close all connections
 	ShutdownChan chan struct{}
 	shutdown chan struct{}
+
+	// Channel to signal to coordinator that there are no more open connections to the Client's Database
+	// and that the coordinator can redirect Envoy to point directly to Astra without any negative side effects
+	ReadyForRedirect chan struct{}
 
 	// Metrics
 	PacketCount int
@@ -115,10 +120,6 @@ type CQLProxy struct {
 }
 
 func (p *CQLProxy) migrationCheck() {
-	defer close(p.MigrationStartChan)
-	defer close(p.MigrationCompleteChan)
-	defer close(p.ShutdownChan)
-
 	envVar := os.Getenv("migration_complete")
 	status, err := strconv.ParseBool(envVar)
 	p.migrationComplete = status && err == nil
@@ -213,7 +214,7 @@ func (p *CQLProxy) handleRequest(conn net.Conn) {
 	}
 
 	if hostname == p.sourceHostString {
-		p.incrementSource()
+		p.incrementSources()
 	}
 
 	// Begin two way packet forwarding
@@ -228,7 +229,7 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 	defer dst.Close()
 
 	if dst.RemoteAddr().String() == p.sourceHostString {
-		defer p.decrementSource()
+		defer p.decrementSources()
 	}
 
 	// TODO: Finalize buffer size
@@ -526,22 +527,22 @@ func (p *CQLProxy) startTable(table string) {
 	p.tableStarts[table] <- struct{}{}
 }
 
-func (p *CQLProxy) incrementSource() {
+func (p *CQLProxy) incrementSources() {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
 	p.connectionsToSource++
 }
 
-func (p *CQLProxy) decrementSource() {
+func (p *CQLProxy) decrementSources() {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
 	p.connectionsToSource--
 
 	if p.migrationComplete && p.connectionsToSource == 0 {
-		log.Debug("No more connections to client database.")
-		// Send signal to coordinator saying that it can redirect envoy to point directly to Astra
+		log.Debug("No more connections to client database; ready for redirect.")
+		p.ReadyForRedirect <- struct{}{}
 	}
 }
 
@@ -577,6 +578,7 @@ func (p *CQLProxy) clear() {
 	p.ReadyChan = make(chan struct{})
 	p.ShutdownChan = make(chan struct{})
 	p.shutdown = make(chan struct{})
+	p.ReadyForRedirect = make(chan struct{})
 	p.lock = sync.Mutex{}
 }
 
