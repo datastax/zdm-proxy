@@ -504,9 +504,9 @@ func (p *CQLProxy) retry(query string, attempts int) error {
 
 func (p *CQLProxy) tableStatus(tableName string) TableStatus {
 	table := p.migrationStatus.Tables[tableName]
-	p.lock.Lock()
+	p.migrationStatus.Lock.Lock()
 	status := table.Status
-	p.lock.Unlock()
+	p.migrationStatus.Lock.Unlock()
 	return status
 }
 
