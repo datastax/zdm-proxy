@@ -1,6 +1,7 @@
-package main
+package migration
 
 import (
+	"cloud-gate/utils"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -61,37 +62,12 @@ var (
 	// Status is the status of migration
 	Status          *MigrationStatus
 	progressPerStep int
-	// Flag parameters
-	keyspace            string
-	sourceHost          string
-	sourceUsername      string
-	sourcePassword      string
-	sourcePort          int
-	destinationHost     string
-	destinationUsername string
-	destinationPassword string
-	destinationPort     int
-	dsbulkPath          string
-	hardRestart         bool
 
 	ignoreKeyspaces = []string{"system_auth", "system_schema", "dse_system_local", "dse_system", "dse_leases", "solr_admin",
 		"dse_insights", "dse_insights_local", "system_distributed", "system", "dse_perf", "system_traces", "dse_security"}
 )
 
 func main() {
-	flag.StringVar(&keyspace, "k", "", "Keyspace to migrate")
-	flag.StringVar(&sourceHost, "sh", "127.0.0.1", "Source cluster hostname")
-	flag.StringVar(&sourceUsername, "su", "", "Source cluster username")
-	flag.StringVar(&sourcePassword, "sp", "", "Source cluster password")
-	flag.IntVar(&sourcePort, "sport", 9042, "Source cluster port")
-	flag.StringVar(&destinationHost, "dh", "127.0.0.1", "Destination host")
-	flag.StringVar(&destinationUsername, "du", "", "Destination cluster username")
-	flag.StringVar(&destinationPassword, "dp", "", "Destination cluster password")
-	flag.IntVar(&destinationPort, "dport", 9042, "Destination cluster port")
-	flag.StringVar(&dsbulkPath, "d", "/Users/terranceli/Documents/projects/codebase/datastax-s20/dsbulk-1.4.1/bin/dsbulk", "dsbulk executable path")
-	flag.BoolVar(&hardRestart, "r", false, "Hard restart (ignore checkpoint)")
-	flag.Parse()
-
 	directory = fmt.Sprintf("./migration-%s/", strconv.FormatInt(time.Now().Unix(), 10))
 	os.Mkdir(directory, 0755)
 
