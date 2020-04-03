@@ -11,16 +11,16 @@ import (
 )
 
 var (
-	source_hostname string
-	source_username string
-	source_password string
-	source_port     int
+	sourceHostname string
+	sourceUsername string
+	sourcePassword string
+	sourcePort     int
 
-	astra_hostname string
-	astra_username string
-	astra_password string
-	astra_port     int
-	listen_port    int
+	astraHostname string
+	astraUsername string
+	astraPassword string
+	astraPort     int
+	listenPort    int
 
 	debug bool
 	test  bool
@@ -43,21 +43,25 @@ func main() {
 	// to the Astra DB
 	migrationCompleteChan := make(chan struct{})
 
+	// Channel for the migration service to send us Table structs for tables that have completed migration
+	tableMigratedChan := make(chan *proxy.Table, 1)
+
 	p := proxy.CQLProxy{
-		SourceHostname: source_hostname,
-		SourceUsername: source_username,
-		SourcePassword: source_password,
-		SourcePort:     source_port,
+		SourceHostname: sourceHostname,
+		SourceUsername: sourceUsername,
+		SourcePassword: sourcePassword,
+		SourcePort:     sourcePort,
 
-		AstraHostname: astra_hostname,
-		AstraUsername: astra_username,
-		AstraPassword: astra_password,
-		AstraPort:     astra_port,
+		AstraHostname: astraHostname,
+		AstraUsername: astraUsername,
+		AstraPassword: astraPassword,
+		AstraPort:     astraPort,
 
-		Port: listen_port,
+		Port: listenPort,
 
 		MigrationStartChan:    migrationStartChan,
 		MigrationCompleteChan: migrationCompleteChan,
+		TableMigratedChan:  tableMigratedChan,
 	}
 
 	// for testing purposes. to delete
@@ -65,31 +69,37 @@ func main() {
 		go doTesting(&p)
 	}
 
-	p.Start()
+	err := p.Start()
+	if err != nil {
+		// TODO: handle error
+		panic(err)
+	}
 
 	for {
 		select {
 		case <-p.ReadyChan:
 			log.Info("Coordinator received proxy ready signal.")
-			p.Listen()
+			err := p.Listen()
+			if err != nil {
+				panic(err)
+			}
 		case <-p.ReadyForRedirect:
 			log.Info("Coordinate received signal that there are no more connections to Client Database.")
 		}
 	}
 }
 
-
 // Most of these will change to environment variables rather than flags
 func parseFlags() {
-	flag.StringVar(&source_hostname, "source_hostname", "127.0.0.1", "Source Hostname")
-	flag.StringVar(&source_username, "source_username", "", "Source Username")
-	flag.StringVar(&source_password, "source_password", "", "Source Password")
-	flag.IntVar(&source_port, "source_port", 9042, "Source Port")
-	flag.StringVar(&astra_hostname, "astra_hostname", "127.0.0.1", "Astra Hostname")
-	flag.StringVar(&astra_username, "astra_username", "", "Aster Username")
-	flag.StringVar(&astra_password, "astra_password", "", "Astra Password")
-	flag.IntVar(&astra_port, "astra_port", 9042, "Astra Port")
-	flag.IntVar(&listen_port, "listen_port", 0, "Listening Port")
+	flag.StringVar(&sourceHostname, "source_hostname", "127.0.0.1", "Source Hostname")
+	flag.StringVar(&sourceUsername, "source_username", "", "Source Username")
+	flag.StringVar(&sourcePassword, "source_password", "", "Source Password")
+	flag.IntVar(&sourcePort, "source_port", 9042, "Source Port")
+	flag.StringVar(&astraHostname, "astra_hostname", "127.0.0.1", "Astra Hostname")
+	flag.StringVar(&astraUsername, "astra_username", "", "Aster Username")
+	flag.StringVar(&astraPassword, "astra_password", "", "Astra Password")
+	flag.IntVar(&astraPort, "astra_port", 9042, "Astra Port")
+	flag.IntVar(&listenPort, "listen_port", 0, "Listening Port")
 	flag.BoolVar(&debug, "debug", false, "Debug Mode")
 	flag.BoolVar(&test, "test", false, "Test Mode")
 	flag.Parse()
@@ -100,7 +110,7 @@ func doTesting(p *proxy.CQLProxy) {
 	for {
 		scanner := bufio.NewScanner(os.Stdin)
 		for scanner.Scan() {
-			switch scanner.Text(){
+			switch scanner.Text() {
 			case "start":
 				tables := make(map[string]proxy.Table)
 				tables["tasks"] = proxy.Table{

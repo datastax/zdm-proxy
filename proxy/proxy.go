@@ -3,6 +3,7 @@ package proxy
 import (
 	"cloud-gate/utils"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -93,6 +94,10 @@ type CQLProxy struct {
 	MigrationStartChan chan *MigrationStatus
 	migrationStatus *MigrationStatus
 
+	// Channel that the migration service will send us tables that have finished migrating
+	// so that we can restart their queue consumption if it was paused
+	TableMigratedChan chan *Table
+
 	// Is the proxy ready to process queries from user?
 	ready bool
 
@@ -110,21 +115,31 @@ type CQLProxy struct {
 	// and that the coordinator can redirect Envoy to point directly to Astra without any negative side effects
 	ReadyForRedirect chan struct{}
 
+
 	// Metrics
+	Metrics Metrics
+}
+
+type Metrics struct {
 	PacketCount int
 	Reads       int
 	Writes      int
 
 	WriteFails int
 	ReadFails  int
+
+	lock sync.Mutex
 }
 
-func (p *CQLProxy) migrationCheck() {
+func (p *CQLProxy) migrationLoop() {
 	envVar := os.Getenv("migration_complete")
 	status, err := strconv.ParseBool(envVar)
+	if err != nil {
+		log.Error(err)
+	}
 	p.migrationComplete = status && err == nil
 
-	log.Debugf("Migration Complete: %s", strconv.FormatBool(p.migrationComplete))
+	log.Debugf("Migration Complete: %t", p.migrationComplete)
 
 	if !p.migrationComplete {
 		log.Info("Proxy waiting for migration start signal.")
@@ -137,6 +152,10 @@ func (p *CQLProxy) migrationCheck() {
 				p.ready = true
 				p.ReadyChan <- struct{}{}
 				log.Info("Proxy sent ready signal.")
+
+			case table := <-p.TableMigratedChan:
+				p.startTable(table.Name)
+				log.Debugf("Restarted query consumption on table %s.%s", table.Keyspace, table.Name)
 
 			case <-p.MigrationCompleteChan:
 				log.Info("Migration Complete. Directing all new connections to Astra Database.")
@@ -159,23 +178,25 @@ func (p *CQLProxy) initQueues() {
 	log.Debug("Proxy queues initialized.")
 }
 
-func (p *CQLProxy) Start() {
+func (p *CQLProxy) Start() error {
 	p.clear()
 
 	// Attempt to connect to astra database using given credentials
 	err := p.connect()
 	if err != nil {
-		panic(err)
+		return err
 	}
 
-	go p.migrationCheck()
+	go p.migrationLoop()
+
+	return nil
 }
 
-func (p *CQLProxy) Listen() {
+func (p *CQLProxy) Listen() error {
 	// Let's operating system assign a random port to listen on if Port isn't set (value == 0)
 	l, err := net.Listen("tcp", fmt.Sprintf(":%d", p.Port))
 	if err != nil {
-		panic(err)
+		return err
 	}
 	p.listener = l
 
@@ -189,7 +210,7 @@ func (p *CQLProxy) Listen() {
 			// TODO: Is there a better way to do this?
 			select {
 			case <-p.shutdown:
-				return
+				return nil
 			default:
 				log.Error(err)
 				continue
@@ -200,11 +221,9 @@ func (p *CQLProxy) Listen() {
 }
 
 func (p *CQLProxy) handleRequest(conn net.Conn) {
-	var hostname string
+	hostname := p.sourceHostString
 	if p.migrationComplete {
 		hostname = p.astraHostString
-	} else {
-		hostname = p.sourceHostString
 	}
 
 	dst, err := net.Dial("tcp", hostname)
@@ -242,6 +261,8 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 		if err != nil {
 			if err != io.EOF {
 				log.Debugf("%s disconnected", src.RemoteAddr())
+			} else {
+				log.Error(err)
 			}
 			return
 		}
@@ -265,21 +286,23 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 			// AND
 			// Parse only if it's a query:
 			// 		OPCode is 0x07
-			if b[cqlVersionByte] < 0x80 {
-				if b[cqlOpcodeByte] == cqlQueryOpcode {
-					p.parseQuery(b)
+			if b[cqlVersionByte] < 0x80 && b[cqlOpcodeByte] == cqlQueryOpcode {
+				err := p.parseQuery(b)
+				if err != nil {
+					// TODO: Handle error
+					log.Error(err)
 				}
 			}
 		}
 
-		p.lock.Lock()
-		p.PacketCount++
-		p.lock.Unlock()
+		p.Metrics.lock.Lock()
+		p.Metrics.PacketCount++
+		p.Metrics.lock.Unlock()
 	}
 }
 
 // TODO: Deal with more cases
-func (p *CQLProxy) parseQuery(b []byte) {
+func (p *CQLProxy) parseQuery(b []byte) error {
 	// Trim off header portion of the query
 	trimmed := b[cqlHeaderLength:]
 
@@ -296,7 +319,8 @@ func (p *CQLProxy) parseQuery(b []byte) {
 	// Check if keyword is a write (add more later)
 	// TODO: Figure out what to do with responses from writes
 	// 	Add delete keyword + others
-	var err error
+	// TODO: When we're extracting keyspaces, if the keyspace doesn't have a gocql session attributed to it,
+	// 	we need to start one up (this is for the idea of having a mapping from keyspace to gocql session)
 	switch keyword {
 	case "USE":
 		// TODO: DEAL with the USE case
@@ -307,19 +331,16 @@ func (p *CQLProxy) parseQuery(b []byte) {
 		//  Need to talk about this more.
 		break
 	case "INSERT":
-		err = p.handleInsertQuery(query)
+		return p.handleInsertQuery(query)
 	case "UPDATE":
-		err = p.handleUpdateQuery(query)
+		return p.handleUpdateQuery(query)
 	case "DELETE":
-		err = p.handleDeleteQuery(query)
+		return p.handleDeleteQuery(query)
 	case "TRUNCATE":
-		err = p.handleTruncateQuery(query)
+		return p.handleTruncateQuery(query)
 	}
 
-	// TODO: Maybe add errors if needed, and don't just panic
-	if err != nil {
-		panic(err)
-	}
+	return errors.New("query not handled")
 }
 
 func (p *CQLProxy) executeQuery(query string) error {
@@ -365,6 +386,7 @@ func (p *CQLProxy) handleDeleteQuery(query string) error {
 		return nil
 	}
 
+	// TODO: must make query all upper to do if v == "FROM"
 	var tableName string
 	for i, v := range split {
 		if v == "FROM" {
@@ -471,16 +493,19 @@ func (p *CQLProxy) consumeQueue(table string) {
 				if err != nil {
 					log.Error(err)
 
-					p.lock.Lock()
-					p.WriteFails++
-					p.lock.Unlock()
+					p.Metrics.lock.Lock()
+					p.Metrics.WriteFails++
+					p.Metrics.lock.Unlock()
 				}
 			}
 
 			p.lock.Lock()
 			p.queueSizes[table]--
-			p.Writes++
 			p.lock.Unlock()
+
+			p.Metrics.lock.Lock()
+			p.Metrics.Writes++
+			p.Metrics.lock.Unlock()
 		}
 	}
 }
@@ -571,9 +596,8 @@ func (p *CQLProxy) clear() {
 	p.tableWaiting = make(map[string]bool)
 	p.tableStarts = make(map[string]chan struct{})
 	p.connectionsToSource = 0
-	p.PacketCount = 0
-	p.Reads = 0
-	p.Writes = 0
+	p.Metrics = Metrics{}
+	p.Metrics.lock = sync.Mutex{}
 	p.ready = false
 	p.ReadyChan = make(chan struct{})
 	p.ShutdownChan = make(chan struct{})
@@ -584,21 +608,15 @@ func (p *CQLProxy) clear() {
 
 // Given a FROM argument, extract the table name
 // ex: table, keyspace.table, keyspace.table;, keyspace.table(, etc..
-func extractTableName(s string) string {
-	// Remove semicolon if it is attached to the table name from the query
-	if i := strings.IndexRune(s, ';'); i != -1 {
-		s = s[:i]
-	}
-
+func extractTableName(fromClause string) string {
 	// Remove keyspace if table in format keyspace.table
-	if i := strings.IndexRune(s, '.'); i != -1 {
-		s = s[i+1:]
-	}
+	tableName := strings.TrimPrefix(fromClause, ".")
+
+	// Remove semicolon if it is attached to the table name from the query
+	tableName = strings.TrimSuffix(tableName, ";")
 
 	// Remove column names if part of an INSERT query: ex: TABLE(col, col)
-	if i := strings.IndexRune(s, '('); i != -1 {
-		s = s[:i]
-	}
+	tableName = strings.TrimSuffix(tableName, "(")
 
-	return s
+	return tableName
 }
