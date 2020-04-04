@@ -28,8 +28,8 @@ func main() {
 	parseFlags()
 
 	m := migration.Migration{
-		Keyspace: keyspace,
-		DsbulkPath: dsbulkPath,
+		Keyspace:    keyspace,
+		DsbulkPath:  dsbulkPath,
 		HardRestart: hardRestart,
 
 		SourceHostname: sourceHostname,
@@ -50,7 +50,8 @@ func main() {
 
 	go m.Migrate()
 
-	for {}
+	for {
+	}
 }
 
 // Most of these will change to environment variables rather than flags

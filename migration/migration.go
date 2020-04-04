@@ -70,15 +70,12 @@ func (s *Status) initTableData(tables map[string]*gocql.TableMetadata) {
 // and restart migration in case of failure
 type checkpoint struct {
 	timestamp time.Time
-	schema    map[string]bool // set of table names representing successfully migrated schemas
-	tables    map[string]bool // set of table names representing successfully migrated table data
+	schema    map[string]bool // schema represents successfully migrated schemas
+	tables    map[string]bool // tables represents migrated table data
 	complete  bool
 }
 
-// ignoreKeyspaces := []string{"system_auth", "system_schema", "dse_system_local", "dse_system", "dse_leases", "solr_admin",
-// 		"dse_insights", "dse_insights_local", "system_distributed", "system", "dse_perf", "system_traces", "dse_security"}
-
-// Migration ...
+// Migration contains necessary setup information
 type Migration struct {
 	Keyspace    string
 	DsbulkPath  string
@@ -98,8 +95,13 @@ type Migration struct {
 	directory     string
 	sourceSession *gocql.Session
 	destSession   *gocql.Session
+	chkLock       *sync.Mutex
+	logLock       *sync.Mutex
+	initialized   bool
 }
 
+// Init creates the connections to the databases and
+// locks needed for checkpoint and logging
 func (m *Migration) Init() error {
 	m.status = newStatus()
 	m.directory = fmt.Sprintf("./migration-%s/", strconv.FormatInt(time.Now().Unix(), 10))
@@ -118,26 +120,32 @@ func (m *Migration) Init() error {
 	}
 	// defer m.destSession.Close()
 
+	m.chkLock = new(sync.Mutex)
+	m.logLock = new(sync.Mutex)
+	m.initialized = true
+
 	return nil
 }
 
 // Migrates a keyspace from the source cluster to the Astra cluster
 func (m *Migration) Migrate() {
+	if !m.initialized {
+		panic("Migration must be initialized before migration can begin")
+	}
+
 	m.logAndPrint(fmt.Sprintf("== MIGRATE KEYSPACE: %s ==\n", m.Keyspace))
-	chk := readCheckpoint(m.Keyspace)
+	chk := m.readCheckpoint(m.Keyspace)
 
 	if m.HardRestart {
-		// clear Astra cluster of all data
+		// On hard restart, clear Astra cluster of all data
 		for tableName, migrated := range chk.schema {
 			if migrated {
 				query := fmt.Sprintf("DROP TABLE %s.%s;", m.Keyspace, tableName)
 				m.destSession.Query(query).Exec()
 			}
 		}
-
-		// clear the checkpoint
 		os.Remove(fmt.Sprintf("./%s.chk", m.Keyspace))
-		chk = readCheckpoint(m.Keyspace)
+		chk = m.readCheckpoint(m.Keyspace)
 	}
 
 	begin := time.Now()
@@ -174,9 +182,10 @@ func (m *Migration) Migrate() {
 				if err != nil {
 					log.Fatal(err)
 				}
-				// edit checkpoint file to include that we successfully migrated the table schema at this time
+				// edit checkpoint file to include that we
+				// successfully migrated the table schema at this time
 				chk.schema[table.Name] = true
-				writeCheckpoint(chk, m.Keyspace)
+				m.writeCheckpoint(chk, m.Keyspace)
 			}
 			m.status.Steps++
 			m.status.Tables[table.Name].Step = MigratingSchemaComplete
@@ -196,9 +205,10 @@ func (m *Migration) Migrate() {
 				if err != nil {
 					log.Fatal(err)
 				}
-				// edit checkpoint file to include that we successfully migrated table data at this time
+				// edit checkpoint file to include that we
+				// successfully migrated table data at this time
 				chk.tables[table.Name] = true
-				writeCheckpoint(chk, m.Keyspace)
+				m.writeCheckpoint(chk, m.Keyspace)
 			}
 			m.status.Steps += 2
 			m.status.Tables[table.Name].Step = LoadingDataComplete
@@ -221,9 +231,11 @@ func (m *Migration) Migrate() {
 
 	fmt.Println(m.status)
 	chk.complete = true
-	writeCheckpoint(chk, m.Keyspace)
+	m.writeCheckpoint(chk, m.Keyspace)
 }
 
+// migrateSchema creates each new table in Astra with
+// column names and types, primary keys, and compaction information
 func (m *Migration) migrateSchema(table *gocql.TableMetadata) error {
 	m.status.Tables[table.Name].Step = MigratingSchema
 	m.logAndPrint(fmt.Sprintf("MIGRATING TABLE SCHEMA: %s... \n", table.Name))
@@ -234,7 +246,6 @@ func (m *Migration) migrateSchema(table *gocql.TableMetadata) error {
 		query += fmt.Sprintf("%s %s, ", cname, column.Type.Type().String())
 	}
 
-	// partition key
 	for _, column := range table.PartitionKey {
 		query += fmt.Sprintf("PRIMARY KEY (%s),", column.Name)
 	}
@@ -267,7 +278,7 @@ func (m *Migration) migrateSchema(table *gocql.TableMetadata) error {
 	return nil
 }
 
-// Migrates a table from the source cluster to the Astra cluster
+// migrateData migrates a table from the source cluster to the Astra cluster
 func (m *Migration) migrateData(table *gocql.TableMetadata) error {
 
 	err := m.unloadTable(table)
@@ -282,7 +293,7 @@ func (m *Migration) migrateData(table *gocql.TableMetadata) error {
 	return nil
 }
 
-// Exports a table CSV from the source cluster into DIRECTORY
+// unloadTable exports a table CSV from the source cluster into DIRECTORY
 func (m *Migration) unloadTable(table *gocql.TableMetadata) error {
 	m.status.Tables[table.Name].Step = UnloadingData
 	m.logAndPrint(fmt.Sprintf("UNLOADING TABLE: %s...\n", table.Name))
@@ -300,7 +311,7 @@ func (m *Migration) unloadTable(table *gocql.TableMetadata) error {
 	return nil
 }
 
-// Loads a table from an exported CSV (in path specified by DIRECTORY)
+// loadTable loads a table from an exported CSV (in path specified by DIRECTORY)
 // into the target cluster
 func (m *Migration) loadTable(table *gocql.TableMetadata) error {
 	m.status.Tables[table.Name].Step = LoadingData
@@ -317,9 +328,8 @@ func (m *Migration) loadTable(table *gocql.TableMetadata) error {
 	return nil
 }
 
-// Gets table information from a keyspace in the source cluster
+// getTables gets table information from a keyspace in the source cluster
 func (m *Migration) getTables() (map[string]*gocql.TableMetadata, error) {
-	// Get table metadata
 	md, err := m.sourceSession.KeyspaceMetadata(m.Keyspace)
 	if err != nil {
 		return nil, err
@@ -328,12 +338,10 @@ func (m *Migration) getTables() (map[string]*gocql.TableMetadata, error) {
 	return md.Tables, nil
 }
 
-var chkLock sync.Mutex
-
-func writeCheckpoint(chk *checkpoint, keyspace string) {
-	// overwrites keyspace.chk with the given checkpoint data
-	chkLock.Lock()
-	defer chkLock.Unlock()
+// writeCheckpoint overwrites keyspace.chk with the given checkpoint data
+func (m *Migration) writeCheckpoint(chk *checkpoint, keyspace string) {
+	m.chkLock.Lock()
+	defer m.chkLock.Unlock()
 	chk.timestamp = time.Now()
 	schemas := ""
 	tables := ""
@@ -363,9 +371,11 @@ func writeCheckpoint(chk *checkpoint, keyspace string) {
 	}
 }
 
-func readCheckpoint(keyspace string) *checkpoint {
-	chkLock.Lock()
-	defer chkLock.Unlock()
+// readCheckpoint returns the checkpoint on file and
+// fills the checkpoint struct
+func (m *Migration) readCheckpoint(keyspace string) *checkpoint {
+	m.chkLock.Lock()
+	defer m.chkLock.Unlock()
 	data, err := ioutil.ReadFile(fmt.Sprintf("%s.chk", keyspace))
 
 	chk := checkpoint{
@@ -395,14 +405,12 @@ func readCheckpoint(keyspace string) *checkpoint {
 	return &chk
 }
 
-var logLock sync.Mutex
-
 func (m *Migration) logAndPrint(s string) {
 	msg := fmt.Sprintf("[%s] %s", time.Now().String(), s)
 	fmt.Printf(msg)
 
-	logLock.Lock()
-	defer logLock.Unlock()
+	m.logLock.Lock()
+	defer m.logLock.Unlock()
 	f, err := os.OpenFile(fmt.Sprintf("%slog.txt", m.directory),
 		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
