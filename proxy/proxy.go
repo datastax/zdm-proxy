@@ -43,10 +43,11 @@ type Table struct {
 	Error    error
 
 	Priority int
+	Lock sync.Mutex
 }
 
 type MigrationStatus struct {
-	Tables map[string]Table
+	Tables map[string]map[string]*Table
 
 	PercentComplete int
 	Speed           int
@@ -69,17 +70,18 @@ type CQLProxy struct {
 
 	Port   int
 	listener net.Listener
-	astraSession *gocql.Session
+	//astraSession *gocql.Session
+	Sessions map[string]*gocql.Session
 
 	// TODO: Make maps support multiple keyspaces (ex: map[string]map[string]chan string)
-	tableQueues map[string]chan string
-	queueSizes  map[string]int
+	tableQueues map[string]map[string]chan *Query
+	queueSizes  map[string]map[string]int
 
 	// Should we wait on this table (do we need to wait for migration to finish before we run anymore queries)
-	tableWaiting map[string]bool
+	tableWaiting map[string]map[string]bool
 
 	// Signals to restart consumption of queries for a particular table
-	tableStarts map[string]chan struct{}
+	tableStarts map[string]map[string]chan struct{}
 
 	// Lock for maps/metrics
 	// TODO: (maybe) create more locks to improve performance
@@ -115,6 +117,8 @@ type CQLProxy struct {
 	// and that the coordinator can redirect Envoy to point directly to Astra without any negative side effects
 	ReadyForRedirect chan struct{}
 
+	// Keeps track of the current keyspace queries are being ran in
+	Keyspace string
 
 	// Metrics
 	Metrics Metrics
@@ -130,6 +134,22 @@ type Metrics struct {
 
 	lock sync.Mutex
 }
+
+type QueryType string
+var USE = QueryType("use")
+var INSERT = QueryType("insert")
+var UPDATE = QueryType("update")
+var DELETE = QueryType("delete")
+var TRUNCATE = QueryType("truncate")
+
+
+type Query struct {
+	Table *Table
+
+	Type QueryType
+	Query string
+}
+
 
 func (p *CQLProxy) migrationLoop() {
 	envVar := os.Getenv("migration_complete")
@@ -155,7 +175,7 @@ func (p *CQLProxy) migrationLoop() {
 				log.Info("Proxy sent ready signal.")
 
 			case table := <-p.TableMigratedChan:
-				p.startTable(table.Name)
+				p.startTable(table.Keyspace, table.Name)
 				log.Debugf("Restarted query consumption on table %s.%s", table.Keyspace, table.Name)
 
 			case <-p.MigrationCompleteChan:
@@ -172,16 +192,23 @@ func (p *CQLProxy) migrationLoop() {
 }
 
 func (p *CQLProxy) initQueues() {
-	for tableName := range p.migrationStatus.Tables {
-			p.tableQueues[tableName] = make(chan string, queueSize)
-			p.tableStarts[tableName] = make(chan struct{})
+	for keyspace, tables := range p.migrationStatus.Tables {
+		p.tableQueues[keyspace] = make(map[string]chan *Query)
+		p.tableStarts[keyspace] = make(map[string]chan struct{})
+		p.queueSizes[keyspace] = make(map[string]int)
+		for tableName := range tables {
+			p.tableQueues[keyspace][tableName] = make(chan *Query, queueSize)
+			p.tableStarts[keyspace][tableName] = make(chan struct{})
+		}
 	}
 	log.Debug("Proxy queues initialized.")
 }
 
 func (p *CQLProxy) consume() {
-	for tableName := range p.migrationStatus.Tables {
-		go p.consumeQueue(tableName)
+	for keyspace, tables := range p.migrationStatus.Tables {
+		for tableName := range tables {
+			go p.consumeQueue(keyspace, tableName)
+		}
 	}
 	log.Debug("Proxy ready to execute queries.")
 }
@@ -190,10 +217,14 @@ func (p *CQLProxy) Start() error {
 	p.clear()
 
 	// Attempt to connect to astra database using given credentials
-	err := p.connect()
+	session, err := p.connect(p.Keyspace)
 	if err != nil {
 		return err
 	}
+	p.Sessions[p.Keyspace] = session
+
+	p.sourceHostString = fmt.Sprintf("%s:%d", p.SourceHostname, p.SourcePort)
+	p.astraHostString = fmt.Sprintf("%s:%d", p.AstraHostname, p.AstraPort)
 
 	go p.migrationLoop()
 
@@ -310,6 +341,8 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 }
 
 // TODO: Deal with more cases
+// TODO: FIX BUG: When the user uses a function such as now(), since it is calculated on the databases side,
+// 	the client DB and astra will have different values.
 func (p *CQLProxy) parseQuery(b []byte) error {
 	// Trim off header portion of the query
 	trimmed := b[cqlHeaderLength:]
@@ -331,13 +364,7 @@ func (p *CQLProxy) parseQuery(b []byte) error {
 	// 	we need to start one up (this is for the idea of having a mapping from keyspace to gocql session)
 	switch keyword {
 	case "USE":
-		// TODO: DEAL with the USE case
-		//  We cannot change the keyspace for a session dynamically, must change it before session
-		//  creation, thus we might have to do some weird stuff here, not exactly sure.
-		//  Maybe we can keep track of the current keyspace we're in?
-		//  --- But then there would be issues with all of the queuing and stuff if there's changes in keyspaces
-		//  Need to talk about this more.
-		break
+		return p.handleUseQuery(query)
 	case "INSERT":
 		return p.handleInsertQuery(query)
 	case "UPDATE":
@@ -351,11 +378,47 @@ func (p *CQLProxy) parseQuery(b []byte) error {
 	return errors.New("query not handled")
 }
 
-func (p *CQLProxy) executeQuery(query string) error {
-	err := p.astraSession.Query(query).Exec()
+func (p *CQLProxy) executeQuery(q *Query) error {
+	session, ok := p.Sessions[q.Table.Keyspace]
+	if !ok {
+		return errors.New("ran query on nonexistent session")
+	}
+
+	err := session.Query(q.Query).Exec()
 	if err != nil {
 		return err
 	}
+
+	// For testing
+	log.Debugf("Executing %v on keyspace %s", *q, q.Table.Keyspace)
+
+	return nil
+}
+
+func (p *CQLProxy) handleUseQuery(query string) error {
+	split := strings.Split(query, " ")
+
+	// Invalid query, don't run
+	if len(split) < 2 {
+		return nil
+	}
+
+	// Remove trailing semicolon, if it's attached
+	keyspace := strings.TrimSuffix(split[1], ";")
+
+	log.Debugf("Attempting to connect to keyspace %s", keyspace)
+	// Open new session if this is the first time we're using this keyspace
+	// Will error out on an invalid keyspace, so we know after this if statement that the keyspace is valid
+	if _, ok := p.Sessions[keyspace]; !ok {
+		newSession, err := p.connect(keyspace)
+		if err != nil {
+			return err
+		}
+		p.Sessions[keyspace] = newSession
+	}
+
+	p.Keyspace = keyspace
+
 	return nil
 }
 
@@ -371,18 +434,29 @@ func (p *CQLProxy) handleTruncateQuery(query string) error {
 	//    TRUNCATE keyspace.table;
 	// OR
 	//	  TRUNCATE TABLE keyspace.table;
+	var keyspace string
 	var tableName string
 	if split[1] == "TABLE" {
-		tableName = extractTableName(split[2])
+		keyspace, tableName = p.extractTableInfo(split[2])
 	} else {
-		tableName = extractTableName(split[1])
+		keyspace, tableName = p.extractTableInfo(split[1])
 	}
 
-	if p.tableStatus(tableName) != MIGRATED {
-		p.stopTable(tableName)
+	table, ok := p.migrationStatus.Tables[keyspace][tableName]
+	if !ok {
+		return fmt.Errorf("table %s.%s does not exist", keyspace, tableName)
 	}
 
-	p.addQueryToTableQueue(tableName, query)
+	if p.tableStatus(keyspace, tableName) != MIGRATED {
+		p.stopTable(keyspace, tableName)
+	}
+
+	q := &Query{
+		Table: table,
+		Type: TRUNCATE,
+		Query: query}
+
+	p.queueQuery(q)
 	return nil
 }
 
@@ -395,25 +469,31 @@ func (p *CQLProxy) handleDeleteQuery(query string) error {
 	}
 
 	// TODO: must make query all upper to do if v == "FROM"
+	var keyspace string
 	var tableName string
 	for i, v := range split {
 		if v == "FROM" {
-			tableName = extractTableName(split[i+1])
+			keyspace, tableName = p.extractTableInfo(split[i+1])
 			break
 		}
 	}
 
-	// Invalid query, don't run
-	if tableName == "" {
-		return nil
+	table, ok := p.migrationStatus.Tables[keyspace][tableName]
+	if !ok {
+		return fmt.Errorf("table %s.%s does not exist", keyspace, tableName)
 	}
 
 	// Wait for migration of table to be finished before processing anymore queries
-	if p.tableStatus(tableName) != MIGRATED {
-		p.stopTable(tableName)
+	if p.tableStatus(keyspace, tableName) != MIGRATED {
+		p.stopTable(keyspace, tableName)
 	}
 
-	p.addQueryToTableQueue(tableName, query)
+	q := &Query{
+		Table: table,
+		Type: DELETE,
+		Query: query}
+
+	p.queueQuery(q)
 	return nil
 }
 
@@ -427,9 +507,19 @@ func (p *CQLProxy) handleInsertQuery(query string) error {
 		return nil
 	}
 
-	tableName := extractTableName(split[2])
+	keyspace, tableName := p.extractTableInfo(split[2])
 
-	p.addQueryToTableQueue(tableName, query)
+	table, ok := p.migrationStatus.Tables[keyspace][tableName]
+	if !ok {
+		return fmt.Errorf("table %s.%s does not exist", keyspace, tableName)
+	}
+
+	q := &Query{
+		Table: table,
+		Type: INSERT,
+		Query: query}
+
+	p.queueQuery(q)
 	return nil
 }
 
@@ -443,23 +533,33 @@ func (p *CQLProxy) handleUpdateQuery(query string) error {
 		return nil
 	}
 
-	tableName := extractTableName(split[1])
+	keyspace, tableName := p.extractTableInfo(split[1])
 
-
-	// Wait for migration of table to be finished before processing anymore queries
-	if p.tableStatus(tableName) != MIGRATED {
-		p.stopTable(tableName)
+	table, ok := p.migrationStatus.Tables[keyspace][tableName]
+	if !ok {
+		return fmt.Errorf("table %s.%s does not exist", keyspace, tableName)
 	}
 
-	p.addQueryToTableQueue(tableName, query)
+	// Wait for migration of table to be finished before processing anymore queries
+	if p.tableStatus(keyspace, tableName) != MIGRATED {
+		p.stopTable(keyspace, tableName)
+	}
+
+	q := &Query{
+		Table: table,
+		Type: UPDATE,
+		Query: query}
+
+	p.queueQuery(q)
 	return nil
 }
 
-func (p *CQLProxy) addQueryToTableQueue(table string, query string) {
+func (p *CQLProxy) queueQuery(query *Query) {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
-	queue, ok := p.tableQueues[table]
+	queue, _ := p.tableQueues[query.Table.Keyspace][query.Table.Name]
+	/*
 	if !ok {
 		// TODO: Remove once we verify that the queue creation works w/ the migration service
 		// 	aka the queue should never be nil and ok should always be true
@@ -467,27 +567,29 @@ func (p *CQLProxy) addQueryToTableQueue(table string, query string) {
 		p.tableQueues[table] = queue
 		p.tableStarts[table] = make(chan struct{})
 		go p.consumeQueue(table)
-	}
+	}*/
 
 	queue <- query
-	p.queueSizes[table]++
+	p.queueSizes[query.Table.Keyspace][query.Table.Name]++
 }
 
-func (p *CQLProxy) consumeQueue(table string) {
+func (p *CQLProxy) consumeQueue(keyspace string, table string) {
+	log.Debugf("Beginning consumption of queries for %s.%s", keyspace, table)
+
 	// TODO: Get rid of this locking once we add queue creation at startup
 	p.lock.Lock()
-	queue := p.tableQueues[table]
+	queue := p.tableQueues[keyspace][table]
 	p.lock.Unlock()
 
 	for {
 		select {
 		case query := <-queue:
 			p.lock.Lock()
-			waiting := p.tableWaiting[table]
+			waiting := p.tableWaiting[keyspace][table]
 			p.lock.Unlock()
 
 			if waiting {
-				<-p.tableStarts[table]
+				<-p.tableStarts[keyspace][table]
 			}
 
 			// Driver is async, so we don't need a lock around query execution
@@ -508,7 +610,7 @@ func (p *CQLProxy) consumeQueue(table string) {
 			}
 
 			p.lock.Lock()
-			p.queueSizes[table]--
+			p.queueSizes[keyspace][table]--
 			p.lock.Unlock()
 
 			p.Metrics.lock.Lock()
@@ -519,7 +621,7 @@ func (p *CQLProxy) consumeQueue(table string) {
 }
 
 // TODO: Make better
-func (p *CQLProxy) retry(query string, attempts int) error {
+func (p *CQLProxy) retry(query *Query, attempts int) error {
 	var err error
 	for i := 1; i <= attempts; i++ {
 		log.Debugf("Retrying %s attempt #%d", query, i)
@@ -535,8 +637,8 @@ func (p *CQLProxy) retry(query string, attempts int) error {
 	return err
 }
 
-func (p *CQLProxy) tableStatus(tableName string) TableStatus {
-	table := p.migrationStatus.Tables[tableName]
+func (p *CQLProxy) tableStatus(keyspace string, tableName string) TableStatus {
+	table := p.migrationStatus.Tables[keyspace][tableName]
 	p.migrationStatus.Lock.Lock()
 	status := table.Status
 	p.migrationStatus.Lock.Unlock()
@@ -544,20 +646,22 @@ func (p *CQLProxy) tableStatus(tableName string) TableStatus {
 }
 
 // Stop consuming queries for a given table
-func (p *CQLProxy) stopTable(table string) {
+func (p *CQLProxy) stopTable(keyspace string, table string) {
+	log.Debugf("Stopping query consumption on %s.%s", keyspace, table)
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
-	p.tableWaiting[table] = true
+	p.tableWaiting[keyspace][table] = true
 }
 
 // Restart consuming queries for a given table
-func (p *CQLProxy) startTable(table string) {
+func (p *CQLProxy) startTable(keyspace string, table string) {
+	log.Debugf("Restarting query consumption on %s.%s", keyspace, table)
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
-	p.tableWaiting[table] = false
-	p.tableStarts[table] <- struct{}{}
+	p.tableWaiting[keyspace][table] = false
+	p.tableStarts[keyspace][table] <- struct{}{}
 }
 
 func (p *CQLProxy) incrementSources() {
@@ -580,29 +684,29 @@ func (p *CQLProxy) decrementSources() {
 }
 
 // TODO: Maybe add a couple retries, or let the caller deal with that?
-func (p *CQLProxy) connect() error {
-	session, err := utils.ConnectToCluster(p.AstraHostname, p.AstraUsername, p.AstraPassword, p.AstraPort)
+func (p *CQLProxy) connect(keyspace string) (*gocql.Session, error) {
+	session, err := utils.ConnectToCluster(p.AstraHostname, p.AstraUsername, p.AstraPassword, p.AstraPort, keyspace)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	p.astraSession = session
 
-	p.sourceHostString = fmt.Sprintf("%s:%d", p.SourceHostname, p.SourcePort)
-	p.astraHostString = fmt.Sprintf("%s:%d", p.AstraHostname, p.AstraPort)
-	return nil
+	return session, err
 }
 
 func (p *CQLProxy) Shutdown() {
 	p.shutdown <- struct{}{}
 	p.listener.Close()
-	p.astraSession.Close()
+	for _, session := range p.Sessions {
+		session.Close()
+	}
 }
 
 func (p *CQLProxy) clear() {
-	p.tableQueues = make(map[string]chan string)
-	p.queueSizes = make(map[string]int)
-	p.tableWaiting = make(map[string]bool)
-	p.tableStarts = make(map[string]chan struct{})
+	p.Sessions = make(map[string]*gocql.Session)
+	p.tableQueues = make(map[string]map[string]chan *Query)
+	p.queueSizes = make(map[string]map[string]int)
+	p.tableWaiting = make(map[string]map[string]bool)
+	p.tableStarts = make(map[string]map[string]chan struct{})
 	p.connectionsToSource = 0
 	p.Metrics = Metrics{}
 	p.Metrics.lock = sync.Mutex{}
@@ -616,21 +720,34 @@ func (p *CQLProxy) clear() {
 
 // Given a FROM argument, extract the table name
 // ex: table, keyspace.table, keyspace.table;, keyspace.table(, etc..
-func extractTableName(fromClause string) string {
-	// Remove semicolon if it is attached to the table name from the query
-	if i := strings.IndexRune(fromClause, ';'); i != -1 {
-		fromClause = fromClause[:i]
-	}
+func (p *CQLProxy) extractTableInfo(fromClause string) (string, string) {
+	var keyspace string
 
 	// Remove keyspace if table in format keyspace.table
 	if i := strings.IndexRune(fromClause, '.'); i != -1 {
-		fromClause = fromClause[i+1:]
+		keyspace = fromClause[:i]
+	}
+
+	if keyspace == "" {
+		keyspace = p.Keyspace
+	}
+
+	tableName := fromClause
+
+	// Remove semicolon if it is attached to the table name from the query
+	if i := strings.IndexRune(tableName, ';'); i != -1 {
+		tableName = tableName[:i]
+	}
+
+	// Remove keyspace if table in format keyspace.table
+	if i := strings.IndexRune(tableName, '.'); i != -1 {
+		tableName = tableName[i+1:]
 	}
 
 	// Remove column names if part of an INSERT query: ex: TABLE(col, col)
-	if i := strings.IndexRune(fromClause, '('); i != -1 {
-		fromClause = fromClause[:i]
+	if i := strings.IndexRune(tableName, '('); i != -1 {
+		tableName = tableName[:i]
 	}
 
-	return fromClause
+	return keyspace, tableName
 }

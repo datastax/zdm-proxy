@@ -58,6 +58,7 @@ func main() {
 		AstraPort:     astraPort,
 
 		Port: listenPort,
+		Keyspace: "codebase",
 
 		MigrationStartChan:    migrationStartChan,
 		MigrationCompleteChan: migrationCompleteChan,
@@ -112,12 +113,14 @@ func doTesting(p *proxy.CQLProxy) {
 		for scanner.Scan() {
 			switch scanner.Text() {
 			case "start":
-				tables := make(map[string]proxy.Table)
-				tables["tasks"] = proxy.Table{
+				tables := make(map[string]map[string]*proxy.Table)
+				tables["codebase"] = make(map[string]*proxy.Table)
+				tables["codebase"]["tasks"] = &proxy.Table{
 					Name:     "tasks",
 					Keyspace: "codebase",
 					Status:   proxy.WAITING,
 					Error:    nil,
+					Lock: sync.Mutex{},
 				}
 
 				p.MigrationStartChan <- &proxy.MigrationStatus{Tables: tables,
