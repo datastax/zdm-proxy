@@ -149,6 +149,7 @@ func (p *CQLProxy) migrationLoop() {
 				log.Info("Proxy received migration info.")
 				p.migrationStatus = status
 				p.initQueues()
+				p.consume()
 				p.ready = true
 				p.ReadyChan <- struct{}{}
 				log.Info("Proxy sent ready signal.")
@@ -176,6 +177,13 @@ func (p *CQLProxy) initQueues() {
 			p.tableStarts[tableName] = make(chan struct{})
 	}
 	log.Debug("Proxy queues initialized.")
+}
+
+func (p *CQLProxy) consume() {
+	for tableName := range p.migrationStatus.Tables {
+		go p.consumeQueue(tableName)
+	}
+	log.Debug("Proxy ready to execute queries.")
 }
 
 func (p *CQLProxy) Start() error {
