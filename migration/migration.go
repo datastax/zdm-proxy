@@ -2,13 +2,12 @@ package migration
 
 import (
 	"cloud-gate/utils"
-	"flag"
+
 	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,26 +16,36 @@ import (
 	"github.com/gocql/gocql"
 )
 
-// TableStatus is the string status of a single table
-// WAITING, MIGRATING SCHEMA, SCHEMA MIGRATION COMPLETED, UNLOADING DATA,
-// UNLOADING COMPLETED, LOADING DATA, MIGRATION COMPLETED, ERRORED
-type TableStatus string
+// Step is an enum of the migration steps for a table
+type Step int
+
+// Waiting, MigratingSchema, ... are the enums of the migration steps
+const (
+	Waiting = iota
+	MigratingSchema
+	MigratingSchemaComplete
+	UnloadingData
+	UnloadingDataComplete
+	LoadingData
+	MigrationComplete
+	Errored
+)
 
 // Table represents status of migration of a single table
 type Table struct {
 	Name     string
-	Status   TableStatus
+	Step     Step
 	Error    error
 	Priority int
 }
 
 // Status represents status of migration
 type Status struct {
-
-	Steps						int
-	TotalSteps			int
-	Speed           float64
-	Lock            *sync.Mutex
+	Tables     map[string]*Table
+	Steps      int
+	TotalSteps int
+	Speed      float64
+	Lock       *sync.Mutex
 }
 
 func newStatus() *Status {
@@ -46,16 +55,16 @@ func newStatus() *Status {
 	return &status
 }
 
-func (s *Status) initTableData(tables map[string]*gocql.TableMetadata){
+func (s *Status) initTableData(tables map[string]*gocql.TableMetadata) {
 	for _, tableData := range tables {
 		s.Tables[tableData.Name] = &(Table{
 			Name:     tableData.Name,
-			Status:   "WAITING",
+			Step:     Waiting,
 			Error:    nil,
 			Priority: 0,
 		})
 	}
-} 
+}
 
 // checkpoint is used to save the progress of migration,
 // and restart migration in case of failure
@@ -69,31 +78,32 @@ type checkpoint struct {
 // ignoreKeyspaces := []string{"system_auth", "system_schema", "dse_system_local", "dse_system", "dse_leases", "solr_admin",
 // 		"dse_insights", "dse_insights_local", "system_distributed", "system", "dse_perf", "system_traces", "dse_security"}
 
-struct Migration {
-		Keyspace string
-		DsbulkPath string
-		HardRestart bool
+// Migration ...
+type Migration struct {
+	Keyspace    string
+	DsbulkPath  string
+	HardRestart bool
 
-		SourceHostname string
-		SourceUsername string
-		SourcePassword string
-		SourcePort int
+	SourceHostname string
+	SourceUsername string
+	SourcePassword string
+	SourcePort     int
 
-		DestHostname string
-		DestUsername string
-		DestPassword string
-		DestPort int
+	DestHostname string
+	DestUsername string
+	DestPassword string
+	DestPort     int
 
-		status Status
-		directory string
-		sourceSession *gocql.Session
-		destSession *gocql.Session
+	status        *Status
+	directory     string
+	sourceSession *gocql.Session
+	destSession   *gocql.Session
 }
 
 func (m *Migration) init() error {
 	m.status = newStatus()
 	m.directory = fmt.Sprintf("./migration-%s/", strconv.FormatInt(time.Now().Unix(), 10))
-	os.Mkdir(directory, 0755)
+	os.Mkdir(m.directory, 0755)
 
 	var err error
 	m.sourceSession, err = utils.ConnectToCluster(m.SourceHostname, m.SourceUsername, m.SourcePassword, m.SourcePort)
@@ -102,7 +112,7 @@ func (m *Migration) init() error {
 	}
 	defer m.sourceSession.Close()
 
-	m.dest, err = utils.ConnectToCluster(m.DestHostname, m.DestUsername, m.DestPassword, m.DestPort)
+	m.destSession, err = utils.ConnectToCluster(m.DestHostname, m.DestUsername, m.DestPassword, m.DestPort)
 	if err != nil {
 		return err
 	}
@@ -120,7 +130,7 @@ func (m *Migration) init() error {
 
 // Migrates a keyspace from the source cluster to the Astra cluster
 func (m *Migration) migrate() {
-	logAndPrint(fmt.Sprintf("== MIGRATE KEYSPACE: %s ==\n", m.Keyspace))
+	m.logAndPrint(fmt.Sprintf("== MIGRATE KEYSPACE: %s ==\n", m.Keyspace))
 	chk := readCheckpoint(m.Keyspace)
 
 	if m.HardRestart {
@@ -128,7 +138,7 @@ func (m *Migration) migrate() {
 		for tableName, migrated := range chk.schema {
 			if migrated {
 				query := fmt.Sprintf("DROP TABLE %s.%s;", m.Keyspace, tableName)
-				destSession.Query(query).Exec()
+				m.destSession.Query(query).Exec()
 			}
 		}
 
@@ -144,10 +154,10 @@ func (m *Migration) migrate() {
 		m.status.TotalSteps = -1
 		m.status.Speed = -1
 		for _, table := range m.status.Tables {
-			table.Status = "MIGRATION COMPLETED"
+			table.Step = MigrationComplete
 			table.Error = nil
 		}
-		logAndPrint("COMPLETED MIGRATION\n")
+		m.logAndPrint("COMPLETED MIGRATION\n")
 		return
 	}
 
@@ -157,9 +167,9 @@ func (m *Migration) migrate() {
 	}
 
 	// Each table load/unload
-	m.TotalSteps = 3 * len(tables)
+	m.status.TotalSteps = 3 * len(tables)
 	m.status.initTableData(tables)
-	
+
 	var wgSchema sync.WaitGroup
 	wgSchema.Add(len(tables))
 	for _, table := range tables {
@@ -176,7 +186,7 @@ func (m *Migration) migrate() {
 				writeCheckpoint(chk, m.Keyspace)
 			}
 			m.status.Steps++
-			m.status.Tables[table.Name].Status = "SCHEMA MIGRATION COMPLETED"
+			m.status.Tables[table.Name].Step = MigratingSchemaComplete
 		}(table)
 	}
 	wgSchema.Wait()
@@ -197,17 +207,17 @@ func (m *Migration) migrate() {
 				writeCheckpoint(chk, m.Keyspace)
 			}
 			m.status.Steps += 2
-			m.status.Tables[table.Name].Status = "MIGRATION COMPLETED"
+			m.status.Tables[table.Name].Step = MigrationComplete
 		}(table)
 	}
 	wgTables.Wait()
 
-	logAndPrint("COMPLETED MIGRATION\n")
+	m.logAndPrint("COMPLETED MIGRATION\n")
 
 	// calculate total file size of migrated data
 	var size int64
 	for table := range tables {
-		dSize, _ := utils.DirSize(directory + table)
+		dSize, _ := utils.DirSize(m.directory + table)
 		size += dSize
 	}
 
@@ -220,8 +230,8 @@ func (m *Migration) migrate() {
 }
 
 func (m *Migration) migrateSchema(table *gocql.TableMetadata) error {
-	logAndPrint(fmt.Sprintf("MIGRATING TABLE SCHEMA: %s... \n", table.Name))
-	m.status.Tables[table.Name].Status = "MIGRATING SCHEMA"
+	m.logAndPrint(fmt.Sprintf("MIGRATING TABLE SCHEMA: %s... \n", table.Name))
+	m.status.Tables[table.Name].Step = MigratingSchema
 
 	query := fmt.Sprintf("CREATE TABLE %s.%s (", m.Keyspace, table.Name)
 
@@ -255,12 +265,12 @@ func (m *Migration) migrateSchema(table *gocql.TableMetadata) error {
 	err := m.destSession.Query(query).Exec()
 
 	if err != nil {
-		m.status.Tables[table.Name].Status = "ERRORED"
+		m.status.Tables[table.Name].Step = Errored
 		m.status.Tables[table.Name].Error = err
 		return err
 	}
 
-	logAndPrint(fmt.Sprintf("COMPLETED MIGRATING TABLE SCHEMA: %s\n", table.Name))
+	m.logAndPrint(fmt.Sprintf("COMPLETED MIGRATING TABLE SCHEMA: %s\n", table.Name))
 	return nil
 }
 
@@ -281,37 +291,37 @@ func (m *Migration) migrateData(table *gocql.TableMetadata) error {
 
 // Exports a table CSV from the source cluster into DIRECTORY
 func (m *Migration) unloadTable(table *gocql.TableMetadata) error {
-	logAndPrint(fmt.Sprintf("UNLOADING TABLE: %s...\n", table.Name))
-	m.status.Tables[table.Name].Status = "UNLOADING DATA"
+	m.logAndPrint(fmt.Sprintf("UNLOADING TABLE: %s...\n", table.Name))
+	m.status.Tables[table.Name].Step = UnloadingData
 
 	cmdArgs := []string{"unload", "-port", strconv.Itoa(m.SourcePort), "-k", m.Keyspace, "-t", table.Name, "-url", m.directory + table.Name, "-logDir", m.directory}
 	_, err := exec.Command(m.DsbulkPath, cmdArgs...).Output()
 	if err != nil {
-		m.status.Tables[table.Name].Status = "ERRORED"
+		m.status.Tables[table.Name].Step = Errored
 		m.status.Tables[table.Name].Error = err
 		return err
 	}
 
-	m.status.Tables[table.Name].Status = "UNLOADING COMPLETED"
-	logAndPrint(fmt.Sprintf("COMPLETED UNLOADING TABLE: %s\n", table.Name))
+	m.status.Tables[table.Name].Step = UnloadingDataComplete
+	m.logAndPrint(fmt.Sprintf("COMPLETED UNLOADING TABLE: %s\n", table.Name))
 	return nil
 }
 
 // Loads a table from an exported CSV (in path specified by DIRECTORY)
 // into the target cluster
 func (m *Migration) loadTable(table *gocql.TableMetadata) error {
-	logAndPrint(fmt.Sprintf("LOADING TABLE: %s...\n", table.Name))
-	m.status.Tables[table.Name].Status = "LOADING DATA"
+	m.logAndPrint(fmt.Sprintf("LOADING TABLE: %s...\n", table.Name))
+	m.status.Tables[table.Name].Step = LoadingData
 
 	cmdArgs := []string{"load", "-h", m.DestHostname, "-port", strconv.Itoa(m.DestPort), "-k", m.Keyspace, "-t", table.Name, "-url", m.directory + table.Name, "-logDir", m.directory}
 	_, err := exec.Command(m.DsbulkPath, cmdArgs...).Output()
 	if err != nil {
-		m.status.Tables[table.Name].Status = "ERRORED"
+		m.status.Tables[table.Name].Step = Errored
 		m.status.Tables[table.Name].Error = err
 		return err
 	}
 
-	logAndPrint(fmt.Sprintf("COMPLETED LOADING TABLE: %s\n", table.Name))
+	m.logAndPrint(fmt.Sprintf("COMPLETED LOADING TABLE: %s\n", table.Name))
 	return nil
 }
 
@@ -395,13 +405,13 @@ func readCheckpoint(keyspace string) *checkpoint {
 
 var logLock sync.Mutex
 
-func logAndPrint(s string) {
+func (m *Migration) logAndPrint(s string) {
 	msg := fmt.Sprintf("[%s] %s", time.Now().String(), s)
 	fmt.Printf(msg)
 
 	logLock.Lock()
 	defer logLock.Unlock()
-	f, err := os.OpenFile(fmt.Sprintf("%slog.txt", directory),
+	f, err := os.OpenFile(fmt.Sprintf("%slog.txt", m.directory),
 		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Fatal(err)

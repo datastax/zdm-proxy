@@ -1,11 +1,8 @@
 package main
 
 import (
-	"bufio"
 	"cloud-gate/migration"
 	"flag"
-	"os"
-	"sync"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -30,7 +27,7 @@ var (
 func main() {
 	parseFlags()
 
-	p := proxy.CQLProxy{
+	p := migration.Migration{
 		SourceHostname: sourceHostname,
 		SourceUsername: sourceUsername,
 		SourcePassword: sourcePassword,

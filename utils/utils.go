@@ -1,6 +1,8 @@
 package utils
 
 import (
+	"os"
+	"path/filepath"
 	"github.com/gocql/gocql"
 	log "github.com/sirupsen/logrus"
 )
