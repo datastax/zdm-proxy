@@ -27,7 +27,7 @@ const (
 	UnloadingData
 	UnloadingDataComplete
 	LoadingData
-	MigrationComplete
+	LoadingDataComplete
 	Errored
 )
 
@@ -147,7 +147,7 @@ func (m *Migration) Migrate() {
 		m.status.TotalSteps = -1
 		m.status.Speed = -1
 		for _, table := range m.status.Tables {
-			table.Step = MigrationComplete
+			table.Step = LoadingDataComplete
 			table.Error = nil
 		}
 		m.logAndPrint("COMPLETED MIGRATION\n")
@@ -180,6 +180,7 @@ func (m *Migration) Migrate() {
 			}
 			m.status.Steps++
 			m.status.Tables[table.Name].Step = MigratingSchemaComplete
+			m.logAndPrint(fmt.Sprintf("COMPLETED MIGRATING TABLE SCHEMA: %s\n", table.Name))
 		}(table)
 	}
 	wgSchema.Wait()
@@ -200,7 +201,8 @@ func (m *Migration) Migrate() {
 				writeCheckpoint(chk, m.Keyspace)
 			}
 			m.status.Steps += 2
-			m.status.Tables[table.Name].Step = MigrationComplete
+			m.status.Tables[table.Name].Step = LoadingDataComplete
+			m.logAndPrint(fmt.Sprintf("COMPLETED LOADING TABLE DATA: %s\n", table.Name))
 		}(table)
 	}
 	wgTables.Wait()
@@ -223,8 +225,8 @@ func (m *Migration) Migrate() {
 }
 
 func (m *Migration) migrateSchema(table *gocql.TableMetadata) error {
-	m.logAndPrint(fmt.Sprintf("MIGRATING TABLE SCHEMA: %s... \n", table.Name))
 	m.status.Tables[table.Name].Step = MigratingSchema
+	m.logAndPrint(fmt.Sprintf("MIGRATING TABLE SCHEMA: %s... \n", table.Name))
 
 	query := fmt.Sprintf("CREATE TABLE %s.%s (", m.Keyspace, table.Name)
 
@@ -262,8 +264,6 @@ func (m *Migration) migrateSchema(table *gocql.TableMetadata) error {
 		m.status.Tables[table.Name].Error = err
 		return err
 	}
-
-	m.logAndPrint(fmt.Sprintf("COMPLETED MIGRATING TABLE SCHEMA: %s\n", table.Name))
 	return nil
 }
 
@@ -284,8 +284,8 @@ func (m *Migration) migrateData(table *gocql.TableMetadata) error {
 
 // Exports a table CSV from the source cluster into DIRECTORY
 func (m *Migration) unloadTable(table *gocql.TableMetadata) error {
-	m.logAndPrint(fmt.Sprintf("UNLOADING TABLE: %s...\n", table.Name))
 	m.status.Tables[table.Name].Step = UnloadingData
+	m.logAndPrint(fmt.Sprintf("UNLOADING TABLE: %s...\n", table.Name))
 
 	cmdArgs := []string{"unload", "-port", strconv.Itoa(m.SourcePort), "-k", m.Keyspace, "-t", table.Name, "-url", m.directory + table.Name, "-logDir", m.directory}
 	_, err := exec.Command(m.DsbulkPath, cmdArgs...).Output()
@@ -303,8 +303,8 @@ func (m *Migration) unloadTable(table *gocql.TableMetadata) error {
 // Loads a table from an exported CSV (in path specified by DIRECTORY)
 // into the target cluster
 func (m *Migration) loadTable(table *gocql.TableMetadata) error {
-	m.logAndPrint(fmt.Sprintf("LOADING TABLE: %s...\n", table.Name))
 	m.status.Tables[table.Name].Step = LoadingData
+	m.logAndPrint(fmt.Sprintf("LOADING TABLE: %s...\n", table.Name))
 
 	cmdArgs := []string{"load", "-h", m.DestHostname, "-port", strconv.Itoa(m.DestPort), "-k", m.Keyspace, "-t", table.Name, "-url", m.directory + table.Name, "-logDir", m.directory}
 	_, err := exec.Command(m.DsbulkPath, cmdArgs...).Output()
@@ -314,7 +314,6 @@ func (m *Migration) loadTable(table *gocql.TableMetadata) error {
 		return err
 	}
 
-	m.logAndPrint(fmt.Sprintf("COMPLETED LOADING TABLE: %s\n", table.Name))
 	return nil
 }
 
