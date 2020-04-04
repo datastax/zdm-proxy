@@ -609,14 +609,20 @@ func (p *CQLProxy) clear() {
 // Given a FROM argument, extract the table name
 // ex: table, keyspace.table, keyspace.table;, keyspace.table(, etc..
 func extractTableName(fromClause string) string {
-	// Remove keyspace if table in format keyspace.table
-	tableName := strings.TrimPrefix(fromClause, ".")
-
 	// Remove semicolon if it is attached to the table name from the query
-	tableName = strings.TrimSuffix(tableName, ";")
+	if i := strings.IndexRune(fromClause, ';'); i != -1 {
+		fromClause = fromClause[:i]
+	}
+
+	// Remove keyspace if table in format keyspace.table
+	if i := strings.IndexRune(fromClause, '.'); i != -1 {
+		fromClause = fromClause[i+1:]
+	}
 
 	// Remove column names if part of an INSERT query: ex: TABLE(col, col)
-	tableName = strings.TrimSuffix(tableName, "(")
+	if i := strings.IndexRune(fromClause, '('); i != -1 {
+		fromClause = fromClause[:i]
+	}
 
-	return tableName
+	return fromClause
 }
