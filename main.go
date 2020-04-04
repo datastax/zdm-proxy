@@ -27,42 +27,30 @@ var (
 func main() {
 	parseFlags()
 
-	p := migration.Migration{
+	m := migration.Migration{
+		Keyspace: keyspace,
+		DsbulkPath: dsbulkPath,
+		HardRestart: hardRestart,
+
 		SourceHostname: sourceHostname,
 		SourceUsername: sourceUsername,
 		SourcePassword: sourcePassword,
 		SourcePort:     sourcePort,
 
-		AstraHostname: astraHostname,
-		AstraUsername: astraUsername,
-		AstraPassword: astraPassword,
-		AstraPort:     astraPort,
-
-		Port: listenPort,
-
-		MigrationStartChan:    migrationStartChan,
-		MigrationCompleteChan: migrationCompleteChan,
-		TableMigratedChan:     tableMigratedChan,
+		DestHostname: astraHostname,
+		DestUsername: astraUsername,
+		DestPassword: astraPassword,
+		DestPort:     astraPort,
 	}
 
-	err := p.Start()
+	err := m.Init()
 	if err != nil {
-		// TODO: handle error
-		panic(err)
+		log.Fatal(err)
 	}
 
-	for {
-		select {
-		case <-p.ReadyChan:
-			log.Info("Coordinator received proxy ready signal.")
-			err := p.Listen()
-			if err != nil {
-				panic(err)
-			}
-		case <-p.ReadyForRedirect:
-			log.Info("Coordinate received signal that there are no more connections to Client Database.")
-		}
-	}
+	go m.Migrate()
+
+	for {}
 }
 
 // Most of these will change to environment variables rather than flags

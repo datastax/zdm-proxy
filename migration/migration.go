@@ -100,7 +100,7 @@ type Migration struct {
 	destSession   *gocql.Session
 }
 
-func (m *Migration) init() error {
+func (m *Migration) Init() error {
 	m.status = newStatus()
 	m.directory = fmt.Sprintf("./migration-%s/", strconv.FormatInt(time.Now().Unix(), 10))
 	os.Mkdir(m.directory, 0755)
@@ -110,26 +110,19 @@ func (m *Migration) init() error {
 	if err != nil {
 		return err
 	}
-	defer m.sourceSession.Close()
+	// defer m.sourceSession.Close()
 
 	m.destSession, err = utils.ConnectToCluster(m.DestHostname, m.DestUsername, m.DestPassword, m.DestPort)
 	if err != nil {
 		return err
 	}
-	defer m.destSession.Close()
+	// defer m.destSession.Close()
 
 	return nil
 }
 
-// func (m *Migration) execute() {
-// 	go migrate(keyspace)
-// 	for {
-// 	}
-// 	fmt.Println(Status)
-// }
-
 // Migrates a keyspace from the source cluster to the Astra cluster
-func (m *Migration) migrate() {
+func (m *Migration) Migrate() {
 	m.logAndPrint(fmt.Sprintf("== MIGRATE KEYSPACE: %s ==\n", m.Keyspace))
 	chk := readCheckpoint(m.Keyspace)
 
