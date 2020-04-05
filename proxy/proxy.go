@@ -195,6 +195,7 @@ func (p *CQLProxy) initQueues() {
 	for keyspace, tables := range p.migrationStatus.Tables {
 		p.tableQueues[keyspace] = make(map[string]chan *Query)
 		p.tableStarts[keyspace] = make(map[string]chan struct{})
+		p.tableWaiting[keyspace] =  make(map[string]bool);
 		p.queueSizes[keyspace] = make(map[string]int)
 		for tableName := range tables {
 			p.tableQueues[keyspace][tableName] = make(chan *Query, queueSize)
@@ -405,6 +406,11 @@ func (p *CQLProxy) handleUseQuery(query string) error {
 
 	// Remove trailing semicolon, if it's attached
 	keyspace := strings.TrimSuffix(split[1], ";")
+	if strings.HasPrefix(keyspace, "\"") && strings.HasSuffix(keyspace, "\"") {
+		keyspace = string([]rune(keyspace)[1:len(keyspace)-1])
+	} else {
+		keyspace = strings.ToLower(keyspace)
+	}
 
 	log.Debugf("Attempting to connect to keyspace %s", keyspace)
 	// Open new session if this is the first time we're using this keyspace

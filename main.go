@@ -58,7 +58,7 @@ func main() {
 		AstraPort:     astraPort,
 
 		Port: listenPort,
-		Keyspace: "codebase",
+		Keyspace: "",
 
 		MigrationStartChan:    migrationStartChan,
 		MigrationCompleteChan: migrationCompleteChan,

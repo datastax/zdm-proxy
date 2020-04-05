@@ -12,7 +12,9 @@ func ConnectToCluster(hostname string, username string, password string, port in
 		Password: password,
 	}
 	cluster.Port = port
-	cluster.Keyspace = keyspace
+	if keyspace != "" {
+		cluster.Keyspace = keyspace
+	}
 
 	session, err := cluster.CreateSession()
 	if err != nil {
