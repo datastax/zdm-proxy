@@ -50,7 +50,7 @@ func main() {
 		DestPort:     astraPort,
 
 		MigrationStartChan: migrationStartChan,
-		migrationCompleteChan: migrationCompleteChan,
+		MigrationCompleteChan: migrationCompleteChan,
 	}
 
 	err := m.Init()

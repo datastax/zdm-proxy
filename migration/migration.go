@@ -32,11 +32,14 @@ const (
 )
 
 // Table represents status of migration of a single table
+// Lock used between proxy and migration to communicate table progress
 type Table struct {
+	Keyspace string
 	Name     string
 	Step     Step
 	Error    error
 	Priority int
+	Lock	 *sync.Mutex
 }
 
 // Status represents status of migration
@@ -66,6 +69,7 @@ func (s *Status) initTableData(tables map[string]*gocql.TableMetadata) {
 			Step:     Waiting,
 			Error:    nil,
 			Priority: 0,
+			Lock: new(sync.Mutex),
 		})
 	}
 }
@@ -128,8 +132,7 @@ func (m *Migration) Migrate() {
 		panic("Migration must be initialized before migration can begin")
 	}
 
-	m.logAndPrint(fmt.Sprintf("== MIGRATE KEYSPACE: %s ==\n", m.Keyspace))
-
+	//m.logAndPrint(fmt.Sprintf("== MIGRATE KEYSPACE: %s ==\n", m.Keyspace))
 	defer m.sourceSession.Close()
 	defer m.destSession.Close()
 	
@@ -191,7 +194,6 @@ func (m *Migration) Migrate() {
 				if err != nil {
 					log.Fatal(err)
 				}
-
 				m.status.Steps += 2
 				m.status.Tables[table.Name].Step = LoadingDataComplete
 				m.logAndPrint(fmt.Sprintf("COMPLETED LOADING TABLE DATA: %s\n", table.Name))
@@ -265,7 +267,7 @@ func (m *Migration) migrateSchema(table *gocql.TableMetadata) error {
 
 // migrateData migrates a table from the source cluster to the Astra cluster
 func (m *Migration) migrateData(table *gocql.TableMetadata) error {
-
+	m.status.Tables[table.Name].Lock.Lock()
 	err := m.unloadTable(table)
 	if err != nil {
 		return err
@@ -275,6 +277,7 @@ func (m *Migration) migrateData(table *gocql.TableMetadata) error {
 	if err != nil {
 		return err
 	}
+	m.status.Tables[table.Name].Lock.Unlock()
 	return nil
 }
 
@@ -315,9 +318,18 @@ func (m *Migration) loadTable(table *gocql.TableMetadata) error {
 
 // getTables gets table information from a keyspace in the source cluster
 func (m *Migration) getTables() (map[string]*gocql.TableMetadata, error) {
-	md, err := m.sourceSession.KeyspaceMetadata(m.Keyspace)
-	if err != nil {
-		return nil, err
+	tableMetadata := make(map[string]*gocql.TableMetadata)
+
+	for _, keyspace := range m.Keyspace {
+		md, err := m.sourceSession.KeyspaceMetadata(keyspace)
+		if err != nil {
+			return nil, err
+		}
+
+		for tableName, table := range md {
+			
+			tableMetadata[]
+		}
 	}
 
 	return md.Tables, nil
