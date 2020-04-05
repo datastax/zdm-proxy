@@ -39,3 +39,13 @@ func DirSize(path string) (int64, error) {
 	})
 	return size, err
 }
+
+// Contains checks if an element exists in a slice
+func Contains(keys []string, elem string) bool {
+    for _, key := range keys {
+        if key == elem {
+            return true
+        }
+    }
+    return false
+}

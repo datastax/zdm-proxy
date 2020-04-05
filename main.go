@@ -18,7 +18,6 @@ var (
 	astraPassword string
 	astraPort     int
 
-	keyspace    string
 	dsbulkPath  string
 	hardRestart bool
 )
@@ -35,7 +34,7 @@ func main() {
 	migrationCompleteChan := make(chan struct{})
 
 	m := migration.Migration{
-		Keyspace:    keyspace,
+		Keyspaces:    []string,
 		DsbulkPath:  dsbulkPath,
 		HardRestart: hardRestart,
 
@@ -74,7 +73,7 @@ func parseFlags() {
 	flag.StringVar(&astraUsername, "astra_username", "", "Aster Username")
 	flag.StringVar(&astraPassword, "astra_password", "", "Astra Password")
 	flag.IntVar(&astraPort, "astra_port", 9042, "Astra Port")
-	flag.StringVar(&keyspace, "k", "", "Keyspace to migrate")
+	//flag.StringVar(&keyspace, "k", "", "Keyspace to migrate")
 	flag.StringVar(&dsbulkPath, "d", "/Users/terranceli/Documents/projects/codebase/datastax-s20/dsbulk-1.4.1/bin/dsbulk", "dsbulk executable path")
 	flag.BoolVar(&hardRestart, "r", false, "Hard restart (ignore checkpoint)")
 	flag.Parse()
