@@ -27,6 +27,13 @@ var (
 func main() {
 	parseFlags()
 
+	// Channel for migrator to communicate with proxy when the migration process has begun
+	migrationStartChan := make(chan *migration.Status, 1)
+
+	// Channel for migration service to send a signal through, directing the proxy to forward all traffic directly
+	// to the Astra DB
+	migrationCompleteChan := make(chan struct{})
+
 	m := migration.Migration{
 		Keyspace:    keyspace,
 		DsbulkPath:  dsbulkPath,
@@ -41,6 +48,9 @@ func main() {
 		DestUsername: astraUsername,
 		DestPassword: astraPassword,
 		DestPort:     astraPort,
+
+		MigrationStartChan: migrationStartChan,
+		migrationCompleteChan: migrationCompleteChan,
 	}
 
 	err := m.Init()

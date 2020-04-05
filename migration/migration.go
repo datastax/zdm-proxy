@@ -76,6 +76,9 @@ type Migration struct {
 	DsbulkPath  string
 	HardRestart bool
 
+	MigrationStartChan chan *Status
+	MigrationCompleteChan chan struct{}
+
 	SourceHostname string
 	SourceUsername string
 	SourcePassword string
@@ -174,6 +177,9 @@ func (m *Migration) Migrate() {
 	}
 	wgSchema.Wait()
 
+	// Notify proxy service that schemas are finished migrating, unload/load starting
+	m.MigrationStartChan <- m.status
+
 	var wgTables sync.WaitGroup
 	wgTables.Add(len(tables))
 	for _, table := range tables {
@@ -210,6 +216,7 @@ func (m *Migration) Migrate() {
 
 	fmt.Println(m.status)
 	m.writeCheckpoint()
+	m.MigrationCompleteChan <- struct{}{}
 }
 
 // migrateSchema creates each new table in Astra with
