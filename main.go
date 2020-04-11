@@ -57,12 +57,12 @@ func main() {
 		AstraPassword: astraPassword,
 		AstraPort:     astraPort,
 
-		Port: listenPort,
+		Port:     listenPort,
 		Keyspace: "",
 
 		MigrationStartChan:    migrationStartChan,
 		MigrationCompleteChan: migrationCompleteChan,
-		TableMigratedChan:  tableMigratedChan,
+		TableMigratedChan:     tableMigratedChan,
 	}
 
 	// for testing purposes. to delete
@@ -120,11 +120,11 @@ func doTesting(p *proxy.CQLProxy) {
 					Keyspace: "codebase",
 					Status:   proxy.WAITING,
 					Error:    nil,
-					Lock: sync.Mutex{},
+					Lock:     &sync.Mutex{},
 				}
 
 				p.MigrationStartChan <- &proxy.MigrationStatus{Tables: tables,
-					Lock: sync.Mutex{}}
+					Lock: &sync.Mutex{}}
 			case "complete":
 				p.MigrationCompleteChan <- struct{}{}
 			case "shutdown":
