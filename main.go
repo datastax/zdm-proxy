@@ -3,7 +3,9 @@ package main
 import (
 	"bufio"
 	"cloud-gate/proxy"
+	"encoding/json"
 	"flag"
+	"net/http"
 	"os"
 	"sync"
 
@@ -24,6 +26,8 @@ var (
 
 	debug bool
 	test  bool
+
+	p *proxy.CQLProxy
 )
 
 // Method mainly to test the proxy service for now
@@ -46,7 +50,7 @@ func main() {
 	// Channel for the migration service to send us Table structs for tables that have completed migration
 	tableMigratedChan := make(chan *proxy.Table, 1)
 
-	p := proxy.CQLProxy{
+	p = &proxy.CQLProxy{
 		SourceHostname: sourceHostname,
 		SourceUsername: sourceUsername,
 		SourcePassword: sourcePassword,
@@ -67,7 +71,7 @@ func main() {
 
 	// for testing purposes. to delete
 	if test {
-		go doTesting(&p)
+		go doTesting(p)
 	}
 
 	err := p.Start()
@@ -75,6 +79,9 @@ func main() {
 		// TODO: handle error
 		panic(err)
 	}
+
+	// start metrics
+	go runMetrics()
 
 	for {
 		select {
@@ -89,6 +96,24 @@ func main() {
 		}
 	}
 }
+
+func runMetrics() {
+	http.HandleFunc("/metrics", getMetrics)
+	log.Fatal(http.ListenAndServe(":8080", nil))
+}
+
+func getMetrics(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	marshaled, err := json.Marshal(p.Metrics)
+	if err != nil {
+		w.Write([]byte(`{"error": "unable to grab metrics"}`))
+		w.Write([]byte(err.Error()))
+		return
+	}
+	w.Write(marshaled)
+}
+
+
 
 // Most of these will change to environment variables rather than flags
 func parseFlags() {
