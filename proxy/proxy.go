@@ -22,7 +22,7 @@ const (
 	cqlOpcodeByte   = 4
 	cqlQueryOpcode  = 7
 	cqlVersionByte  = 0
-	cqlBufferSize   = 0xffff
+	cqlBufferSize   = 0xffffffff
 
 	WAITING   = TableStatus("WAITING")
 	MIGRATING = TableStatus("MIGRATING")
