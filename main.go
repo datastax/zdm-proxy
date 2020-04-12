@@ -20,6 +20,7 @@ var (
 
 	dsbulkPath  string
 	hardRestart bool
+	threads     int
 )
 
 // Method mainly to test the proxy service for now
@@ -34,9 +35,9 @@ func main() {
 	migrationCompleteChan := make(chan struct{})
 
 	m := migration.Migration{
-		Keyspaces:    []string,
 		DsbulkPath:  dsbulkPath,
 		HardRestart: hardRestart,
+		Workers:     threads,
 
 		SourceHostname: sourceHostname,
 		SourceUsername: sourceUsername,
@@ -48,7 +49,7 @@ func main() {
 		DestPassword: astraPassword,
 		DestPort:     astraPort,
 
-		MigrationStartChan: migrationStartChan,
+		MigrationStartChan:    migrationStartChan,
 		MigrationCompleteChan: migrationCompleteChan,
 	}
 
@@ -73,8 +74,8 @@ func parseFlags() {
 	flag.StringVar(&astraUsername, "astra_username", "", "Aster Username")
 	flag.StringVar(&astraPassword, "astra_password", "", "Astra Password")
 	flag.IntVar(&astraPort, "astra_port", 9042, "Astra Port")
-	//flag.StringVar(&keyspace, "k", "", "Keyspace to migrate")
 	flag.StringVar(&dsbulkPath, "d", "/Users/terranceli/Documents/projects/codebase/datastax-s20/dsbulk-1.4.1/bin/dsbulk", "dsbulk executable path")
 	flag.BoolVar(&hardRestart, "r", false, "Hard restart (ignore checkpoint)")
+	flag.IntVar(&threads, "t", 1, "Number of threads to use")
 	flag.Parse()
 }

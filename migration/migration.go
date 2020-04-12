@@ -1,8 +1,7 @@
 package migration
 
 import (
-	"cloud-gate/utils"
-
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -12,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"cloud-gate/utils"
 
 	"github.com/gocql/gocql"
 )
@@ -42,7 +43,7 @@ type Table struct {
 
 // Status represents status of migration
 type Status struct {
-	Timestamp	 time.Time
+	Timestamp  time.Time
 	Tables     map[string]*map[string]*Table
 	Steps      int
 	TotalSteps int
@@ -63,9 +64,10 @@ func (s *Status) initTableData(tables map[string]*map[string]*gocql.TableMetadat
 	s.TotalSteps = 0
 	for keyspace, keyspaceTables := range tables {
 		s.TotalSteps += 3 * len(*keyspaceTables)
-		s.Tables[keyspace] = new(map[string]*Table)
-		for table, tableData := range *keyspaceTables {
-			s.Tables[keyspace][table] = &(Table{
+		t := make(map[string]*Table)
+		s.Tables[keyspace] = &t
+		for table := range *keyspaceTables {
+			(*s.Tables[keyspace])[table] = &(Table{
 				Name:     table,
 				Step:     Waiting,
 				Error:    nil,
@@ -80,8 +82,9 @@ type Migration struct {
 	Keyspaces   []string
 	DsbulkPath  string
 	HardRestart bool
+	Workers     int
 
-	MigrationStartChan chan *Status
+	MigrationStartChan    chan *Status
 	MigrationCompleteChan chan struct{}
 
 	SourceHostname string
@@ -114,7 +117,7 @@ func (m *Migration) Init() error {
 	if err != nil {
 		return err
 	}
-	
+
 	m.destSession, err = utils.ConnectToCluster(m.DestHostname, m.DestUsername, m.DestPassword, m.DestPort)
 	if err != nil {
 		return err
@@ -128,22 +131,18 @@ func (m *Migration) Init() error {
 }
 
 // Migrate executes the migration
-func (m *Migration) Migrate() {
+func (m *Migration) Migrate() error {
 	if !m.initialized {
-		panic("Migration must be initialized before migration can begin")
+		return errors.New("Migration must be initialized before migration can begin")
 	}
 
-	m.logAndPrint(fmt.Sprintf("== BEGIN MIGRATION ==\n"))
+	print(fmt.Sprintf("== BEGIN MIGRATION ==\n"))
 
 	defer m.sourceSession.Close()
 	defer m.destSession.Close()
-	
-	keyspaces, err := m.getKeyspaces()
-	if err != nil {
-		log.Fatal(err)
-	}
-	
-	tables, err := m.getTables(keyspaces)
+
+	m.getKeyspaces()
+	tables, err := m.getTables(m.Keyspaces)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -161,64 +160,43 @@ func (m *Migration) Migrate() {
 				}
 			}
 		}
-		
+
 		os.Remove("./migration.chk")
 		m.readCheckpoint()
 	}
 
 	begin := time.Now()
-
+	schemaJobs := make(chan *gocql.TableMetadata, len(tables))
+	tableJobs := make(chan *gocql.TableMetadata, len(tables))
 	var wgSchema sync.WaitGroup
-	wgSchema.Add(len(tables)) // TODO: what does this do and how to fix?
-	for keyspace, keyspaceTables := range tables {
-		for tableName, table := range *keyspaceTables {
-			// if we already migrated schema, skip this
-			go func(table *gocql.TableMetadata) {
-				defer wgSchema.Done()
-				if (*m.status.Tables[keyspace])[tableName].Step < MigratingSchemaComplete {
-					err = m.migrateSchema(keyspace, table)
-					if err != nil {
-						log.Fatal(err)
-					}
-	
-					m.status.Steps++
-					(*m.status.Tables[keyspace])[table.Name].Step = MigratingSchemaComplete
-					m.logAndPrint(fmt.Sprintf("COMPLETED MIGRATING TABLE SCHEMA: %s\n", table.Name))
-					m.writeCheckpoint()
-				}
-			}(table)
+	var wgTables sync.WaitGroup
+
+	for worker := 1; worker <= m.Workers; worker++ {
+		go m.schemaPool(worker, &wgSchema, schemaJobs)
+		go m.tablePool(worker, &wgTables, tableJobs)
+	}
+
+	for _, keyspaceTables := range tables {
+		for _, table := range *keyspaceTables {
+			wgSchema.Add(1)
+			schemaJobs <- table
 		}
 	}
+	close(schemaJobs)
 	wgSchema.Wait()
-
 	// Notify proxy service that schemas are finished migrating, unload/load starting
 	m.MigrationStartChan <- m.status
 
-	var wgTables sync.WaitGroup
-	wgTables.Add(len(tables)) // TODO: what does this do and how to fix?
-	for keyspace, keyspaceTables := range tables {
-		for tableName, table := range *keyspaceTables {
-			// if we already migrated table, skip this
-			go func(table *gocql.TableMetadata) {
-				defer wgTables.Done()
-				if (*m.status.Tables[keyspace])[tableName].Step != LoadingDataComplete {
-					err = m.migrateData(keyspace, table)
-					if err != nil {
-						log.Fatal(err)
-					}
-	
-					m.status.Steps += 2
-					(*m.status.Tables[keyspace])[tableName].Step = LoadingDataComplete
-					m.logAndPrint(fmt.Sprintf("COMPLETED LOADING TABLE DATA: %s\n", table.Name))
-					m.writeCheckpoint()
-				}
-				
-			}(table)
+	for _, keyspaceTables := range tables {
+		for _, table := range *keyspaceTables {
+			wgTables.Add(1)
+			tableJobs <- table
 		}
 	}
-	wgTables.Wait()
 
-	m.logAndPrint("COMPLETED MIGRATION\n")
+	close(tableJobs)
+	wgTables.Wait()
+	print("COMPLETED MIGRATION\n")
 
 	// calculate total file size of migrated data
 	var size int64
@@ -228,24 +206,35 @@ func (m *Migration) Migrate() {
 			size += dSize
 		}
 	}
-	
 
 	// calculate average speed in megabytes per second
 	m.status.Speed = (float64(size) / 1024 / 1024) / (float64(time.Now().UnixNano()-begin.UnixNano()) / 1000000000)
 
-	fmt.Println(m.status)
 	m.writeCheckpoint()
 	m.MigrationCompleteChan <- struct{}{}
+	return nil
 }
 
-// migrateSchema creates each new table in Astra with
-// column names and types, primary keys, and compaction information
-func (m *Migration) migrateSchema(keyspace string, table *gocql.TableMetadata) error {
-	(*m.status.Tables[keyspace])[table.Name].Step = MigratingSchema
-	m.logAndPrint(fmt.Sprintf("MIGRATING TABLE SCHEMA: %s... \n", table.Name))
+func (m *Migration) schemaPool(worker int, wg *sync.WaitGroup, jobs <-chan *gocql.TableMetadata) {
+	for table := range jobs {
+		// if we already migrated schema, skip this
+		if (*m.status.Tables[table.Keyspace])[table.Name].Step < MigratingSchemaComplete {
+			err := m.migrateSchema(table.Keyspace, table)
+			if err != nil {
+				log.Fatal(err)
+			}
 
-	query := fmt.Sprintf("CREATE TABLE %s.%s (", keyspace, table.Name)
+			m.status.Steps++
+			(*m.status.Tables[table.Keyspace])[table.Name].Step = MigratingSchemaComplete
+			print(fmt.Sprintf("COMPLETED MIGRATING TABLE SCHEMA: %s.%s\n", table.Keyspace, table.Name))
+			m.writeCheckpoint()
+		}
+		wg.Done()
+	}
+}
 
+func generateSchemaMigrationQuery(table *gocql.TableMetadata, compactionMap map[string]string) string {
+	query := fmt.Sprintf("CREATE TABLE %s.%s (", table.Keyspace, table.Name)
 	for cname, column := range table.Columns {
 		query += fmt.Sprintf("%s %s, ", cname, column.Type.Type().String())
 	}
@@ -256,22 +245,32 @@ func (m *Migration) migrateSchema(keyspace string, table *gocql.TableMetadata) e
 
 	query += ") "
 
-	// compaction
-	cQuery := `SELECT compaction FROM system_schema.tables
-					WHERE keyspace_name = ? and table_name = ?;`
-	cMap := make(map[string]interface{})
 	cString := "{"
-	itr := m.sourceSession.Query(cQuery, keyspace, table.Name).Iter()
-	itr.MapScan(cMap)
-
-	compactionMap := (cMap["compaction"]).(map[string]string)
-
 	for key, value := range compactionMap {
 		cString += fmt.Sprintf("'%s': '%s', ", key, value)
 	}
 	cString = cString[0:(len(cString)-2)] + "}"
 	query += fmt.Sprintf("WITH compaction = %s;", cString)
 
+	return query
+}
+
+// migrateSchema creates each new table in Astra with
+// column names and types, primary keys, and compaction information
+func (m *Migration) migrateSchema(keyspace string, table *gocql.TableMetadata) error {
+	(*m.status.Tables[keyspace])[table.Name].Step = MigratingSchema
+	print(fmt.Sprintf("MIGRATING TABLE SCHEMA: %s.%s... \n", table.Keyspace, table.Name))
+
+	// Fetch table compaction metadata
+	cQuery := `SELECT compaction FROM system_schema.tables
+					WHERE keyspace_name = ? and table_name = ?;`
+	cMap := make(map[string]interface{})
+	itr := m.sourceSession.Query(cQuery, keyspace, table.Name).Iter()
+	itr.MapScan(cMap)
+
+	compactionMap := (cMap["compaction"]).(map[string]string)
+
+	query := generateSchemaMigrationQuery(table, compactionMap)
 	err := m.destSession.Query(query).Exec()
 
 	if err != nil {
@@ -280,6 +279,23 @@ func (m *Migration) migrateSchema(keyspace string, table *gocql.TableMetadata) e
 		return err
 	}
 	return nil
+}
+
+func (m *Migration) tablePool(worker int, wg *sync.WaitGroup, jobs <-chan *gocql.TableMetadata) {
+	for table := range jobs {
+		if (*m.status.Tables[table.Keyspace])[table.Name].Step != LoadingDataComplete {
+			err := m.migrateData(table.Keyspace, table)
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			m.status.Steps += 2
+			(*m.status.Tables[table.Keyspace])[table.Name].Step = LoadingDataComplete
+			print(fmt.Sprintf("COMPLETED LOADING TABLE DATA: %s.%s\n", table.Keyspace, table.Name))
+			m.writeCheckpoint()
+		}
+		wg.Done()
+	}
 }
 
 // migrateData migrates a table from the source cluster to the Astra cluster
@@ -300,7 +316,7 @@ func (m *Migration) migrateData(keyspace string, table *gocql.TableMetadata) err
 // unloadTable exports a table CSV from the source cluster into DIRECTORY
 func (m *Migration) unloadTable(keyspace string, table *gocql.TableMetadata) error {
 	(*m.status.Tables[keyspace])[table.Name].Step = UnloadingData
-	m.logAndPrint(fmt.Sprintf("UNLOADING TABLE: %s...\n", table.Name))
+	print(fmt.Sprintf("UNLOADING TABLE: %s.%s...\n", table.Keyspace, table.Name))
 
 	cmdArgs := []string{"unload", "-port", strconv.Itoa(m.SourcePort), "-k", keyspace, "-t", table.Name, "-url", m.directory + keyspace + "." + table.Name, "-logDir", m.directory}
 	_, err := exec.Command(m.DsbulkPath, cmdArgs...).Output()
@@ -311,7 +327,7 @@ func (m *Migration) unloadTable(keyspace string, table *gocql.TableMetadata) err
 	}
 
 	(*m.status.Tables[keyspace])[table.Name].Step = UnloadingDataComplete
-	m.logAndPrint(fmt.Sprintf("COMPLETED UNLOADING TABLE: %s\n", table.Name))
+	print(fmt.Sprintf("COMPLETED UNLOADING TABLE: %s.%s\n", table.Keyspace, table.Name))
 	return nil
 }
 
@@ -319,7 +335,7 @@ func (m *Migration) unloadTable(keyspace string, table *gocql.TableMetadata) err
 // into the target cluster
 func (m *Migration) loadTable(keyspace string, table *gocql.TableMetadata) error {
 	(*m.status.Tables[keyspace])[table.Name].Step = LoadingData
-	m.logAndPrint(fmt.Sprintf("LOADING TABLE: %s...\n", table.Name))
+	print(fmt.Sprintf("LOADING TABLE: %s.%s...\n", table.Keyspace, table.Name))
 
 	cmdArgs := []string{"load", "-h", m.DestHostname, "-port", strconv.Itoa(m.DestPort), "-k", keyspace, "-t", table.Name, "-url", m.directory + keyspace + "." + table.Name, "-logDir", m.directory}
 	_, err := exec.Command(m.DsbulkPath, cmdArgs...).Output()
@@ -332,20 +348,17 @@ func (m *Migration) loadTable(keyspace string, table *gocql.TableMetadata) error
 	return nil
 }
 
-func (m *Migration) getKeyspaces() ([]string, error) {
-	kQuery := `SELECT keyspace_name FROM system_schema.keyspaces;`
-	kMap := make(map[string]interface{})
-	itr := m.sourceSession.Query(kQuery).Iter()
-	itr.MapScan(kMap)
-
-	names := (kMap["keyspace_name"]).([]string)
-	// ignoreKeyspaces is for testing and omitting system keyspaces
+func (m *Migration) getKeyspaces() {
 	ignoreKeyspaces := []string{"system_auth", "system_schema", "dse_system_local", "dse_system", "dse_leases", "solr_admin",
-	"dse_insights", "dse_insights_local", "system_distributed", "system", "dse_perf", "system_traces", "dse_security"}
-	
-	for _, name := range names {
-		if (!utils.Contains(ignoreKeyspaces, name)) {
-			m.Keyspaces = append(m.Keyspaces, ) // TODO:
+		"dse_insights", "dse_insights_local", "system_distributed", "system", "dse_perf", "system_traces", "dse_security"}
+
+	kQuery := `SELECT keyspace_name FROM system_schema.keyspaces;`
+	itr := m.sourceSession.Query(kQuery).Iter()
+
+	var keyspaceName string
+	for itr.Scan(&keyspaceName) {
+		if !utils.Contains(ignoreKeyspaces, keyspaceName) {
+			m.Keyspaces = append(m.Keyspaces, keyspaceName)
 		}
 	}
 }
@@ -355,8 +368,8 @@ func (m *Migration) getTables(keyspaces []string) (map[string]*map[string]*gocql
 	tableMetadata := make(map[string]*map[string]*gocql.TableMetadata)
 	for _, keyspace := range keyspaces {
 		md, err := m.sourceSession.KeyspaceMetadata(keyspace)
-		if (err != nil) {
-			m.logAndPrint(fmt.Sprintf("ERROR GETTING KEYSPACE %s...\n", keyspace))
+		if err != nil {
+			print(fmt.Sprintf("ERROR GETTING KEYSPACE %s...\n", keyspace))
 			log.Fatal(err)
 		}
 		tableMetadata[keyspace] = &md.Tables
@@ -374,11 +387,11 @@ func (m *Migration) writeCheckpoint() {
 	for keyspace, keyspaceTables := range m.status.Tables {
 		for tableName, table := range *keyspaceTables {
 			if table.Step >= MigratingSchemaComplete {
-				data += fmt.Sprintf("s:%s\n", keyspace + "." + tableName)
+				data += fmt.Sprintf("s:%s\n", keyspace+"."+tableName)
 			}
-	
+
 			if table.Step == LoadingDataComplete {
-				data += fmt.Sprintf("d:%s\n", keyspace + "." + tableName)
+				data += fmt.Sprintf("d:%s\n", keyspace+"."+tableName)
 			}
 		}
 	}
@@ -407,7 +420,7 @@ func (m *Migration) readCheckpoint() {
 	savedMigration := strings.Fields(string(data))
 
 	m.status.Timestamp, _ = time.Parse(time.RFC3339, savedMigration[0])
-	for _, entry := range savedMigration {
+	for _, entry := range savedMigration[1:] {
 		tableNameTokens := strings.Split(entry[2:], ".")
 		keyspace := tableNameTokens[0]
 		tableName := tableNameTokens[1]
@@ -421,19 +434,7 @@ func (m *Migration) readCheckpoint() {
 	}
 }
 
-func (m *Migration) logAndPrint(s string) {
+func print(s string) {
 	msg := fmt.Sprintf("[%s] %s", time.Now().String(), s)
 	fmt.Printf(msg)
-
-	m.logLock.Lock()
-	defer m.logLock.Unlock()
-	f, err := os.OpenFile(fmt.Sprintf("%slog.txt", m.directory),
-		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer f.Close()
-	if _, err := f.WriteString(msg); err != nil {
-		log.Fatal(err)
-	}
 }
