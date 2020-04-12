@@ -266,7 +266,13 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 		defer p.decrementSources()
 	}
 
-	buf := make([]byte, cqlBufferSize)
+	// TODO: Finalize buffer size
+	// 	Right now just using 0xffff as a placeholder, but the maximum request
+	// 	that could be sent through the CQL wire protocol is 256mb, so we should accommodate that, unless there's
+	// 	an issue with that
+	buf := make([]byte, 0xffff)
+	data := make([]byte, 0);
+	consumeData := false
 	for {
 		bytesRead, err := src.Read(buf)
 		if err != nil {
@@ -277,32 +283,56 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 			}
 			return
 		}
+		log.Debugf("Read %d bytes from src %s", bytesRead, src.RemoteAddr())
+		data = append(data, buf[:bytesRead]...)
 
-		b := buf[:bytesRead]
-		_, err = dst.Write(b)
-		if err != nil {
-			log.Error(err)
-			continue
-		}
+		consumeData = true
+		for consumeData {
 
-		// We only want to mirror writes if this connection is still directly connected to the
-		// user's DB
-		if !p.migrationComplete || dst.RemoteAddr().String() == p.sourceHostString {
-			// Parse only if it's a request from the client:
-			// 		First bit of version field is a 0 (< 0x80)
-			// AND
-			// Parse only if it's a query:
-			// 		OPCode is 0x07
-			if b[cqlVersionByte] < 0x80 && b[cqlOpcodeByte] == cqlQueryOpcode {
-				err := p.parseQuery(b)
+			//if there is not a full CQL header
+			if len(data) < cqlHeaderLength {
+				consumeData = false
+				break
+			}
+
+			bodyLength := binary.BigEndian.Uint32(data[5:9])
+			fullLength := cqlHeaderLength + int(bodyLength)
+			if len(data) < fullLength {
+				consumeData = false
+				break
+			} else {
+				indivQuery := data[:fullLength]
+				bytesWritten, err := dst.Write(indivQuery)
 				if err != nil {
-					// TODO: Handle error
 					log.Error(err)
+					continue
 				}
+				log.Debugf("Wrote %d bytes", bytesWritten)
+				// We only want to mirror writes if the migration is not complete,
+				// OR if the migration is complete, but this connection is still directly connected to the
+				// user's DB (ex: migration is finished while the user is actively connected to the proxy)
+				// TODO: Can possibly get rid of the !p.migrationComplete part of the condition
+				if !p.migrationComplete || dst.RemoteAddr().String() == p.sourceHostString {
+					// Parse only if it's a request from the client:
+					// 		First bit of version field is a 0 (< 0x80)
+					// AND
+					// Parse only if it's a query:
+					// 		OPCode is 0x07
+					if indivQuery[cqlVersionByte] < 0x80 && indivQuery[cqlOpcodeByte] == cqlQueryOpcode {
+						err := p.parseQuery(indivQuery)
+						if err != nil {
+							// TODO: Handle error
+							log.Error(err)
+						}
+					}
+				}
+
+				p.Metrics.incrementPackets()
+
+				//FIXME: Verify that this frees
+				data = data[fullLength:]
 			}
 		}
-
-		p.Metrics.incrementPackets()
 	}
 }
 
@@ -349,6 +379,7 @@ func (p *CQLProxy) executeQuery(q *Query) error {
 		return errors.New("ran query on nonexistent session")
 	}
 
+	fmt.Println(q.Query)
 	err := session.Query(q.Query).Exec()
 	if err != nil {
 		return err
