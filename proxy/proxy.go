@@ -361,9 +361,37 @@ func (p *CQLProxy) mirrorData(data []byte) error {
 		log.Errorf("Encountered parsing error %v", err)
 	}
 
-	//FIXME: Handle actions based on paths
+	// FIXME: Handle more actions based on paths
+	// currently handles batch, query, and prepare statements that involve 'use, insert, update, delete, and truncate'
+	if len(paths) > 1 {
+		return p.handleBatchQuery(data, paths)
+	} else {
+		fields := strings.Split(paths[0], "/")
 
+		if len(fields) > 2 {
+			if fields[1] == "prepare" {
+				p.executeQuery(data)
+			} else if fields[1] == "query" || fields[1] == "execute" {
+				switch fields[2] {
+				case "use":
+					return p.handleUseQuery(data, path[0])
+				case "insert":
+					return p.handleInsertQuery(data, path[0])
+				case "update":
+					return p.handleUpdateQuery(data, path[0])
+				case "delete":
+					return p.handleDeleteQuery(data, path[0])
+				case "truncate":
+					return p.handleTruncateQuery(data, path[0])
+				}
+			}
+		} else {
+			// path is '/opcode' case
+			// FIXME: decide if there are any cases we need to handle here
+			p.executeQuery(data)
+		}
 
+	}
 }
 
 // Taken with small modifications from
@@ -563,6 +591,7 @@ func parseCassandra(p *CQLProxy, query string) (string, string) {
 		// UPDATE <table-name>
 		table = strings.ToLower(fields[1])
 	case "use":
+		//FIXME: modify to handle case-sensitive keyspace
 		p.Keyspace = strings.Trim(fields[1], "\"\\'")
 		log.Debugf("Saving keyspace '%s'", p.Keyspace)
 		table = p.Keyspace
