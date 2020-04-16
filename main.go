@@ -143,7 +143,7 @@ func doTesting(p *proxy.CQLProxy) {
 				tables["codebase"]["tasks"] = &proxy.Table{
 					Name:     "tasks",
 					Keyspace: "codebase",
-					Status:   proxy.WAITING,
+					Status:   proxy.MIGRATED,
 					Error:    nil,
 					Lock:     &sync.Mutex{},
 				}

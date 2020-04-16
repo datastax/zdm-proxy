@@ -13,16 +13,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gocql/gocql"
 	log "github.com/sirupsen/logrus"
 )
 
 const (
 	cqlHeaderLength = 9
-	cqlOpcodeByte   = 4
-	cqlQueryOpcode  = 7
-	cqlVersionByte  = 0
-	cqlBufferSize   = 0xffffffff
 
 	unknownPreparedQueryPath = "/unknown-prepared-query"
 
@@ -31,11 +26,13 @@ const (
 	MIGRATED  = TableStatus("MIGRATED")
 	ERROR     = TableStatus("ERROR")
 
-	USE      = QueryType("USE")
-	INSERT   = QueryType("INSERT")
-	UPDATE   = QueryType("UPDATE")
-	DELETE   = QueryType("DELETE")
-	TRUNCATE = QueryType("TRUNCATE")
+	USE = QueryType("use")
+	INSERT = QueryType("insert")
+	UPDATE = QueryType("update")
+	DELETE = QueryType("delete")
+	TRUNCATE = QueryType("truncate")
+	PREPARE = QueryType("prepare")
+	MISC = QueryType("misc")
 
 	// TODO: Finalize queue size to use
 	queueSize = 1000
@@ -78,7 +75,7 @@ type CQLProxy struct {
 
 	Port     int
 	listener net.Listener
-	Sessions map[string]*gocql.Session
+	astraSession *net.Conn
 
 	tableQueues map[string]map[string]chan *Query
 	queueSizes  map[string]map[string]int
@@ -139,11 +136,13 @@ type CQLProxy struct {
 
 type QueryType string
 
+
 type Query struct {
 	Table *Table
 
-	Type  QueryType
-	Query string
+
+	Type QueryType
+	Query []byte
 }
 
 // TODO: Maybe change migration_complete to migration_in_progress, so that we can turn on proxy before migration
@@ -208,11 +207,11 @@ func (p *CQLProxy) Start() error {
 	p.reset()
 
 	// Attempt to connect to astra database using given credentials
-	session, err := p.connect(p.Keyspace)
+	conn, err := p.connect()
 	if err != nil {
 		return err
 	}
-	p.Sessions[p.Keyspace] = session
+	p.astraSession = conn
 
 	go p.migrationLoop()
 
@@ -293,7 +292,7 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 			}
 			return
 		}
-		log.Debugf("Read %d bytes from src %s", bytesRead, src.RemoteAddr())
+		//log.Debugf("Read %d bytes from src %s", bytesRead, src.RemoteAddr())
 		data = append(data, buf[:bytesRead]...)
 
 		consumeData = true
@@ -312,12 +311,12 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 				break
 			} else {
 				indivQuery := data[:fullLength]
-				bytesWritten, err := dst.Write(indivQuery)
+				_, err := dst.Write(indivQuery)
 				if err != nil {
 					log.Error(err)
 					continue
 				}
-				log.Debugf("Wrote %d bytes", bytesWritten)
+				//log.Debugf("Wrote %d bytes", bytesWritten)
 				// We only want to mirror writes if the migration is not complete,
 				// OR if the migration is complete, but this connection is still directly connected to the
 				// user's DB (ex: migration is finished while the user is actively connected to the proxy)
@@ -364,34 +363,45 @@ func (p *CQLProxy) mirrorData(data []byte) error {
 	// FIXME: Handle more actions based on paths
 	// currently handles batch, query, and prepare statements that involve 'use, insert, update, delete, and truncate'
 	if len(paths) > 1 {
-		return p.handleBatchQuery(data, paths)
+		return nil
+		// return p.handleBatchQuery(data, paths)
+		// TODO: Handle batch statements
 	} else {
 		fields := strings.Split(paths[0], "/")
 
 		if len(fields) > 2 {
 			if fields[1] == "prepare" {
-				p.executeQuery(data)
+				q := &Query{
+					Table: nil,
+					Type: PREPARE,
+					Query: data}
+				return p.executeQuery(q)
 			} else if fields[1] == "query" || fields[1] == "execute" {
 				switch fields[2] {
 				case "use":
-					return p.handleUseQuery(data, path[0])
+					return p.handleUseQuery(data, paths[0])
 				case "insert":
-					return p.handleInsertQuery(data, path[0])
+					return p.handleInsertQuery(data, paths[0])
 				case "update":
-					return p.handleUpdateQuery(data, path[0])
+					return p.handleUpdateQuery(data, paths[0])
 				case "delete":
-					return p.handleDeleteQuery(data, path[0])
+					return p.handleDeleteQuery(data, paths[0])
 				case "truncate":
-					return p.handleTruncateQuery(data, path[0])
+					return p.handleTruncateQuery(data, paths[0])
 				}
 			}
 		} else {
 			// path is '/opcode' case
 			// FIXME: decide if there are any cases we need to handle here
-			p.executeQuery(data)
+			q := &Query{
+				Table: nil,
+				Type: MISC,
+				Query: data}
+			return p.executeQuery(q)
 		}
 
 	}
+	return nil
 }
 
 // Taken with small modifications from
@@ -591,10 +601,7 @@ func parseCassandra(p *CQLProxy, query string) (string, string) {
 		// UPDATE <table-name>
 		table = strings.ToLower(fields[1])
 	case "use":
-		//FIXME: modify to handle case-sensitive keyspace
-		p.Keyspace = strings.Trim(fields[1], "\"\\'")
-		log.Debugf("Saving keyspace '%s'", p.Keyspace)
-		table = p.Keyspace
+		table = fields[1]
 	case "alter", "create", "drop", "truncate", "list":
 
 		action = strings.Join([]string{action, fields[1]}, "-")
@@ -659,117 +666,43 @@ func readPastBatchValues(data []byte, initialOffset int) int {
 	return offset
 }
 
-// TODO: Deal with more cases
-// TODO: FIX BUG: When the user uses a function such as now(), since it is calculated on the databases side,
-// 	the client DB and astra will have different values.
-func (p *CQLProxy) parseQuery(b []byte) error {
-	// Trim off header portion of the query
-	trimmed := b[cqlHeaderLength:]
-
-	// Find length of query body
-	queryLen := binary.BigEndian.Uint32(trimmed[:4])
-
-	// Splice out query body
-	query := string(trimmed[4 : 4+queryLen])
-
-	// Get keyword of the query
-	// Currently only supports queries of the type "KEYWORD -------------"
-	keyword := strings.ToUpper(query[0:strings.IndexRune(query, ' ')])
-
-	// Check if keyword is a write (add more later)
-	// TODO: Figure out what to do with responses from writes
-	// 	Add delete keyword + others
-	// TODO: When we're extracting keyspaces, if the keyspace doesn't have a gocql session attributed to it,
-	// 	we need to start one up (this is for the idea of having a mapping from keyspace to gocql session)
-	switch keyword {
-	case "USE":
-		return p.handleUseQuery(query)
-	case "INSERT":
-		return p.handleInsertQuery(query)
-	case "UPDATE":
-		return p.handleUpdateQuery(query)
-	case "DELETE":
-		return p.handleDeleteQuery(query)
-	case "TRUNCATE":
-		return p.handleTruncateQuery(query)
-	}
-
-	return nil
-}
-
 func (p *CQLProxy) executeQuery(q *Query) error {
-	session, ok := p.Sessions[q.Table.Keyspace]
-	if !ok {
-		return errors.New("ran query on nonexistent session")
-	}
-
-	fmt.Println(q.Query)
-	err := session.Query(q.Query).Exec()
+	_, err := (*p.astraSession).Write(q.Query)
 	if err != nil {
 		return err
 	}
 
 	// For testing
-	log.Debugf("Executing %v on keyspace %s", *q, q.Table.Keyspace)
+	log.Debugf("Executing %v", *q)
+
 	return nil
 }
 
-func (p *CQLProxy) handleUseQuery(query string) error {
-	split := strings.Split(query, " ")
+func (p *CQLProxy) handleUseQuery(query []byte, path string) error {
+	split := strings.Split(path, "/")
 
-	// Invalid query, don't run
-	if len(split) < 2 {
-		return nil
-	}
-
-	// Remove trailing semicolon if it's attached
-	keyspace := strings.TrimSuffix(split[1], ";")
-
-	// If surrounded by quotation marks, case sensitive, else not case sensitive
+	// Remove trailing semicolon, if it's attached
+	keyspace := split[3]
 	if strings.HasPrefix(keyspace, "\"") && strings.HasSuffix(keyspace, "\"") {
 		keyspace = keyspace[1 : len(keyspace)-1]
 	} else {
 		keyspace = strings.ToLower(keyspace)
 	}
 
-	log.Debugf("Attempting to connect to keyspace %s", keyspace)
-	// Open new session if this is the first time we're using this keyspace
-	// Will error out on an invalid keyspace, so we know after this if statement that the keyspace is valid
-	if _, ok := p.Sessions[keyspace]; !ok {
-		newSession, err := p.connect(keyspace)
-		if err != nil {
-			return err
-		}
-		p.Sessions[keyspace] = newSession
-	}
-
 	p.Keyspace = keyspace
 
-	return nil
+	q := &Query{
+		Table: nil,
+		Type: USE,
+		Query: query}
+
+	return p.executeQuery(q)
 }
 
-func (p *CQLProxy) handleTruncateQuery(query string) error {
-	split := strings.Split(strings.ToUpper(query), " ")
-	// Invalid query, don't run
-	// TODO: maybe return an error or something, if necessary
-	if len(split) < 2 {
-		return nil
-	}
+func (p *CQLProxy) handleTruncateQuery(query []byte, path string) error {
+	split := strings.Split(path, "/")
 
-	// Two possibilities for a TRUNCATE query:
-	//    TRUNCATE keyspace.table;
-	// OR
-	//	  TRUNCATE TABLE keyspace.table;
-	var keyspace string
-	var tableName string
-	if split[1] == "TABLE" {
-		keyspace, tableName = extractTableInfo(split[2])
-	} else {
-		keyspace, tableName = extractTableInfo(split[1])
-	}
-	if keyspace == "" {
-		keyspace = p.Keyspace
-	}
+	keyspace, tableName := extractTableInfo(split[3])
 
 	table, ok := p.migrationStatus.Tables[keyspace][tableName]
 	if !ok {
@@ -789,23 +722,10 @@ func (p *CQLProxy) handleTruncateQuery(query string) error {
 	return nil
 }
 
-func (p *CQLProxy) handleDeleteQuery(query string) error {
-	split := strings.Split(query, " ")
+func (p *CQLProxy) handleDeleteQuery(query []byte, path string) error {
+	split := strings.Split(path, "/")
 
-	// Query must be invalid, don't run
-	if len(split) < 5 {
-		return nil
-	}
-
-	// TODO: must make query all upper to do if v == "FROM"
-	var keyspace string
-	var tableName string
-	for i, v := range split {
-		if v == "FROM" {
-			keyspace, tableName = extractTableInfo(split[i+1])
-			break
-		}
-	}
+	keyspace, tableName := extractTableInfo(split[3])
 
 	if keyspace == "" {
 		keyspace = p.Keyspace
@@ -831,19 +751,10 @@ func (p *CQLProxy) handleDeleteQuery(query string) error {
 }
 
 // Extract table name from insert query & add query to proper queue
-func (p *CQLProxy) handleInsertQuery(query string) error {
-	// TODO: Clean this up
-	split := strings.Split(query, " ")
+func (p *CQLProxy) handleInsertQuery(query []byte, path string) error {
+	split := strings.Split(path, "/")
 
-	// Query must be invalid, ignore
-	if len(split) < 5 {
-		return nil
-	}
-
-	keyspace, tableName := extractTableInfo(split[2])
-	if keyspace == "" {
-		keyspace = p.Keyspace
-	}
+	keyspace, tableName := extractTableInfo(split[3])
 
 	table, ok := p.migrationStatus.Tables[keyspace][tableName]
 	if !ok {
@@ -860,19 +771,10 @@ func (p *CQLProxy) handleInsertQuery(query string) error {
 }
 
 // Extract table name from update query & add query to proper queue
-func (p *CQLProxy) handleUpdateQuery(query string) error {
-	// TODO: See if there's a better way to go about doing this
-	split := strings.Split(query, " ")
+func (p *CQLProxy) handleUpdateQuery(query []byte, path string) error {
+	split := strings.Split(path, "/")
 
-	// Query must be invalid, ignore
-	if len(split) < 6 {
-		return nil
-	}
-
-	keyspace, tableName := extractTableInfo(split[1])
-	if keyspace == "" {
-		keyspace = p.Keyspace
-	}
+	keyspace, tableName := extractTableInfo(split[3])
 
 	table, ok := p.migrationStatus.Tables[keyspace][tableName]
 	if !ok {
@@ -890,6 +792,11 @@ func (p *CQLProxy) handleUpdateQuery(query string) error {
 		Query: query}
 
 	p.queueQuery(q)
+	return nil
+}
+
+//TODO: Handle batch statements
+func (p *CQLProxy) handleBatchQuery(query []byte, paths []string) error{
 	return nil
 }
 
@@ -1004,25 +911,19 @@ func (p *CQLProxy) decrementSources() {
 }
 
 // TODO: Maybe add a couple retries, or let the caller deal with that?
-func (p *CQLProxy) connect(keyspace string) (*gocql.Session, error) {
-	session, err := utils.ConnectToCluster(p.AstraHostname, p.AstraUsername, p.AstraPassword, p.AstraPort, keyspace)
-	if err != nil {
-		return nil, err
-	}
-
-	return session, err
+func (p *CQLProxy) connect() (*net.Conn, error) {
+	astraHostString := fmt.Sprintf("%s:%d", p.AstraHostname, p.AstraPort)
+	dst, err := net.Dial("tcp", astraHostString)
+	return &dst, err
 }
 
 func (p *CQLProxy) Shutdown() {
 	p.shutdown <- struct{}{}
 	p.listener.Close()
-	for _, session := range p.Sessions {
-		session.Close()
-	}
+	(*p.astraSession).Close()
 }
 
 func (p *CQLProxy) reset() {
-	p.Sessions = make(map[string]*gocql.Session)
 	p.tableQueues = make(map[string]map[string]chan *Query)
 	p.queueSizes = make(map[string]map[string]int)
 	p.tableWaiting = make(map[string]map[string]bool)
