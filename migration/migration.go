@@ -1,10 +1,13 @@
 package migration
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
+	"net"
 	"os"
 	"os/exec"
 	"strconv"
@@ -12,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"cloud-gate/requests"
 	"cloud-gate/utils"
 
 	"github.com/gocql/gocql"
@@ -83,9 +87,7 @@ type Migration struct {
 	DsbulkPath  string
 	HardRestart bool
 	Workers     int
-
-	MigrationStartChan    chan *Status
-	MigrationCompleteChan chan struct{}
+	ProxyPort   int
 
 	SourceHostname string
 	SourceUsername string
@@ -185,7 +187,10 @@ func (m *Migration) Migrate() error {
 	close(schemaJobs)
 	wgSchema.Wait()
 	// Notify proxy service that schemas are finished migrating, unload/load starting
-	m.MigrationStartChan <- m.status
+	m.sendRequest(&requests.Request{
+		Type: requests.Start,
+		Data: make([]byte, 0),
+	})
 
 	for _, keyspaceTables := range tables {
 		for _, table := range *keyspaceTables {
@@ -198,7 +203,7 @@ func (m *Migration) Migrate() error {
 	wgTables.Wait()
 	print("COMPLETED MIGRATION\n")
 
-	// calculate total file size of migrated data
+	// Calculate total file size of migrated data
 	var size int64
 	for keyspace, keyspaceTables := range tables {
 		for tableName := range *keyspaceTables {
@@ -207,17 +212,22 @@ func (m *Migration) Migrate() error {
 		}
 	}
 
-	// calculate average speed in megabytes per second
+	// Calculate average speed in megabytes per second
 	m.status.Speed = (float64(size) / 1024 / 1024) / (float64(time.Now().UnixNano()-begin.UnixNano()) / 1000000000)
 
 	m.writeCheckpoint()
-	m.MigrationCompleteChan <- struct{}{}
+	// Notify proxy of completed migration
+	m.sendRequest(&requests.Request{
+		Type: requests.Complete,
+		Data: make([]byte, 0),
+	})
+
 	return nil
 }
 
 func (m *Migration) schemaPool(worker int, wg *sync.WaitGroup, jobs <-chan *gocql.TableMetadata) {
 	for table := range jobs {
-		// if we already migrated schema, skip this
+		// If we already migrated schema, skip this
 		if (*m.status.Tables[table.Keyspace])[table.Name].Step < MigratingSchemaComplete {
 			err := m.migrateSchema(table.Keyspace, table)
 			if err != nil {
@@ -293,6 +303,16 @@ func (m *Migration) tablePool(worker int, wg *sync.WaitGroup, jobs <-chan *gocql
 			(*m.status.Tables[table.Keyspace])[table.Name].Step = LoadingDataComplete
 			print(fmt.Sprintf("COMPLETED LOADING TABLE DATA: %s.%s\n", table.Keyspace, table.Name))
 			m.writeCheckpoint()
+
+			bytes, err := json.Marshal((*m.status.Tables[table.Keyspace])[table.Name])
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			m.sendRequest(&requests.Request{
+				Type: requests.TableUpdate,
+				Data: bytes,
+			})
 		}
 		wg.Done()
 	}
@@ -310,6 +330,7 @@ func (m *Migration) migrateData(keyspace string, table *gocql.TableMetadata) err
 	if err != nil {
 		return err
 	}
+
 	return nil
 }
 
@@ -437,4 +458,104 @@ func (m *Migration) readCheckpoint() {
 func print(s string) {
 	msg := fmt.Sprintf("[%s] %s", time.Now().String(), s)
 	fmt.Printf(msg)
+}
+
+// startCommunication sets up communication between migration and proxy service using web sockets
+func (m *Migration) startCommunication() error {
+	l, err := net.Listen("tcp", fmt.Sprintf(":%d", m.ProxyPort))
+	if err != nil {
+		return err
+	}
+	defer l.Close()
+	for {
+		conn, err := l.Accept()
+		if err != nil {
+			select {
+			default:
+				print(err.Error())
+				continue
+			}
+		}
+		go m.processRequest(conn)
+	}
+}
+
+// processRequest reads in the request and sends it to the handleRequest method
+func (m *Migration) processRequest(conn net.Conn) error {
+	// TODO: change buffer size
+	buf := make([]byte, 100)
+	for {
+		bytesRead, err := conn.Read(buf)
+		if err != nil {
+			if err == io.EOF {
+				print(err.Error())
+			}
+			return err
+		}
+		b := buf[:bytesRead]
+		var req requests.Request
+		err = json.Unmarshal(b, &req)
+		if err != nil {
+			print(err.Error())
+			return err
+		}
+
+		err = m.handleRequest(&req)
+		if err != nil {
+			print(err.Error())
+			return err
+		}
+
+		_, err = conn.Write(b)
+		if err != nil {
+			print(err.Error())
+			continue
+		}
+	}
+}
+
+// sendRequest will notify the proxy service about the migration progress
+// For now, because proxy port is not set up and we cannot test with proxy, we return on error
+func (m *Migration) sendRequest(req *requests.Request) error {
+	conn, err := net.Dial("tcp", fmt.Sprintf(":%d", m.ProxyPort))
+	if err != nil || conn == nil {
+		print("Can't reach proxy service...\n")
+		return err
+	}
+
+	defer conn.Close()
+
+	bytes, err := json.Marshal(*req)
+	_, err = conn.Write(bytes)
+	if err != nil {
+		print(err.Error())
+		return err
+	}
+	return nil
+}
+
+// handleRequest takes the notification from proxy service and either
+// 1) stops the migration process due to a failure
+// 2) update priority queue with the next table that needs to be migrated (Have not yet implemented)
+func (m *Migration) handleRequest(req *requests.Request) error {
+	// TODO: figure out what kind of requests from the proxy service we need to handle
+	// 1. shutdown 2. pq update
+	switch req.Type {
+	case requests.Shutdown:
+		// TODO: something something figure out how to restart automatically
+		log.Fatal("Proxy Service failed, need to restart services")
+	case requests.TableUpdate:
+		var table Table
+		err := json.Unmarshal(req.Data, &table)
+		if err != nil {
+			// log error
+			return err
+		}
+		(*m.status.Tables[table.Keyspace])[table.Name].Priority = table.Priority
+		// TODO: something something priority queue
+		// pqLock.Lock()
+		// change table priority value
+		// pqLock.Unlock()
+	}
+	return nil
 }
