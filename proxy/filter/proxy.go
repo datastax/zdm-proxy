@@ -3,6 +3,7 @@ package filter
 import (
 	"cloud-gate/proxy/cqlparser"
 	"cloud-gate/updates"
+	"cloud-gate/migration/migration"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -70,12 +71,12 @@ type CQLProxy struct {
 	MigrationCompleteChan chan struct{}
 
 	// Channel that signals that the migrator has begun the unloading/loading process
-	MigrationStartChan chan *MigrationStatus
-	migrationStatus    *MigrationStatus
+	MigrationStartChan chan *migration.Status
+	migrationStatus    *migration.Status
 
 	// Channel that the migration service will send us tables that have finished migrating
 	// so that we can restart their queue consumption if it was paused
-	TableMigratedChan chan *Table
+	TableMigratedChan chan *migration.Table
 
 	// Is the proxy ready to process queries from user?
 	ready bool
@@ -107,7 +108,7 @@ type CQLProxy struct {
 type QueryType string
 
 type Query struct {
-	Table *Table
+	Table *migration.Table
 
 	Type  QueryType
 	Query []byte
@@ -175,7 +176,7 @@ func (p *CQLProxy) migrationLoop() {
 	}
 }
 
-func (p *CQLProxy) loadMigrationInfo(status *MigrationStatus) {
+func (p *CQLProxy) loadMigrationInfo(status *migration.Status) {
 	for keyspace, tables := range status.Tables {
 		p.tableQueues[keyspace] = make(map[string]chan *Query)
 		p.tableStarts[keyspace] = make(map[string]chan struct{})
@@ -288,16 +289,16 @@ func (p *CQLProxy) handleMigrationCommunication(conn net.Conn) {
 
 func (p *CQLProxy) handleUpdate(req *updates.Update) error {
 	switch req.Type {
-	case updates.START:
-		var status MigrationStatus
+	case updates.Start:
+		var status migration.Status
 		err := json.Unmarshal(req.Data, &status)
 		if err != nil {
 			return err
 		}
 
 		p.MigrationStartChan <- &status
-	case updates.TABLE_UPDATE:
-		var table Table
+	case updates.TableUpdate:
+		var table migration.Table
 		err := json.Unmarshal(req.Data, &table)
 		if err != nil {
 			return err
@@ -305,9 +306,9 @@ func (p *CQLProxy) handleUpdate(req *updates.Update) error {
 		p.migrationStatus.Lock.Lock()
 		p.migrationStatus.Tables[table.Keyspace][table.Name] = &table
 		p.migrationStatus.Lock.Unlock()
-	case updates.COMPLETE:
+	case updates.Complete:
 		p.MigrationCompleteChan <- struct{}{}
-	case updates.SHUTDOWN:
+	case updates.Shutdown:
 		p.ShutdownChan <- struct{}{}
 	}
 	return nil
@@ -492,7 +493,7 @@ func (p *CQLProxy) handleTruncateQuery(query []byte, path string) error {
 		return fmt.Errorf("table %s.%s does not exist", keyspace, tableName)
 	}
 
-	if p.tableStatus(keyspace, tableName) != MIGRATED {
+	if p.tableStatus(keyspace, tableName) != migration.LoadingDataComplete {
 		p.stopTable(keyspace, tableName)
 	}
 
@@ -520,7 +521,7 @@ func (p *CQLProxy) handleDeleteQuery(query []byte, path string) error {
 	}
 
 	// Wait for migration of table to be finished before processing anymore queries
-	if p.tableStatus(keyspace, tableName) != MIGRATED {
+	if p.tableStatus(keyspace, tableName) != migration.LoadingDataComplete  {
 		p.stopTable(keyspace, tableName)
 	}
 
@@ -565,7 +566,7 @@ func (p *CQLProxy) handleUpdateQuery(query []byte, path string) error {
 	}
 
 	// Wait for migration of table to be finished before processing anymore queries
-	if p.tableStatus(keyspace, tableName) != MIGRATED {
+	if p.tableStatus(keyspace, tableName) != migration.LoadingDataComplete  {
 		p.stopTable(keyspace, tableName)
 	}
 
@@ -644,12 +645,12 @@ func (p *CQLProxy) execute(query *Query) error {
 	return err
 }
 
-func (p *CQLProxy) tableStatus(keyspace string, tableName string) TableStatus {
+func (p *CQLProxy) tableStatus(keyspace string, tableName string) migration.Step {
 	table := p.migrationStatus.Tables[keyspace][tableName]
 	table.Lock.Lock()
 	defer table.Lock.Unlock()
 
-	status := table.Status
+	status := table.Step
 	return status
 }
 
