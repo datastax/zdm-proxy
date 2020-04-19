@@ -87,7 +87,7 @@ func main() {
 		select {
 		case <-p.ReadyChan:
 			log.Info("Coordinator received proxy ready signal.")
-			err := p.Listen()
+			err := p.StartProxyListener()
 			if err != nil {
 				panic(err)
 			}

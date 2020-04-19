@@ -17,48 +17,19 @@ import (
 )
 
 const (
-	cqlHeaderLength = 9
-
 	unknownPreparedQueryPath = "/unknown-prepared-query"
 
-	WAITING   = TableStatus("WAITING")
-	MIGRATING = TableStatus("MIGRATING")
-	MIGRATED  = TableStatus("MIGRATED")
-	ERROR     = TableStatus("ERROR")
-
-	USE = QueryType("use")
-	INSERT = QueryType("insert")
-	UPDATE = QueryType("update")
-	DELETE = QueryType("delete")
-	TRUNCATE = QueryType("truncate")
-	PREPARE = QueryType("prepare")
-	MISC = QueryType("misc")
+	USE      = QueryType("USE")
+	INSERT   = QueryType("INSERT")
+	UPDATE   = QueryType("UPDATE")
+	DELETE   = QueryType("DELETE")
+	TRUNCATE = QueryType("TRUNCATE")
+	PREPARE  = QueryType("PREPARE")
+	MISC     = QueryType("MISC")
 
 	// TODO: Finalize queue size to use
 	queueSize = 1000
 )
-
-// These three migration/table structs will be transferred over to the migrator package
-type TableStatus string
-
-type Table struct {
-	Name     string
-	Keyspace string
-	Status   TableStatus
-	Error    error
-
-	Priority int
-	Lock     *sync.Mutex
-}
-
-type MigrationStatus struct {
-	Tables map[string]map[string]*Table
-
-	PercentComplete int
-	Speed           int
-
-	Lock *sync.Mutex
-}
 
 type CQLProxy struct {
 	SourceHostname   string
@@ -73,9 +44,9 @@ type CQLProxy struct {
 	AstraPort       int
 	astraHostString string
 
-	Port     int
-	listener net.Listener
-	astraSession *net.Conn
+	Port         int
+	listeners     []net.Listener
+	astraSession net.Conn
 
 	tableQueues map[string]map[string]chan *Query
 	queueSizes  map[string]map[string]int
@@ -113,7 +84,7 @@ type CQLProxy struct {
 
 	// Channel to signal when the Proxy should stop all forwarding and close all connections
 	ShutdownChan chan struct{}
-	shutdown     chan struct{}
+	shutdown     bool
 
 	// Channel to signal to coordinator that there are no more open connections to the Client's Database
 	// and that the coordinator can redirect Envoy to point directly to Astra without any negative side effects
@@ -136,12 +107,10 @@ type CQLProxy struct {
 
 type QueryType string
 
-
 type Query struct {
 	Table *Table
 
-
-	Type QueryType
+	Type  QueryType
 	Query []byte
 }
 
@@ -174,7 +143,6 @@ func (p *CQLProxy) migrationLoop() {
 				log.Info("Migration Complete. Directing all new connections to Astra Database.")
 
 			case <-p.ShutdownChan:
-				log.Info("Proxy shutting down...")
 				p.Shutdown()
 				return
 			}
@@ -207,7 +175,7 @@ func (p *CQLProxy) Start() error {
 	p.reset()
 
 	// Attempt to connect to astra database using given credentials
-	conn, err := p.connect()
+	conn, err := connect(p.AstraHostname, p.AstraPort)
 	if err != nil {
 		return err
 	}
@@ -218,34 +186,39 @@ func (p *CQLProxy) Start() error {
 	return nil
 }
 
-func (p *CQLProxy) Listen() error {
+func (p *CQLProxy) StartProxyListener() error {
 	// Let's operating system assign a random port to listen on if Port isn't set (value == 0)
 	l, err := net.Listen("tcp", fmt.Sprintf(":%d", p.Port))
 	if err != nil {
 		return err
 	}
-	p.listener = l
 
-	defer l.Close()
+	go p.listen(l, p.handleDatabaseConnection)
+
 	port := l.Addr().(*net.TCPAddr).Port
 	log.Infof("Proxy listening for packets on port %d", port)
+	return nil
+}
+
+func (p *CQLProxy) listen(listener net.Listener, handler func (net.Conn))  {
+	defer listener.Close()
+	p.listeners = append(p.listeners, listener)
 
 	for {
-		conn, err := l.Accept()
+		conn, err := listener.Accept()
 		if err != nil {
-			select {
-			case <-p.shutdown:
-				return nil
-			default:
-				log.Error(err)
-				continue
+			if p.shutdown {
+				log.Infof("Shutting down listener %v", listener)
+				return
 			}
+			log.Error(err)
+			continue
 		}
-		go p.handleRequest(conn)
+		go handler(conn)
 	}
 }
 
-func (p *CQLProxy) handleRequest(conn net.Conn) {
+func (p *CQLProxy) handleDatabaseConnection(conn net.Conn) {
 	hostname := p.sourceHostString
 	if p.migrationComplete {
 		hostname = p.astraHostString
@@ -280,7 +253,7 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 	// 	that could be sent through the CQL wire protocol is 256mb, so we should accommodate that, unless there's
 	// 	an issue with that
 	buf := make([]byte, 0xffff)
-	data := make([]byte, 0);
+	data := make([]byte, 0)
 	consumeData := false
 	for {
 		bytesRead, err := src.Read(buf)
@@ -299,13 +272,13 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 		for consumeData {
 
 			//if there is not a full CQL header
-			if len(data) < cqlHeaderLength {
+			if len(data) < 9 {
 				consumeData = false
 				break
 			}
 
 			bodyLength := binary.BigEndian.Uint32(data[5:9])
-			fullLength := cqlHeaderLength + int(bodyLength)
+			fullLength := 9 + int(bodyLength)
 			if len(data) < fullLength {
 				consumeData = false
 				break
@@ -373,7 +346,7 @@ func (p *CQLProxy) mirrorData(data []byte) error {
 			if fields[1] == "prepare" {
 				q := &Query{
 					Table: nil,
-					Type: PREPARE,
+					Type:  PREPARE,
 					Query: data}
 				return p.executeQuery(q)
 			} else if fields[1] == "query" || fields[1] == "execute" {
@@ -395,7 +368,7 @@ func (p *CQLProxy) mirrorData(data []byte) error {
 			// FIXME: decide if there are any cases we need to handle here
 			q := &Query{
 				Table: nil,
-				Type: MISC,
+				Type:  MISC,
 				Query: data}
 			return p.executeQuery(q)
 		}
@@ -667,7 +640,7 @@ func readPastBatchValues(data []byte, initialOffset int) int {
 }
 
 func (p *CQLProxy) executeQuery(q *Query) error {
-	_, err := (*p.astraSession).Write(q.Query)
+	_, err := p.astraSession.Write(q.Query)
 	if err != nil {
 		return err
 	}
@@ -693,7 +666,7 @@ func (p *CQLProxy) handleUseQuery(query []byte, path string) error {
 
 	q := &Query{
 		Table: nil,
-		Type: USE,
+		Type:  USE,
 		Query: query}
 
 	return p.executeQuery(q)
@@ -796,7 +769,7 @@ func (p *CQLProxy) handleUpdateQuery(query []byte, path string) error {
 }
 
 //TODO: Handle batch statements
-func (p *CQLProxy) handleBatchQuery(query []byte, paths []string) error{
+func (p *CQLProxy) handleBatchQuery(query []byte, paths []string) error {
 	return nil
 }
 
@@ -911,16 +884,19 @@ func (p *CQLProxy) decrementSources() {
 }
 
 // TODO: Maybe add a couple retries, or let the caller deal with that?
-func (p *CQLProxy) connect() (*net.Conn, error) {
-	astraHostString := fmt.Sprintf("%s:%d", p.AstraHostname, p.AstraPort)
+func connect(hostname string, port int) (net.Conn, error) {
+	astraHostString := fmt.Sprintf("%s:%d", hostname, port)
 	dst, err := net.Dial("tcp", astraHostString)
-	return &dst, err
+	return dst, err
 }
 
 func (p *CQLProxy) Shutdown() {
-	p.shutdown <- struct{}{}
-	p.listener.Close()
-	(*p.astraSession).Close()
+	log.Info("Proxy shutting down...")
+	p.shutdown = true
+	for _, listener := range p.listeners {
+		listener.Close()
+	}
+
 }
 
 func (p *CQLProxy) reset() {
@@ -931,7 +907,8 @@ func (p *CQLProxy) reset() {
 	p.ready = false
 	p.ReadyChan = make(chan struct{})
 	p.ShutdownChan = make(chan struct{})
-	p.shutdown = make(chan struct{})
+	p.shutdown = false
+	p.listeners = []net.Listener{}
 	p.ReadyForRedirect = make(chan struct{})
 	p.connectionsToSource = 0
 	p.lock = &sync.Mutex{}
