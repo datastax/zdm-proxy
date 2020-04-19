@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"cloud-gate/migration/migration"
 	"cloud-gate/proxy/filter"
 	"encoding/json"
 	"flag"
@@ -41,14 +42,14 @@ func main() {
 	}
 
 	// Channel for migrator to communicate with proxy when the migration process has begun
-	migrationStartChan := make(chan *filter.MigrationStatus, 1)
+	migrationStartChan := make(chan *migration.Status, 1)
 
 	// Channel for migration service to send a signal through, directing the proxy to forward all traffic directly
 	// to the Astra DB
 	migrationCompleteChan := make(chan struct{})
 
 	// Channel for the migration service to send us Table structs for tables that have completed migration
-	tableMigratedChan := make(chan *filter.Table, 1)
+	tableMigratedChan := make(chan *migration.Table, 1)
 
 	p = &filter.CQLProxy{
 		SourceHostname: sourceHostname,
@@ -134,17 +135,18 @@ func doTesting(p *filter.CQLProxy) {
 		for scanner.Scan() {
 			switch scanner.Text() {
 			case "start":
-				tables := make(map[string]map[string]*filter.Table)
-				tables["codebase"] = make(map[string]*filter.Table)
-				tables["codebase"]["tasks"] = &filter.Table{
+				tables := make(map[string]map[string]*migration.Table)
+				tables["codebase"] = make(map[string]*migration.Table)
+				tables["codebase"]["tasks"] = &migration.Table{
 					Name:     "tasks",
 					Keyspace: "codebase",
-					Status:   filter.MIGRATED,
+					Step:   migration.LoadingDataComplete,
 					Error:    nil,
+
 					Lock:     &sync.Mutex{},
 				}
 
-				p.MigrationStartChan <- &filter.MigrationStatus{Tables: tables,
+				p.MigrationStartChan <- &migration.Status{Tables: tables,
 					Lock: &sync.Mutex{}}
 			case "complete":
 				p.MigrationCompleteChan <- struct{}{}
