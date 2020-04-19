@@ -275,18 +275,6 @@ func (m *Migration) migrateData(table *gocql.TableMetadata) error {
 }
 
 func (m *Migration) buildUnloadQuery(table *gocql.TableMetadata) string {
-	/*
-		dsbulk unload -h localhost -query
-			"SELECT id,
-				petal_length, 	WRITETIME(petal_length) 	AS w_petal_length, 	TTL(petal_length) 	AS l_petal_length,
-				petal_width, 		WRITETIME(petal_width) 		AS w_petal_width, 	TTL(petal_width) 		AS l_petal_width,
-				sepal_length, 	WRITETIME(sepal_length) 	AS w_sepal_length, 	TTL(sepal_length) 	AS l_sepal_length,
-				sepal_width, 		WRITETIME(sepal_width) 		AS w_sepal_width, 	TTL(sepal_width) 		AS l_sepal_width,
-				species, 				WRITETIME(species) 				AS w_species, 			TTL(species) 				AS l_species
-				FROM dsbulkblog.iris_with_id"
-			...
-	*/
-
 	query := "SELECT "
 	for colName, column := range table.Columns {
 		if column.Kind == gocql.ColumnPartitionKey {
@@ -305,7 +293,6 @@ func (m *Migration) unloadTable(table *gocql.TableMetadata) error {
 	print(fmt.Sprintf("UNLOADING TABLE: %s.%s...\n", table.Keyspace, table.Name))
 
 	query := m.buildUnloadQuery(table)
-	print("\n\n" + query + "\n\n")
 	cmdArgs := []string{"unload", "-port", strconv.Itoa(m.SourcePort), "-query", query, "-url", m.directory + table.Keyspace + "." + table.Name, "-logDir", m.directory}
 	_, err := exec.Command(m.DsbulkPath, cmdArgs...).Output()
 	if err != nil {
@@ -323,6 +310,9 @@ func (m *Migration) buildLoadQuery(table *gocql.TableMetadata) string {
 	query := "BEGIN BATCH "
 	partitionKey := table.PartitionKey[0].Name
 	for colName := range table.Columns {
+		if colName == partitionKey {
+			continue
+		}
 		query += fmt.Sprintf("INSERT INTO %[1]s.%[2]s(%[3]s, %[4]s) VALUES (:%[3]s, :%[4]s) USING TIMESTAMP :w_%[4]s AND TTL :l_%[4]s; ", table.Keyspace, table.Name, partitionKey, colName)
 	}
 	query += "APPLY BATCH;"
@@ -336,7 +326,7 @@ func (m *Migration) loadTable(table *gocql.TableMetadata) error {
 	print(fmt.Sprintf("LOADING TABLE: %s.%s...\n", table.Keyspace, table.Name))
 
 	query := m.buildLoadQuery(table)
-	cmdArgs := []string{"load", "-h", m.DestHostname, "-port", strconv.Itoa(m.DestPort), "-query", query, "-url", m.directory + table.Keyspace + "." + table.Name, "-logDir", m.directory, "--batch.mode DISABLED"}
+	cmdArgs := []string{"load", "-h", m.DestHostname, "-port", strconv.Itoa(m.DestPort), "-query", query, "-url", m.directory + table.Keyspace + "." + table.Name, "-logDir", m.directory, "--batch.mode", "DISABLED"}
 	_, err := exec.Command(m.DsbulkPath, cmdArgs...).Output()
 	if err != nil {
 		m.status.Tables[table.Keyspace][table.Name].Step = Errored
