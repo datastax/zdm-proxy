@@ -31,6 +31,9 @@ const (
 
 	// TODO: Finalize queue size to use
 	queueSize = 1000
+
+	cassHdrLen = 9
+	cassMaxLen = 268435456 // 256 MB, per spec
 )
 
 type CQLProxy struct {
@@ -328,7 +331,6 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 	// 	an issue with that
 	buf := make([]byte, 0xffff)
 	data := make([]byte, 0)
-	consumeData := false
 	for {
 		bytesRead, err := src.Read(buf)
 		if err != nil {
@@ -339,48 +341,42 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 			}
 			return
 		}
-		//log.Debugf("Read %d bytes from src %s", bytesRead, src.RemoteAddr())
 		data = append(data, buf[:bytesRead]...)
 
-		consumeData = true
-		for consumeData {
-
+		// Build queries reading in at most 0xffff size at a time.
+		for true {
 			//if there is not a full CQL header
-			if len(data) < 9 {
-				consumeData = false
+			if len(data) < cassHdrLen {
 				break
 			}
 
 			bodyLength := binary.BigEndian.Uint32(data[5:9])
-			fullLength := 9 + int(bodyLength)
-			if len(data) < fullLength {
-				consumeData = false
+			fullLength := cassHdrLen + int(bodyLength)
+			if len(data) < fullLength || len(data) > cassMaxLen {
 				break
-			} else {
-				indivQuery := data[:fullLength]
-				_, err := dst.Write(indivQuery)
+			}
+
+			query := data[:fullLength]
+			_, err := dst.Write(query)
+			if err != nil {
+				log.Error(err)
+				continue
+			}
+
+			// We only want to mirror writes if this connection is still directly connected to the
+			// client source Database
+			if dst.RemoteAddr().String() == p.sourceHostString {
+				// Passes all data along to be separated into requests and responses
+				err := p.mirrorData(query)
 				if err != nil {
 					log.Error(err)
-					continue
 				}
-				//log.Debugf("Wrote %d bytes", bytesWritten)
-				// We only want to mirror writes if the migration is not complete,
-				// OR if the migration is complete, but this connection is still directly connected to the
-				// user's DB (ex: migration is finished while the user is actively connected to the proxy)
-				// TODO: Can possibly get rid of the !p.migrationComplete part of the condition
-				if !p.migrationComplete || dst.RemoteAddr().String() == p.sourceHostString {
-					// Passes all data along to be separated into requests and responses
-					err := p.mirrorData(indivQuery)
-					if err != nil {
-						log.Error(err)
-					}
-				}
-
-				p.Metrics.incrementPackets()
-
-				//FIXME: Verify that this frees
-				data = data[fullLength:]
 			}
+
+			p.Metrics.incrementPackets()
+
+			// Keep any extra bytes in the buffer that is part of the next query
+			data = data[fullLength:]
 		}
 	}
 }
@@ -404,7 +400,11 @@ func (p *CQLProxy) mirrorData(data []byte) error {
 	// table is the table as written in the command
 	paths, err := cqlparser.CassandraParseRequest(p.preparedQueries, data)
 	if err != nil {
-		log.Errorf("Encountered parsing error %v", err)
+		return err
+	}
+
+	if len(paths) == 0 {
+		return errors.New("length 0 request")
 	}
 
 	// FIXME: Handle more actions based on paths
@@ -429,17 +429,24 @@ func (p *CQLProxy) mirrorData(data []byte) error {
 					Query: data}
 				return p.execute(q)
 			} else if fields[1] == "query" || fields[1] == "execute" {
+				keyspace, table := extractTableInfo(fields[3])
+				if keyspace == "" {
+					keyspace = p.Keyspace
+				}
+
 				switch fields[2] {
 				case "use":
-					return p.handleUseQuery(data, paths[0])
+					return p.handleUseQuery(data, fields[3])
 				case "insert":
-					return p.handleInsertQuery(data, paths[0])
+					return p.handleInsertQuery(data, keyspace, table)
 				case "update":
-					return p.handleUpdateQuery(data, paths[0])
+					return p.handleUpdateQuery(data, keyspace, table)
 				case "delete":
-					return p.handleDeleteQuery(data, paths[0])
+					return p.handleDeleteQuery(data, keyspace, table)
 				case "truncate":
-					return p.handleTruncateQuery(data, paths[0])
+					return p.handleTruncateQuery(data, keyspace, table)
+				case "select":
+					p.Metrics.incrementReads()
 				}
 			}
 		} else {
@@ -456,11 +463,9 @@ func (p *CQLProxy) mirrorData(data []byte) error {
 	return nil
 }
 
-func (p *CQLProxy) handleUseQuery(query []byte, path string) error {
-	split := strings.Split(path, "/")
+func (p *CQLProxy) handleUseQuery(query []byte, keyspace string) error {
 
-	// Remove trailing semicolon, if it's attached
-	keyspace := split[3]
+	// Cassandra assumes case-insensitive unless keyspace is encased in quotation marks
 	if strings.HasPrefix(keyspace, "\"") && strings.HasSuffix(keyspace, "\"") {
 		keyspace = keyspace[1 : len(keyspace)-1]
 	} else {
@@ -473,7 +478,6 @@ func (p *CQLProxy) handleUseQuery(query []byte, path string) error {
 
 	p.Keyspace = keyspace
 
-
 	q := &Query{
 		Table: nil,
 		Type:  USE,
@@ -482,14 +486,7 @@ func (p *CQLProxy) handleUseQuery(query []byte, path string) error {
 	return p.execute(q)
 }
 
-func (p *CQLProxy) handleTruncateQuery(query []byte, path string) error {
-	split := strings.Split(path, "/")
-
-	keyspace, tableName := extractTableInfo(split[3])
-	if keyspace == "" {
-		keyspace = p.Keyspace
-	}
-
+func (p *CQLProxy) handleTruncateQuery(query []byte, keyspace string, tableName string) error {
 	table, ok := p.migrationStatus.Tables[keyspace][tableName]
 	if !ok {
 		return fmt.Errorf("table %s.%s does not exist", keyspace, tableName)
@@ -505,17 +502,11 @@ func (p *CQLProxy) handleTruncateQuery(query []byte, path string) error {
 		Query: query}
 
 	p.queueQuery(q)
+
 	return nil
 }
 
-func (p *CQLProxy) handleDeleteQuery(query []byte, path string) error {
-	split := strings.Split(path, "/")
-
-	keyspace, tableName := extractTableInfo(split[3])
-	if keyspace == "" {
-		keyspace = p.Keyspace
-	}
-
+func (p *CQLProxy) handleDeleteQuery(query []byte, keyspace string, tableName string) error {
 	table, ok := p.migrationStatus.Tables[keyspace][tableName]
 	if !ok {
 		return fmt.Errorf("table %s.%s does not exist", keyspace, tableName)
@@ -532,18 +523,12 @@ func (p *CQLProxy) handleDeleteQuery(query []byte, path string) error {
 		Query: query}
 
 	p.queueQuery(q)
+
 	return nil
 }
 
 // Extract table name from insert query & add query to proper queue
-func (p *CQLProxy) handleInsertQuery(query []byte, path string) error {
-	split := strings.Split(path, "/")
-
-	keyspace, tableName := extractTableInfo(split[3])
-	if keyspace == "" {
-		keyspace = p.Keyspace
-	}
-
+func (p *CQLProxy) handleInsertQuery(query []byte, keyspace string, tableName string) error {
 	table, ok := p.migrationStatus.Tables[keyspace][tableName]
 	if !ok {
 		return fmt.Errorf("table %s.%s does not exist", keyspace, tableName)
@@ -555,18 +540,12 @@ func (p *CQLProxy) handleInsertQuery(query []byte, path string) error {
 		Query: query}
 
 	p.queueQuery(q)
+
 	return nil
 }
 
 // Extract table name from update query & add query to proper queue
-func (p *CQLProxy) handleUpdateQuery(query []byte, path string) error {
-	split := strings.Split(path, "/")
-
-	keyspace, tableName := extractTableInfo(split[3])
-	if keyspace == "" {
-		keyspace = p.Keyspace
-	}
-
+func (p *CQLProxy) handleUpdateQuery(query []byte, keyspace string, tableName string) error {
 	table, ok := p.migrationStatus.Tables[keyspace][tableName]
 	if !ok {
 		return fmt.Errorf("table %s.%s does not exist", keyspace, tableName)
@@ -583,6 +562,7 @@ func (p *CQLProxy) handleUpdateQuery(query []byte, path string) error {
 		Query: query}
 
 	p.queueQuery(q)
+
 	return nil
 }
 
