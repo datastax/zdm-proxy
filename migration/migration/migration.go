@@ -234,7 +234,7 @@ func (m *Migration) migrateSchema(keyspace string, table *gocql.TableMetadata) e
 func (m *Migration) tablePool(worker int, wg *sync.WaitGroup, jobs <-chan *gocql.TableMetadata) {
 	for table := range jobs {
 		if (*m.status.Tables[table.Keyspace])[table.Name].Step != LoadingDataComplete {
-			err := m.migrateData(table.Keyspace, table)
+			err := m.migrateData(table)
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -259,14 +259,14 @@ func (m *Migration) tablePool(worker int, wg *sync.WaitGroup, jobs <-chan *gocql
 }
 
 // migrateData migrates a table from the source cluster to the Astra cluster
-func (m *Migration) migrateData(keyspace string, table *gocql.TableMetadata) error {
+func (m *Migration) migrateData(table *gocql.TableMetadata) error {
 
-	err := m.unloadTable(keyspace, table)
+	err := m.unloadTable(table)
 	if err != nil {
 		return err
 	}
 
-	err = m.loadTable(keyspace, table)
+	err = m.loadTable(table)
 	if err != nil {
 		return err
 	}
@@ -274,35 +274,74 @@ func (m *Migration) migrateData(keyspace string, table *gocql.TableMetadata) err
 	return nil
 }
 
+func (m *Migration) buildUnloadQuery(table *gocql.TableMetadata) string {
+	/*
+		dsbulk unload -h localhost -query
+			"SELECT id,
+				petal_length, 	WRITETIME(petal_length) 	AS w_petal_length, 	TTL(petal_length) 	AS l_petal_length,
+				petal_width, 		WRITETIME(petal_width) 		AS w_petal_width, 	TTL(petal_width) 		AS l_petal_width,
+				sepal_length, 	WRITETIME(sepal_length) 	AS w_sepal_length, 	TTL(sepal_length) 	AS l_sepal_length,
+				sepal_width, 		WRITETIME(sepal_width) 		AS w_sepal_width, 	TTL(sepal_width) 		AS l_sepal_width,
+				species, 				WRITETIME(species) 				AS w_species, 			TTL(species) 				AS l_species
+				FROM dsbulkblog.iris_with_id"
+			...
+	*/
+
+	query := "SELECT "
+	for colName, column := range table.Columns {
+		if column.Kind == gocql.ColumnPartitionKey {
+			query += colName + ", "
+			continue
+		}
+		query += fmt.Sprintf("%[1]s, WRITETIME(%[1]s) AS w_%[1]s, TTL(%[1]s) AS l_%[1]s, ", colName)
+	}
+
+	return query[0:len(query)-2] + fmt.Sprintf(" FROM %s.%s", table.Keyspace, table.Name)
+}
+
 // unloadTable exports a table CSV from the source cluster into DIRECTORY
-func (m *Migration) unloadTable(keyspace string, table *gocql.TableMetadata) error {
-	(*m.status.Tables[keyspace])[table.Name].Step = UnloadingData
+func (m *Migration) unloadTable(table *gocql.TableMetadata) error {
+	(*m.status.Tables[table.Keyspace])[table.Name].Step = UnloadingData
 	print(fmt.Sprintf("UNLOADING TABLE: %s.%s...\n", table.Keyspace, table.Name))
 
-	cmdArgs := []string{"unload", "-port", strconv.Itoa(m.SourcePort), "-k", keyspace, "-t", table.Name, "-url", m.directory + keyspace + "." + table.Name, "-logDir", m.directory}
+	query := m.buildUnloadQuery(table)
+	print("\n\n" + query + "\n\n")
+	cmdArgs := []string{"unload", "-port", strconv.Itoa(m.SourcePort), "-query", query, "-url", m.directory + table.Keyspace + "." + table.Name, "-logDir", m.directory}
 	_, err := exec.Command(m.DsbulkPath, cmdArgs...).Output()
 	if err != nil {
-		(*m.status.Tables[keyspace])[table.Name].Step = Errored
-		(*m.status.Tables[keyspace])[table.Name].Error = err
+		(*m.status.Tables[table.Keyspace])[table.Name].Step = Errored
+		(*m.status.Tables[table.Keyspace])[table.Name].Error = err
 		return err
 	}
 
-	(*m.status.Tables[keyspace])[table.Name].Step = UnloadingDataComplete
+	(*m.status.Tables[table.Keyspace])[table.Name].Step = UnloadingDataComplete
 	print(fmt.Sprintf("COMPLETED UNLOADING TABLE: %s.%s\n", table.Keyspace, table.Name))
 	return nil
 }
 
+func (m *Migration) buildLoadQuery(table *gocql.TableMetadata) string {
+	/*
+			dsbulk load -h localhost -query "BEGIN BATCH INSERT INTO dsbulkblog.iris_with_id(id, petal_length) VALUES (:id, :petal_length)
+		USING TIMESTAMP :w_petal_length AND TTL :l_petal_length; INSERT INTO dsbulkblog.iris_with_id(id, petal_width) VALUES (:id, :petal_width)
+		USING TIMESTAMP :w_petal_width AND TTL :l_petal_width; INSERT INTO dsbulkblog.iris_with_id(id, sepal_length) VALUES (:id, :sepal_length)
+		USING TIMESTAMP :w_sepal_length AND TTL :l_sepal_length; INSERT INTO dsbulkblog.iris_with_id(id, sepal_width) VALUES (:id, :sepal_width)
+		USING TIMESTAMP :w_sepal_width AND TTL :l_sepal_width; INSERT INTO dsbulkblog.iris_with_id(id, species) VALUES (:id, :species)
+		USING TIMESTAMP :w_species AND TTL :l_species; APPLY BATCH;" -url /tmp/dsbulkblog/migrate --batch.mode DISABLED
+	*/
+	return ""
+}
+
 // loadTable loads a table from an exported CSV (in path specified by DIRECTORY)
 // into the target cluster
-func (m *Migration) loadTable(keyspace string, table *gocql.TableMetadata) error {
-	(*m.status.Tables[keyspace])[table.Name].Step = LoadingData
+func (m *Migration) loadTable(table *gocql.TableMetadata) error {
+	(*m.status.Tables[table.Keyspace])[table.Name].Step = LoadingData
 	print(fmt.Sprintf("LOADING TABLE: %s.%s...\n", table.Keyspace, table.Name))
 
-	cmdArgs := []string{"load", "-h", m.DestHostname, "-port", strconv.Itoa(m.DestPort), "-k", keyspace, "-t", table.Name, "-url", m.directory + keyspace + "." + table.Name, "-logDir", m.directory}
+	cmdArgs := []string{"load", "-h", m.DestHostname, "-port", strconv.Itoa(m.DestPort), "-k", table.Keyspace, "-t", table.Name, "-url", m.directory + table.Keyspace + "." + table.Name, "-logDir", m.directory}
 	_, err := exec.Command(m.DsbulkPath, cmdArgs...).Output()
 	if err != nil {
-		(*m.status.Tables[keyspace])[table.Name].Step = Errored
-		(*m.status.Tables[keyspace])[table.Name].Error = err
+		(*m.status.Tables[table.Keyspace])[table.Name].Step = Errored
+		(*m.status.Tables[table.Keyspace])[table.Name].Error = err
 		return err
 	}
 
