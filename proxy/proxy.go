@@ -1,8 +1,10 @@
 package proxy
 
 import (
+	"cloud-gate/requests"
 	"cloud-gate/utils"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -45,7 +47,7 @@ type CQLProxy struct {
 	astraHostString string
 
 	Port         int
-	listeners     []net.Listener
+	listeners    []net.Listener
 	astraSession net.Conn
 
 	tableQueues map[string]map[string]chan *Query
@@ -59,6 +61,9 @@ type CQLProxy struct {
 
 	// TODO: (maybe) create more locks to improve performance
 	lock *sync.Mutex
+
+	// Port to communicate with the migration service over
+	MigrationPort int
 
 	migrationComplete bool
 
@@ -112,6 +117,82 @@ type Query struct {
 
 	Type  QueryType
 	Query []byte
+}
+
+func (p *CQLProxy) startCommunicationListener() error {
+	l, err := net.Listen("tcp", fmt.Sprintf(":%d", p.MigrationPort))
+	if err != nil {
+		return err
+	}
+
+	go p.listen(l, p.handleMigrationCommunication)
+
+	return nil
+}
+
+func (p *CQLProxy) handleMigrationCommunication(conn net.Conn) {
+	defer conn.Close()
+
+	// TODO: change buffer size
+	buf := make([]byte, 0xfffffff)
+	for {
+		bytesRead, err := conn.Read(buf)
+		if err != nil {
+			if err == io.EOF {
+				log.Error(err)
+			}
+			return
+		}
+
+		b := buf[:bytesRead]
+		var req requests.Request
+		err = json.Unmarshal(b, &req)
+		if err != nil {
+			log.Error(err)
+			return
+		}
+
+		err = p.handleUpdate(&req)
+		if err != nil {
+			log.Error(err)
+			return
+		}
+
+		_, err = conn.Write(b)
+		if err != nil {
+			log.Error(err)
+			continue
+		}
+
+	}
+
+}
+
+func (p *CQLProxy) handleUpdate(req *requests.Request) error {
+	switch req.Type {
+	case requests.START:
+		var status MigrationStatus
+		err := json.Unmarshal(req.Data, &status)
+		if err != nil {
+			return err
+		}
+
+		p.MigrationStartChan <- &status
+	case requests.TABLE_UPDATE:
+		var table Table
+		err := json.Unmarshal(req.Data, &table)
+		if err != nil {
+			return err
+		}
+		p.migrationStatus.Lock.Lock()
+		p.migrationStatus.Tables[table.Keyspace][table.Name] = &table
+		p.migrationStatus.Lock.Unlock()
+	case requests.COMPLETE:
+		p.MigrationCompleteChan <- struct{}{}
+	case requests.SHUTDOWN:
+		p.ShutdownChan <- struct{}{}
+	}
+	return nil
 }
 
 // TODO: Maybe change migration_complete to migration_in_progress, so that we can turn on proxy before migration
@@ -183,6 +264,11 @@ func (p *CQLProxy) Start() error {
 
 	go p.migrationLoop()
 
+	err = p.startCommunicationListener()
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -200,7 +286,7 @@ func (p *CQLProxy) StartProxyListener() error {
 	return nil
 }
 
-func (p *CQLProxy) listen(listener net.Listener, handler func (net.Conn))  {
+func (p *CQLProxy) listen(listener net.Listener, handler func(net.Conn)) {
 	defer listener.Close()
 	p.listeners = append(p.listeners, listener)
 

@@ -66,6 +66,7 @@ func main() {
 
 		MigrationStartChan:    migrationStartChan,
 		MigrationCompleteChan: migrationCompleteChan,
+		MigrationPort:         15000,
 		TableMigratedChan:     tableMigratedChan,
 	}
 
@@ -112,8 +113,6 @@ func getMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Write(marshaled)
 }
-
-
 
 // Most of these will change to environment variables rather than flags
 func parseFlags() {
