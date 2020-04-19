@@ -5,6 +5,12 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+const (
+
+)
+
+
+
 var OpcodeMap = map[byte]string{
 		0x00: "error",
 		0x01: "startup",

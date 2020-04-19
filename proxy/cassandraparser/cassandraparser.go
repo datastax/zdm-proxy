@@ -1,0 +1,282 @@
+package cassandraparser
+
+import (
+	"cloud-gate/utils"
+	"encoding/binary"
+	"errors"
+	log "github.com/sirupsen/logrus"
+	"strings"
+)
+
+const (
+	UnknownPreparedQueryPath = "/unknown-prepared-query"
+)
+
+type PreparedQueries struct {
+	// Stores prepared query string while waiting for 'prepared' reply fro server with prepared id
+	// Replies are associated via stream-id
+	PreparedQueryPathByStreamID map[uint16]string
+
+	// Stores query string based on prepared-id
+	// Allows us to view query at time of execute command
+	PreparedQueryPathByPreparedID map[string]string
+}
+
+// Taken with small modifications from
+// https://github.com/cilium/cilium/blob/2bc1fdeb97331761241f2e4b3fb88ad524a0681b/proxylib/cassandra/cassandraparser.go
+func CassandraParseReply(p *PreparedQueries, data []byte) {
+	direction := data[0] & 0x80
+	if direction != 0x80 {
+		log.Errorf("Direction bit is 'request', but we are trying to parse reply")
+		return
+	}
+
+	streamID := binary.BigEndian.Uint16(data[2:4])
+	log.Debugf("Reply with opcode %d and stream-id %d", data[4], streamID)
+	// if this is an opcode == RESULT message of type 'prepared', associate the prepared
+	// statement id with the full query string that was included in the
+	// associated PREPARE request.  The stream-id in this reply allows us to
+	// find the associated prepare query string.
+	if data[4] == 0x08 {
+		resultKind := binary.BigEndian.Uint32(data[9:13])
+		log.Debugf("resultKind = %d", resultKind)
+		if resultKind == 0x0004 {
+			idLen := binary.BigEndian.Uint16(data[13:15])
+			preparedID := string(data[15 : 15+idLen])
+			log.Debugf("Result with prepared-id = '%s' for stream-id %d", preparedID, streamID)
+			path := p.PreparedQueryPathByStreamID[streamID]
+			if len(path) > 0 {
+				// found cached query path to associate with this preparedID
+				p.PreparedQueryPathByPreparedID[preparedID] = path
+				log.Debugf("Associating query path '%s' with prepared-id %s as part of stream-id %d", path, preparedID, streamID)
+			} else {
+				log.Warnf("Unable to find prepared query path associated with stream-id %d", streamID)
+			}
+		}
+	}
+}
+
+// Taken with small modifications from
+// https://github.com/cilium/cilium/blob/2bc1fdeb97331761241f2e4b3fb88ad524a0681b/proxylib/cassandra/cassandraparser.go
+func CassandraParseRequest(p *PreparedQueries, data []byte) ([]string, error) {
+	direction := data[0] & 0x80 // top bit
+	if direction != 0 {
+		return nil, errors.New("direction bit is 'reply' but we are trying to parse a request")
+	}
+
+	opcode := data[4]
+	path := utils.OpcodeMap[opcode]
+
+	// parse query string from query/prepare/batch requests
+
+	// NOTE: parsing only prepare statements and passing all execute
+	// statements requires that we 'invalidate' all execute statements
+	// anytime policy changes, to ensure that no execute statements are
+	// allowed that correspond to prepared queries that would no longer
+	// be valid.   A better option might be to cache all prepared queries,
+	// mapping the execution ID to allow/deny each time policy is changed.
+	if opcode == 0x07 || opcode == 0x09 {
+		// query || prepare
+		queryLen := binary.BigEndian.Uint32(data[9:13])
+		endIndex := 13 + queryLen
+		query := string(data[13:endIndex])
+		action, table := parseCassandra(query)
+
+		if action == "" {
+			return nil, errors.New("invalid frame type")
+		}
+
+		path = "/" + path + "/" + action + "/" + table
+		if opcode == 0x09 {
+			// stash 'path' for this prepared query based on stream id
+			// rewrite 'opcode' portion of the path to be 'execute' rather than 'prepare'
+			streamID := binary.BigEndian.Uint16(data[2:4])
+			log.Debugf("Prepare query path '%s' with stream-id %d", path, streamID)
+			p.PreparedQueryPathByStreamID[streamID] = strings.Replace(path, "prepare", "execute", 1)
+		}
+		return []string{path}, nil
+	} else if opcode == 0x0d {
+		// batch
+
+		numQueries := binary.BigEndian.Uint16(data[10:12])
+		paths := make([]string, numQueries)
+		log.Debugf("batch query count = %d", numQueries)
+		offset := 12
+		for i := 0; i < int(numQueries); i++ {
+			kind := data[offset]
+			if kind == 0 {
+				// full query string
+				queryLen := int(binary.BigEndian.Uint32(data[offset+1 : offset+5]))
+
+				query := string(data[offset+5 : offset+5+queryLen])
+				action, table := parseCassandra(query)
+
+				if action == "" {
+					return nil, errors.New("invalid frame type")
+				}
+				path = "/" + path + "/" + action + "/" + table
+				paths[i] = path
+				path = "batch" // reset for next item
+				offset = offset + 5 + queryLen
+				offset = readPastBatchValues(data, offset)
+			} else if kind == 1 {
+				// prepared query id
+
+				idLen := int(binary.BigEndian.Uint16(data[offset+1 : offset+3]))
+				preparedID := string(data[offset+3 : (offset + 3 + idLen)])
+				log.Debugf("Batch entry with prepared-id = '%s'", preparedID)
+				path := p.PreparedQueryPathByPreparedID[preparedID]
+				if len(path) > 0 {
+					paths[i] = path
+				} else {
+					log.Warnf("No cached entry for prepared-id = '%s' in batch", preparedID)
+
+					return []string{UnknownPreparedQueryPath}, nil
+				}
+				offset = offset + 3 + idLen
+
+				offset = readPastBatchValues(data, offset)
+			} else {
+				log.Errorf("unexpected value of 'kind' in batch query: %d", kind)
+				return nil, errors.New("processing batch command failed")
+			}
+		}
+		return paths, nil
+	} else if opcode == 0x0a {
+		// execute
+
+		// parse out prepared query id, and then look up our
+		// cached query path for policy evaluation.
+		idLen := binary.BigEndian.Uint16(data[9:11])
+		preparedID := string(data[11:(11 + idLen)])
+		log.Debugf("Execute with prepared-id = '%s'", preparedID)
+		path := p.PreparedQueryPathByPreparedID[preparedID]
+
+		if len(path) == 0 {
+			log.Warnf("No cached entry for prepared-id = '%s'", preparedID)
+
+			return []string{UnknownPreparedQueryPath}, nil
+		}
+
+		return []string{path}, nil
+	} else {
+		// other opcode, just return type of opcode
+
+		return []string{"/" + path}, nil
+	}
+}
+
+// Taken from
+// https://github.com/cilium/cilium/blob/2bc1fdeb97331761241f2e4b3fb88ad524a0681b/proxylib/cassandra/cassandraparser.go
+func parseCassandra(query string) (string, string) {
+	var action string
+	var table string
+
+	query = strings.TrimRight(query, ";")            // remove potential trailing ;
+	fields := strings.Fields(strings.ToLower(query)) // handles all whitespace
+
+	// we currently do not strip comments.  It seems like cqlsh does
+	// strip comments, but its not clear if that can be assumed of all clients
+	// It should not be possible to "spoof" the 'action' as this is assumed to be
+	// the first token (leaving no room for a comment to start), but it could potentially
+	// trick this parser into thinking we're accessing table X, when in fact the
+	// query accesses table Y, which would obviously be a security vulnerability
+	// As a result, we look at each token here, and if any of them match the comment
+	// characters for cassandra, we fail parsing.
+	for i := 0; i < len(fields); i++ {
+		if len(fields[i]) >= 2 &&
+			(fields[i][:2] == "--" ||
+				fields[i][:2] == "/*" ||
+				fields[i][:2] == "//") {
+
+			log.Warnf("Unable to safely parse query with comments '%s'", query)
+			return "", ""
+		}
+	}
+	if len(fields) < 2 {
+		goto invalidQuery
+	}
+
+	action = fields[0]
+	switch action {
+	case "select", "delete":
+		for i := 1; i < len(fields); i++ {
+			if fields[i] == "from" {
+				table = strings.ToLower(fields[i+1])
+			}
+		}
+		if len(table) == 0 {
+			log.Warnf("Unable to parse table name from query '%s'", query)
+			return "", ""
+		}
+	case "insert":
+		// INSERT into <table-name>
+		if len(fields) < 3 {
+			goto invalidQuery
+		}
+		table = strings.ToLower(fields[2])
+	case "update":
+		// UPDATE <table-name>
+		table = strings.ToLower(fields[1])
+	case "use":
+		table = fields[1]
+	case "alter", "create", "drop", "truncate", "list":
+
+		action = strings.Join([]string{action, fields[1]}, "-")
+		if fields[1] == "table" || fields[1] == "keyspace" {
+
+			if len(fields) < 3 {
+				goto invalidQuery
+			}
+			table = fields[2]
+			if table == "if" {
+				if action == "create-table" {
+					if len(fields) < 6 {
+						goto invalidQuery
+					}
+					// handle optional "IF NOT EXISTS"
+					table = fields[5]
+				} else if action == "drop-table" || action == "drop-keyspace" {
+					if len(fields) < 5 {
+						goto invalidQuery
+					}
+					// handle optional "IF EXISTS"
+					table = fields[4]
+				}
+			}
+		}
+		if action == "truncate" && len(fields) == 2 {
+			// special case, truncate can just be passed table name
+			table = fields[1]
+		}
+		if fields[1] == "materialized" {
+			action = action + "-view"
+		} else if fields[1] == "custom" {
+			action = "create-index"
+		}
+	default:
+		goto invalidQuery
+	}
+
+	return action, table
+
+invalidQuery:
+
+	log.Errorf("Unable to parse query: '%s'", query)
+	return "", ""
+}
+
+// Taken from
+// https://github.com/cilium/cilium/blob/2bc1fdeb97331761241f2e4b3fb88ad524a0681b/proxylib/cassandra/cassandraparser.go
+func readPastBatchValues(data []byte, initialOffset int) int {
+	numValues := int(binary.BigEndian.Uint16(data[initialOffset : initialOffset+2]))
+	offset := initialOffset + 2
+	for i := 0; i < numValues; i++ {
+		valueLen := int(binary.BigEndian.Uint32(data[offset : offset+4]))
+		// handle 'null' (-1) and 'not set' (-2) case, where 0 bytes follow
+		if valueLen >= 0 {
+			offset = offset + 4 + valueLen
+		}
+	}
+	return offset
+}
