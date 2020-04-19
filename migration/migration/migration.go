@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"cloud-gate/requests"
+	"cloud-gate/updates"
 	"cloud-gate/utils"
 
 	"github.com/gocql/gocql"
@@ -127,8 +127,8 @@ func (m *Migration) Migrate() error {
 	close(schemaJobs)
 	wgSchema.Wait()
 	// Notify proxy service that schemas are finished migrating, unload/load starting
-	m.sendRequest(&requests.Request{
-		Type: requests.Start,
+	m.sendRequest(&updates.Update{
+		Type: updates.Start,
 		Data: make([]byte, 0),
 	})
 
@@ -157,8 +157,8 @@ func (m *Migration) Migrate() error {
 
 	m.writeCheckpoint()
 	// Notify proxy of completed migration
-	m.sendRequest(&requests.Request{
-		Type: requests.Complete,
+	m.sendRequest(&updates.Update{
+		Type: updates.Complete,
 		Data: make([]byte, 0),
 	})
 
@@ -249,8 +249,8 @@ func (m *Migration) tablePool(worker int, wg *sync.WaitGroup, jobs <-chan *gocql
 				log.Fatal(err)
 			}
 
-			m.sendRequest(&requests.Request{
-				Type: requests.TableUpdate,
+			m.sendRequest(&updates.Update{
+				Type: updates.TableUpdate,
 				Data: bytes,
 			})
 		}
@@ -433,7 +433,7 @@ func (m *Migration) processRequest(conn net.Conn) error {
 			return err
 		}
 		b := buf[:bytesRead]
-		var req requests.Request
+		var req updates.Update
 		err = json.Unmarshal(b, &req)
 		if err != nil {
 			print(err.Error())
@@ -456,7 +456,7 @@ func (m *Migration) processRequest(conn net.Conn) error {
 
 // sendRequest will notify the proxy service about the migration progress
 // For now, because proxy port is not set up and we cannot test with proxy, we return on error
-func (m *Migration) sendRequest(req *requests.Request) error {
+func (m *Migration) sendRequest(req *updates.Update) error {
 	conn, err := net.Dial("tcp", fmt.Sprintf(":%d", m.ProxyPort))
 	if err != nil || conn == nil {
 		print("Can't reach proxy service...\n")
@@ -477,14 +477,14 @@ func (m *Migration) sendRequest(req *requests.Request) error {
 // handleRequest takes the notification from proxy service and either
 // 1) stops the migration process due to a failure
 // 2) update priority queue with the next table that needs to be migrated (Have not yet implemented)
-func (m *Migration) handleRequest(req *requests.Request) error {
+func (m *Migration) handleRequest(req *updates.Update) error {
 	// TODO: figure out what kind of requests from the proxy service we need to handle
 	// 1. shutdown 2. pq update
 	switch req.Type {
-	case requests.Shutdown:
+	case updates.Shutdown:
 		// TODO: something something figure out how to restart automatically
 		log.Fatal("Proxy Service failed, need to restart services")
-	case requests.TableUpdate:
+	case updates.TableUpdate:
 		var table Table
 		err := json.Unmarshal(req.Data, &table)
 		if err != nil {
