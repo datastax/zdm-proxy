@@ -140,10 +140,10 @@ func doTesting(p *filter.CQLProxy) {
 				tables["codebase"]["tasks"] = &migration.Table{
 					Name:     "tasks",
 					Keyspace: "codebase",
-					Step:   migration.LoadingDataComplete,
+					Step:     migration.MigratingSchema,
 					Error:    nil,
 
-					Lock:     &sync.Mutex{},
+					Lock: &sync.Mutex{},
 				}
 
 				p.MigrationStartChan <- &migration.Status{Tables: tables,
@@ -152,6 +152,16 @@ func doTesting(p *filter.CQLProxy) {
 				p.MigrationCompleteChan <- struct{}{}
 			case "shutdown":
 				p.ShutdownChan <- struct{}{}
+			case "restart":
+				table := &migration.Table{
+					Name:     "tasks",
+					Keyspace: "codebase",
+					Step:     migration.LoadingDataComplete,
+					Error:    nil,
+
+					Lock: &sync.Mutex{},
+				}
+				p.TableMigratedChan <- table
 			}
 		}
 	}

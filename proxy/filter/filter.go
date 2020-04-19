@@ -1,9 +1,9 @@
 package filter
 
 import (
+	"cloud-gate/migration/migration"
 	"cloud-gate/proxy/cqlparser"
 	"cloud-gate/updates"
-	"cloud-gate/migration/migration"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -20,7 +20,6 @@ import (
 )
 
 const (
-
 	USE      = QueryType("USE")
 	INSERT   = QueryType("INSERT")
 	UPDATE   = QueryType("UPDATE")
@@ -53,14 +52,10 @@ type CQLProxy struct {
 	listeners    []net.Listener
 	astraSession net.Conn
 
-	tableQueues map[string]map[string]chan *Query
+	queues      map[string]map[string]chan *Query
+	queueLocks  map[string]map[string]*sync.Mutex
 	queueSizes  map[string]map[string]int
-
-	// Should we wait on this table (do we need to wait for migration to finish before we run anymore queries)
-	tableWaiting map[string]map[string]bool
-
-	// Signals to restart consumption of queries for a particular table
-	tableStarts map[string]map[string]chan struct{}
+	tablePaused map[string]map[string]bool
 
 	// TODO: (maybe) create more locks to improve performance
 	lock *sync.Mutex
@@ -116,7 +111,6 @@ type Query struct {
 	Type  QueryType
 	Query []byte
 }
-
 
 func (p *CQLProxy) Start() error {
 	p.reset()
@@ -181,13 +175,13 @@ func (p *CQLProxy) migrationLoop() {
 
 func (p *CQLProxy) loadMigrationInfo(status *migration.Status) {
 	for keyspace, tables := range status.Tables {
-		p.tableQueues[keyspace] = make(map[string]chan *Query)
-		p.tableStarts[keyspace] = make(map[string]chan struct{})
-		p.tableWaiting[keyspace] = make(map[string]bool)
+		p.queues[keyspace] = make(map[string]chan *Query)
+		p.queueLocks[keyspace] = make(map[string]*sync.Mutex)
 		p.queueSizes[keyspace] = make(map[string]int)
+		p.tablePaused[keyspace] = make(map[string]bool)
 		for tableName := range tables {
-			p.tableQueues[keyspace][tableName] = make(chan *Query, queueSize)
-			p.tableStarts[keyspace][tableName] = make(chan struct{})
+			p.queues[keyspace][tableName] = make(chan *Query, queueSize)
+			p.queueLocks[keyspace][tableName] = &sync.Mutex{}
 
 			go p.consumeQueue(keyspace, tableName)
 		}
@@ -492,7 +486,7 @@ func (p *CQLProxy) handleTruncateQuery(query []byte, keyspace string, tableName 
 		return fmt.Errorf("table %s.%s does not exist", keyspace, tableName)
 	}
 
-	if p.tableStatus(keyspace, tableName) != migration.LoadingDataComplete {
+	if !p.tablePaused[keyspace][tableName] && p.tableStatus(keyspace, tableName) != migration.LoadingDataComplete {
 		p.stopTable(keyspace, tableName)
 	}
 
@@ -513,7 +507,7 @@ func (p *CQLProxy) handleDeleteQuery(query []byte, keyspace string, tableName st
 	}
 
 	// Wait for migration of table to be finished before processing anymore queries
-	if p.tableStatus(keyspace, tableName) != migration.LoadingDataComplete  {
+	if !p.tablePaused[keyspace][tableName] && p.tableStatus(keyspace, tableName) != migration.LoadingDataComplete {
 		p.stopTable(keyspace, tableName)
 	}
 
@@ -552,7 +546,7 @@ func (p *CQLProxy) handleUpdateQuery(query []byte, keyspace string, tableName st
 	}
 
 	// Wait for migration of table to be finished before processing anymore queries
-	if p.tableStatus(keyspace, tableName) != migration.LoadingDataComplete  {
+	if !p.tablePaused[keyspace][tableName] && p.tableStatus(keyspace, tableName) != migration.LoadingDataComplete {
 		p.stopTable(keyspace, tableName)
 	}
 
@@ -572,7 +566,7 @@ func (p *CQLProxy) handleBatchQuery(query []byte, paths []string) error {
 }
 
 func (p *CQLProxy) queueQuery(query *Query) {
-	p.tableQueues[query.Table.Keyspace][query.Table.Name] <- query
+	p.queues[query.Table.Keyspace][query.Table.Name] <- query
 
 	p.lock.Lock()
 	defer p.lock.Unlock()
@@ -584,14 +578,8 @@ func (p *CQLProxy) consumeQueue(keyspace string, table string) {
 
 	for {
 		select {
-		case query := <-p.tableQueues[keyspace][table]:
-			p.lock.Lock()
-			waiting := p.tableWaiting[keyspace][table]
-			p.lock.Unlock()
-
-			if waiting {
-				<-p.tableStarts[keyspace][table]
-			}
+		case query := <-p.queues[keyspace][table]:
+			p.queueLocks[keyspace][table].Lock()
 
 			// Driver is async, so we don't need a lock around query execution
 			err := p.execute(query)
@@ -602,16 +590,19 @@ func (p *CQLProxy) consumeQueue(keyspace string, table string) {
 				log.Error(err)
 
 				p.Metrics.incrementWriteFails()
-				}
+			} else {
+				p.Metrics.incrementWrites()
 			}
 
 			p.lock.Lock()
 			p.queueSizes[keyspace][table]--
 			p.lock.Unlock()
 
-			p.Metrics.incrementWrites()
+			p.queueLocks[keyspace][table].Unlock()
 		}
+
 	}
+}
 
 // TODO: Add exponential backoff
 func (p *CQLProxy) execute(query *Query) error {
@@ -641,23 +632,16 @@ func (p *CQLProxy) tableStatus(keyspace string, tableName string) migration.Step
 	return status
 }
 
-// Stop consuming queries for a given table
-func (p *CQLProxy) stopTable(keyspace string, table string) {
-	log.Debugf("Stopping query consumption on %s.%s", keyspace, table)
-	p.lock.Lock()
-	defer p.lock.Unlock()
-
-	p.tableWaiting[keyspace][table] = true
+func (p *CQLProxy) stopTable(keyspace string, tableName string) {
+	log.Debugf("Stopping query consumption on %s.%s", keyspace, tableName)
+	p.tablePaused[keyspace][tableName] = true
+	p.queueLocks[keyspace][tableName].Lock()
 }
 
-// Restart consuming queries for a given table
-func (p *CQLProxy) startTable(keyspace string, table string) {
-	log.Debugf("Restarting query consumption on %s.%s", keyspace, table)
-	p.lock.Lock()
-	defer p.lock.Unlock()
-
-	p.tableWaiting[keyspace][table] = false
-	p.tableStarts[keyspace][table] <- struct{}{}
+func (p *CQLProxy) startTable(keyspace string, tableName string) {
+	log.Debugf("Starting query consumption on %s.%s", keyspace, tableName)
+	p.tablePaused[keyspace][tableName] = false
+	p.queueLocks[keyspace][tableName].Unlock()
 }
 
 func (p *CQLProxy) incrementSources() {
@@ -690,10 +674,10 @@ func (p *CQLProxy) Shutdown() {
 }
 
 func (p *CQLProxy) reset() {
-	p.tableQueues = make(map[string]map[string]chan *Query)
+	p.queues = make(map[string]map[string]chan *Query)
+	p.queueLocks = make(map[string]map[string]*sync.Mutex)
 	p.queueSizes = make(map[string]map[string]int)
-	p.tableWaiting = make(map[string]map[string]bool)
-	p.tableStarts = make(map[string]map[string]chan struct{})
+	p.tablePaused = make(map[string]map[string]bool)
 	p.ready = false
 	p.ReadyChan = make(chan struct{})
 	p.ShutdownChan = make(chan struct{})
@@ -707,7 +691,7 @@ func (p *CQLProxy) reset() {
 	p.sourceHostString = fmt.Sprintf("%s:%d", p.SourceHostname, p.SourcePort)
 	p.astraHostString = fmt.Sprintf("%s:%d", p.AstraHostname, p.AstraPort)
 	p.preparedQueries = &cqlparser.PreparedQueries{
-		PreparedQueryPathByStreamID: make(map[uint16]string),
+		PreparedQueryPathByStreamID:   make(map[uint16]string),
 		PreparedQueryPathByPreparedID: make(map[string]string),
 	}
 }
