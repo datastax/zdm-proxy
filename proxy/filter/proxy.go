@@ -2,7 +2,7 @@ package filter
 
 import (
 	"cloud-gate/proxy/cqlparser"
-	"cloud-gate/requests"
+	"cloud-gate/updates"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -467,8 +467,12 @@ func (p *CQLProxy) handleUseQuery(query []byte, path string) error {
 		keyspace = strings.ToLower(keyspace)
 	}
 
-	// TODO: Check if keyspace is valid (look inside migration status map)
+	if _, ok := p.migrationStatus.Tables[keyspace]; !ok {
+		return errors.New("invalid keyspace")
+	}
+
 	p.Keyspace = keyspace
+
 
 	q := &Query{
 		Table: nil,
