@@ -2,7 +2,7 @@ package main
 
 import (
 	"bufio"
-	"cloud-gate/proxy"
+	"cloud-gate/proxy/filter"
 	"encoding/json"
 	"flag"
 	"net/http"
@@ -27,7 +27,7 @@ var (
 	debug bool
 	test  bool
 
-	p *proxy.CQLProxy
+	p *filter.CQLProxy
 )
 
 // Method mainly to test the proxy service for now
@@ -41,16 +41,16 @@ func main() {
 	}
 
 	// Channel for migrator to communicate with proxy when the migration process has begun
-	migrationStartChan := make(chan *proxy.MigrationStatus, 1)
+	migrationStartChan := make(chan *filter.MigrationStatus, 1)
 
 	// Channel for migration service to send a signal through, directing the proxy to forward all traffic directly
 	// to the Astra DB
 	migrationCompleteChan := make(chan struct{})
 
 	// Channel for the migration service to send us Table structs for tables that have completed migration
-	tableMigratedChan := make(chan *proxy.Table, 1)
+	tableMigratedChan := make(chan *filter.Table, 1)
 
-	p = &proxy.CQLProxy{
+	p = &filter.CQLProxy{
 		SourceHostname: sourceHostname,
 		SourceUsername: sourceUsername,
 		SourcePassword: sourcePassword,
@@ -128,23 +128,23 @@ func parseFlags() {
 }
 
 //function for testing purposes. Will be deleted later. toggles status for table 'codebase' upon user input
-func doTesting(p *proxy.CQLProxy) {
+func doTesting(p *filter.CQLProxy) {
 	for {
 		scanner := bufio.NewScanner(os.Stdin)
 		for scanner.Scan() {
 			switch scanner.Text() {
 			case "start":
-				tables := make(map[string]map[string]*proxy.Table)
-				tables["codebase"] = make(map[string]*proxy.Table)
-				tables["codebase"]["tasks"] = &proxy.Table{
+				tables := make(map[string]map[string]*filter.Table)
+				tables["codebase"] = make(map[string]*filter.Table)
+				tables["codebase"]["tasks"] = &filter.Table{
 					Name:     "tasks",
 					Keyspace: "codebase",
-					Status:   proxy.MIGRATED,
+					Status:   filter.MIGRATED,
 					Error:    nil,
 					Lock:     &sync.Mutex{},
 				}
 
-				p.MigrationStartChan <- &proxy.MigrationStatus{Tables: tables,
+				p.MigrationStartChan <- &filter.MigrationStatus{Tables: tables,
 					Lock: &sync.Mutex{}}
 			case "complete":
 				p.MigrationCompleteChan <- struct{}{}

@@ -1,7 +1,7 @@
-package proxy
+package filter
 
 import (
-	"cloud-gate/proxy/cassandraparser"
+	"cloud-gate/proxy/cqlparser"
 	"cloud-gate/requests"
 	"encoding/binary"
 	"encoding/json"
@@ -101,7 +101,7 @@ type CQLProxy struct {
 	Metrics Metrics
 
 	// Struct that holds prepared queries by StreamID and by PreparedID
-	preparedQueries *cassandraparser.PreparedQueries
+	preparedQueries *cqlparser.PreparedQueries
 }
 
 type QueryType string
@@ -393,7 +393,7 @@ func (p *CQLProxy) mirrorData(data []byte) error {
 
 	// if reply, we parse replies but only look for prepared-query-id responses
 	if data[0] > 0x80 {
-		cassandraparser.CassandraParseReply(p.preparedQueries, data)
+		cqlparser.CassandraParseReply(p.preparedQueries, data)
 		return nil
 	}
 
@@ -401,7 +401,7 @@ func (p *CQLProxy) mirrorData(data []byte) error {
 	// opcode is "startup", "query", "batch", etc.
 	// action is "select", "insert", "update", etc,
 	// table is the table as written in the command
-	paths, err := cassandraparser.CassandraParseRequest(p.preparedQueries, data)
+	paths, err := cqlparser.CassandraParseRequest(p.preparedQueries, data)
 	if err != nil {
 		log.Errorf("Encountered parsing error %v", err)
 	}
@@ -413,7 +413,7 @@ func (p *CQLProxy) mirrorData(data []byte) error {
 		// return p.handleBatchQuery(data, paths)
 		// TODO: Handle batch statements
 	} else {
-		if paths[0] == cassandraparser.UnknownPreparedQueryPath {
+		if paths[0] == cqlparser.UnknownPreparedQueryPath {
 			log.Debug("Err: Encountered unknown prepared query. Query Ignored")
 			return nil
 		}
@@ -714,7 +714,7 @@ func (p *CQLProxy) reset() {
 	p.Metrics.lock = &sync.Mutex{}
 	p.sourceHostString = fmt.Sprintf("%s:%d", p.SourceHostname, p.SourcePort)
 	p.astraHostString = fmt.Sprintf("%s:%d", p.AstraHostname, p.AstraPort)
-	p.preparedQueries = &cassandraparser.PreparedQueries{
+	p.preparedQueries = &cqlparser.PreparedQueries{
 		PreparedQueryPathByStreamID: make(map[uint16]string),
 		PreparedQueryPathByPreparedID: make(map[string]string),
 	}

@@ -1,4 +1,4 @@
-package cassandraparser
+package cqlparser
 
 import (
 	"cloud-gate/utils"
