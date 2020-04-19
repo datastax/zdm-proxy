@@ -119,79 +119,29 @@ type Query struct {
 	Query []byte
 }
 
-func (p *CQLProxy) startCommunicationListener() error {
-	l, err := net.Listen("tcp", fmt.Sprintf(":%d", p.MigrationPort))
+
+func (p *CQLProxy) Start() error {
+	p.reset()
+
+	// Attempt to connect to astra database using given credentials
+	conn, err := connect(p.AstraHostname, p.AstraPort)
+	if err != nil {
+		return err
+	}
+	p.astraSession = conn
+
+	go p.migrationLoop()
+
+	err = p.listen(p.MigrationPort, p.handleMigrationCommunication)
 	if err != nil {
 		return err
 	}
 
-	go p.listen(l, p.handleMigrationCommunication)
-
-	return nil
-}
-
-func (p *CQLProxy) handleMigrationCommunication(conn net.Conn) {
-	defer conn.Close()
-
-	// TODO: change buffer size
-	buf := make([]byte, 0xfffffff)
-	for {
-		bytesRead, err := conn.Read(buf)
-		if err != nil {
-			if err == io.EOF {
-				log.Error(err)
-			}
-			return
-		}
-
-		b := buf[:bytesRead]
-		var req requests.Request
-		err = json.Unmarshal(b, &req)
-		if err != nil {
-			log.Error(err)
-			return
-		}
-
-		err = p.handleUpdate(&req)
-		if err != nil {
-			log.Error(err)
-			return
-		}
-
-		_, err = conn.Write(b)
-		if err != nil {
-			log.Error(err)
-			continue
-		}
-
+	err = p.listen(p.Port, p.handleDatabaseConnection)
+	if err != nil {
+		return err
 	}
 
-}
-
-func (p *CQLProxy) handleUpdate(req *requests.Request) error {
-	switch req.Type {
-	case requests.START:
-		var status MigrationStatus
-		err := json.Unmarshal(req.Data, &status)
-		if err != nil {
-			return err
-		}
-
-		p.MigrationStartChan <- &status
-	case requests.TABLE_UPDATE:
-		var table Table
-		err := json.Unmarshal(req.Data, &table)
-		if err != nil {
-			return err
-		}
-		p.migrationStatus.Lock.Lock()
-		p.migrationStatus.Tables[table.Keyspace][table.Name] = &table
-		p.migrationStatus.Lock.Unlock()
-	case requests.COMPLETE:
-		p.MigrationCompleteChan <- struct{}{}
-	case requests.SHUTDOWN:
-		p.ShutdownChan <- struct{}{}
-	}
 	return nil
 }
 
@@ -212,7 +162,7 @@ func (p *CQLProxy) migrationLoop() {
 		for {
 			select {
 			case status := <-p.MigrationStartChan:
-				p.start(status)
+				p.loadMigrationInfo(status)
 				log.Info("Proxy ready to consume queries.")
 
 			case table := <-p.TableMigratedChan:
@@ -231,7 +181,7 @@ func (p *CQLProxy) migrationLoop() {
 	}
 }
 
-func (p *CQLProxy) start(status *MigrationStatus) {
+func (p *CQLProxy) loadMigrationInfo(status *MigrationStatus) {
 	for keyspace, tables := range status.Tables {
 		p.tableQueues[keyspace] = make(map[string]chan *Query)
 		p.tableStarts[keyspace] = make(map[string]chan struct{})
@@ -252,56 +202,34 @@ func (p *CQLProxy) start(status *MigrationStatus) {
 	log.Info("Proxy ready to execute queries.")
 }
 
-func (p *CQLProxy) Start() error {
-	p.reset()
-
-	// Attempt to connect to astra database using given credentials
-	conn, err := connect(p.AstraHostname, p.AstraPort)
+func (p *CQLProxy) listen(port int, handler func(net.Conn)) error {
+	l, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
-		return err
-	}
-	p.astraSession = conn
-
-	go p.migrationLoop()
-
-	err = p.startCommunicationListener()
-	if err != nil {
+		log.Error(err)
 		return err
 	}
 
-	return nil
-}
+	p.lock.Lock()
+	p.listeners = append(p.listeners, l)
+	p.lock.Unlock()
 
-func (p *CQLProxy) StartProxyListener() error {
-	// Let's operating system assign a random port to listen on if Port isn't set (value == 0)
-	l, err := net.Listen("tcp", fmt.Sprintf(":%d", p.Port))
-	if err != nil {
-		return err
-	}
-
-	go p.listen(l, p.handleDatabaseConnection)
-
-	port := l.Addr().(*net.TCPAddr).Port
-	log.Infof("Proxy listening for packets on port %d", port)
-	return nil
-}
-
-func (p *CQLProxy) listen(listener net.Listener, handler func(net.Conn)) {
-	defer listener.Close()
-	p.listeners = append(p.listeners, listener)
-
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			if p.shutdown {
-				log.Infof("Shutting down listener %v", listener)
-				return
+	go func() {
+		defer l.Close()
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				if p.shutdown {
+					log.Infof("Shutting down listener %v", l)
+					return
+				}
+				log.Error(err)
+				continue
 			}
-			log.Error(err)
-			continue
+			go handler(conn)
 		}
-		go handler(conn)
-	}
+	}()
+
+	return nil
 }
 
 func (p *CQLProxy) handleDatabaseConnection(conn net.Conn) {
@@ -324,6 +252,71 @@ func (p *CQLProxy) handleDatabaseConnection(conn net.Conn) {
 	go p.forward(conn, dst)
 	go p.forward(dst, conn)
 
+}
+
+func (p *CQLProxy) handleMigrationCommunication(conn net.Conn) {
+	defer conn.Close()
+
+	// TODO: change buffer size
+	buf := make([]byte, 0xfffffff)
+	for {
+		bytesRead, err := conn.Read(buf)
+		if err != nil {
+			if err == io.EOF {
+				log.Error(err)
+			}
+			return
+		}
+
+		b := buf[:bytesRead]
+		var update updates.Update
+		err = json.Unmarshal(b, &update)
+		if err != nil {
+			log.Error(err)
+			return
+		}
+
+		err = p.handleUpdate(&update)
+		if err != nil {
+			log.Error(err)
+			return
+		}
+
+		_, err = conn.Write(b)
+		if err != nil {
+			log.Error(err)
+			continue
+		}
+
+	}
+
+}
+
+func (p *CQLProxy) handleUpdate(req *updates.Update) error {
+	switch req.Type {
+	case updates.START:
+		var status MigrationStatus
+		err := json.Unmarshal(req.Data, &status)
+		if err != nil {
+			return err
+		}
+
+		p.MigrationStartChan <- &status
+	case updates.TABLE_UPDATE:
+		var table Table
+		err := json.Unmarshal(req.Data, &table)
+		if err != nil {
+			return err
+		}
+		p.migrationStatus.Lock.Lock()
+		p.migrationStatus.Tables[table.Keyspace][table.Name] = &table
+		p.migrationStatus.Lock.Unlock()
+	case updates.COMPLETE:
+		p.MigrationCompleteChan <- struct{}{}
+	case updates.SHUTDOWN:
+		p.ShutdownChan <- struct{}{}
+	}
+	return nil
 }
 
 func (p *CQLProxy) forward(src, dst net.Conn) {
@@ -434,7 +427,7 @@ func (p *CQLProxy) mirrorData(data []byte) error {
 					Table: nil,
 					Type:  PREPARE,
 					Query: data}
-				return p.executeQuery(q)
+				return p.execute(q)
 			} else if fields[1] == "query" || fields[1] == "execute" {
 				switch fields[2] {
 				case "use":
@@ -456,7 +449,7 @@ func (p *CQLProxy) mirrorData(data []byte) error {
 				Table: nil,
 				Type:  MISC,
 				Query: data}
-			return p.executeQuery(q)
+			return p.execute(q)
 		}
 
 	}
@@ -725,18 +718,6 @@ func readPastBatchValues(data []byte, initialOffset int) int {
 	return offset
 }
 
-func (p *CQLProxy) executeQuery(q *Query) error {
-	_, err := p.astraSession.Write(q.Query)
-	if err != nil {
-		return err
-	}
-
-	// For testing
-	log.Debugf("Executing %v", *q)
-
-	return nil
-}
-
 func (p *CQLProxy) handleUseQuery(query []byte, path string) error {
 	split := strings.Split(path, "/")
 
@@ -748,6 +729,7 @@ func (p *CQLProxy) handleUseQuery(query []byte, path string) error {
 		keyspace = strings.ToLower(keyspace)
 	}
 
+	// TODO: Check if keyspace is valid (look inside migration status map)
 	p.Keyspace = keyspace
 
 	q := &Query{
@@ -755,7 +737,7 @@ func (p *CQLProxy) handleUseQuery(query []byte, path string) error {
 		Type:  USE,
 		Query: query}
 
-	return p.executeQuery(q)
+	return p.execute(q)
 }
 
 func (p *CQLProxy) handleTruncateQuery(query []byte, path string) error {
@@ -882,17 +864,14 @@ func (p *CQLProxy) consumeQueue(keyspace string, table string) {
 			}
 
 			// Driver is async, so we don't need a lock around query execution
-			err := p.executeQuery(query)
+			err := p.execute(query)
 			if err != nil {
-				log.Debugf("Query %s failed, retrying", query)
-				err = p.retry(query, 5)
 				// TODO: Figure out exactly what to do if we're unable to write
 				// 	If it's a bad query, no issue, but if it's a good query that isn't working for some reason
 				// 	we need to figure out what to do
-				if err != nil {
-					log.Error(err)
+				log.Error(err)
 
-					p.Metrics.incrementWriteFails()
+				p.Metrics.incrementWriteFails()
 				}
 			}
 
@@ -903,20 +882,21 @@ func (p *CQLProxy) consumeQueue(keyspace string, table string) {
 			p.Metrics.incrementWrites()
 		}
 	}
-}
 
-// TODO: Make better
-func (p *CQLProxy) retry(query *Query, attempts int) error {
+// TODO: Add exponential backoff
+func (p *CQLProxy) execute(query *Query) error {
+	log.Debugf("Executing %v", *query)
+
 	var err error
-	for i := 1; i <= attempts; i++ {
-		log.Debugf("Retrying %s attempt #%d", query, i)
-
-		err = p.executeQuery(query)
+	for i := 1; i <= 5; i++ {
+		// TODO: Catch reply and see if it was successful
+		_, err := p.astraSession.Write(query.Query)
 		if err == nil {
 			break
 		}
-		// This is an arbitrary duration for now, probably want to change in future
+
 		time.Sleep(500 * time.Millisecond)
+		log.Debugf("Retrying %s attempt #%d", query, i+1)
 	}
 
 	return err
@@ -969,13 +949,6 @@ func (p *CQLProxy) decrementSources() {
 	}
 }
 
-// TODO: Maybe add a couple retries, or let the caller deal with that?
-func connect(hostname string, port int) (net.Conn, error) {
-	astraHostString := fmt.Sprintf("%s:%d", hostname, port)
-	dst, err := net.Dial("tcp", astraHostString)
-	return dst, err
-}
-
 func (p *CQLProxy) Shutdown() {
 	log.Info("Proxy shutting down...")
 	p.shutdown = true
@@ -983,6 +956,7 @@ func (p *CQLProxy) Shutdown() {
 		listener.Close()
 	}
 
+	// TODO: Stop all goroutines
 }
 
 func (p *CQLProxy) reset() {
@@ -1004,6 +978,13 @@ func (p *CQLProxy) reset() {
 	p.astraHostString = fmt.Sprintf("%s:%d", p.AstraHostname, p.AstraPort)
 	p.preparedQueryPathByStreamID = make(map[uint16]string)
 	p.preparedQueryPathByPreparedID = make(map[string]string)
+}
+
+// TODO: Maybe add a couple retries, or let the caller deal with that?
+func connect(hostname string, port int) (net.Conn, error) {
+	astraHostString := fmt.Sprintf("%s:%d", hostname, port)
+	dst, err := net.Dial("tcp", astraHostString)
+	return dst, err
 }
 
 // Given a FROM argument, extract the table name

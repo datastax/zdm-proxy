@@ -88,10 +88,7 @@ func main() {
 		select {
 		case <-p.ReadyChan:
 			log.Info("Coordinator received proxy ready signal.")
-			err := p.StartProxyListener()
-			if err != nil {
-				panic(err)
-			}
+
 		case <-p.ReadyForRedirect:
 			log.Info("Coordinate received signal that there are no more connections to Client Database.")
 		}
