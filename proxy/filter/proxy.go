@@ -456,7 +456,6 @@ func (p *CQLProxy) mirrorData(data []byte) error {
 	return nil
 }
 
-
 func (p *CQLProxy) handleUseQuery(query []byte, path string) error {
 	split := strings.Split(path, "/")
 
@@ -487,6 +486,9 @@ func (p *CQLProxy) handleTruncateQuery(query []byte, path string) error {
 	split := strings.Split(path, "/")
 
 	keyspace, tableName := extractTableInfo(split[3])
+	if keyspace == "" {
+		keyspace = p.Keyspace
+	}
 
 	table, ok := p.migrationStatus.Tables[keyspace][tableName]
 	if !ok {
@@ -510,7 +512,6 @@ func (p *CQLProxy) handleDeleteQuery(query []byte, path string) error {
 	split := strings.Split(path, "/")
 
 	keyspace, tableName := extractTableInfo(split[3])
-
 	if keyspace == "" {
 		keyspace = p.Keyspace
 	}
@@ -539,6 +540,9 @@ func (p *CQLProxy) handleInsertQuery(query []byte, path string) error {
 	split := strings.Split(path, "/")
 
 	keyspace, tableName := extractTableInfo(split[3])
+	if keyspace == "" {
+		keyspace = p.Keyspace
+	}
 
 	table, ok := p.migrationStatus.Tables[keyspace][tableName]
 	if !ok {
@@ -559,6 +563,9 @@ func (p *CQLProxy) handleUpdateQuery(query []byte, path string) error {
 	split := strings.Split(path, "/")
 
 	keyspace, tableName := extractTableInfo(split[3])
+	if keyspace == "" {
+		keyspace = p.Keyspace
+	}
 
 	table, ok := p.migrationStatus.Tables[keyspace][tableName]
 	if !ok {
