@@ -319,10 +319,6 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 		defer p.decrementSources()
 	}
 
-	// TODO: Finalize buffer size
-	// 	Right now just using 0xffff as a placeholder, but the maximum request
-	// 	that could be sent through the CQL wire protocol is 256mb, so we should accommodate that, unless there's
-	// 	an issue with that
 	buf := make([]byte, 0xffff)
 	data := make([]byte, 0)
 	for {
@@ -430,15 +426,15 @@ func (p *CQLProxy) mirrorData(data []byte) error {
 
 				switch fields[2] {
 				case "use":
-					return p.handleUseQuery(data, fields[3])
+					return p.handleUseQuery(fields[3], data)
 				case "insert":
-					return p.handleInsertQuery(data, keyspace, table)
+					return p.handleInsertQuery(keyspace, table, data)
 				case "update":
-					return p.handleUpdateQuery(data, keyspace, table)
+					return p.handleSpecialWriteQuery(keyspace, table, UPDATE, data)
 				case "delete":
-					return p.handleDeleteQuery(data, keyspace, table)
+					return p.handleSpecialWriteQuery(keyspace, table, DELETE, data)
 				case "truncate":
-					return p.handleTruncateQuery(data, keyspace, table)
+					return p.handleSpecialWriteQuery(keyspace, table, TRUNCATE, data)
 				case "select":
 					p.Metrics.incrementReads()
 				}
@@ -457,7 +453,7 @@ func (p *CQLProxy) mirrorData(data []byte) error {
 	return nil
 }
 
-func (p *CQLProxy) handleUseQuery(query []byte, keyspace string) error {
+func (p *CQLProxy) handleUseQuery(keyspace string, query []byte) error {
 
 	// Cassandra assumes case-insensitive unless keyspace is encased in quotation marks
 	if strings.HasPrefix(keyspace, "\"") && strings.HasSuffix(keyspace, "\"") {
@@ -480,49 +476,8 @@ func (p *CQLProxy) handleUseQuery(query []byte, keyspace string) error {
 	return p.execute(q)
 }
 
-func (p *CQLProxy) handleTruncateQuery(query []byte, keyspace string, tableName string) error {
-	table, ok := p.migrationStatus.Tables[keyspace][tableName]
-	if !ok {
-		return fmt.Errorf("table %s.%s does not exist", keyspace, tableName)
-	}
-
-	if !p.tablePaused[keyspace][tableName] && p.tableStatus(keyspace, tableName) != migration.LoadingDataComplete {
-		p.stopTable(keyspace, tableName)
-	}
-
-	q := &Query{
-		Table: table,
-		Type:  TRUNCATE,
-		Query: query}
-
-	p.queueQuery(q)
-
-	return nil
-}
-
-func (p *CQLProxy) handleDeleteQuery(query []byte, keyspace string, tableName string) error {
-	table, ok := p.migrationStatus.Tables[keyspace][tableName]
-	if !ok {
-		return fmt.Errorf("table %s.%s does not exist", keyspace, tableName)
-	}
-
-	// Wait for migration of table to be finished before processing anymore queries
-	if !p.tablePaused[keyspace][tableName] && p.tableStatus(keyspace, tableName) != migration.LoadingDataComplete {
-		p.stopTable(keyspace, tableName)
-	}
-
-	q := &Query{
-		Table: table,
-		Type:  DELETE,
-		Query: query}
-
-	p.queueQuery(q)
-
-	return nil
-}
-
 // Extract table name from insert query & add query to proper queue
-func (p *CQLProxy) handleInsertQuery(query []byte, keyspace string, tableName string) error {
+func (p *CQLProxy) handleInsertQuery(keyspace string, tableName string, query []byte) error {
 	table, ok := p.migrationStatus.Tables[keyspace][tableName]
 	if !ok {
 		return fmt.Errorf("table %s.%s does not exist", keyspace, tableName)
@@ -538,21 +493,21 @@ func (p *CQLProxy) handleInsertQuery(query []byte, keyspace string, tableName st
 	return nil
 }
 
-// Extract table name from update query & add query to proper queue
-func (p *CQLProxy) handleUpdateQuery(query []byte, keyspace string, tableName string) error {
+// A special write query is a write query that depends on all values already being present in the table
+// ex: UPDATE, DELETE, TRUNCATE
+func (p *CQLProxy) handleSpecialWriteQuery(keyspace string, tableName string, queryType QueryType, query []byte) error {
 	table, ok := p.migrationStatus.Tables[keyspace][tableName]
 	if !ok {
 		return fmt.Errorf("table %s.%s does not exist", keyspace, tableName)
 	}
 
-	// Wait for migration of table to be finished before processing anymore queries
 	if !p.tablePaused[keyspace][tableName] && p.tableStatus(keyspace, tableName) != migration.LoadingDataComplete {
 		p.stopTable(keyspace, tableName)
 	}
 
 	q := &Query{
 		Table: table,
-		Type:  UPDATE,
+		Type:  queryType,
 		Query: query}
 
 	p.queueQuery(q)
