@@ -95,7 +95,7 @@ func (m *Migration) Migrate() error {
 	if m.HardRestart {
 		// On hard restart, clear Astra cluster of all data
 		for keyspace, keyspaceTables := range m.status.Tables {
-			for tableName, table := range *keyspaceTables {
+			for tableName, table := range keyspaceTables {
 				if table.Step >= MigratingSchemaComplete {
 					query := fmt.Sprintf("DROP TABLE %s.%s;", keyspace, tableName)
 					m.destSession.Query(query).Exec()
@@ -119,7 +119,7 @@ func (m *Migration) Migrate() error {
 	}
 
 	for _, keyspaceTables := range tables {
-		for _, table := range *keyspaceTables {
+		for _, table := range keyspaceTables {
 			wgSchema.Add(1)
 			schemaJobs <- table
 		}
@@ -133,7 +133,7 @@ func (m *Migration) Migrate() error {
 	})
 
 	for _, keyspaceTables := range tables {
-		for _, table := range *keyspaceTables {
+		for _, table := range keyspaceTables {
 			wgTables.Add(1)
 			tableJobs <- table
 		}
@@ -146,7 +146,7 @@ func (m *Migration) Migrate() error {
 	// Calculate total file size of migrated data
 	var size int64
 	for keyspace, keyspaceTables := range tables {
-		for tableName := range *keyspaceTables {
+		for tableName := range keyspaceTables {
 			dSize, _ := utils.DirSize(m.directory + keyspace + "." + tableName)
 			size += dSize
 		}
@@ -168,14 +168,14 @@ func (m *Migration) Migrate() error {
 func (m *Migration) schemaPool(worker int, wg *sync.WaitGroup, jobs <-chan *gocql.TableMetadata) {
 	for table := range jobs {
 		// If we already migrated schema, skip this
-		if (*m.status.Tables[table.Keyspace])[table.Name].Step < MigratingSchemaComplete {
+		if m.status.Tables[table.Keyspace][table.Name].Step < MigratingSchemaComplete {
 			err := m.migrateSchema(table.Keyspace, table)
 			if err != nil {
 				log.Fatal(err)
 			}
 
 			m.status.Steps++
-			(*m.status.Tables[table.Keyspace])[table.Name].Step = MigratingSchemaComplete
+			m.status.Tables[table.Keyspace][table.Name].Step = MigratingSchemaComplete
 			print(fmt.Sprintf("COMPLETED MIGRATING TABLE SCHEMA: %s.%s\n", table.Keyspace, table.Name))
 			m.writeCheckpoint()
 		}
@@ -208,7 +208,7 @@ func generateSchemaMigrationQuery(table *gocql.TableMetadata, compactionMap map[
 // migrateSchema creates each new table in Astra with
 // column names and types, primary keys, and compaction information
 func (m *Migration) migrateSchema(keyspace string, table *gocql.TableMetadata) error {
-	(*m.status.Tables[keyspace])[table.Name].Step = MigratingSchema
+	m.status.Tables[keyspace][table.Name].Step = MigratingSchema
 	print(fmt.Sprintf("MIGRATING TABLE SCHEMA: %s.%s... \n", table.Keyspace, table.Name))
 
 	// Fetch table compaction metadata
@@ -224,8 +224,8 @@ func (m *Migration) migrateSchema(keyspace string, table *gocql.TableMetadata) e
 	err := m.destSession.Query(query).Exec()
 
 	if err != nil {
-		(*m.status.Tables[keyspace])[table.Name].Step = Errored
-		(*m.status.Tables[keyspace])[table.Name].Error = err
+		m.status.Tables[keyspace][table.Name].Step = Errored
+		m.status.Tables[keyspace][table.Name].Error = err
 		return err
 	}
 	return nil
@@ -233,18 +233,18 @@ func (m *Migration) migrateSchema(keyspace string, table *gocql.TableMetadata) e
 
 func (m *Migration) tablePool(worker int, wg *sync.WaitGroup, jobs <-chan *gocql.TableMetadata) {
 	for table := range jobs {
-		if (*m.status.Tables[table.Keyspace])[table.Name].Step != LoadingDataComplete {
+		if m.status.Tables[table.Keyspace][table.Name].Step != LoadingDataComplete {
 			err := m.migrateData(table)
 			if err != nil {
 				log.Fatal(err)
 			}
 
 			m.status.Steps += 2
-			(*m.status.Tables[table.Keyspace])[table.Name].Step = LoadingDataComplete
+			m.status.Tables[table.Keyspace][table.Name].Step = LoadingDataComplete
 			print(fmt.Sprintf("COMPLETED LOADING TABLE DATA: %s.%s\n", table.Keyspace, table.Name))
 			m.writeCheckpoint()
 
-			bytes, err := json.Marshal((*m.status.Tables[table.Keyspace])[table.Name])
+			bytes, err := json.Marshal(m.status.Tables[table.Keyspace][table.Name])
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -301,7 +301,7 @@ func (m *Migration) buildUnloadQuery(table *gocql.TableMetadata) string {
 
 // unloadTable exports a table CSV from the source cluster into DIRECTORY
 func (m *Migration) unloadTable(table *gocql.TableMetadata) error {
-	(*m.status.Tables[table.Keyspace])[table.Name].Step = UnloadingData
+	m.status.Tables[table.Keyspace][table.Name].Step = UnloadingData
 	print(fmt.Sprintf("UNLOADING TABLE: %s.%s...\n", table.Keyspace, table.Name))
 
 	query := m.buildUnloadQuery(table)
@@ -309,39 +309,38 @@ func (m *Migration) unloadTable(table *gocql.TableMetadata) error {
 	cmdArgs := []string{"unload", "-port", strconv.Itoa(m.SourcePort), "-query", query, "-url", m.directory + table.Keyspace + "." + table.Name, "-logDir", m.directory}
 	_, err := exec.Command(m.DsbulkPath, cmdArgs...).Output()
 	if err != nil {
-		(*m.status.Tables[table.Keyspace])[table.Name].Step = Errored
-		(*m.status.Tables[table.Keyspace])[table.Name].Error = err
+		m.status.Tables[table.Keyspace][table.Name].Step = Errored
+		m.status.Tables[table.Keyspace][table.Name].Error = err
 		return err
 	}
 
-	(*m.status.Tables[table.Keyspace])[table.Name].Step = UnloadingDataComplete
+	m.status.Tables[table.Keyspace][table.Name].Step = UnloadingDataComplete
 	print(fmt.Sprintf("COMPLETED UNLOADING TABLE: %s.%s\n", table.Keyspace, table.Name))
 	return nil
 }
 
 func (m *Migration) buildLoadQuery(table *gocql.TableMetadata) string {
-	/*
-			dsbulk load -h localhost -query "BEGIN BATCH INSERT INTO dsbulkblog.iris_with_id(id, petal_length) VALUES (:id, :petal_length)
-		USING TIMESTAMP :w_petal_length AND TTL :l_petal_length; INSERT INTO dsbulkblog.iris_with_id(id, petal_width) VALUES (:id, :petal_width)
-		USING TIMESTAMP :w_petal_width AND TTL :l_petal_width; INSERT INTO dsbulkblog.iris_with_id(id, sepal_length) VALUES (:id, :sepal_length)
-		USING TIMESTAMP :w_sepal_length AND TTL :l_sepal_length; INSERT INTO dsbulkblog.iris_with_id(id, sepal_width) VALUES (:id, :sepal_width)
-		USING TIMESTAMP :w_sepal_width AND TTL :l_sepal_width; INSERT INTO dsbulkblog.iris_with_id(id, species) VALUES (:id, :species)
-		USING TIMESTAMP :w_species AND TTL :l_species; APPLY BATCH;" -url /tmp/dsbulkblog/migrate --batch.mode DISABLED
-	*/
-	return ""
+	query := "BEGIN BATCH "
+	partitionKey := table.PartitionKey[0].Name
+	for colName := range table.Columns {
+		query += fmt.Sprintf("INSERT INTO %[1]s.%[2]s(%[3]s, %[4]s) VALUES (:%[3]s, :%[4]s) USING TIMESTAMP :w_%[4]s AND TTL :l_%[4]s; ", table.Keyspace, table.Name, partitionKey, colName)
+	}
+	query += "APPLY BATCH;"
+	return query
 }
 
 // loadTable loads a table from an exported CSV (in path specified by DIRECTORY)
 // into the target cluster
 func (m *Migration) loadTable(table *gocql.TableMetadata) error {
-	(*m.status.Tables[table.Keyspace])[table.Name].Step = LoadingData
+	m.status.Tables[table.Keyspace][table.Name].Step = LoadingData
 	print(fmt.Sprintf("LOADING TABLE: %s.%s...\n", table.Keyspace, table.Name))
 
-	cmdArgs := []string{"load", "-h", m.DestHostname, "-port", strconv.Itoa(m.DestPort), "-k", table.Keyspace, "-t", table.Name, "-url", m.directory + table.Keyspace + "." + table.Name, "-logDir", m.directory}
+	query := m.buildLoadQuery(table)
+	cmdArgs := []string{"load", "-h", m.DestHostname, "-port", strconv.Itoa(m.DestPort), "-query", query, "-url", m.directory + table.Keyspace + "." + table.Name, "-logDir", m.directory, "--batch.mode DISABLED"}
 	_, err := exec.Command(m.DsbulkPath, cmdArgs...).Output()
 	if err != nil {
-		(*m.status.Tables[table.Keyspace])[table.Name].Step = Errored
-		(*m.status.Tables[table.Keyspace])[table.Name].Error = err
+		m.status.Tables[table.Keyspace][table.Name].Step = Errored
+		m.status.Tables[table.Keyspace][table.Name].Error = err
 		return err
 	}
 
@@ -364,15 +363,15 @@ func (m *Migration) getKeyspaces() {
 }
 
 // getTables gets table information from a keyspace in the source cluster
-func (m *Migration) getTables(keyspaces []string) (map[string]*map[string]*gocql.TableMetadata, error) {
-	tableMetadata := make(map[string]*map[string]*gocql.TableMetadata)
+func (m *Migration) getTables(keyspaces []string) (map[string]map[string]*gocql.TableMetadata, error) {
+	tableMetadata := make(map[string]map[string]*gocql.TableMetadata)
 	for _, keyspace := range keyspaces {
 		md, err := m.sourceSession.KeyspaceMetadata(keyspace)
 		if err != nil {
 			print(fmt.Sprintf("ERROR GETTING KEYSPACE %s...\n", keyspace))
 			log.Fatal(err)
 		}
-		tableMetadata[keyspace] = &md.Tables
+		tableMetadata[keyspace] = md.Tables
 	}
 	return tableMetadata, nil
 }
@@ -385,7 +384,7 @@ func (m *Migration) writeCheckpoint() {
 	data := ""
 
 	for keyspace, keyspaceTables := range m.status.Tables {
-		for tableName, table := range *keyspaceTables {
+		for tableName, table := range keyspaceTables {
 			if table.Step >= MigratingSchemaComplete {
 				data += fmt.Sprintf("s:%s\n", keyspace+"."+tableName)
 			}
@@ -425,10 +424,10 @@ func (m *Migration) readCheckpoint() {
 		keyspace := tableNameTokens[0]
 		tableName := tableNameTokens[1]
 		if entry[0] == 's' {
-			(*m.status.Tables[keyspace])[tableName].Step = MigratingSchemaComplete
+			m.status.Tables[keyspace][tableName].Step = MigratingSchemaComplete
 			m.status.Steps++
 		} else if entry[0] == 'd' {
-			(*m.status.Tables[keyspace])[tableName].Step = LoadingDataComplete
+			m.status.Tables[keyspace][tableName].Step = LoadingDataComplete
 			m.status.Steps += 2
 		}
 	}
@@ -530,7 +529,7 @@ func (m *Migration) handleRequest(req *updates.Update) error {
 			// log error
 			return err
 		}
-		(*m.status.Tables[table.Keyspace])[table.Name].Priority = table.Priority
+		m.status.Tables[table.Keyspace][table.Name].Priority = table.Priority
 		// TODO: something something priority queue
 		// pqLock.Lock()
 		// change table priority value
