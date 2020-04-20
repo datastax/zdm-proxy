@@ -107,7 +107,7 @@ type QueryType string
 
 type Query struct {
 	Timestamp uint64
-	Table *migration.Table
+	Table     *migration.Table
 
 	Type  QueryType
 	Query []byte
@@ -116,9 +116,9 @@ type Query struct {
 func newQuery(table *migration.Table, queryType QueryType, query []byte) *Query {
 	return &Query{
 		Timestamp: uint64(time.Now().UnixNano() / 1000000),
-		Table: table,
-		Type: queryType,
-		Query: query,
+		Table:     table,
+		Type:      queryType,
+		Query:     query,
 	}
 }
 
@@ -136,7 +136,7 @@ func (q *Query) usingTimestamp() *Query {
 	}
 
 	// Query already includes timestamp, ignore
-	if q.Query[index+3] & 0x20 == 0x20 {
+	if q.Query[index+3]&0x20 == 0x20 {
 		// TODO: Ensure we can keep the original timestamp & we don't need to alter anything
 		//binary.BigEndian.PutUint64(q.Query[len(q.Query) - 8:], q.Timestamp)
 		return q
@@ -281,10 +281,6 @@ func (p *CQLProxy) handleDatabaseConnection(conn net.Conn) {
 		return
 	}
 
-	if hostname == p.sourceHostString {
-		p.incrementSources()
-	}
-
 	// Begin two way packet forwarding
 	go p.forward(conn, dst)
 	go p.forward(dst, conn)
@@ -313,27 +309,27 @@ func (p *CQLProxy) handleMigrationCommunication(conn net.Conn) {
 			return
 		}
 
-		err = p.handleUpdate(&update)
-		if err != nil {
-			log.Error(err)
-			return
+		var resp []byte
+		if p.handleUpdate(&update) != nil {
+			resp = updates.FailureResponse(&update)
+		} else {
+			resp = updates.SuccessResponse(&update)
 		}
 
-		_, err = conn.Write(b)
+		_, err = conn.Write(resp)
 		if err != nil {
 			log.Error(err)
-			continue
 		}
 
 	}
 
 }
 
-func (p *CQLProxy) handleUpdate(req *updates.Update) error {
-	switch req.Type {
+func (p *CQLProxy) handleUpdate(update *updates.Update) error {
+	switch update.Type {
 	case updates.Start:
 		var status migration.Status
-		err := json.Unmarshal(req.Data, &status)
+		err := json.Unmarshal(update.Data, &status)
 		if err != nil {
 			return err
 		}
@@ -341,10 +337,11 @@ func (p *CQLProxy) handleUpdate(req *updates.Update) error {
 		p.MigrationStartChan <- &status
 	case updates.TableUpdate:
 		var table migration.Table
-		err := json.Unmarshal(req.Data, &table)
+		err := json.Unmarshal(update.Data, &table)
 		if err != nil {
 			return err
 		}
+
 		p.migrationStatus.Lock.Lock()
 		p.migrationStatus.Tables[table.Keyspace][table.Name] = &table
 		p.migrationStatus.Lock.Unlock()
@@ -361,6 +358,7 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 	defer dst.Close()
 
 	if dst.RemoteAddr().String() == p.sourceHostString {
+		p.incrementSources()
 		defer p.decrementSources()
 	}
 
