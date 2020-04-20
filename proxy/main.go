@@ -41,15 +41,6 @@ func main() {
 		log.SetLevel(log.InfoLevel)
 	}
 
-	// Channel for migrator to communicate with proxy when the migration process has begun
-	migrationStartChan := make(chan *migration.Status, 1)
-
-	// Channel for migration service to send a signal through, directing the proxy to forward all traffic directly
-	// to the Astra DB
-	migrationCompleteChan := make(chan struct{})
-
-	// Channel for the migration service to send us Table structs for tables that have completed migration
-	tableMigratedChan := make(chan *migration.Table, 1)
 
 	p = &filter.CQLProxy{
 		SourceHostname: sourceHostname,
@@ -64,11 +55,7 @@ func main() {
 
 		Port:     listenPort,
 		Keyspace: "",
-
-		MigrationStartChan:    migrationStartChan,
-		MigrationCompleteChan: migrationCompleteChan,
-		MigrationPort:         15000,
-		TableMigratedChan:     tableMigratedChan,
+		MigrationPort:     15000,
 	}
 
 	// for testing purposes. to delete
@@ -146,10 +133,10 @@ func doTesting(p *filter.CQLProxy) {
 					Lock: &sync.Mutex{},
 				}
 
-				p.MigrationStartChan <- &migration.Status{Tables: tables,
+				p.MigrationStart <- &migration.Status{Tables: tables,
 					Lock: &sync.Mutex{}}
 			case "complete":
-				p.MigrationCompleteChan <- struct{}{}
+				p.MigrationDone <- struct{}{}
 			case "shutdown":
 				p.ShutdownChan <- struct{}{}
 			case "restart":
@@ -161,7 +148,7 @@ func doTesting(p *filter.CQLProxy) {
 
 					Lock: &sync.Mutex{},
 				}
-				p.TableMigratedChan <- table
+				p.TableMigrated <- table
 			}
 		}
 	}

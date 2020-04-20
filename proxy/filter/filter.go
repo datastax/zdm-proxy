@@ -60,51 +60,40 @@ type CQLProxy struct {
 	queueSizes  map[string]map[string]int
 	tablePaused map[string]map[string]bool
 	queryResponses map[uint16]chan bool
-
-	// TODO: (maybe) create more locks to improve performance
 	lock *sync.Mutex
+
+	migrationStatus *migration.Status
 
 	// Port to communicate with the migration service over
 	MigrationPort int
-
 	migrationComplete bool
 
-	// Channel that signals that the migrator has finished the migration process.
-	MigrationCompleteChan chan struct{}
-
-	// Channel that signals that the migrator has begun the unloading/loading process
-	MigrationStartChan chan *migration.Status
-	migrationStatus    *migration.Status
-
-	// Channel that the migration service will send us tables that have finished migrating
-	// so that we can restart their queue consumption if it was paused
-	TableMigratedChan chan *migration.Table
-
-	// Is the proxy ready to process queries from user?
-	ready bool
-
-	// Channel signalling that the proxy is now ready to process queries
-	ReadyChan chan struct{}
-
-	// Number of open connections to the Client's Database
-	connectionsToSource int
+	// Channels for dealing with updates from migration service
+	MigrationStart chan *migration.Status
+	TableMigrated  chan *migration.Table
+	MigrationDone  chan struct{}
 
 	// Channel to signal when the Proxy should stop all forwarding and close all connections
 	ShutdownChan chan struct{}
 	shutdown     bool
 
+	ready bool
+
+	// Channel signalling that the proxy is now ready to process queries
+	ReadyChan chan struct{}
+
 	// Channel to signal to coordinator that there are no more open connections to the Client's Database
 	// and that the coordinator can redirect Envoy to point directly to Astra without any negative side effects
 	ReadyForRedirect chan struct{}
+
+	// Holds prepared queries by StreamID and by PreparedID
+	preparedQueries *cqlparser.PreparedQueries
 
 	// Keeps track of the current keyspace queries are being ran in
 	Keyspace string
 
 	// Metrics
 	Metrics Metrics
-
-	// Struct that holds prepared queries by StreamID and by PreparedID
-	preparedQueries *cqlparser.PreparedQueries
 }
 
 type QueryType string
@@ -204,15 +193,15 @@ func (p *CQLProxy) migrationLoop() {
 		log.Info("Proxy waiting for migration start signal.")
 		for {
 			select {
-			case status := <-p.MigrationStartChan:
+			case status := <-p.MigrationStart:
 				p.loadMigrationInfo(status)
 				log.Info("Proxy ready to consume queries.")
 
-			case table := <-p.TableMigratedChan:
+			case table := <-p.TableMigrated:
 				p.startTable(table.Keyspace, table.Name)
 				log.Debugf("Restarted query consumption on table %s.%s", table.Keyspace, table.Name)
 
-			case <-p.MigrationCompleteChan:
+			case <-p.MigrationDone:
 				p.migrationComplete = true
 				log.Info("Migration Complete. Directing all new connections to Astra Database.")
 
@@ -340,7 +329,7 @@ func (p *CQLProxy) handleUpdate(update *updates.Update) error {
 			return err
 		}
 
-		p.MigrationStartChan <- &status
+		p.MigrationStart <- &status
 	case updates.TableUpdate:
 		var table migration.Table
 		err := json.Unmarshal(update.Data, &table)
@@ -352,7 +341,7 @@ func (p *CQLProxy) handleUpdate(update *updates.Update) error {
 		p.migrationStatus.Tables[table.Keyspace][table.Name] = &table
 		p.migrationStatus.Lock.Unlock()
 	case updates.Complete:
-		p.MigrationCompleteChan <- struct{}{}
+		p.MigrationDone <- struct{}{}
 	case updates.Shutdown:
 		p.ShutdownChan <- struct{}{}
 	}
@@ -364,8 +353,8 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 	defer dst.Close()
 
 	if dst.RemoteAddr().String() == p.sourceHostString {
-		p.incrementSources()
-		defer p.decrementSources()
+		p.Metrics.incrementConnections()
+		defer p.Metrics.decrementConnections()
 	}
 
 	buf := make([]byte, 0xffff)
@@ -706,20 +695,8 @@ func (p *CQLProxy) startTable(keyspace string, tableName string) {
 	p.queueLocks[keyspace][tableName].Unlock()
 }
 
-func (p *CQLProxy) incrementSources() {
-	p.lock.Lock()
-	defer p.lock.Unlock()
-
-	p.connectionsToSource++
-}
-
-func (p *CQLProxy) decrementSources() {
-	p.lock.Lock()
-	defer p.lock.Unlock()
-
-	p.connectionsToSource--
-
-	if p.migrationComplete && p.connectionsToSource == 0 {
+func (p *CQLProxy) checkRedirect() {
+	if p.migrationComplete && p.Metrics.sourceConnections() == 0 {
 		log.Debug("No more connections to client database; ready for redirect.")
 		p.ReadyForRedirect <- struct{}{}
 	}
@@ -747,7 +724,6 @@ func (p *CQLProxy) reset() {
 	p.shutdown = false
 	p.listeners = []net.Listener{}
 	p.ReadyForRedirect = make(chan struct{})
-	p.connectionsToSource = 0
 	p.lock = &sync.Mutex{}
 	p.Metrics = Metrics{}
 	p.Metrics.lock = &sync.Mutex{}
@@ -757,6 +733,9 @@ func (p *CQLProxy) reset() {
 		PreparedQueryPathByStreamID:   make(map[uint16]string),
 		PreparedQueryPathByPreparedID: make(map[string]string),
 	}
+	p.MigrationStart = make(chan *migration.Status, 1)
+	p.MigrationDone = make(chan struct{})
+	p.TableMigrated = make(chan *migration.Table, 1)
 }
 
 // TODO: Maybe add a couple retries, or let the caller deal with that?
@@ -804,6 +783,8 @@ type Metrics struct {
 	WriteFails int
 	ReadFails  int
 
+	ConnectionsToSource int
+
 	lock *sync.Mutex
 }
 
@@ -840,4 +821,26 @@ func (m *Metrics) incrementReadFails() {
 	defer m.lock.Unlock()
 
 	m.ReadFails++
+}
+
+func (m *Metrics) incrementConnections() {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
+	m.ConnectionsToSource++
+}
+
+func (m *Metrics) decrementConnections() {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
+	m.ConnectionsToSource--
+}
+
+func (m *Metrics) sourceConnections() int {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
+	numConnections := m.ConnectionsToSource
+	return numConnections
 }
