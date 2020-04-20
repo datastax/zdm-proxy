@@ -2,10 +2,10 @@ package main
 
 import (
 	"bufio"
+	"cloud-gate/config"
 	"cloud-gate/migration/migration"
 	"cloud-gate/proxy/filter"
 	"encoding/json"
-	"flag"
 	"net/http"
 	"os"
 	"sync"
@@ -14,52 +14,25 @@ import (
 )
 
 var (
-	sourceHostname string
-	sourceUsername string
-	sourcePassword string
-	sourcePort     int
-
-	astraHostname string
-	astraUsername string
-	astraPassword string
-	astraPort     int
-	listenPort    int
-
-	debug bool
-	test  bool
-
 	p *filter.CQLProxy
 )
 
 // Method mainly to test the proxy service for now
 func main() {
-	parseFlags()
+	conf := config.New().ParseEnvVars()
 
-	if debug {
+	if conf.Debug {
 		log.SetLevel(log.DebugLevel)
 	} else {
 		log.SetLevel(log.InfoLevel)
 	}
 
-
 	p = &filter.CQLProxy{
-		SourceHostname: sourceHostname,
-		SourceUsername: sourceUsername,
-		SourcePassword: sourcePassword,
-		SourcePort:     sourcePort,
-
-		AstraHostname: astraHostname,
-		AstraUsername: astraUsername,
-		AstraPassword: astraPassword,
-		AstraPort:     astraPort,
-
-		Port:     listenPort,
-		Keyspace: "",
-		MigrationPort:     15000,
+		Conf: conf,
 	}
 
 	// for testing purposes. to delete
-	if test {
+	if conf.Test {
 		go doTesting(p)
 	}
 
@@ -97,22 +70,6 @@ func getMetrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Write(marshaled)
-}
-
-// Most of these will change to environment variables rather than flags
-func parseFlags() {
-	flag.StringVar(&sourceHostname, "source_hostname", "127.0.0.1", "Source Hostname")
-	flag.StringVar(&sourceUsername, "source_username", "", "Source Username")
-	flag.StringVar(&sourcePassword, "source_password", "", "Source Password")
-	flag.IntVar(&sourcePort, "source_port", 9042, "Source Port")
-	flag.StringVar(&astraHostname, "astra_hostname", "127.0.0.1", "Astra Hostname")
-	flag.StringVar(&astraUsername, "astra_username", "", "Aster Username")
-	flag.StringVar(&astraPassword, "astra_password", "", "Astra Password")
-	flag.IntVar(&astraPort, "astra_port", 9042, "Astra Port")
-	flag.IntVar(&listenPort, "listen_port", 0, "Listening Port")
-	flag.BoolVar(&debug, "debug", false, "Debug Mode")
-	flag.BoolVar(&test, "test", false, "Test Mode")
-	flag.Parse()
 }
 
 //function for testing purposes. Will be deleted later. toggles status for table 'codebase' upon user input

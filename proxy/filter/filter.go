@@ -1,6 +1,7 @@
 package filter
 
 import (
+	"cloud-gate/config"
 	"cloud-gate/migration/migration"
 	"cloud-gate/proxy/cqlparser"
 	"cloud-gate/updates"
@@ -10,8 +11,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -39,19 +38,11 @@ const (
 )
 
 type CQLProxy struct {
-	SourceHostname   string
-	SourceUsername   string
-	SourcePassword   string
-	SourcePort       int
+	Conf *config.Config
+
 	sourceHostString string
+	astraHostString  string
 
-	AstraHostname   string
-	AstraUsername   string
-	AstraPassword   string
-	AstraPort       int
-	astraHostString string
-
-	Port         int
 	listeners    []net.Listener
 	astraSession net.Conn
 
@@ -65,8 +56,7 @@ type CQLProxy struct {
 	migrationStatus *migration.Status
 
 	// Port to communicate with the migration service over
-	MigrationPort     int
-	migrationComplete bool
+	MigrationComplete bool
 
 	// Channels for dealing with updates from migration service
 	MigrationStart chan *migration.Status
@@ -156,7 +146,7 @@ func (p *CQLProxy) Start() error {
 	p.reset()
 
 	// Attempt to connect to astra database using given credentials
-	conn, err := connect(p.AstraHostname, p.AstraPort)
+	conn, err := connect(p.Conf.AstraHostname, p.Conf.AstraPort)
 	if err != nil {
 		return err
 	}
@@ -164,12 +154,12 @@ func (p *CQLProxy) Start() error {
 
 	go p.migrationLoop()
 
-	err = p.listen(p.MigrationPort, p.handleMigrationCommunication)
+	err = p.listen(p.Conf.MigrationPort, p.handleMigrationCommunication)
 	if err != nil {
 		return err
 	}
 
-	err = p.listen(p.Port, p.handleDatabaseConnection)
+	err = p.listen(p.Conf.ListenPort, p.handleDatabaseConnection)
 	if err != nil {
 		return err
 	}
@@ -180,29 +170,20 @@ func (p *CQLProxy) Start() error {
 // TODO: Maybe change migration_complete to migration_in_progress, so that we can turn on proxy before migration
 // 	starts (if it ever starts), and it will just redirect to Astra normally.
 func (p *CQLProxy) migrationLoop() {
-	envVar := os.Getenv("migration_complete")
-	status, err := strconv.ParseBool(envVar)
-	if err != nil {
-		log.Error(err)
-	}
-	p.migrationComplete = status && err == nil
+	log.Debugf("Migration Complete: %t", p.MigrationComplete)
 
-	log.Debugf("Migration Complete: %t", p.migrationComplete)
-
-	if !p.migrationComplete {
+	if !p.MigrationComplete {
 		log.Info("Proxy waiting for migration start signal.")
 		for {
 			select {
 			case status := <-p.MigrationStart:
 				p.loadMigrationInfo(status)
-				log.Info("Proxy ready to consume queries.")
 
 			case table := <-p.TableMigrated:
 				p.startTable(table.Keyspace, table.Name)
-				log.Debugf("Restarted query consumption on table %s.%s", table.Keyspace, table.Name)
 
 			case <-p.MigrationDone:
-				p.migrationComplete = true
+				p.MigrationComplete = true
 				log.Info("Migration Complete. Directing all new connections to Astra Database.")
 
 			case <-p.ShutdownChan:
@@ -266,7 +247,7 @@ func (p *CQLProxy) listen(port int, handler func(net.Conn)) error {
 
 func (p *CQLProxy) handleDatabaseConnection(conn net.Conn) {
 	hostname := p.sourceHostString
-	if p.migrationComplete {
+	if p.MigrationComplete {
 		hostname = p.astraHostString
 	}
 
@@ -705,7 +686,7 @@ func (p *CQLProxy) startTable(keyspace string, tableName string) {
 }
 
 func (p *CQLProxy) checkRedirect() {
-	if p.migrationComplete && p.Metrics.sourceConnections() == 0 {
+	if p.MigrationComplete && p.Metrics.sourceConnections() == 0 {
 		log.Debug("No more connections to client database; ready for redirect.")
 		p.ReadyForRedirect <- struct{}{}
 	}
@@ -731,13 +712,14 @@ func (p *CQLProxy) reset() {
 	p.ReadyChan = make(chan struct{})
 	p.ShutdownChan = make(chan struct{})
 	p.shutdown = false
+	p.MigrationComplete = p.Conf.MigrationComplete
 	p.listeners = []net.Listener{}
 	p.ReadyForRedirect = make(chan struct{})
 	p.lock = &sync.Mutex{}
 	p.Metrics = Metrics{}
 	p.Metrics.lock = &sync.Mutex{}
-	p.sourceHostString = fmt.Sprintf("%s:%d", p.SourceHostname, p.SourcePort)
-	p.astraHostString = fmt.Sprintf("%s:%d", p.AstraHostname, p.AstraPort)
+	p.sourceHostString = fmt.Sprintf("%s:%d", p.Conf.SourceHostname, p.Conf.SourcePort)
+	p.astraHostString = fmt.Sprintf("%s:%d", p.Conf.AstraHostname, p.Conf.AstraPort)
 	p.preparedQueries = &cqlparser.PreparedQueries{
 		PreparedQueryPathByStreamID:   make(map[uint16]string),
 		PreparedQueryPathByPreparedID: make(map[string]string),
