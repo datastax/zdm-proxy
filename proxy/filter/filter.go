@@ -106,10 +106,55 @@ type CQLProxy struct {
 type QueryType string
 
 type Query struct {
+	Timestamp uint64
 	Table *migration.Table
 
 	Type  QueryType
 	Query []byte
+}
+
+func newQuery(table *migration.Table, queryType QueryType, query []byte) *Query {
+	return &Query{
+		Timestamp: uint64(time.Now().UnixNano() / 1000000),
+		Table: table,
+		Type: queryType,
+		Query: query,
+	}
+}
+
+func (q *Query) usingTimestamp() *Query {
+	// Set timestamp bit to 1
+	// Search for ';' character, signifying the end of the ASCII query and the start
+	// of the flags. ';' in hex is 3b
+	// TODO: Ensure this is the best way to find where the flags are
+	var index int
+	for i, val := range q.Query {
+		if val == 0x3b {
+			index = i
+			break
+		}
+	}
+
+	// Query already includes timestamp, ignore
+	if q.Query[index+3] & 0x20 == 0x20 {
+		// TODO: Ensure we can keep the original timestamp & we don't need to alter anything
+		//binary.BigEndian.PutUint64(q.Query[len(q.Query) - 8:], q.Timestamp)
+		return q
+	}
+
+	// Set the timestamp bit (0x20) of flags to 1
+	q.Query[index+3] = q.Query[index+3] | 0x20
+
+	// Add timestamp to end of query
+	timestamp := make([]byte, 8)
+	binary.BigEndian.PutUint64(timestamp, q.Timestamp)
+	q.Query = append(q.Query, timestamp...)
+
+	// Update length of body
+	bodyLen := binary.BigEndian.Uint32(q.Query[5:9]) + 64
+	binary.BigEndian.PutUint32(q.Query[5:9], bodyLen)
+
+	return q
 }
 
 func (p *CQLProxy) Start() error {
@@ -347,20 +392,22 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 			}
 
 			query := data[:fullLength]
-			_, err := dst.Write(query)
-			if err != nil {
-				log.Error(err)
-				continue
-			}
 
-			// We only want to mirror writes if this connection is still directly connected to the
-			// client source Database
+			// Mirror writes to Astra Database if this connection is still directly
+			// connected to the client source Database
 			if dst.RemoteAddr().String() == p.sourceHostString {
 				// Passes all data along to be separated into requests and responses
 				err := p.mirrorData(query)
 				if err != nil {
 					log.Error(err)
 				}
+			}
+
+			// Write to source Database
+			_, err := dst.Write(query)
+			if err != nil {
+				log.Error(err)
+				continue
 			}
 
 			p.Metrics.incrementPackets()
@@ -413,10 +460,7 @@ func (p *CQLProxy) mirrorData(data []byte) error {
 
 		if len(fields) > 2 {
 			if fields[1] == "prepare" {
-				q := &Query{
-					Table: nil,
-					Type:  PREPARE,
-					Query: data}
+				q := newQuery(nil, PREPARE, data)
 				return p.execute(q)
 			} else if fields[1] == "query" || fields[1] == "execute" {
 				keyspace, table := extractTableInfo(fields[3])
@@ -442,10 +486,7 @@ func (p *CQLProxy) mirrorData(data []byte) error {
 		} else {
 			// path is '/opcode' case
 			// FIXME: decide if there are any cases we need to handle here
-			q := &Query{
-				Table: nil,
-				Type:  MISC,
-				Query: data}
+			q := newQuery(nil, MISC, data)
 			return p.execute(q)
 		}
 
@@ -466,12 +507,10 @@ func (p *CQLProxy) handleUseQuery(keyspace string, query []byte) error {
 		return errors.New("invalid keyspace")
 	}
 
+	// Set current keyspace
 	p.Keyspace = keyspace
 
-	q := &Query{
-		Table: nil,
-		Type:  USE,
-		Query: query}
+	q := newQuery(nil, USE, query)
 
 	return p.execute(q)
 }
@@ -483,11 +522,7 @@ func (p *CQLProxy) handleInsertQuery(keyspace string, tableName string, query []
 		return fmt.Errorf("table %s.%s does not exist", keyspace, tableName)
 	}
 
-	q := &Query{
-		Table: table,
-		Type:  INSERT,
-		Query: query}
-
+	q := newQuery(table, INSERT, query).usingTimestamp()
 	p.queueQuery(q)
 
 	return nil
@@ -505,11 +540,7 @@ func (p *CQLProxy) handleSpecialWriteQuery(keyspace string, tableName string, qu
 		p.stopTable(keyspace, tableName)
 	}
 
-	q := &Query{
-		Table: table,
-		Type:  queryType,
-		Query: query}
-
+	q := newQuery(table, queryType, query).usingTimestamp()
 	p.queueQuery(q)
 
 	return nil
