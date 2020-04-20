@@ -12,3 +12,9 @@ type Table struct {
 
 	Lock *sync.Mutex
 }
+
+func (t *Table) Update(newData *Table) {
+	t.Step = newData.Step
+	t.Error = newData.Error
+	t.Priority = newData.Priority
+}

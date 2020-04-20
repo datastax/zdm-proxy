@@ -331,15 +331,18 @@ func (p *CQLProxy) handleUpdate(update *updates.Update) error {
 
 		p.MigrationStart <- &status
 	case updates.TableUpdate:
-		var table migration.Table
-		err := json.Unmarshal(update.Data, &table)
+		var tableUpdate migration.Table
+		err := json.Unmarshal(update.Data, &tableUpdate)
 		if err != nil {
 			return err
 		}
 
-		p.migrationStatus.Lock.Lock()
-		p.migrationStatus.Tables[table.Keyspace][table.Name] = &table
-		p.migrationStatus.Lock.Unlock()
+		if table, ok := p.migrationStatus.Tables[tableUpdate.Keyspace][tableUpdate.Name]; ok {
+			table.Update(&tableUpdate)
+		} else {
+			return fmt.Errorf("table %s.%s does not exist", tableUpdate.Keyspace, tableUpdate.Name)
+		}
+
 	case updates.Complete:
 		p.MigrationDone <- struct{}{}
 	case updates.Shutdown:

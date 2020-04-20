@@ -20,6 +20,8 @@ const (
 	Failure
 )
 
+// TODO: maybe add an error field so the two services can communicate what
+// 	actually happened during failures
 // Update represents a request between the migration and proxy services
 type Update struct {
 	id   uuid.UUID
