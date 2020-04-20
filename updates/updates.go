@@ -20,13 +20,12 @@ const (
 	Failure
 )
 
-// TODO: maybe add an error field so the two services can communicate what
-// 	actually happened during failures
 // Update represents a request between the migration and proxy services
 type Update struct {
-	id   uuid.UUID
-	Type UpdateType
-	Data []byte
+	id    uuid.UUID
+	Type  UpdateType
+	Data  []byte
+	Error error
 }
 
 func SuccessResponse(update *Update) []byte {
@@ -43,10 +42,11 @@ func SuccessResponse(update *Update) []byte {
 	return marshaled
 }
 
-func FailureResponse(update *Update) []byte {
+func FailureResponse(update *Update, err error) []byte {
 	resp := Update{
-		id:   update.id,
-		Type: Failure,
+		id:    update.id,
+		Type:  Failure,
+		Error: err,
 	}
 
 	marshaled, err := json.Marshal(resp)

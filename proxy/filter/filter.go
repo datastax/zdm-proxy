@@ -35,7 +35,7 @@ const (
 	cassMaxLen = 268435456 // 256 MB, per spec
 
 	maxQueryRetries = 5
-	queryTimeout = 2 * time.Second
+	queryTimeout    = 2 * time.Second
 )
 
 type CQLProxy struct {
@@ -55,17 +55,17 @@ type CQLProxy struct {
 	listeners    []net.Listener
 	astraSession net.Conn
 
-	queues      map[string]map[string]chan *Query
-	queueLocks  map[string]map[string]*sync.Mutex
-	queueSizes  map[string]map[string]int
-	tablePaused map[string]map[string]bool
+	queues         map[string]map[string]chan *Query
+	queueLocks     map[string]map[string]*sync.Mutex
+	queueSizes     map[string]map[string]int
+	tablePaused    map[string]map[string]bool
 	queryResponses map[uint16]chan bool
-	lock *sync.Mutex
+	lock           *sync.Mutex
 
 	migrationStatus *migration.Status
 
 	// Port to communicate with the migration service over
-	MigrationPort int
+	MigrationPort     int
 	migrationComplete bool
 
 	// Channels for dealing with updates from migration service
@@ -102,8 +102,8 @@ type Query struct {
 	Timestamp uint64
 	Table     *migration.Table
 
-	Type  QueryType
-	Query []byte
+	Type   QueryType
+	Query  []byte
 	Stream uint16
 }
 
@@ -305,8 +305,9 @@ func (p *CQLProxy) handleMigrationCommunication(conn net.Conn) {
 		}
 
 		var resp []byte
-		if p.handleUpdate(&update) != nil {
-			resp = updates.FailureResponse(&update)
+		err = p.handleUpdate(&update)
+		if err != nil {
+			resp = updates.FailureResponse(&update, err)
 		} else {
 			resp = updates.SuccessResponse(&update)
 		}
@@ -326,7 +327,7 @@ func (p *CQLProxy) handleUpdate(update *updates.Update) error {
 		var status migration.Status
 		err := json.Unmarshal(update.Data, &status)
 		if err != nil {
-			return err
+			return errors.New("unable to unmarshal json")
 		}
 
 		p.MigrationStart <- &status
@@ -334,7 +335,7 @@ func (p *CQLProxy) handleUpdate(update *updates.Update) error {
 		var tableUpdate migration.Table
 		err := json.Unmarshal(update.Data, &tableUpdate)
 		if err != nil {
-			return err
+			return errors.New("unable to unmarshal json")
 		}
 
 		if table, ok := p.migrationStatus.Tables[tableUpdate.Keyspace][tableUpdate.Name]; ok {
@@ -347,7 +348,12 @@ func (p *CQLProxy) handleUpdate(update *updates.Update) error {
 		p.MigrationDone <- struct{}{}
 	case updates.Shutdown:
 		p.ShutdownChan <- struct{}{}
+	case updates.Success:
+		// TODO: delete from map / stop go routine that will resend on timer
+	case updates.Failure:
+		// TODO: resend original update
 	}
+
 	return nil
 }
 
@@ -610,9 +616,9 @@ func (p *CQLProxy) executeWrite(q *Query, attempts ...int) error {
 	}
 
 	err := p.executeAndCheckReply(q)
-	if  err != nil {
+	if err != nil {
 		log.Errorf("%s. Retrying query %d", err.Error(), q.Stream)
-		return p.executeWrite(q, attempt + 1)
+		return p.executeWrite(q, attempt+1)
 	}
 
 	return nil
@@ -648,7 +654,7 @@ func (p *CQLProxy) executeAndCheckReply(q *Query) error {
 	}
 }
 
-func (p *CQLProxy) createResponseChan(q *Query) chan bool{
+func (p *CQLProxy) createResponseChan(q *Query) chan bool {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
