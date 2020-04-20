@@ -33,6 +33,9 @@ const (
 
 	cassHdrLen = 9
 	cassMaxLen = 268435456 // 256 MB, per spec
+
+	maxQueryRetries = 5
+	queryTimeout = 2 * time.Second
 )
 
 type CQLProxy struct {
@@ -56,6 +59,7 @@ type CQLProxy struct {
 	queueLocks  map[string]map[string]*sync.Mutex
 	queueSizes  map[string]map[string]int
 	tablePaused map[string]map[string]bool
+	queryResponses map[uint16]chan bool
 
 	// TODO: (maybe) create more locks to improve performance
 	lock *sync.Mutex
@@ -111,6 +115,7 @@ type Query struct {
 
 	Type  QueryType
 	Query []byte
+	Stream uint16
 }
 
 func newQuery(table *migration.Table, queryType QueryType, query []byte) *Query {
@@ -119,6 +124,7 @@ func newQuery(table *migration.Table, queryType QueryType, query []byte) *Query 
 		Table:     table,
 		Type:      queryType,
 		Query:     query,
+		Stream:    binary.BigEndian.Uint16(query[2:4]),
 	}
 }
 
@@ -401,6 +407,10 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 				}
 			}
 
+			if src.RemoteAddr().String() == p.astraHostString {
+				p.handleAstraReply(query)
+			}
+
 			// Write to source Database
 			_, err := dst.Write(query)
 			if err != nil {
@@ -492,6 +502,14 @@ func (p *CQLProxy) mirrorData(data []byte) error {
 	return nil
 }
 
+func (p *CQLProxy) handleAstraReply(query []byte) {
+	stream := binary.BigEndian.Uint16(query[2:4])
+	if success, ok := p.queryResponses[stream]; ok {
+		// Send false only if the OPCode is ERROR (0x0000)
+		success <- query[4] != 0x0000
+	}
+}
+
 func (p *CQLProxy) handleUseQuery(keyspace string, query []byte) error {
 
 	// Cassandra assumes case-insensitive unless keyspace is encased in quotation marks
@@ -566,7 +584,7 @@ func (p *CQLProxy) consumeQueue(keyspace string, table string) {
 			p.queueLocks[keyspace][table].Lock()
 
 			// Driver is async, so we don't need a lock around query execution
-			err := p.execute(query)
+			err := p.executeWrite(query)
 			if err != nil {
 				// TODO: Figure out exactly what to do if we're unable to write
 				// 	If it's a bad query, no issue, but if it's a good query that isn't working for some reason
@@ -586,6 +604,66 @@ func (p *CQLProxy) consumeQueue(keyspace string, table string) {
 		}
 
 	}
+}
+
+// TODO: Change stream when retrying or else cassandra doesn't respond
+func (p *CQLProxy) executeWrite(q *Query, attempts ...int) error {
+	attempt := 0
+	if attempts != nil {
+		attempt = attempts[0]
+	}
+
+	if attempt == maxQueryRetries-1 {
+		return fmt.Errorf("query on stream %d unsuccessful", q.Stream)
+	}
+
+	err := p.executeAndCheckReply(q)
+	if  err != nil {
+		log.Errorf("%s. Retrying query %d", err.Error(), q.Stream)
+		return p.executeWrite(q, attempt + 1)
+	}
+
+	return nil
+}
+
+func (p *CQLProxy) executeAndCheckReply(q *Query) error {
+	resp := p.createResponseChan(q)
+	defer func() {
+		close(resp)
+
+		p.lock.Lock()
+		delete(p.queryResponses, q.Stream)
+		p.lock.Unlock()
+	}()
+
+	err := p.execute(q)
+	if err != nil {
+		return err
+	}
+
+	ticker := time.NewTicker(queryTimeout)
+	for {
+		select {
+		case <-ticker.C:
+			return fmt.Errorf("timeout for query %d", q.Stream)
+		case success := <-resp:
+			if success {
+				log.Debugf("received successful response for query %d", q.Stream)
+				return nil
+			}
+			return fmt.Errorf("received unsuccessful response for query %d", q.Stream)
+		}
+	}
+}
+
+func (p *CQLProxy) createResponseChan(q *Query) chan bool{
+	p.lock.Lock()
+	defer p.lock.Unlock()
+
+	respChan := make(chan bool, 1)
+	p.queryResponses[q.Stream] = respChan
+
+	return respChan
 }
 
 // TODO: Add exponential backoff
@@ -662,6 +740,7 @@ func (p *CQLProxy) reset() {
 	p.queueLocks = make(map[string]map[string]*sync.Mutex)
 	p.queueSizes = make(map[string]map[string]int)
 	p.tablePaused = make(map[string]map[string]bool)
+	p.queryResponses = make(map[uint16]chan bool)
 	p.ready = false
 	p.ReadyChan = make(chan struct{})
 	p.ShutdownChan = make(chan struct{})
