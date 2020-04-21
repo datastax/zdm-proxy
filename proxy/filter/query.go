@@ -39,28 +39,33 @@ func newQuery(table *migration.Table, queryType QueryType, query []byte) *Query 
 	}
 }
 
+// TODO: Handle Batch statements. Currently assumes Query is QUERY or EXECUTE
 func (q *Query) usingTimestamp() *Query {
 	// Set timestamp bit to 1
-	// Search for ';' character, signifying the end of the ASCII query and the start
-	// of the flags. ';' in hex is 3b
-	// TODO: Ensure this is the best way to find where the flags are
+
+	opcode := q.Query[4]
+
+	//index represents start of <query_parameters> in binary protocol
 	var index int
-	for i, val := range q.Query {
-		if val == 0x3b {
-			index = i
-			break
-		}
+	if opcode == 0x07 {
+		//if QUERY
+		queryLen := binary.BigEndian.Uint32(q.Query[9:13])
+		index = 13 + int(queryLen)
+	} else if opcode == 0x0a {
+		//if EXECUTE
+		queryLen := binary.BigEndian.Uint32(q.Query[9:11])
+		index = 11 + int(queryLen)
 	}
 
 	// Query already includes timestamp, ignore
-	if q.Query[index+3]&0x20 == 0x20 {
+	if q.Query[index+2]&0x20 == 0x20 {
 		// TODO: Ensure we can keep the original timestamp & we don't need to alter anything
 		//binary.BigEndian.PutUint64(q.Query[len(q.Query) - 8:], q.Timestamp)
 		return q
 	}
 
 	// Set the timestamp bit (0x20) of flags to 1
-	q.Query[index+3] = q.Query[index+3] | 0x20
+	q.Query[index+2] = q.Query[index+2] | 0x20
 
 	// Add timestamp to end of query
 	timestamp := make([]byte, 8)
@@ -68,7 +73,7 @@ func (q *Query) usingTimestamp() *Query {
 	q.Query = append(q.Query, timestamp...)
 
 	// Update length of body
-	bodyLen := binary.BigEndian.Uint32(q.Query[5:9]) + 64
+	bodyLen := binary.BigEndian.Uint32(q.Query[5:9]) + 8
 	binary.BigEndian.PutUint32(q.Query[5:9], bodyLen)
 
 	return q
