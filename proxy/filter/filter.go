@@ -377,40 +377,42 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 				break
 			}
 
-			query := data[:fullLength]
+			frame := data[:fullLength]
 
-			// Mirror writes to Astra Database if this connection is still directly
-			// connected to the client source Database
-			if dst.RemoteAddr().String() == p.sourceHostString {
-				// Passes all data along to be separated into requests and responses
-				err := p.mirrorData(query)
+			// If the frame is a reply from Astra, handle the reply. If the frame
+			// is a query from the user, always send to Astra through writeToAstra()
+			if frame[0] > 0x80 {
+				if src.RemoteAddr().String() == p.astraHostString {
+					p.handleAstraReply(frame)
+				}
+			} else {
+				err := p.writeToAstra(frame)
 				if err != nil {
 					log.Error(err)
 				}
 			}
 
-			// If this is a reply from the Astra DB, check if it's a response to one of
-			// our queries
-			if src.RemoteAddr().String() == p.astraHostString {
-				p.handleAstraReply(query)
-			}
-
-			_, err := dst.Write(query)
-			if err != nil {
-				log.Error(err)
-				continue
+			// Only tunnel packets through if we are directly connected to the source DB.
+			// If we are connected directly to the Astra DB, we want to ensure that queries go through
+			// the writeToAstra() function to account for query queues
+			if dst.RemoteAddr().String() == p.sourceHostString || src.RemoteAddr().String() == p.sourceHostString {
+				_, err := dst.Write(frame)
+				if err != nil {
+					log.Error(err)
+					continue
+				}
 			}
 
 			p.Metrics.incrementPackets()
 
-			// Keep any extra bytes in the buffer that is part of the next query
+			// Keep any extra bytes in the buffer that are part of the next query
 			data = data[fullLength:]
 		}
 	}
 }
 
 // MirrorData receives all data and decides what to do
-func (p *CQLProxy) mirrorData(data []byte) error {
+func (p *CQLProxy) writeToAstra(data []byte) error {
 	compressionFlag := data[1] & 0x01
 	if compressionFlag == 1 {
 		return errors.New("compression flag set, unable to parse reply beyond header")
@@ -418,7 +420,6 @@ func (p *CQLProxy) mirrorData(data []byte) error {
 
 	// if reply, we parse replies but only look for prepared-query-id responses
 	if data[0] > 0x80 {
-		cqlparser.CassandraParseReply(p.preparedQueries, data)
 		return nil
 	}
 
@@ -486,6 +487,8 @@ func (p *CQLProxy) mirrorData(data []byte) error {
 }
 
 func (p *CQLProxy) handleAstraReply(query []byte) {
+	cqlparser.CassandraParseReply(p.preparedQueries, query)
+
 	stream := binary.BigEndian.Uint16(query[2:4])
 	if success, ok := p.queryResponses[stream]; ok {
 		// Send false only if the OPCode is ERROR (0x0000)
