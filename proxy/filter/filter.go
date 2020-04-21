@@ -344,7 +344,10 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 
 	if dst.RemoteAddr().String() == p.sourceHostString {
 		p.Metrics.incrementConnections()
-		defer p.Metrics.decrementConnections()
+		defer func() {
+			p.Metrics.decrementConnections()
+			p.checkRedirect()
+		}()
 	}
 
 	buf := make([]byte, 0xffff)
@@ -386,11 +389,12 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 				}
 			}
 
+			// If this is a reply from the Astra DB, check if it's a response to one of
+			// our queries
 			if src.RemoteAddr().String() == p.astraHostString {
 				p.handleAstraReply(query)
 			}
 
-			// Write to source Database
 			_, err := dst.Write(query)
 			if err != nil {
 				log.Error(err)
@@ -569,7 +573,6 @@ func (p *CQLProxy) consumeQueue(keyspace string, table string) {
 				// 	If it's a bad query, no issue, but if it's a good query that isn't working for some reason
 				// 	we need to figure out what to do
 				log.Error(err)
-
 				p.Metrics.incrementWriteFails()
 			} else {
 				p.Metrics.incrementWrites()
@@ -587,12 +590,12 @@ func (p *CQLProxy) consumeQueue(keyspace string, table string) {
 
 // TODO: Change stream when retrying or else cassandra doesn't respond
 func (p *CQLProxy) executeWrite(q *Query, attempts ...int) error {
-	attempt := 0
+	attempt := 1
 	if attempts != nil {
 		attempt = attempts[0]
 	}
 
-	if attempt == maxQueryRetries-1 {
+	if attempt > maxQueryRetries {
 		return fmt.Errorf("query on stream %d unsuccessful", q.Stream)
 	}
 
@@ -645,20 +648,17 @@ func (p *CQLProxy) createResponseChan(q *Query) chan bool {
 	return respChan
 }
 
-// TODO: Add exponential backoff
 func (p *CQLProxy) execute(query *Query) error {
 	log.Debugf("Executing %v", *query)
 
 	var err error
 	for i := 1; i <= 5; i++ {
-		// TODO: Catch reply and see if it was successful
 		_, err := p.astraSession.Write(query.Query)
 		if err == nil {
 			break
 		}
 
 		time.Sleep(500 * time.Millisecond)
-		log.Debugf("Retrying %s attempt #%d", query, i+1)
 	}
 
 	return err
@@ -669,18 +669,23 @@ func (p *CQLProxy) tableStatus(keyspace string, tableName string) migration.Step
 	table.Lock.Lock()
 	defer table.Lock.Unlock()
 
-	status := table.Step
-	return status
+	return table.Step
 }
 
 func (p *CQLProxy) stopTable(keyspace string, tableName string) {
 	log.Debugf("Stopping query consumption on %s.%s", keyspace, tableName)
+	p.lock.Lock()
+	defer p.lock.Unlock()
+
 	p.tablePaused[keyspace][tableName] = true
 	p.queueLocks[keyspace][tableName].Lock()
 }
 
 func (p *CQLProxy) startTable(keyspace string, tableName string) {
 	log.Debugf("Starting query consumption on %s.%s", keyspace, tableName)
+	p.lock.Lock()
+	defer p.lock.Unlock()
+
 	p.tablePaused[keyspace][tableName] = false
 	p.queueLocks[keyspace][tableName].Unlock()
 }
@@ -832,6 +837,5 @@ func (m *Metrics) sourceConnections() int {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 
-	numConnections := m.ConnectionsToSource
-	return numConnections
+	return m.ConnectionsToSource
 }

@@ -22,15 +22,24 @@ const (
 
 // Update represents a request between the migration and proxy services
 type Update struct {
-	id    uuid.UUID
+	ID    uuid.UUID
 	Type  UpdateType
 	Data  []byte
 	Error error
 }
 
+func New(updateType UpdateType, data []byte) *Update {
+	return &Update{
+		ID: uuid.New(),
+		Type: updateType,
+		Data: data,
+		Error: nil,
+	}
+}
+
 func SuccessResponse(update *Update) []byte {
 	resp := Update{
-		id:   update.id,
+		ID:   update.ID,
 		Type: Success,
 	}
 
@@ -44,7 +53,7 @@ func SuccessResponse(update *Update) []byte {
 
 func FailureResponse(update *Update, err error) []byte {
 	resp := Update{
-		id:    update.id,
+		ID:    update.ID,
 		Type:  Failure,
 		Error: err,
 	}
