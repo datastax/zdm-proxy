@@ -24,40 +24,6 @@ type PreparedQueries struct {
 
 // Taken with small modifications from
 // https://github.com/cilium/cilium/blob/2bc1fdeb97331761241f2e4b3fb88ad524a0681b/proxylib/cassandra/cassandraparser.go
-func CassandraParseReply(p *PreparedQueries, data []byte) {
-	direction := data[0] & 0x80
-	if direction != 0x80 {
-		log.Errorf("Direction bit is 'request', but we are trying to parse reply")
-		return
-	}
-
-	streamID := binary.BigEndian.Uint16(data[2:4])
-	log.Debugf("Reply with opcode %d and stream-id %d", data[4], streamID)
-	// if this is an opcode == RESULT message of type 'prepared', associate the prepared
-	// statement id with the full query string that was included in the
-	// associated PREPARE request.  The stream-id in this reply allows us to
-	// find the associated prepare query string.
-	if data[4] == 0x08 {
-		resultKind := binary.BigEndian.Uint32(data[9:13])
-		log.Debugf("resultKind = %d", resultKind)
-		if resultKind == 0x0004 {
-			idLen := binary.BigEndian.Uint16(data[13:15])
-			preparedID := string(data[15 : 15+idLen])
-			log.Debugf("Result with prepared-id = '%s' for stream-id %d", preparedID, streamID)
-			path := p.PreparedQueryPathByStreamID[streamID]
-			if len(path) > 0 {
-				// found cached query path to associate with this preparedID
-				p.PreparedQueryPathByPreparedID[preparedID] = path
-				log.Debugf("Associating query path '%s' with prepared-id %s as part of stream-id %d", path, preparedID, streamID)
-			} else {
-				log.Warnf("Unable to find prepared query path associated with stream-id %d", streamID)
-			}
-		}
-	}
-}
-
-// Taken with small modifications from
-// https://github.com/cilium/cilium/blob/2bc1fdeb97331761241f2e4b3fb88ad524a0681b/proxylib/cassandra/cassandraparser.go
 func CassandraParseRequest(p *PreparedQueries, data []byte) ([]string, error) {
 	direction := data[0] & 0x80 // top bit
 	if direction != 0 {

@@ -19,14 +19,6 @@ import (
 )
 
 const (
-	USE      = QueryType("USE")
-	INSERT   = QueryType("INSERT")
-	UPDATE   = QueryType("UPDATE")
-	DELETE   = QueryType("DELETE")
-	TRUNCATE = QueryType("TRUNCATE")
-	PREPARE  = QueryType("PREPARE")
-	MISC     = QueryType("MISC")
-
 	// TODO: Finalize queue size to use
 	queueSize = 1000
 
@@ -84,62 +76,6 @@ type CQLProxy struct {
 
 	// Metrics
 	Metrics Metrics
-}
-
-type QueryType string
-
-type Query struct {
-	Timestamp uint64
-	Table     *migration.Table
-
-	Type   QueryType
-	Query  []byte
-	Stream uint16
-}
-
-func newQuery(table *migration.Table, queryType QueryType, query []byte) *Query {
-	return &Query{
-		Timestamp: uint64(time.Now().UnixNano() / 1000000),
-		Table:     table,
-		Type:      queryType,
-		Query:     query,
-		Stream:    binary.BigEndian.Uint16(query[2:4]),
-	}
-}
-
-func (q *Query) usingTimestamp() *Query {
-	// Set timestamp bit to 1
-	// Search for ';' character, signifying the end of the ASCII query and the start
-	// of the flags. ';' in hex is 3b
-	// TODO: Ensure this is the best way to find where the flags are
-	var index int
-	for i, val := range q.Query {
-		if val == 0x3b {
-			index = i
-			break
-		}
-	}
-
-	// Query already includes timestamp, ignore
-	if q.Query[index+3]&0x20 == 0x20 {
-		// TODO: Ensure we can keep the original timestamp & we don't need to alter anything
-		//binary.BigEndian.PutUint64(q.Query[len(q.Query) - 8:], q.Timestamp)
-		return q
-	}
-
-	// Set the timestamp bit (0x20) of flags to 1
-	q.Query[index+3] = q.Query[index+3] | 0x20
-
-	// Add timestamp to end of query
-	timestamp := make([]byte, 8)
-	binary.BigEndian.PutUint64(timestamp, q.Timestamp)
-	q.Query = append(q.Query, timestamp...)
-
-	// Update length of body
-	bodyLen := binary.BigEndian.Uint32(q.Query[5:9]) + 64
-	binary.BigEndian.PutUint32(q.Query[5:9], bodyLen)
-
-	return q
 }
 
 func (p *CQLProxy) Start() error {
@@ -422,6 +358,43 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 	}
 }
 
+func (p *CQLProxy) handleAstraReply(data []byte) {
+	streamID := binary.BigEndian.Uint16(data[2:4])
+	opcode := data[4]
+
+	log.Debugf("Reply with opcode %d and stream-id %d", data[4], streamID)
+
+	// if this is an opcode == RESULT message of type 'prepared', associate the prepared
+	// statement id with the full query string that was included in the
+	// associated PREPARE request.  The stream-id in this reply allows us to
+	// find the associated prepare query string.
+	if opcode == 0x08 {
+		resultKind := binary.BigEndian.Uint32(data[9:13])
+		log.Debugf("resultKind = %d", resultKind)
+		if resultKind == 0x0004 {
+			idLen := binary.BigEndian.Uint16(data[13:15])
+			preparedID := string(data[15 : 15+idLen])
+			log.Debugf("Result with prepared-id = '%s' for stream-id %d", preparedID, streamID)
+			path := p.preparedQueries.PreparedQueryPathByStreamID[streamID]
+			if len(path) > 0 {
+				// found cached query path to associate with this preparedID
+				p.preparedQueries.PreparedQueryPathByPreparedID[preparedID] = path
+				log.Debugf("Associating query path '%s' with prepared-id %s as part of stream-id %d",
+					path, preparedID, streamID)
+			} else {
+				log.Warnf("Unable to find prepared query path associated with stream-id %d", streamID)
+			}
+		}
+	}
+
+	// If this is a response to a previous query we ran, send result over success channel
+	// Failed query only if opcode is ERROR (0x0000)
+	if success, ok := p.queryResponses[streamID]; ok {
+		success <- opcode != 0x0000
+		return
+	}
+}
+
 // MirrorData receives all data and decides what to do
 func (p *CQLProxy) writeToAstra(data []byte, client string) error {
 	compressionFlag := data[1] & 0x01
@@ -466,30 +439,14 @@ func (p *CQLProxy) writeToAstra(data []byte, client string) error {
 				q := newQuery(nil, PREPARE, data)
 				return p.execute(q)
 			} else if fields[1] == "query" || fields[1] == "execute" {
-				keyspace, table := extractTableInfo(fields[3])
+				queryType := QueryType(fields[2])
 
-				withKeyspace := data
-				if keyspace == "" && fields[2] != "use" {
-					keyspace = p.Keyspaces[client]
-					if keyspace == "" {
-						return errors.New("invalid keyspace")
-					}
-
-					withKeyspace = embedKeyspace(data, keyspace, table)
-				}
-
-				switch fields[2] {
-				case "use":
+				switch queryType {
+				case USE:
 					return p.handleUseQuery(fields[3], data, client)
-				case "insert":
-					return p.handleInsertQuery(keyspace, table, withKeyspace)
-				case "update":
-					return p.handleSpecialWriteQuery(keyspace, table, UPDATE, withKeyspace)
-				case "delete":
-					return p.handleSpecialWriteQuery(keyspace, table, DELETE, withKeyspace)
-				case "truncate":
-					return p.handleSpecialWriteQuery(keyspace, table, TRUNCATE, withKeyspace)
-				case "select":
+				case INSERT, UPDATE, DELETE, TRUNCATE:
+					return p.handleWriteQuery(fields[3], queryType, data, client)
+				case SELECT:
 					p.Metrics.incrementReads()
 				}
 			}
@@ -504,40 +461,7 @@ func (p *CQLProxy) writeToAstra(data []byte, client string) error {
 	return nil
 }
 
-// TODO: Make cleaner / more efficient
-func embedKeyspace(query []byte, keyspace string, table string) []byte {
-	tablePrefix := []byte(keyspace + ".")
-
-	// Find table in original query
-	index := strings.Index(string(query), table)
-
-	before := make([]byte, index)
-	copy(before, query[:index])
-	after := query[index:]
-
-	// Rebuild query
-	updatedQuery := append(before, tablePrefix...)
-	updatedQuery = append(updatedQuery, after...)
-
-	// Update query length
-	bodyLen := binary.BigEndian.Uint32(updatedQuery[5:9]) + uint32(len(tablePrefix))
-	binary.BigEndian.PutUint32(updatedQuery[5:9], bodyLen)
-
-	return updatedQuery
-}
-
-func (p *CQLProxy) handleAstraReply(query []byte) {
-	cqlparser.CassandraParseReply(p.preparedQueries, query)
-
-	stream := binary.BigEndian.Uint16(query[2:4])
-	if success, ok := p.queryResponses[stream]; ok {
-		// Send false only if the OPCode is ERROR (0x0000)
-		success <- query[4] != 0x0000
-	}
-}
-
 func (p *CQLProxy) handleUseQuery(keyspace string, query []byte, client string) error {
-
 	// Cassandra assumes case-insensitive unless keyspace is encased in quotation marks
 	if strings.HasPrefix(keyspace, "\"") && strings.HasSuffix(keyspace, "\"") {
 		keyspace = keyspace[1 : len(keyspace)-1]
@@ -558,32 +482,38 @@ func (p *CQLProxy) handleUseQuery(keyspace string, query []byte, client string) 
 	return p.execute(q)
 }
 
-// Extract table name from insert query & add query to proper queue
-func (p *CQLProxy) handleInsertQuery(keyspace string, tableName string, query []byte) error {
+func (p *CQLProxy) handleWriteQuery(fromClause string, queryType QueryType, data []byte, client string) error {
+	keyspace, tableName := extractTableInfo(fromClause)
+
+	// Is the keyspace already in the table clause of the query, or do we need to add it
+	addKeyspace := false
+	if keyspace == "" {
+		keyspace = p.Keyspaces[client]
+		if keyspace == "" {
+			return errors.New("invalid keyspace")
+		}
+
+		addKeyspace = true
+	}
+
 	table, ok := p.migrationStatus.Tables[keyspace][tableName]
 	if !ok {
 		return fmt.Errorf("table %s.%s does not exist", keyspace, tableName)
 	}
 
-	q := newQuery(table, INSERT, query).usingTimestamp()
-	p.queueQuery(q)
-
-	return nil
-}
-
-// A special write query is a write query that depends on all values already being present in the table
-// ex: UPDATE, DELETE, TRUNCATE
-func (p *CQLProxy) handleSpecialWriteQuery(keyspace string, tableName string, queryType QueryType, query []byte) error {
-	table, ok := p.migrationStatus.Tables[keyspace][tableName]
-	if !ok {
-		return fmt.Errorf("table %s.%s does not exist", keyspace, tableName)
+	q := newQuery(table, queryType, data).usingTimestamp()
+	if addKeyspace {
+		q = q.addKeyspace(keyspace)
 	}
 
-	if !p.tablePaused[keyspace][tableName] && p.tableStatus(keyspace, tableName) != migration.LoadingDataComplete {
-		p.stopTable(keyspace, tableName)
+	// write query that depends on all values already being present in the table
+	// ex: UPDATE, DELETE, TRUNCATE
+	if queryType != INSERT {
+		if !p.tablePaused[keyspace][tableName] && p.tableStatus(keyspace, tableName) != migration.LoadingDataComplete {
+			p.stopTable(keyspace, tableName)
+		}
 	}
 
-	q := newQuery(table, queryType, query).usingTimestamp()
 	p.queueQuery(q)
 
 	return nil
