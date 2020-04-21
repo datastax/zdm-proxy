@@ -80,7 +80,7 @@ type CQLProxy struct {
 	preparedQueries *cqlparser.PreparedQueries
 
 	// Keeps track of the current keyspace queries are being ran in
-	Keyspace string
+	Keyspaces map[string]string
 
 	// Metrics
 	Metrics Metrics
@@ -342,7 +342,18 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 	defer src.Close()
 	defer dst.Close()
 
-	if dst.RemoteAddr().String() == p.sourceHostString {
+	sourceAddress := src.RemoteAddr().String()
+	destAddress := dst.RemoteAddr().String()
+
+	defer func() {
+		p.lock.Lock()
+		if _, ok := p.Keyspaces[sourceAddress]; ok {
+			delete(p.Keyspaces, sourceAddress)
+		}
+		p.lock.Unlock()
+	}()
+
+	if destAddress == p.sourceHostString {
 		p.Metrics.incrementConnections()
 		defer func() {
 			p.Metrics.decrementConnections()
@@ -382,11 +393,11 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 			// If the frame is a reply from Astra, handle the reply. If the frame
 			// is a query from the user, always send to Astra through writeToAstra()
 			if frame[0] > 0x80 {
-				if src.RemoteAddr().String() == p.astraHostString {
+				if sourceAddress == p.astraHostString {
 					p.handleAstraReply(frame)
 				}
 			} else {
-				err := p.writeToAstra(frame)
+				err := p.writeToAstra(frame, sourceAddress)
 				if err != nil {
 					log.Error(err)
 				}
@@ -395,7 +406,7 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 			// Only tunnel packets through if we are directly connected to the source DB.
 			// If we are connected directly to the Astra DB, we want to ensure that queries go through
 			// the writeToAstra() function to account for query queues
-			if dst.RemoteAddr().String() == p.sourceHostString || src.RemoteAddr().String() == p.sourceHostString {
+			if sourceAddress == p.sourceHostString || destAddress == p.sourceHostString {
 				_, err := dst.Write(frame)
 				if err != nil {
 					log.Error(err)
@@ -412,7 +423,7 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 }
 
 // MirrorData receives all data and decides what to do
-func (p *CQLProxy) writeToAstra(data []byte) error {
+func (p *CQLProxy) writeToAstra(data []byte, client string) error {
 	compressionFlag := data[1] & 0x01
 	if compressionFlag == 1 {
 		return errors.New("compression flag set, unable to parse reply beyond header")
@@ -456,15 +467,20 @@ func (p *CQLProxy) writeToAstra(data []byte) error {
 				return p.execute(q)
 			} else if fields[1] == "query" || fields[1] == "execute" {
 				keyspace, table := extractTableInfo(fields[3])
+
 				withKeyspace := data
 				if keyspace == "" && fields[2] != "use" {
-					keyspace = p.Keyspace
+					keyspace = p.Keyspaces[client]
+					if keyspace == "" {
+						return errors.New("invalid keyspace")
+					}
+
 					withKeyspace = embedKeyspace(data, keyspace, table)
 				}
 
 				switch fields[2] {
 				case "use":
-					return p.handleUseQuery(fields[3], data)
+					return p.handleUseQuery(fields[3], data, client)
 				case "insert":
 					return p.handleInsertQuery(keyspace, table, withKeyspace)
 				case "update":
@@ -520,7 +536,7 @@ func (p *CQLProxy) handleAstraReply(query []byte) {
 	}
 }
 
-func (p *CQLProxy) handleUseQuery(keyspace string, query []byte) error {
+func (p *CQLProxy) handleUseQuery(keyspace string, query []byte, client string) error {
 
 	// Cassandra assumes case-insensitive unless keyspace is encased in quotation marks
 	if strings.HasPrefix(keyspace, "\"") && strings.HasSuffix(keyspace, "\"") {
@@ -533,8 +549,9 @@ func (p *CQLProxy) handleUseQuery(keyspace string, query []byte) error {
 		return errors.New("invalid keyspace")
 	}
 
-	// Set current keyspace
-	p.Keyspace = keyspace
+	p.lock.Lock()
+	p.Keyspaces[client] = keyspace
+	p.lock.Unlock()
 
 	q := newQuery(nil, USE, query)
 
@@ -759,6 +776,7 @@ func (p *CQLProxy) reset() {
 	p.MigrationStart = make(chan *migration.Status, 1)
 	p.MigrationDone = make(chan struct{})
 	p.TableMigrated = make(chan *migration.Table, 1)
+	p.Keyspaces = make(map[string]string)
 }
 
 // TODO: Maybe add a couple retries, or let the caller deal with that?
