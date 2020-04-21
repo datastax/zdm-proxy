@@ -456,21 +456,23 @@ func (p *CQLProxy) writeToAstra(data []byte) error {
 				return p.execute(q)
 			} else if fields[1] == "query" || fields[1] == "execute" {
 				keyspace, table := extractTableInfo(fields[3])
-				if keyspace == "" {
+				withKeyspace := data
+				if keyspace == "" && fields[2] != "use" {
 					keyspace = p.Keyspace
+					withKeyspace = embedKeyspace(data, keyspace, table)
 				}
 
 				switch fields[2] {
 				case "use":
 					return p.handleUseQuery(fields[3], data)
 				case "insert":
-					return p.handleInsertQuery(keyspace, table, data)
+					return p.handleInsertQuery(keyspace, table, withKeyspace)
 				case "update":
-					return p.handleSpecialWriteQuery(keyspace, table, UPDATE, data)
+					return p.handleSpecialWriteQuery(keyspace, table, UPDATE, withKeyspace)
 				case "delete":
-					return p.handleSpecialWriteQuery(keyspace, table, DELETE, data)
+					return p.handleSpecialWriteQuery(keyspace, table, DELETE, withKeyspace)
 				case "truncate":
-					return p.handleSpecialWriteQuery(keyspace, table, TRUNCATE, data)
+					return p.handleSpecialWriteQuery(keyspace, table, TRUNCATE, withKeyspace)
 				case "select":
 					p.Metrics.incrementReads()
 				}
@@ -484,6 +486,28 @@ func (p *CQLProxy) writeToAstra(data []byte) error {
 
 	}
 	return nil
+}
+
+// TODO: Make cleaner / more efficient
+func embedKeyspace(query []byte, keyspace string, table string) []byte {
+	tablePrefix := []byte(keyspace + ".")
+
+	// Find table in original query
+	index := strings.Index(string(query), table)
+
+	before := make([]byte, index)
+	copy(before, query[:index])
+	after := query[index:]
+
+	// Rebuild query
+	updatedQuery := append(before, tablePrefix...)
+	updatedQuery = append(updatedQuery, after...)
+
+	// Update query length
+	bodyLen := binary.BigEndian.Uint32(updatedQuery[5:9]) + uint32(len(tablePrefix))
+	binary.BigEndian.PutUint32(updatedQuery[5:9], bodyLen)
+
+	return updatedQuery
 }
 
 func (p *CQLProxy) handleAstraReply(query []byte) {
