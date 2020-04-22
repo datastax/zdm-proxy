@@ -47,9 +47,6 @@ func main() {
 
 	for {
 		select {
-		case <-p.ReadyChan:
-			log.Info("Coordinator received proxy ready signal.")
-
 		case <-p.ReadyForRedirect:
 			log.Info("Coordinate received signal that there are no more connections to Client Database.")
 		}

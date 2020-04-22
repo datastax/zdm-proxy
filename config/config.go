@@ -18,6 +18,7 @@ type Config struct {
 
 	MigrationComplete bool `required:"true" split_words:"true"`
 	MigrationPort     int  `required:"true" split_words:"true"`
+	ProxyPort         int  `required:"true" split_words:"true"`
 	ListenPort        int  `split_words:"true"`
 
 	Test  bool

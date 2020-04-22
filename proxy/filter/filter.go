@@ -37,6 +37,7 @@ type CQLProxy struct {
 
 	listeners    []net.Listener
 	astraSession net.Conn
+	migrationSession net.Conn
 
 	queues         map[string]map[string]chan *Query
 	queueLocks     map[string]map[string]*sync.Mutex
@@ -90,11 +91,12 @@ func (p *CQLProxy) Start() error {
 
 	go p.migrationLoop()
 
-	err = p.listen(p.Conf.MigrationPort, p.handleMigrationCommunication)
+	err = p.listen(p.Conf.ProxyPort, p.handleMigrationCommunication)
 	if err != nil {
 		return err
 	}
 
+	<- p.ReadyChan
 	err = p.listen(p.Conf.ListenPort, p.handleDatabaseConnection)
 	if err != nil {
 		return err
@@ -202,6 +204,16 @@ func (p *CQLProxy) handleDatabaseConnection(conn net.Conn) {
 func (p *CQLProxy) handleMigrationCommunication(conn net.Conn) {
 	defer conn.Close()
 
+	// TODO: Fix this janky retrying system lol
+	log.Debugf("Attempting to connect to migration service via port %d", p.Conf.MigrationPort)
+	out, err := net.Dial("tcp", fmt.Sprintf(":%d", p.Conf.MigrationPort))
+	if err != nil {
+		log.Debugf("couldn't connect, retrying")
+		time.Sleep(1 * time.Second)
+		defer p.handleMigrationCommunication(conn)
+		return
+	}
+
 	// TODO: change buffer size
 	buf := make([]byte, 0xfffffff)
 	for {
@@ -229,7 +241,7 @@ func (p *CQLProxy) handleMigrationCommunication(conn net.Conn) {
 			resp = update.Success()
 		}
 
-		_, err = conn.Write(resp)
+		_, err = out.Write(resp)
 		if err != nil {
 			log.Error(err)
 		}
