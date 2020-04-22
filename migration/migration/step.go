@@ -9,6 +9,7 @@ const (
 	Waiting
 	MigratingSchema
 	MigratingSchemaComplete
+	WaitingToUnload
 	UnloadingData
 	UnloadingDataComplete
 	LoadingData

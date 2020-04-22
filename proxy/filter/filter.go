@@ -521,7 +521,7 @@ func (p *CQLProxy) handleWriteQuery(fromClause string, queryType QueryType, data
 	// write query that depends on all values already being present in the table
 	// ex: UPDATE, DELETE, TRUNCATE
 	if queryType != INSERT {
-		if !p.tablePaused[keyspace][tableName] && p.tableStatus(keyspace, tableName) >= migration.UnloadingData && p.tableStatus(keyspace, tableName) < migration.LoadingDataComplete {
+		if !p.tablePaused[keyspace][tableName] && p.tableStatus(keyspace, tableName) >= migration.WaitingToUnload && p.tableStatus(keyspace, tableName) < migration.LoadingDataComplete {
 			p.stopTable(keyspace, tableName)
 		}
 	}
