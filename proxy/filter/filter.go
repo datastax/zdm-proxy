@@ -213,7 +213,7 @@ func (p *CQLProxy) handleMigrationCommunication(conn net.Conn) {
 
 	// TODO: Do a real retrying system, not this janky thing
 	log.Debugf("Attempting to connect to migration service via port %d", p.Conf.MigrationPort)
-	out, err := net.Dial("tcp", fmt.Sprintf(":%d", p.Conf.MigrationPort))
+	out, err := connect(p.Conf.MigrationServiceHostname, p.Conf.MigrationPort)
 	if err != nil {
 		log.Debugf("couldn't connect, retrying")
 		time.Sleep(1 * time.Second)
