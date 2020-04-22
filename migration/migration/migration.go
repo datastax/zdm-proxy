@@ -127,18 +127,16 @@ func (m *Migration) Migrate() error {
 	}
 	close(schemaJobs)
 	wgSchema.Wait()
-	bytes, err := json.Marshal(m.status)
-	if err != nil {
-		return err
-	}
 
+	// Start listening to proxy communications
 	go m.startCommunication()
 
 	// Notify proxy service that schemas are finished migrating, unload/load starting
-	m.sendRequest(&updates.Update{
-		Type: updates.Start,
-		Data: bytes,
-	})
+	m.sendStart()
+	// TODO: wait for proxy to send success back before beginning data migration
+	time.Sleep(2 * time.Second)
+	// TODO: in all the send helper functions, add the type of request sent to a map of requests
+	// after sleeping, check if map value has been sent to 1 (or whatever)
 
 	for _, keyspaceTables := range tables {
 		for _, table := range keyspaceTables {
@@ -165,16 +163,7 @@ func (m *Migration) Migrate() error {
 
 	m.writeCheckpoint()
 
-	bytes, err = json.Marshal(m.status)
-	if err != nil {
-		return err
-	}
-
-	// Notify proxy of completed migration
-	m.sendRequest(&updates.Update{
-		Type: updates.Complete,
-		Data: bytes,
-	})
+	m.sendComplete()
 
 	return nil
 }
@@ -258,15 +247,7 @@ func (m *Migration) tablePool(worker int, wg *sync.WaitGroup, jobs <-chan *gocql
 			print(fmt.Sprintf("COMPLETED LOADING TABLE DATA: %s.%s\n", table.Keyspace, table.Name))
 			m.writeCheckpoint()
 
-			bytes, err := json.Marshal(m.status.Tables[table.Keyspace][table.Name])
-			if err != nil {
-				log.Fatal(err)
-			}
-
-			m.sendRequest(&updates.Update{
-				Type: updates.TableUpdate,
-				Data: bytes,
-			})
+			m.sendTableUpdate(m.status.Tables[table.Keyspace][table.Name])
 		}
 		wg.Done()
 	}
@@ -305,6 +286,7 @@ func (m *Migration) buildUnloadQuery(table *gocql.TableMetadata) string {
 func (m *Migration) unloadTable(table *gocql.TableMetadata) error {
 	m.status.Tables[table.Keyspace][table.Name].Step = UnloadingData
 	print(fmt.Sprintf("UNLOADING TABLE: %s.%s...\n", table.Keyspace, table.Name))
+	m.sendTableUpdate(m.status.Tables[table.Keyspace][table.Name])
 
 	query := m.buildUnloadQuery(table)
 	cmdArgs := []string{"unload", "-port", strconv.Itoa(m.SourcePort), "-query", query, "-url", m.directory + table.Keyspace + "." + table.Name, "-logDir", m.directory}
@@ -318,16 +300,7 @@ func (m *Migration) unloadTable(table *gocql.TableMetadata) error {
 	m.status.Tables[table.Keyspace][table.Name].Step = UnloadingDataComplete
 	print(fmt.Sprintf("COMPLETED UNLOADING TABLE: %s.%s\n", table.Keyspace, table.Name))
 
-	// TODO: put all instances of this into a sendTableStatus method
-	bytes, err := json.Marshal(m.status.Tables[table.Keyspace][table.Name])
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	m.sendRequest(&updates.Update{
-		Type: updates.TableUpdate,
-		Data: bytes,
-	})
+	m.sendTableUpdate(m.status.Tables[table.Keyspace][table.Name])
 
 	return nil
 }
@@ -350,6 +323,7 @@ func (m *Migration) buildLoadQuery(table *gocql.TableMetadata) string {
 func (m *Migration) loadTable(table *gocql.TableMetadata) error {
 	m.status.Tables[table.Keyspace][table.Name].Step = LoadingData
 	print(fmt.Sprintf("LOADING TABLE: %s.%s...\n", table.Keyspace, table.Name))
+	m.sendTableUpdate(m.status.Tables[table.Keyspace][table.Name])
 
 	query := m.buildLoadQuery(table)
 	cmdArgs := []string{"load", "-h", m.DestHostname, "-port", strconv.Itoa(m.DestPort), "-query", query, "-url", m.directory + table.Keyspace + "." + table.Name, "-logDir", m.directory, "--batch.mode", "DISABLED"}
@@ -510,6 +484,48 @@ func (m *Migration) processRequest(conn net.Conn) error {
 	}
 }
 
+func (m *Migration) sendStart() error {
+	bytes, err := json.Marshal(m.status)
+	if err != nil {
+		return err
+	}
+
+	m.sendRequest(&updates.Update{
+		Type: updates.Start,
+		Data: bytes,
+	})
+
+	return nil
+}
+
+func (m *Migration) sendComplete() error {
+	bytes, err := json.Marshal(m.status)
+	if err != nil {
+		return err
+	}
+
+	m.sendRequest(&updates.Update{
+		Type: updates.Complete,
+		Data: bytes,
+	})
+
+	return nil
+}
+
+func (m *Migration) sendTableUpdate(table *Table) error {
+	bytes, err := json.Marshal(table)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	m.sendRequest(&updates.Update{
+		Type: updates.TableUpdate,
+		Data: bytes,
+	})
+
+	return nil
+}
+
 // sendRequest will notify the proxy service about the migration progress
 // For now, because proxy port is not set up and we cannot test with proxy, we return on error
 func (m *Migration) sendRequest(req *updates.Update) error {
@@ -527,7 +543,10 @@ func (m *Migration) sendRequest(req *updates.Update) error {
 		print(err.Error())
 		return err
 	}
-	// after sending, add the sent data to a map, wait for some amount of time then check map to see if it's been cleared
+
+	//maxRetries := 5
+	//time.Sleep(2 * time.Second)
+	// TODO: after sending, add the sent data to a map, wait for some amount of time then check map to see if it's been cleared
 	// else resend the data
 	// after retrying 3 (??) times then just shutdown?? idk
 	return nil
