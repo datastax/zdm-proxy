@@ -79,6 +79,9 @@ type CQLProxy struct {
 	Metrics Metrics
 }
 
+// Start starts up the proxy. The proxy creates a connection with the Astra Database,
+// creates a communication channel with the migration service and then begins listening
+// on $PROXY_QUERY_PORT for queries to the database.
 func (p *CQLProxy) Start() error {
 	p.reset()
 
@@ -97,7 +100,7 @@ func (p *CQLProxy) Start() error {
 	}
 
 	<-p.ReadyChan
-	err = p.listen(p.Conf.ListenPort, p.handleDatabaseConnection)
+	err = p.listen(p.Conf.ProxyQueryPort, p.handleDatabaseConnection)
 	if err != nil {
 		return err
 	}
@@ -132,6 +135,8 @@ func (p *CQLProxy) migrationLoop() {
 	}
 }
 
+// loadMigrationInfo initializes all the maps needed for the proxy, using
+// a migration.Status object to get all the keyspaces and tables
 func (p *CQLProxy) loadMigrationInfo(status *migration.Status) {
 	for keyspace, tables := range status.Tables {
 		p.queues[keyspace] = make(map[string]chan *Query)
@@ -153,6 +158,8 @@ func (p *CQLProxy) loadMigrationInfo(status *migration.Status) {
 	log.Info("Proxy ready to execute queries.")
 }
 
+// listen creates a listener on the passed in port argument, and every connection
+// that is received over that port is handled by the passed in handler function.
 func (p *CQLProxy) listen(port int, handler func(net.Conn)) error {
 	l, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
@@ -204,7 +211,7 @@ func (p *CQLProxy) handleDatabaseConnection(conn net.Conn) {
 func (p *CQLProxy) handleMigrationCommunication(conn net.Conn) {
 	defer conn.Close()
 
-	// TODO: Fix this janky retrying system lol
+	// TODO: Do a real retrying system, not this janky thing
 	log.Debugf("Attempting to connect to migration service via port %d", p.Conf.MigrationPort)
 	out, err := net.Dial("tcp", fmt.Sprintf(":%d", p.Conf.MigrationPort))
 	if err != nil {
@@ -221,8 +228,10 @@ func (p *CQLProxy) handleMigrationCommunication(conn net.Conn) {
 		if err != nil {
 			if err == io.EOF {
 				log.Error(err)
+				continue
+			} else {
+				return
 			}
-			return
 		}
 
 		b := buf[:bytesRead]
@@ -230,7 +239,7 @@ func (p *CQLProxy) handleMigrationCommunication(conn net.Conn) {
 		err = json.Unmarshal(b, &update)
 		if err != nil {
 			log.Error(err)
-			return
+			continue
 		}
 
 		var resp []byte
@@ -402,6 +411,9 @@ func (p *CQLProxy) handleAstraReply(data []byte) {
 		}
 	}
 
+	p.lock.Lock()
+	defer p.lock.Unlock()
+
 	// If this is a response to a previous query we ran, send result over success channel
 	// Failed query only if opcode is ERROR (0x0000)
 	if success, ok := p.queryResponses[streamID]; ok {
@@ -410,16 +422,11 @@ func (p *CQLProxy) handleAstraReply(data []byte) {
 	}
 }
 
-// MirrorData receives all data and decides what to do
+// writeToAstra takes a query frame and ensures it is properly relayed to the Astra DB
 func (p *CQLProxy) writeToAstra(data []byte, client string) error {
 	compressionFlag := data[1] & 0x01
 	if compressionFlag == 1 {
 		return errors.New("compression flag set, unable to parse reply beyond header")
-	}
-
-	// if reply, we parse replies but only look for prepared-query-id responses
-	if data[0] > 0x80 {
-		return nil
 	}
 
 	// Returns list of []string paths in form /opcode/action/table
@@ -432,7 +439,7 @@ func (p *CQLProxy) writeToAstra(data []byte, client string) error {
 	}
 
 	if len(paths) == 0 {
-		return errors.New("length 0 request")
+		return errors.New("invalid request")
 	}
 
 	// FIXME: Handle more actions based on paths
@@ -502,7 +509,7 @@ func (p *CQLProxy) handleWriteQuery(fromClause string, queryType QueryType, data
 
 	// Is the keyspace already in the table clause of the query, or do we need to add it
 	addKeyspace := false
-	if data[4] == 0x07 && keyspace == "" {
+	if keyspace == "" {
 		keyspace = p.Keyspaces[client]
 		if keyspace == "" {
 			return errors.New("invalid keyspace")
@@ -521,10 +528,12 @@ func (p *CQLProxy) handleWriteQuery(fromClause string, queryType QueryType, data
 		q = q.addKeyspace(keyspace)
 	}
 
-	// write query that depends on all values already being present in the table
-	// ex: UPDATE, DELETE, TRUNCATE
+	// If we have a write query that depends on all values already being present in the database,
+	// if migration of this table is currently in progress (or about to begin), then pause consumption
+	// of queries for this table.
 	if queryType != INSERT {
-		if !p.tablePaused[keyspace][tableName] && p.tableStatus(keyspace, tableName) >= migration.WaitingToUnload && p.tableStatus(keyspace, tableName) < migration.LoadingDataComplete {
+		status := p.tableStatus(keyspace, tableName)
+		if !p.tablePaused[keyspace][tableName] && status >= migration.WaitingToUnload && status < migration.LoadingDataComplete {
 			p.stopTable(keyspace, tableName)
 		}
 	}
@@ -547,6 +556,7 @@ func (p *CQLProxy) queueQuery(query *Query) {
 	p.queueSizes[query.Table.Keyspace][query.Table.Name]++
 }
 
+// consumeQueue executes all queries for a particular table, in the order that they are received.
 func (p *CQLProxy) consumeQueue(keyspace string, table string) {
 	log.Debugf("Beginning consumption of queries for %s.%s", keyspace, table)
 
@@ -578,6 +588,8 @@ func (p *CQLProxy) consumeQueue(keyspace string, table string) {
 }
 
 // TODO: Change stream when retrying or else cassandra doesn't respond
+// executeWrite will keep retrying a query up to maxQueryRetries number of times
+// if it's unsuccessful
 func (p *CQLProxy) executeWrite(q *Query, attempts ...int) error {
 	attempt := 1
 	if attempts != nil {
@@ -597,13 +609,15 @@ func (p *CQLProxy) executeWrite(q *Query, attempts ...int) error {
 	return nil
 }
 
+// executeAndCheckReply will send a query to the Astra DB, and listen for a response.
+// Returns an error if the duration of queryTimeout passes without a response,
+// or if the Astra DB responds saying that there was an error with the query.
 func (p *CQLProxy) executeAndCheckReply(q *Query) error {
 	resp := p.createResponseChan(q)
 	defer func() {
-		close(resp)
-
 		p.lock.Lock()
 		delete(p.queryResponses, q.Stream)
+		close(resp)
 		p.lock.Unlock()
 	}()
 
@@ -637,6 +651,7 @@ func (p *CQLProxy) createResponseChan(q *Query) chan bool {
 	return respChan
 }
 
+// TODO: is this function even needed? Do we need to be retrying here too?
 func (p *CQLProxy) execute(query *Query) error {
 	log.Debugf("Executing %v", *query)
 
@@ -647,7 +662,7 @@ func (p *CQLProxy) execute(query *Query) error {
 			break
 		}
 
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 	}
 
 	return err
@@ -661,6 +676,8 @@ func (p *CQLProxy) tableStatus(keyspace string, tableName string) migration.Step
 	return table.Step
 }
 
+// stopTable grabs the queueLock for a table so that the consumeQueue function cannot
+// continue processing queries for the table.
 func (p *CQLProxy) stopTable(keyspace string, tableName string) {
 	log.Debugf("Stopping query consumption on %s.%s", keyspace, tableName)
 	p.lock.Lock()
@@ -670,6 +687,8 @@ func (p *CQLProxy) stopTable(keyspace string, tableName string) {
 	p.queueLocks[keyspace][tableName].Lock()
 }
 
+// startTable releases the queueLock for a table so that the consumeQueue function
+// can resume processing queries for the table.
 func (p *CQLProxy) startTable(keyspace string, tableName string) {
 	log.Debugf("Starting query consumption on %s.%s", keyspace, tableName)
 	p.lock.Lock()
@@ -679,6 +698,9 @@ func (p *CQLProxy) startTable(keyspace string, tableName string) {
 	p.queueLocks[keyspace][tableName].Unlock()
 }
 
+// checkRedirect communicates over the ReadyForRedirect channel when migration is complete
+// and there are no direct connections to the client's source DB any longer
+// (envoy can point directly to the Astra DB now, skipping over proxy)
 func (p *CQLProxy) checkRedirect() {
 	if p.MigrationComplete && p.Metrics.sourceConnections() == 0 {
 		log.Debug("No more connections to client database; ready for redirect.")
@@ -686,6 +708,7 @@ func (p *CQLProxy) checkRedirect() {
 	}
 }
 
+// Shutdown shuts down the proxy service
 func (p *CQLProxy) Shutdown() {
 	log.Info("Proxy shutting down...")
 	p.shutdown = true
@@ -724,10 +747,9 @@ func (p *CQLProxy) reset() {
 	p.Keyspaces = make(map[string]string)
 }
 
-// TODO: Maybe add a couple retries, or let the caller deal with that?
 func connect(hostname string, port int) (net.Conn, error) {
-	astraHostString := fmt.Sprintf("%s:%d", hostname, port)
-	dst, err := net.Dial("tcp", astraHostString)
+	host := fmt.Sprintf("%s:%d", hostname, port)
+	dst, err := net.Dial("tcp", host)
 	return dst, err
 }
 

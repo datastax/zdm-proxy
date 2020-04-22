@@ -40,9 +40,9 @@ func newQuery(table *migration.Table, queryType QueryType, query []byte) *Query 
 }
 
 // TODO: Handle Batch statements. Currently assumes Query is QUERY or EXECUTE
-func (q *Query) usingTimestamp() *Query {
-	// Set timestamp bit to 1
+// usingTimestamp will add a timestamp within the query, if one is not already present.
 
+func (q *Query) usingTimestamp() *Query {
 	opcode := q.Query[4]
 
 	//index represents start of <query_parameters> in binary protocol
@@ -58,9 +58,11 @@ func (q *Query) usingTimestamp() *Query {
 	}
 
 	// Query already includes timestamp, ignore
+	// Byte 0x20 of the flags portion of the query represent whether or not a timestamp
+	// will be included with this query
 	if q.Query[index+2]&0x20 == 0x20 {
 		// TODO: Ensure we can keep the original timestamp & we don't need to alter anything
-		//binary.BigEndian.PutUint64(q.Query[len(q.Query) - 8:], q.Timestamp)
+		// binary.BigEndian.PutUint64(q.Query[len(q.Query) - 8:], q.Timestamp)
 		return q
 	}
 
@@ -80,6 +82,11 @@ func (q *Query) usingTimestamp() *Query {
 }
 
 // TODO: Make cleaner / more efficient
+// addKeyspace will explicity add the keyspace to a query, if not present.
+// For example, if the user is in keyspace 'codebase' and they run:
+// 		INSERT INTO tasks(id, task) VALUES(now(), 'task')
+// this function will change the query to
+// 		INSERT INTO codebase.tasks(id, task) VALUES(now(), 'task')
 func (q *Query) addKeyspace(keyspace string) *Query {
 	// Find table in original query
 	index := strings.Index(string(q.Query), q.Table.Name)
