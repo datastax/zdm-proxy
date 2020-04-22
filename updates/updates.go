@@ -37,9 +37,9 @@ func New(updateType UpdateType, data []byte) *Update {
 	}
 }
 
-func SuccessResponse(update *Update) []byte {
+func (u *Update) Success() []byte {
 	resp := Update{
-		ID:   update.ID,
+		ID:   u.ID,
 		Type: Success,
 	}
 
@@ -51,9 +51,9 @@ func SuccessResponse(update *Update) []byte {
 	return marshaled
 }
 
-func FailureResponse(update *Update, err error) []byte {
+func (u *Update) Failure(err error) []byte {
 	resp := Update{
-		ID:    update.ID,
+		ID:    u.ID,
 		Type:  Failure,
 		Error: err,
 	}

@@ -224,9 +224,9 @@ func (p *CQLProxy) handleMigrationCommunication(conn net.Conn) {
 		var resp []byte
 		err = p.handleUpdate(&update)
 		if err != nil {
-			resp = updates.FailureResponse(&update, err)
+			resp = update.Failure(err)
 		} else {
-			resp = updates.SuccessResponse(&update)
+			resp = update.Success()
 		}
 
 		_, err = conn.Write(resp)
