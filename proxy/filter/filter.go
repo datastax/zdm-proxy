@@ -421,7 +421,7 @@ func (p *CQLProxy) writeToAstra(data []byte, client string) error {
 	}
 
 	// FIXME: Handle more actions based on paths
-	// currently handles batch, query, and prepare statements that involve 'use, insert, update, delete, and truncate'
+	// currently handles query and prepare statements that involve 'use, insert, update, delete, and truncate'
 	if len(paths) > 1 {
 		return nil
 		// return p.handleBatchQuery(data, paths)
@@ -487,7 +487,7 @@ func (p *CQLProxy) handleWriteQuery(fromClause string, queryType QueryType, data
 
 	// Is the keyspace already in the table clause of the query, or do we need to add it
 	addKeyspace := false
-	if keyspace == "" {
+	if data[4] == 0x07 && keyspace == "" {
 		keyspace = p.Keyspaces[client]
 		if keyspace == "" {
 			return errors.New("invalid keyspace")
