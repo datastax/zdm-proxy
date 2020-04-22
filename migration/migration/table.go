@@ -13,6 +13,7 @@ type Table struct {
 	Lock *sync.Mutex
 }
 
+// Update changes Table information
 func (t *Table) Update(newData *Table) {
 	t.Step = newData.Step
 	t.Error = newData.Error

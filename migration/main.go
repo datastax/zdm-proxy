@@ -18,10 +18,11 @@ var (
 	astraPassword string
 	astraPort     int
 
-	dsbulkPath  string
-	hardRestart bool
-	threads     int
-	proxyPort   int
+	dsbulkPath    string
+	hardRestart   bool
+	threads       int
+	migrationPort int
+	proxyPort     int
 )
 
 // Method mainly to test the proxy service for now
@@ -29,10 +30,11 @@ func main() {
 	parseFlags()
 
 	m := migration.Migration{
-		DsbulkPath:  dsbulkPath,
-		HardRestart: hardRestart,
-		Workers:     threads,
-		ProxyPort:   proxyPort,
+		DsbulkPath:    dsbulkPath,
+		HardRestart:   hardRestart,
+		Workers:       threads,
+		MigrationPort: migrationPort,
+		ProxyPort:     proxyPort,
 
 		SourceHostname: sourceHostname,
 		SourceUsername: sourceUsername,
@@ -69,6 +71,7 @@ func parseFlags() {
 	flag.StringVar(&dsbulkPath, "d", "/Users/terranceli/Documents/projects/codebase/datastax-s20/dsbulk-1.4.1/bin/dsbulk", "dsbulk executable path")
 	flag.BoolVar(&hardRestart, "r", false, "Hard restart (ignore checkpoint)")
 	flag.IntVar(&threads, "t", 1, "Number of threads to use")
-	flag.IntVar(&proxyPort, "pp", 0, "Port of the proxy service")
+	flag.IntVar(&migrationPort, "mp", 0, "Port to listen on")
+	flag.IntVar(&proxyPort, "pp", 0, "Port to send to proxy")
 	flag.Parse()
 }

@@ -23,11 +23,12 @@ import (
 
 // Migration contains necessary setup information
 type Migration struct {
-	Keyspaces   []string
-	DsbulkPath  string
-	HardRestart bool
-	Workers     int
-	ProxyPort   int
+	Keyspaces     []string
+	DsbulkPath    string
+	HardRestart   bool
+	Workers       int
+	MigrationPort int
+	ProxyPort     int
 
 	SourceHostname string
 	SourceUsername string
@@ -126,10 +127,17 @@ func (m *Migration) Migrate() error {
 	}
 	close(schemaJobs)
 	wgSchema.Wait()
+	bytes, err := json.Marshal(m.status)
+	if err != nil {
+		return err
+	}
+
+	go m.startCommunication()
+
 	// Notify proxy service that schemas are finished migrating, unload/load starting
 	m.sendRequest(&updates.Update{
 		Type: updates.Start,
-		Data: make([]byte, 0),
+		Data: bytes,
 	})
 
 	for _, keyspaceTables := range tables {
@@ -156,10 +164,16 @@ func (m *Migration) Migrate() error {
 	m.status.Speed = (float64(size) / 1024 / 1024) / (float64(time.Now().UnixNano()-begin.UnixNano()) / 1000000000)
 
 	m.writeCheckpoint()
+
+	bytes, err = json.Marshal(m.status)
+	if err != nil {
+		return err
+	}
+
 	// Notify proxy of completed migration
 	m.sendRequest(&updates.Update{
 		Type: updates.Complete,
-		Data: make([]byte, 0),
+		Data: bytes,
 	})
 
 	return nil
@@ -303,6 +317,18 @@ func (m *Migration) unloadTable(table *gocql.TableMetadata) error {
 
 	m.status.Tables[table.Keyspace][table.Name].Step = UnloadingDataComplete
 	print(fmt.Sprintf("COMPLETED UNLOADING TABLE: %s.%s\n", table.Keyspace, table.Name))
+
+	// TODO: put all instances of this into a sendTableStatus method
+	bytes, err := json.Marshal(m.status.Tables[table.Keyspace][table.Name])
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	m.sendRequest(&updates.Update{
+		Type: updates.TableUpdate,
+		Data: bytes,
+	})
+
 	return nil
 }
 
@@ -430,7 +456,7 @@ func print(s string) {
 
 // startCommunication sets up communication between migration and proxy service using web sockets
 func (m *Migration) startCommunication() error {
-	l, err := net.Listen("tcp", fmt.Sprintf(":%d", m.ProxyPort))
+	l, err := net.Listen("tcp", fmt.Sprintf(":%d", m.MigrationPort))
 	if err != nil {
 		return err
 	}
@@ -461,6 +487,7 @@ func (m *Migration) processRequest(conn net.Conn) error {
 			return err
 		}
 		b := buf[:bytesRead]
+		print(string(b) + "\n")
 		var req updates.Update
 		err = json.Unmarshal(b, &req)
 		if err != nil {
@@ -470,8 +497,9 @@ func (m *Migration) processRequest(conn net.Conn) error {
 
 		err = m.handleRequest(&req)
 		if err != nil {
-			print(err.Error())
-			return err
+			b = req.Failure(err)
+		} else {
+			b = req.Success()
 		}
 
 		_, err = conn.Write(b)
@@ -485,7 +513,7 @@ func (m *Migration) processRequest(conn net.Conn) error {
 // sendRequest will notify the proxy service about the migration progress
 // For now, because proxy port is not set up and we cannot test with proxy, we return on error
 func (m *Migration) sendRequest(req *updates.Update) error {
-	conn, err := net.Dial("tcp", fmt.Sprintf(":%d", m.ProxyPort))
+	conn, err := net.Dial("tcp", fmt.Sprintf(":%d", m.ProxyPort)) // TODO: call this only once, keep the connection open
 	if err != nil || conn == nil {
 		print("Can't reach proxy service...\n")
 		return err
@@ -493,12 +521,15 @@ func (m *Migration) sendRequest(req *updates.Update) error {
 
 	defer conn.Close()
 
-	bytes, err := json.Marshal(*req)
+	bytes, err := json.Marshal(req)
 	_, err = conn.Write(bytes)
 	if err != nil {
 		print(err.Error())
 		return err
 	}
+	// after sending, add the sent data to a map, wait for some amount of time then check map to see if it's been cleared
+	// else resend the data
+	// after retrying 3 (??) times then just shutdown?? idk
 	return nil
 }
 
@@ -524,6 +555,10 @@ func (m *Migration) handleRequest(req *updates.Update) error {
 		// pqLock.Lock()
 		// change table priority value
 		// pqLock.Unlock()
+	case updates.Success:
+		// TODO: delete from map / stop go routine that will resend on timer
+	case updates.Failure:
+		// TODO: resend original update
 	}
 	return nil
 }

@@ -35,8 +35,8 @@ type CQLProxy struct {
 	sourceHostString string
 	astraHostString  string
 
-	listeners    []net.Listener
-	astraSession net.Conn
+	listeners        []net.Listener
+	astraSession     net.Conn
 	migrationSession net.Conn
 
 	queues         map[string]map[string]chan *Query
@@ -96,7 +96,7 @@ func (p *CQLProxy) Start() error {
 		return err
 	}
 
-	<- p.ReadyChan
+	<-p.ReadyChan
 	err = p.listen(p.Conf.ListenPort, p.handleDatabaseConnection)
 	if err != nil {
 		return err
@@ -258,7 +258,7 @@ func (p *CQLProxy) handleUpdate(update *updates.Update) error {
 		if err != nil {
 			return errors.New("unable to unmarshal json")
 		}
-
+		log.Errorln(string(update.Data))
 		p.MigrationStart <- &status
 	case updates.TableUpdate:
 		var tableUpdate migration.Table
@@ -266,7 +266,7 @@ func (p *CQLProxy) handleUpdate(update *updates.Update) error {
 		if err != nil {
 			return errors.New("unable to unmarshal json")
 		}
-
+		log.Errorln(string(update.Data))
 		if table, ok := p.migrationStatus.Tables[tableUpdate.Keyspace][tableUpdate.Name]; ok {
 			table.Update(&tableUpdate)
 		} else {

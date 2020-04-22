@@ -2,6 +2,7 @@ package updates
 
 import (
 	"encoding/json"
+
 	"github.com/google/uuid"
 
 	log "github.com/sirupsen/logrus"
@@ -25,15 +26,15 @@ type Update struct {
 	ID    uuid.UUID
 	Type  UpdateType
 	Data  []byte
-	Error error
+	Error string
 }
 
 func New(updateType UpdateType, data []byte) *Update {
 	return &Update{
-		ID: uuid.New(),
-		Type: updateType,
-		Data: data,
-		Error: nil,
+		ID:    uuid.New(),
+		Type:  updateType,
+		Data:  data,
+		Error: "",
 	}
 }
 
@@ -55,7 +56,7 @@ func (u *Update) Failure(err error) []byte {
 	resp := Update{
 		ID:    u.ID,
 		Type:  Failure,
-		Error: err,
+		Error: err.Error(),
 	}
 
 	marshaled, err := json.Marshal(resp)

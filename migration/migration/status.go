@@ -37,6 +37,7 @@ func (s *Status) initTableData(tables map[string]map[string]*gocql.TableMetadata
 		s.Tables[keyspace] = t
 		for table := range keyspaceTables {
 			s.Tables[keyspace][table] = &(Table{
+				Keyspace: keyspace,
 				Name:     table,
 				Step:     Waiting,
 				Error:    nil,
