@@ -258,7 +258,7 @@ func (p *CQLProxy) handleUpdate(update *updates.Update) error {
 		if err != nil {
 			return errors.New("unable to unmarshal json")
 		}
-		log.Errorln(string(update.Data))
+
 		p.MigrationStart <- &status
 	case updates.TableUpdate:
 		var tableUpdate migration.Table
@@ -266,8 +266,11 @@ func (p *CQLProxy) handleUpdate(update *updates.Update) error {
 		if err != nil {
 			return errors.New("unable to unmarshal json")
 		}
-		log.Errorln(string(update.Data))
+
 		if table, ok := p.migrationStatus.Tables[tableUpdate.Keyspace][tableUpdate.Name]; ok {
+			if p.tablePaused[table.Keyspace][table.Name] && tableUpdate.Step == migration.LoadingDataComplete {
+				p.startTable(table.Keyspace, table.Name)
+			}
 			table.Update(&tableUpdate)
 		} else {
 			return fmt.Errorf("table %s.%s does not exist", tableUpdate.Keyspace, tableUpdate.Name)
