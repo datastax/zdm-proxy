@@ -24,7 +24,7 @@ const (
 // Update represents a request between the migration and proxy services
 type Update struct {
 	// TODO: ID type string
-	ID    uuid.UUID
+	ID    string
 	Type  UpdateType
 	Data  []byte
 	Error string
@@ -32,7 +32,7 @@ type Update struct {
 
 func New(updateType UpdateType, data []byte) *Update {
 	return &Update{
-		ID:    uuid.New(),
+		ID:    uuid.New().String(),
 		Type:  updateType,
 		Data:  data,
 		Error: "",
