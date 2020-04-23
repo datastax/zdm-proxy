@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -32,12 +33,13 @@ const (
 type CQLProxy struct {
 	Conf *config.Config
 
-	sourceHostString string
-	astraHostString  string
+	sourceIP           string
+	astraIP            string
+	astraSession       net.Conn
+	migrationServiceIP string
+	migrationSession   net.Conn
 
-	listeners        []net.Listener
-	astraSession     net.Conn
-	migrationSession net.Conn
+	listeners []net.Listener
 
 	queues         map[string]map[string]chan *Query
 	queueLocks     map[string]map[string]*sync.Mutex
@@ -46,21 +48,16 @@ type CQLProxy struct {
 	queryResponses map[uint16]chan bool
 	lock           *sync.Mutex
 
-	migrationStatus *migration.Status
-
-	// Port to communicate with the migration service over
-	MigrationComplete bool
+	migrationStatus   *migration.Status
+	migrationComplete bool
 
 	// Channels for dealing with updates from migration service
 	MigrationStart chan *migration.Status
-	TableMigrated  chan *migration.Table
 	MigrationDone  chan struct{}
 
 	// Channel to signal when the Proxy should stop all forwarding and close all connections
 	ShutdownChan chan struct{}
 	shutdown     bool
-
-	ready bool
 
 	// Channel signalling that the proxy is now ready to process queries
 	ReadyChan chan struct{}
@@ -72,7 +69,7 @@ type CQLProxy struct {
 	// Holds prepared queries by StreamID and by PreparedID
 	preparedQueries *cqlparser.PreparedQueries
 
-	// Keeps track of the current keyspace queries are being ran in
+	// Keeps track of the current keyspace queries are being ran in per connection
 	Keyspaces map[string]string
 
 	// Metrics
@@ -85,16 +82,17 @@ type CQLProxy struct {
 func (p *CQLProxy) Start() error {
 	p.reset()
 
+	var err error
 	// Attempt to connect to astra database using given credentials
-	conn, err := connect(p.Conf.AstraHostname, p.Conf.AstraPort)
+	p.astraSession, err = net.Dial("tcp", p.astraIP)
 	if err != nil {
 		return err
 	}
-	p.astraSession = conn
 
-	go p.migrationLoop()
+	go p.statusLoop()
+	go p.runMetrics()
 
-	err = p.listen(p.Conf.ProxyPort, p.handleMigrationCommunication)
+	err = p.listen(p.Conf.ProxyCommunicationPort, p.handleMigrationCommunication)
 	if err != nil {
 		return err
 	}
@@ -105,27 +103,34 @@ func (p *CQLProxy) Start() error {
 		return err
 	}
 
+	log.Infof("Proxy started and ready to accept queries on port %d", p.Conf.ProxyQueryPort)
 	return nil
+}
+
+func (p *CQLProxy) runMetrics() {
+	localhost := fmt.Sprintf(":%d", p.Conf.ProxyMetricsPort)
+	http.HandleFunc("/", p.Metrics.write)
+	log.Fatal(http.ListenAndServe(localhost, nil))
 }
 
 // TODO: Maybe change migration_complete to migration_in_progress, so that we can turn on proxy before migration
 // 	starts (if it ever starts), and it will just redirect to Astra normally.
-func (p *CQLProxy) migrationLoop() {
-	log.Debugf("Migration Complete: %t", p.MigrationComplete)
+// statusLoop listens for updates to the overall migration process,
+// and processes them accordingly
+func (p *CQLProxy) statusLoop() {
+	log.Debugf("Migration Complete: %t", p.migrationComplete)
 
-	if !p.MigrationComplete {
+	if !p.migrationComplete {
 		log.Info("Proxy waiting for migration start signal.")
 		for {
 			select {
 			case status := <-p.MigrationStart:
 				p.loadMigrationInfo(status)
 
-			case table := <-p.TableMigrated:
-				p.startTable(table.Keyspace, table.Name)
-
 			case <-p.MigrationDone:
-				p.MigrationComplete = true
 				log.Info("Migration Complete. Directing all new connections to Astra Database.")
+				p.migrationComplete = true
+				p.checkRedirect()
 
 			case <-p.ShutdownChan:
 				p.Shutdown()
@@ -138,6 +143,8 @@ func (p *CQLProxy) migrationLoop() {
 // loadMigrationInfo initializes all the maps needed for the proxy, using
 // a migration.Status object to get all the keyspaces and tables
 func (p *CQLProxy) loadMigrationInfo(status *migration.Status) {
+	p.migrationStatus = status
+
 	for keyspace, tables := range status.Tables {
 		p.queues[keyspace] = make(map[string]chan *Query)
 		p.queueLocks[keyspace] = make(map[string]*sync.Mutex)
@@ -151,11 +158,7 @@ func (p *CQLProxy) loadMigrationInfo(status *migration.Status) {
 		}
 	}
 
-	p.migrationStatus = status
 	p.ReadyChan <- struct{}{}
-	p.ready = true
-
-	log.Info("Proxy ready to execute queries.")
 }
 
 // listen creates a listener on the passed in port argument, and every connection
@@ -163,7 +166,6 @@ func (p *CQLProxy) loadMigrationInfo(status *migration.Status) {
 func (p *CQLProxy) listen(port int, handler func(net.Conn)) error {
 	l, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
-		log.Error(err)
 		return err
 	}
 
@@ -177,7 +179,7 @@ func (p *CQLProxy) listen(port int, handler func(net.Conn)) error {
 			conn, err := l.Accept()
 			if err != nil {
 				if p.shutdown {
-					log.Infof("Shutting down listener %v", l)
+					log.Debugf("Shutting down listener on port %d", port)
 					return
 				}
 				log.Error(err)
@@ -190,10 +192,12 @@ func (p *CQLProxy) listen(port int, handler func(net.Conn)) error {
 	return nil
 }
 
+// handleDatabaseConnection takes a connection from the client and begins forwarding
+// packets to/from the client's old DB, and mirroring writes to the Astra DB.
 func (p *CQLProxy) handleDatabaseConnection(conn net.Conn) {
-	hostname := p.sourceHostString
-	if p.MigrationComplete {
-		hostname = p.astraHostString
+	hostname := p.sourceIP
+	if p.migrationComplete {
+		hostname = p.astraIP
 	}
 
 	dst, err := net.Dial("tcp", hostname)
@@ -205,21 +209,20 @@ func (p *CQLProxy) handleDatabaseConnection(conn net.Conn) {
 	// Begin two way packet forwarding
 	go p.forward(conn, dst)
 	go p.forward(dst, conn)
-
 }
 
 func (p *CQLProxy) handleMigrationCommunication(conn net.Conn) {
 	defer conn.Close()
 
-	// TODO: Do a real retrying system, not this janky thing
-	log.Debugf("Attempting to connect to migration service via port %d", p.Conf.MigrationPort)
-	out, err := connect(p.Conf.MigrationServiceHostname, p.Conf.MigrationPort)
+	log.Debugf("Attempting to connect to migration service at %s", p.migrationServiceIP)
+	out, err := net.Dial("tcp", p.migrationServiceIP)
 	if err != nil {
-		log.Debugf("couldn't connect, retrying")
+		log.Error("couldn't connect to migration service, retrying in 1 second...")
 		time.Sleep(1 * time.Second)
 		defer p.handleMigrationCommunication(conn)
 		return
 	}
+	log.Info("Successfully established connection with migration service")
 
 	// TODO: change buffer size
 	buf := make([]byte, 0xfffffff)
@@ -254,7 +257,6 @@ func (p *CQLProxy) handleMigrationCommunication(conn net.Conn) {
 		if err != nil {
 			log.Error(err)
 		}
-
 	}
 
 }
@@ -313,7 +315,7 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 		p.lock.Unlock()
 	}()
 
-	if destAddress == p.sourceHostString {
+	if destAddress == p.sourceIP {
 		p.Metrics.incrementConnections()
 		defer func() {
 			p.Metrics.decrementConnections()
@@ -337,6 +339,7 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 
 		// Build queries reading in at most 0xffff size at a time.
 		for true {
+
 			//if there is not a full CQL header
 			if len(data) < cassHdrLen {
 				break
@@ -344,16 +347,21 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 
 			bodyLength := binary.BigEndian.Uint32(data[5:9])
 			fullLength := cassHdrLen + int(bodyLength)
-			if len(data) < fullLength || len(data) > cassMaxLen {
+			if len(data) < fullLength {
+				break
+			} else if fullLength > cassMaxLen {
+				log.Error("query larger than max allowed by Cassandra, ignoring.")
+				data = data[fullLength:]
 				break
 			}
 
+			p.Metrics.incrementFrames()
 			frame := data[:fullLength]
 
 			// If the frame is a reply from Astra, handle the reply. If the frame
 			// is a query from the user, always send to Astra through writeToAstra()
 			if frame[0] > 0x80 {
-				if sourceAddress == p.astraHostString {
+				if sourceAddress == p.astraIP {
 					p.handleAstraReply(frame)
 				}
 			} else {
@@ -364,9 +372,9 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 			}
 
 			// Only tunnel packets through if we are directly connected to the source DB.
-			// If we are connected directly to the Astra DB, we want to ensure that queries go through
-			// the writeToAstra() function to account for query queues
-			if sourceAddress == p.sourceHostString || destAddress == p.sourceHostString {
+			// If we are connected directly to the Astra DB, we don't need to write to dst,
+			// as the write was already handled by writeToAstra above
+			if sourceAddress == p.sourceIP || destAddress == p.sourceIP {
 				_, err := dst.Write(frame)
 				if err != nil {
 					log.Error(err)
@@ -374,14 +382,16 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 				}
 			}
 
-			p.Metrics.incrementPackets()
-
 			// Keep any extra bytes in the buffer that are part of the next query
 			data = data[fullLength:]
 		}
 	}
 }
 
+// handleAstraReply checks if this frame was a reply from a recently sent PREPARE statement
+// and if it was successful, then it stores the path. If this reply was Astra's success response
+// from us running a write query, then we send the success/failure message to the channel
+// corresponding to the Stream ID of the response
 func (p *CQLProxy) handleAstraReply(data []byte) {
 	streamID := binary.BigEndian.Uint16(data[2:4])
 	opcode := data[4]
@@ -702,7 +712,7 @@ func (p *CQLProxy) startTable(keyspace string, tableName string) {
 // and there are no direct connections to the client's source DB any longer
 // (envoy can point directly to the Astra DB now, skipping over proxy)
 func (p *CQLProxy) checkRedirect() {
-	if p.MigrationComplete && p.Metrics.sourceConnections() == 0 {
+	if p.migrationComplete && p.Metrics.sourceConnections() == 0 {
 		log.Debug("No more connections to client database; ready for redirect.")
 		p.ReadyForRedirect <- struct{}{}
 	}
@@ -725,32 +735,25 @@ func (p *CQLProxy) reset() {
 	p.queueSizes = make(map[string]map[string]int)
 	p.tablePaused = make(map[string]map[string]bool)
 	p.queryResponses = make(map[uint16]chan bool)
-	p.ready = false
 	p.ReadyChan = make(chan struct{})
 	p.ShutdownChan = make(chan struct{})
 	p.shutdown = false
-	p.MigrationComplete = p.Conf.MigrationComplete
+	p.migrationComplete = p.Conf.MigrationComplete
 	p.listeners = []net.Listener{}
 	p.ReadyForRedirect = make(chan struct{})
 	p.lock = &sync.Mutex{}
 	p.Metrics = Metrics{}
 	p.Metrics.lock = &sync.Mutex{}
-	p.sourceHostString = fmt.Sprintf("%s:%d", p.Conf.SourceHostname, p.Conf.SourcePort)
-	p.astraHostString = fmt.Sprintf("%s:%d", p.Conf.AstraHostname, p.Conf.AstraPort)
+	p.sourceIP = fmt.Sprintf("%s:%d", p.Conf.SourceHostname, p.Conf.SourcePort)
+	p.astraIP = fmt.Sprintf("%s:%d", p.Conf.AstraHostname, p.Conf.AstraPort)
+	p.migrationServiceIP = fmt.Sprintf("%s:%d", p.Conf.MigrationServiceHostname, p.Conf.MigrationCommunicationPort)
 	p.preparedQueries = &cqlparser.PreparedQueries{
 		PreparedQueryPathByStreamID:   make(map[uint16]string),
 		PreparedQueryPathByPreparedID: make(map[string]string),
 	}
 	p.MigrationStart = make(chan *migration.Status, 1)
 	p.MigrationDone = make(chan struct{})
-	p.TableMigrated = make(chan *migration.Table, 1)
 	p.Keyspaces = make(map[string]string)
-}
-
-func connect(hostname string, port int) (net.Conn, error) {
-	host := fmt.Sprintf("%s:%d", hostname, port)
-	dst, err := net.Dial("tcp", host)
-	return dst, err
 }
 
 // Given a FROM argument, extract the table name
@@ -763,12 +766,8 @@ func extractTableInfo(fromClause string) (string, string) {
 		keyspace = fromClause[:i]
 	}
 
-	tableName := fromClause
-
 	// Remove semicolon if it is attached to the table name from the query
-	if i := strings.IndexRune(tableName, ';'); i != -1 {
-		tableName = tableName[:i]
-	}
+	tableName := strings.TrimSuffix(fromClause, ";")
 
 	// Remove keyspace if table in format keyspace.table
 	if i := strings.IndexRune(tableName, '.'); i != -1 {
@@ -784,9 +783,9 @@ func extractTableInfo(fromClause string) (string, string) {
 }
 
 type Metrics struct {
-	PacketCount int
-	Reads       int
-	Writes      int
+	FrameCount int
+	Reads      int
+	Writes     int
 
 	WriteFails int
 	ReadFails  int
@@ -796,11 +795,22 @@ type Metrics struct {
 	lock *sync.Mutex
 }
 
-func (m *Metrics) incrementPackets() {
+func (m *Metrics) write(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	marshaled, err := json.Marshal(m)
+	if err != nil {
+		w.Write([]byte(`{"error": "unable to grab metrics"}`))
+		w.Write([]byte(err.Error()))
+		return
+	}
+	w.Write(marshaled)
+}
+
+func (m *Metrics) incrementFrames() {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 
-	m.PacketCount++
+	m.FrameCount++
 }
 
 func (m *Metrics) incrementReads() {

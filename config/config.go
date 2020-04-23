@@ -16,12 +16,13 @@ type Config struct {
 	AstraPassword string `required:"true" split_words:"true"`
 	AstraPort     int    `required:"true" split_words:"true"`
 
-	MigrationComplete        bool   `required:"true" split_words:"true"`
-	MigrationServiceHostname string `required:"true" split_words:"true"`
-	MigrationPort            int    `required:"true" split_words:"true"`
-	ProxyServiceHostname     string `required:"true" split_words:"true"`
-	ProxyPort                int    `required:"true" split_words:"true"`
-	ProxyQueryPort           int    `split_words:"true"`
+	MigrationComplete          bool   `required:"true" split_words:"true"`
+	MigrationServiceHostname   string `required:"true" split_words:"true"`
+	MigrationCommunicationPort int    `required:"true" split_words:"true"`
+	ProxyServiceHostname       string `required:"true" split_words:"true"`
+	ProxyCommunicationPort     int    `required:"true" split_words:"true"`
+	ProxyMetricsPort           int    `required:"true" split_words:"true"`
+	ProxyQueryPort             int    `split_words:"true"`
 
 	Test  bool
 	Debug bool

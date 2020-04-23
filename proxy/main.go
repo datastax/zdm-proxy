@@ -5,8 +5,6 @@ import (
 	"cloud-gate/config"
 	"cloud-gate/migration/migration"
 	"cloud-gate/proxy/filter"
-	"encoding/json"
-	"net/http"
 	"os"
 	"sync"
 
@@ -42,31 +40,12 @@ func main() {
 		panic(err)
 	}
 
-	// start metrics
-	go runMetrics()
-
 	for {
 		select {
 		case <-p.ReadyForRedirect:
 			log.Info("Coordinate received signal that there are no more connections to Client Database.")
 		}
 	}
-}
-
-func runMetrics() {
-	http.HandleFunc("/metrics", getMetrics)
-	log.Fatal(http.ListenAndServe(":8080", nil))
-}
-
-func getMetrics(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	marshaled, err := json.Marshal(p.Metrics)
-	if err != nil {
-		w.Write([]byte(`{"error": "unable to grab metrics"}`))
-		w.Write([]byte(err.Error()))
-		return
-	}
-	w.Write(marshaled)
 }
 
 //function for testing purposes. Will be deleted later. toggles status for table 'codebase' upon user input
@@ -93,16 +72,6 @@ func doTesting(p *filter.CQLProxy) {
 				p.MigrationDone <- struct{}{}
 			case "shutdown":
 				p.ShutdownChan <- struct{}{}
-			case "restart":
-				table := &migration.Table{
-					Name:     "tasks",
-					Keyspace: "codebase",
-					Step:     migration.LoadingDataComplete,
-					Error:    nil,
-
-					Lock: &sync.Mutex{},
-				}
-				p.TableMigrated <- table
 			}
 		}
 	}
