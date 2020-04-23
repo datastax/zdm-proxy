@@ -92,6 +92,8 @@ func (p *CQLProxy) Start() error {
 	go p.statusLoop()
 	go p.runMetrics()
 
+	p.establishMigrationConnection()
+
 	err = p.listen(p.Conf.ProxyCommunicationPort, p.handleMigrationCommunication)
 	if err != nil {
 		return err
@@ -105,6 +107,20 @@ func (p *CQLProxy) Start() error {
 
 	log.Infof("Proxy started and ready to accept queries on port %d", p.Conf.ProxyQueryPort)
 	return nil
+}
+
+func (p *CQLProxy) establishMigrationConnection() {
+	log.Debugf("Attempting to connect to migration service at %s", p.migrationServiceIP)
+	out, err := net.Dial("tcp", p.migrationServiceIP)
+	if err != nil {
+		log.Error("couldn't connect to migration service, retrying in 1 second...")
+		time.Sleep(1 * time.Second)
+		defer p.establishMigrationConnection()
+		return
+	}
+	p.migrationSession = out
+
+	log.Info("Successfully established connection with migration service")
 }
 
 func (p *CQLProxy) runMetrics() {
@@ -214,16 +230,6 @@ func (p *CQLProxy) handleDatabaseConnection(conn net.Conn) {
 func (p *CQLProxy) handleMigrationCommunication(conn net.Conn) {
 	defer conn.Close()
 
-	log.Debugf("Attempting to connect to migration service at %s", p.migrationServiceIP)
-	out, err := net.Dial("tcp", p.migrationServiceIP)
-	if err != nil {
-		log.Error("couldn't connect to migration service, retrying in 1 second...")
-		time.Sleep(1 * time.Second)
-		defer p.handleMigrationCommunication(conn)
-		return
-	}
-	log.Info("Successfully established connection with migration service")
-
 	// TODO: change buffer size
 	buf := make([]byte, 0xfffffff)
 	for {
@@ -253,7 +259,7 @@ func (p *CQLProxy) handleMigrationCommunication(conn net.Conn) {
 			resp = update.Success()
 		}
 
-		_, err = out.Write(resp)
+		_, err = p.migrationSession.Write(resp)
 		if err != nil {
 			log.Error(err)
 		}
