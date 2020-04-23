@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/jpillora/backoff"
 	"io"
 	"net"
 	"net/http"
@@ -84,15 +85,12 @@ func (p *CQLProxy) Start() error {
 
 	var err error
 	// Attempt to connect to astra database using given credentials
-	p.astraSession, err = net.Dial("tcp", p.astraIP)
-	if err != nil {
-		return err
-	}
+	p.astraSession = p.establishConnection("Astra", "tcp", p.astraIP)
+	p.migrationSession = p.establishConnection("Migration Service", "tcp", p.migrationServiceIP)
 
 	go p.statusLoop()
 	go p.runMetrics()
 
-	p.establishMigrationConnection()
 
 	err = p.listen(p.Conf.ProxyCommunicationPort, p.handleMigrationCommunication)
 	if err != nil {
@@ -109,18 +107,28 @@ func (p *CQLProxy) Start() error {
 	return nil
 }
 
-func (p *CQLProxy) establishMigrationConnection() {
-	log.Debugf("Attempting to connect to migration service at %s", p.migrationServiceIP)
-	out, err := net.Dial("tcp", p.migrationServiceIP)
-	if err != nil {
-		log.Error("couldn't connect to migration service, retrying in 1 second...")
-		time.Sleep(1 * time.Second)
-		defer p.establishMigrationConnection()
-		return
+func (p *CQLProxy) establishConnection(name string, network string, port string) net.Conn {
+	b := &backoff.Backoff{
+		Min:    100 * time.Millisecond,
+		Max:    10 * time.Second,
+		Factor: 2,
+		Jitter: false,
 	}
-	p.migrationSession = out
 
-	log.Info("Successfully established connection with migration service")
+	log.Debugf("Attempting to connect to %s at %s...", name, port)
+	for {
+		conn, err := net.Dial(network, port)
+		if err != nil {
+			nextDuration := b.Duration()
+			log.Debugf("Couldn't connect to %s, retrying in %s...", name, nextDuration.String())
+			time.Sleep(nextDuration)
+			continue
+		}
+		log.Infof("Successfully established connection with %s", name)
+		return conn
+	}
+
+
 }
 
 func (p *CQLProxy) runMetrics() {
@@ -129,10 +137,8 @@ func (p *CQLProxy) runMetrics() {
 	log.Fatal(http.ListenAndServe(localhost, nil))
 }
 
-// TODO: Maybe change migration_complete to migration_in_progress, so that we can turn on proxy before migration
-// 	starts (if it ever starts), and it will just redirect to Astra normally.
-// statusLoop listens for updates to the overall migration process,
-// and processes them accordingly
+// TODO: May just get rid of this entire function, as it can all be handled by p.handleUpdate() directly
+// statusLoop listens for updates to the overall migration process and processes them accordingly
 func (p *CQLProxy) statusLoop() {
 	log.Debugf("Migration Complete: %t", p.migrationComplete)
 
