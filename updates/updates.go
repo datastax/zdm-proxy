@@ -23,7 +23,6 @@ const (
 
 // Update represents a request between the migration and proxy services
 type Update struct {
-	// TODO: ID type string
 	ID    string
 	Type  UpdateType
 	Data  []byte
