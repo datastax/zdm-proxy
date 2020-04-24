@@ -329,15 +329,6 @@ func (p *CQLProxy) sendPriorityUpdate(table *migration.Table) error {
 		return err
 	}
 
-	respChan := p.createUpdateResponseChan(update)
-
-	defer func() {
-		close(respChan)
-		p.lock.Lock()
-		delete(p.outstandingUpdates, update.ID)
-		p.lock.Unlock()
-	}()
-
 	b := &backoff.Backoff{
 		Min:    200 * time.Millisecond,
 		Max:    10 * time.Second,
@@ -348,19 +339,11 @@ func (p *CQLProxy) sendPriorityUpdate(table *migration.Table) error {
 	go func() {
 		for {
 			_, err = p.migrationSession.Write(marshaledUpdate)
-
-			duration := b.Duration()
-			timeout := time.NewTicker(duration)
-			select {
-			case resp := <-respChan:
-				if resp {
-					log.Debugf("Got successful reply from migration service for update %s.", update.ID)
-					return
-				}
-				log.Debugf("Got unsuccessful reply from migration service for update %s. Retrying...", update.ID)
-			case <-timeout.C:
-				log.Debugf("Got no reply from migration service for update %s in %s. Retrying...",
-					update.ID, duration)
+			if err != nil {
+				duration := b.Duration()
+				log.Debugf("Unable to send update %s to migration service. Retrying in %s...",
+					update.ID, duration.String())
+				time.Sleep(duration)
 			}
 		}
 	}()
@@ -725,16 +708,6 @@ func (p *CQLProxy) createQueryResponseChan(q *Query) chan bool {
 
 	respChan := make(chan bool, 1)
 	p.queryResponses[q.Stream] = respChan
-
-	return respChan
-}
-
-func (p *CQLProxy) createUpdateResponseChan(u *updates.Update) chan bool {
-	p.lock.Lock()
-	defer p.lock.Unlock()
-
-	respChan := make(chan bool, 1)
-	p.outstandingUpdates[u.ID] = respChan
 
 	return respChan
 }
