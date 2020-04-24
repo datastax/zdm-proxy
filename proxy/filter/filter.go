@@ -49,8 +49,9 @@ type CQLProxy struct {
 	queryResponses map[uint16]chan bool
 	lock           *sync.Mutex
 
-	migrationStatus   *migration.Status
-	migrationComplete bool
+	outstandingUpdates map[string]chan bool
+	migrationStatus    *migration.Status
+	migrationComplete  bool
 
 	// Channels for dealing with updates from migration service
 	MigrationStart chan *migration.Status
@@ -91,14 +92,13 @@ func (p *CQLProxy) Start() error {
 	go p.statusLoop()
 	go p.runMetrics()
 
-
 	err = p.listen(p.Conf.ProxyCommunicationPort, p.handleMigrationCommunication)
 	if err != nil {
 		return err
 	}
 
 	<-p.ReadyChan
-	err = p.listen(p.Conf.ProxyQueryPort, p.handleDatabaseConnection)
+	err = p.listen(p.Conf.ProxyQueryPort, p.handleClientConnection)
 	if err != nil {
 		return err
 	}
@@ -127,8 +127,6 @@ func (p *CQLProxy) establishConnection(name string, network string, port string)
 		log.Infof("Successfully established connection with %s", name)
 		return conn
 	}
-
-
 }
 
 func (p *CQLProxy) runMetrics() {
@@ -214,9 +212,9 @@ func (p *CQLProxy) listen(port int, handler func(net.Conn)) error {
 	return nil
 }
 
-// handleDatabaseConnection takes a connection from the client and begins forwarding
+// handleClientConnection takes a connection from the client and begins forwarding
 // packets to/from the client's old DB, and mirroring writes to the Astra DB.
-func (p *CQLProxy) handleDatabaseConnection(conn net.Conn) {
+func (p *CQLProxy) handleClientConnection(conn net.Conn) {
 	hostname := p.sourceIP
 	if p.migrationComplete {
 		hostname = p.astraIP
@@ -303,11 +301,69 @@ func (p *CQLProxy) handleUpdate(update *updates.Update) error {
 		p.MigrationDone <- struct{}{}
 	case updates.Shutdown:
 		p.ShutdownChan <- struct{}{}
-	case updates.Success:
-		// TODO: delete from map / stop go routine that will resend on timer
-	case updates.Failure:
-		// TODO: resend original update
+	case updates.Success, updates.Failure:
+		p.lock.Lock()
+		if resp, ok := p.outstandingUpdates[update.ID]; ok {
+			resp <- update.Type == updates.Success
+		}
+		p.lock.Unlock()
 	}
+
+	return nil
+}
+
+// --Unused for now, but will be used in the near future--
+// sendPriorityUpdate will send a tableUpdate to the migration service with an
+// updated priority value for the table. We do this as if there is a table
+// with a very large queue, we want that to be migrated ASAP, so we communicate
+// the priority of a table's migration
+func (p *CQLProxy) sendPriorityUpdate(table *migration.Table) error {
+	marshaledTable, err := json.Marshal(table)
+	if err != nil {
+		return err
+	}
+
+	update := updates.New(updates.TableUpdate, marshaledTable)
+	marshaledUpdate, err := json.Marshal(update)
+	if err != nil {
+		return err
+	}
+
+	respChan := p.createUpdateResponseChan(update)
+
+	defer func() {
+		close(respChan)
+		p.lock.Lock()
+		delete(p.outstandingUpdates, update.ID)
+		p.lock.Unlock()
+	}()
+
+	b := &backoff.Backoff{
+		Min:    200 * time.Millisecond,
+		Max:    10 * time.Second,
+		Factor: 2,
+		Jitter: false,
+	}
+
+	go func() {
+		for {
+			_, err = p.migrationSession.Write(marshaledUpdate)
+
+			duration := b.Duration()
+			timeout := time.NewTicker(duration)
+			select {
+			case resp := <-respChan:
+				if resp {
+					log.Debugf("Got successful reply from migration service for update %s.", update.ID)
+					return
+				}
+				log.Debugf("Got unsuccessful reply from migration service for update %s. Retrying...", update.ID)
+			case <-timeout.C:
+				log.Debugf("Got no reply from migration service for update %s in %s. Retrying...",
+					update.ID, duration)
+			}
+		}
+	}()
 
 	return nil
 }
@@ -635,7 +691,7 @@ func (p *CQLProxy) executeWrite(q *Query, attempts ...int) error {
 // Returns an error if the duration of queryTimeout passes without a response,
 // or if the Astra DB responds saying that there was an error with the query.
 func (p *CQLProxy) executeAndCheckReply(q *Query) error {
-	resp := p.createResponseChan(q)
+	resp := p.createQueryResponseChan(q)
 	defer func() {
 		p.lock.Lock()
 		delete(p.queryResponses, q.Stream)
@@ -663,12 +719,22 @@ func (p *CQLProxy) executeAndCheckReply(q *Query) error {
 	}
 }
 
-func (p *CQLProxy) createResponseChan(q *Query) chan bool {
+func (p *CQLProxy) createQueryResponseChan(q *Query) chan bool {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
 	respChan := make(chan bool, 1)
 	p.queryResponses[q.Stream] = respChan
+
+	return respChan
+}
+
+func (p *CQLProxy) createUpdateResponseChan(u *updates.Update) chan bool {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+
+	respChan := make(chan bool, 1)
+	p.outstandingUpdates[u.ID] = respChan
 
 	return respChan
 }
@@ -750,6 +816,7 @@ func (p *CQLProxy) reset() {
 	p.ReadyChan = make(chan struct{})
 	p.ShutdownChan = make(chan struct{})
 	p.shutdown = false
+	p.outstandingUpdates = make(map[string]chan bool)
 	p.migrationComplete = p.Conf.MigrationComplete
 	p.listeners = []net.Listener{}
 	p.ReadyForRedirect = make(chan struct{})
