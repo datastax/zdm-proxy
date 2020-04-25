@@ -56,7 +56,7 @@ New commands are added to their table’s queue through `writeToAstra()`, and co
 
 The process to stop the consumption of queues is as follows:
 
-1. The migration service signals that they want to begin migrating a table by sending a `TableUpdate` with step `WaitingToUnload` (see *Communicating with Migration Service*)
+1. The migration service signals that they want to begin migrating a table by sending a `TableUpdate` with step `WaitingToUnload` (see [Communicating with Migration Service](#communicating-with-migration-service))
 2. Proxy service updates the table’s status to `WaitingToUnload` and sends a `Success` update back to migration service. From this point on, any UPDATE, DELETE, or TRUNCATE command to that table will cause `stopTable()` to be run.
 3. Once the migration service receives the `Success` update from the proxy service, it begins unloading.
 

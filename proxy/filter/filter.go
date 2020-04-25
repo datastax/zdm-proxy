@@ -1,15 +1,10 @@
 package filter
 
 import (
-	"cloud-gate/config"
-	"cloud-gate/migration/migration"
-	"cloud-gate/proxy/cqlparser"
-	"cloud-gate/updates"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/jpillora/backoff"
 	"io"
 	"net"
 	"net/http"
@@ -17,6 +12,12 @@ import (
 	"sync"
 	"time"
 
+	"cloud-gate/config"
+	"cloud-gate/migration/migration"
+	"cloud-gate/proxy/cqlparser"
+	"cloud-gate/updates"
+
+	"github.com/jpillora/backoff"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -127,12 +128,6 @@ func (p *CQLProxy) establishConnection(name string, network string, port string)
 		log.Infof("Successfully established connection with %s", name)
 		return conn
 	}
-}
-
-func (p *CQLProxy) runMetrics() {
-	localhost := fmt.Sprintf(":%d", p.Conf.ProxyMetricsPort)
-	http.HandleFunc("/", p.Metrics.write)
-	log.Fatal(http.ListenAndServe(localhost, nil))
 }
 
 // TODO: May just get rid of this entire function, as it can all be handled by p.handleUpdate() directly
@@ -509,38 +504,37 @@ func (p *CQLProxy) writeToAstra(data []byte, client string) error {
 		return nil
 		// return p.handleBatchQuery(data, paths)
 		// TODO: Handle batch statements
-	} else {
-		if paths[0] == cqlparser.UnknownPreparedQueryPath {
-			log.Debug("Err: Encountered unknown prepared query. Query Ignored")
-			return nil
-		}
-
-		fields := strings.Split(paths[0], "/")
-
-		if len(fields) > 2 {
-			if fields[1] == "prepare" {
-				q := newQuery(nil, PREPARE, data)
-				return p.execute(q)
-			} else if fields[1] == "query" || fields[1] == "execute" {
-				queryType := QueryType(fields[2])
-
-				switch queryType {
-				case USE:
-					return p.handleUseQuery(fields[3], data, client)
-				case INSERT, UPDATE, DELETE, TRUNCATE:
-					return p.handleWriteQuery(fields[3], queryType, data, client)
-				case SELECT:
-					p.Metrics.incrementReads()
-				}
-			}
-		} else {
-			// path is '/opcode' case
-			// FIXME: decide if there are any cases we need to handle here
-			q := newQuery(nil, MISC, data)
-			return p.execute(q)
-		}
-
 	}
+
+	if paths[0] == cqlparser.UnknownPreparedQueryPath {
+		log.Debug("Err: Encountered unknown prepared query. Query Ignored")
+		return nil
+	}
+
+	fields := strings.Split(paths[0], "/")
+	if len(fields) > 2 {
+		if fields[1] == "prepare" {
+			q := newQuery(nil, prepareQuery, data)
+			return p.execute(q)
+		} else if fields[1] == "query" || fields[1] == "execute" {
+			queryType := QueryType(fields[2])
+
+			switch queryType {
+			case useQuery:
+				return p.handleUseQuery(fields[3], data, client)
+			case insertQuery, updateQuery, deleteQuery, truncateQuery:
+				return p.handleWriteQuery(fields[3], queryType, data, client)
+			case selectQuery:
+				p.Metrics.incrementReads()
+			}
+		}
+	} else {
+		// path is '/opcode' case
+		// FIXME: decide if there are any cases we need to handle here
+		q := newQuery(nil, miscQuery, data)
+		return p.execute(q)
+	}
+
 	return nil
 }
 
@@ -560,7 +554,7 @@ func (p *CQLProxy) handleUseQuery(keyspace string, query []byte, client string) 
 	p.Keyspaces[client] = keyspace
 	p.lock.Unlock()
 
-	q := newQuery(nil, USE, query)
+	q := newQuery(nil, useQuery, query)
 
 	return p.execute(q)
 }
@@ -592,7 +586,7 @@ func (p *CQLProxy) handleWriteQuery(fromClause string, queryType QueryType, data
 	// If we have a write query that depends on all values already being present in the database,
 	// if migration of this table is currently in progress (or about to begin), then pause consumption
 	// of queries for this table.
-	if queryType != INSERT {
+	if queryType != insertQuery {
 		status := p.tableStatus(keyspace, tableName)
 		if !p.tablePaused[keyspace][tableName] && status >= migration.WaitingToUnload && status < migration.LoadingDataComplete {
 			p.stopTable(keyspace, tableName)
@@ -832,6 +826,11 @@ func extractTableInfo(fromClause string) (string, string) {
 	}
 
 	return keyspace, tableName
+}
+
+func (p *CQLProxy) runMetrics() {
+	http.HandleFunc("/", p.Metrics.write)
+	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", p.Conf.ProxyMetricsPort), nil))
 }
 
 type Metrics struct {
