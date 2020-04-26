@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 
 	"github.com/google/uuid"
-
 	log "github.com/sirupsen/logrus"
 )
 
@@ -29,6 +28,7 @@ type Update struct {
 	Error string
 }
 
+// New returns a new Update struct with a random UUID, the passed in Type and the passed in data.
 func New(updateType UpdateType, data []byte) *Update {
 	return &Update{
 		ID:    uuid.New().String(),
@@ -38,6 +38,7 @@ func New(updateType UpdateType, data []byte) *Update {
 	}
 }
 
+// Success returns a serialized success response for the Update struct
 func (u *Update) Success() []byte {
 	resp := Update{
 		ID:   u.ID,
@@ -52,6 +53,7 @@ func (u *Update) Success() []byte {
 	return marshaled
 }
 
+// Failure returns a serialized failure response for the Update struct
 func (u *Update) Failure(err error) []byte {
 	resp := Update{
 		ID:    u.ID,

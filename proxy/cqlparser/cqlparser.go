@@ -1,19 +1,38 @@
 package cqlparser
 
 import (
-	"cloud-gate/utils"
 	"encoding/binary"
 	"errors"
-	log "github.com/sirupsen/logrus"
 	"strings"
+
+	log "github.com/sirupsen/logrus"
 )
 
 const (
 	UnknownPreparedQueryPath = "/unknown-prepared-query"
 )
 
+var opcodeMap = map[byte]string{
+	0x00: "error",
+	0x01: "startup",
+	0x02: "ready",
+	0x03: "authenticate",
+	0x05: "options",
+	0x06: "supported",
+	0x07: "query",
+	0x08: "result",
+	0x09: "prepare",
+	0x0A: "execute",
+	0x0B: "register",
+	0x0C: "event",
+	0x0D: "batch",
+	0x0E: "auth_challenge",
+	0x0F: "auth_response",
+	0x10: "auth_success",
+}
+
 type PreparedQueries struct {
-	// Stores prepared query string while waiting for 'prepared' reply fro server with prepared id
+	// Stores prepared query string while waiting for 'prepared' reply from server with prepared id
 	// Replies are associated via stream-id
 	PreparedQueryPathByStreamID map[uint16]string
 
@@ -31,7 +50,7 @@ func CassandraParseRequest(p *PreparedQueries, data []byte) ([]string, error) {
 	}
 
 	opcode := data[4]
-	path := utils.OpcodeMap[opcode]
+	path := opcodeMap[opcode]
 
 	// parse query string from query/prepare/batch requests
 

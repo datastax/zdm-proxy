@@ -2,7 +2,7 @@ package config
 
 import (
 	"github.com/kelseyhightower/envconfig"
-	"log"
+	log "github.com/sirupsen/logrus"
 )
 
 type Config struct {
@@ -28,10 +28,13 @@ type Config struct {
 	Debug bool
 }
 
+// New returns an empty Config struct
 func New() *Config {
 	return &Config{}
 }
 
+// ParseEnvVars fills out the fields of the Config struct according to envconfig rules.
+// See: Usage @ https://github.com/kelseyhightower/envconfig
 func (c *Config) ParseEnvVars() *Config {
 	err := envconfig.Process("", c)
 	if err != nil {

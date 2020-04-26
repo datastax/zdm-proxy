@@ -2,11 +2,12 @@ package main
 
 import (
 	"bufio"
+	"os"
+	"sync"
+
 	"cloud-gate/config"
 	"cloud-gate/migration/migration"
 	"cloud-gate/proxy/filter"
-	"os"
-	"sync"
 
 	log "github.com/sirupsen/logrus"
 )

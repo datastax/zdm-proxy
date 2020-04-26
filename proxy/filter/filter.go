@@ -1,10 +1,6 @@
 package filter
 
 import (
-	"cloud-gate/config"
-	"cloud-gate/migration/migration"
-	"cloud-gate/proxy/cqlparser"
-	"cloud-gate/updates"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -17,6 +13,12 @@ import (
 	"sync"
 	"time"
 
+	"cloud-gate/config"
+	"cloud-gate/migration/migration"
+	"cloud-gate/proxy/cqlparser"
+	"cloud-gate/updates"
+
+	"github.com/jpillora/backoff"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -49,8 +51,9 @@ type CQLProxy struct {
 	queryResponses map[uint16]chan bool
 	lock           *sync.Mutex
 
-	migrationStatus   *migration.Status
-	migrationComplete bool
+	outstandingUpdates map[string]chan bool
+	migrationStatus    *migration.Status
+	migrationComplete  bool
 
 	// Channels for dealing with updates from migration service
 	MigrationStart chan *migration.Status
@@ -91,14 +94,13 @@ func (p *CQLProxy) Start() error {
 	go p.statusLoop()
 	go p.runMetrics()
 
-
 	err = p.listen(p.Conf.ProxyCommunicationPort, p.handleMigrationCommunication)
 	if err != nil {
 		return err
 	}
 
 	<-p.ReadyChan
-	err = p.listen(p.Conf.ProxyQueryPort, p.handleDatabaseConnection)
+	err = p.listen(p.Conf.ProxyQueryPort, p.handleClientConnection)
 	if err != nil {
 		return err
 	}
@@ -127,14 +129,6 @@ func (p *CQLProxy) establishConnection(name string, network string, port string)
 		log.Infof("Successfully established connection with %s", name)
 		return conn
 	}
-
-
-}
-
-func (p *CQLProxy) runMetrics() {
-	localhost := fmt.Sprintf(":%d", p.Conf.ProxyMetricsPort)
-	http.HandleFunc("/", p.Metrics.write)
-	log.Fatal(http.ListenAndServe(localhost, nil))
 }
 
 // TODO: May just get rid of this entire function, as it can all be handled by p.handleUpdate() directly
@@ -214,9 +208,9 @@ func (p *CQLProxy) listen(port int, handler func(net.Conn)) error {
 	return nil
 }
 
-// handleDatabaseConnection takes a connection from the client and begins forwarding
+// handleClientConnection takes a connection from the client and begins forwarding
 // packets to/from the client's old DB, and mirroring writes to the Astra DB.
-func (p *CQLProxy) handleDatabaseConnection(conn net.Conn) {
+func (p *CQLProxy) handleClientConnection(conn net.Conn) {
 	hostname := p.sourceIP
 	if p.migrationComplete {
 		hostname = p.astraIP
@@ -303,11 +297,52 @@ func (p *CQLProxy) handleUpdate(update *updates.Update) error {
 		p.MigrationDone <- struct{}{}
 	case updates.Shutdown:
 		p.ShutdownChan <- struct{}{}
-	case updates.Success:
-		// TODO: delete from map / stop go routine that will resend on timer
-	case updates.Failure:
-		// TODO: resend original update
+	case updates.Success, updates.Failure:
+		p.lock.Lock()
+		if resp, ok := p.outstandingUpdates[update.ID]; ok {
+			resp <- update.Type == updates.Success
+		}
+		p.lock.Unlock()
 	}
+
+	return nil
+}
+
+// --Unused for now, but will be used in the near future--
+// sendPriorityUpdate will send a tableUpdate to the migration service with an
+// updated priority value for the table. We do this as if there is a table
+// with a very large queue, we want that to be migrated ASAP, so we communicate
+// the priority of a table's migration
+func (p *CQLProxy) sendPriorityUpdate(table *migration.Table) error {
+	marshaledTable, err := json.Marshal(table)
+	if err != nil {
+		return err
+	}
+
+	update := updates.New(updates.TableUpdate, marshaledTable)
+	marshaledUpdate, err := json.Marshal(update)
+	if err != nil {
+		return err
+	}
+
+	b := &backoff.Backoff{
+		Min:    200 * time.Millisecond,
+		Max:    10 * time.Second,
+		Factor: 2,
+		Jitter: false,
+	}
+
+	go func() {
+		for {
+			_, err = p.migrationSession.Write(marshaledUpdate)
+			if err != nil {
+				duration := b.Duration()
+				log.Debugf("Unable to send update %s to migration service. Retrying in %s...",
+					update.ID, duration.String())
+				time.Sleep(duration)
+			}
+		}
+	}()
 
 	return nil
 }
@@ -400,6 +435,10 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 	}
 }
 
+// handleAstraReply checks if this frame was a reply from a recently sent PREPARE statement
+// and if it was successful, then it stores the path. If this reply was Astra's success response
+// from us running a write query, then we send the success/failure message to the channel
+// corresponding to the Stream ID of the response
 func (p *CQLProxy) handleAstraReply(data []byte) {
 	streamID := binary.BigEndian.Uint16(data[2:4])
 	opcode := data[4]
@@ -466,38 +505,37 @@ func (p *CQLProxy) writeToAstra(data []byte, client string) error {
 		return nil
 		// return p.handleBatchQuery(data, paths)
 		// TODO: Handle batch statements
-	} else {
-		if paths[0] == cqlparser.UnknownPreparedQueryPath {
-			log.Debug("Err: Encountered unknown prepared query. Query Ignored")
-			return nil
-		}
-
-		fields := strings.Split(paths[0], "/")
-
-		if len(fields) > 2 {
-			if fields[1] == "prepare" {
-				q := newQuery(nil, PREPARE, data)
-				return p.execute(q)
-			} else if fields[1] == "query" || fields[1] == "execute" {
-				queryType := QueryType(fields[2])
-
-				switch queryType {
-				case USE:
-					return p.handleUseQuery(fields[3], data, client)
-				case INSERT, UPDATE, DELETE, TRUNCATE:
-					return p.handleWriteQuery(fields[3], queryType, data, client)
-				case SELECT:
-					p.Metrics.incrementReads()
-				}
-			}
-		} else {
-			// path is '/opcode' case
-			// FIXME: decide if there are any cases we need to handle here
-			q := newQuery(nil, MISC, data)
-			return p.execute(q)
-		}
-
 	}
+
+	if paths[0] == cqlparser.UnknownPreparedQueryPath {
+		log.Debug("Err: Encountered unknown prepared query. Query Ignored")
+		return nil
+	}
+
+	fields := strings.Split(paths[0], "/")
+	if len(fields) > 2 {
+		if fields[1] == "prepare" {
+			q := newQuery(nil, prepareQuery, data)
+			return p.execute(q)
+		} else if fields[1] == "query" || fields[1] == "execute" {
+			queryType := QueryType(fields[2])
+
+			switch queryType {
+			case useQuery:
+				return p.handleUseQuery(fields[3], data, client)
+			case insertQuery, updateQuery, deleteQuery, truncateQuery:
+				return p.handleWriteQuery(fields[3], queryType, data, client)
+			case selectQuery:
+				p.Metrics.incrementReads()
+			}
+		}
+	} else {
+		// path is '/opcode' case
+		// FIXME: decide if there are any cases we need to handle here
+		q := newQuery(nil, miscQuery, data)
+		return p.execute(q)
+	}
+
 	return nil
 }
 
@@ -517,7 +555,7 @@ func (p *CQLProxy) handleUseQuery(keyspace string, query []byte, client string) 
 	p.Keyspaces[client] = keyspace
 	p.lock.Unlock()
 
-	q := newQuery(nil, USE, query)
+	q := newQuery(nil, useQuery, query)
 
 	return p.execute(q)
 }
@@ -549,7 +587,7 @@ func (p *CQLProxy) handleWriteQuery(fromClause string, queryType QueryType, data
 	// If we have a write query that depends on all values already being present in the database,
 	// if migration of this table is currently in progress (or about to begin), then pause consumption
 	// of queries for this table.
-	if queryType != INSERT {
+	if queryType != insertQuery {
 		status := p.tableStatus(keyspace, tableName)
 		if !p.tablePaused[keyspace][tableName] && status >= migration.WaitingToUnload && status < migration.LoadingDataComplete {
 			p.stopTable(keyspace, tableName)
@@ -631,7 +669,7 @@ func (p *CQLProxy) executeWrite(q *Query, attempts ...int) error {
 // Returns an error if the duration of queryTimeout passes without a response,
 // or if the Astra DB responds saying that there was an error with the query.
 func (p *CQLProxy) executeAndCheckReply(q *Query) error {
-	resp := p.createResponseChan(q)
+	resp := p.createQueryResponseChan(q)
 	defer func() {
 		p.lock.Lock()
 		delete(p.queryResponses, q.Stream)
@@ -659,7 +697,7 @@ func (p *CQLProxy) executeAndCheckReply(q *Query) error {
 	}
 }
 
-func (p *CQLProxy) createResponseChan(q *Query) chan bool {
+func (p *CQLProxy) createQueryResponseChan(q *Query) chan bool {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
@@ -746,6 +784,7 @@ func (p *CQLProxy) reset() {
 	p.ReadyChan = make(chan struct{})
 	p.ShutdownChan = make(chan struct{})
 	p.shutdown = false
+	p.outstandingUpdates = make(map[string]chan bool)
 	p.migrationComplete = p.Conf.MigrationComplete
 	p.listeners = []net.Listener{}
 	p.ReadyForRedirect = make(chan struct{})
@@ -788,6 +827,11 @@ func extractTableInfo(fromClause string) (string, string) {
 	}
 
 	return keyspace, tableName
+}
+
+func (p *CQLProxy) runMetrics() {
+	http.HandleFunc("/", p.Metrics.write)
+	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", p.Conf.ProxyMetricsPort), nil))
 }
 
 type Metrics struct {

@@ -1,32 +1,33 @@
 package filter
 
 import (
-	"cloud-gate/migration/migration"
 	"encoding/binary"
 	"strings"
 	"time"
+
+	"cloud-gate/migration/migration"
 )
 
 const (
-	SELECT   = QueryType("select")
-	USE      = QueryType("use")
-	INSERT   = QueryType("insert")
-	UPDATE   = QueryType("update")
-	DELETE   = QueryType("delete")
-	TRUNCATE = QueryType("truncate")
-	PREPARE  = QueryType("prepare")
-	MISC     = QueryType("misc")
+	selectQuery   = QueryType("select")
+	useQuery      = QueryType("use")
+	insertQuery   = QueryType("insert")
+	updateQuery   = QueryType("update")
+	deleteQuery   = QueryType("delete")
+	truncateQuery = QueryType("truncate")
+	prepareQuery  = QueryType("prepare")
+	miscQuery     = QueryType("misc")
 )
 
 type QueryType string
 
 type Query struct {
 	Timestamp uint64
+	Stream    uint16
 	Table     *migration.Table
 
-	Type   QueryType
-	Query  []byte
-	Stream uint16
+	Type  QueryType
+	Query []byte
 }
 
 func newQuery(table *migration.Table, queryType QueryType, query []byte) *Query {
@@ -41,7 +42,6 @@ func newQuery(table *migration.Table, queryType QueryType, query []byte) *Query 
 
 // TODO: Handle Batch statements. Currently assumes Query is QUERY or EXECUTE
 // usingTimestamp will add a timestamp within the query, if one is not already present.
-
 func (q *Query) usingTimestamp() *Query {
 	opcode := q.Query[4]
 
