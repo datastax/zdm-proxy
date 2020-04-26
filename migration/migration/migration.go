@@ -19,6 +19,7 @@ import (
 	"cloud-gate/utils"
 
 	"github.com/gocql/gocql"
+	"github.com/jupp0r/go-priority-queue"
 )
 
 // Migration contains necessary setup information
@@ -46,6 +47,8 @@ type Migration struct {
 	destSession   *gocql.Session
 	chkLock       *sync.Mutex
 	logLock       *sync.Mutex
+	pqLock        *sync.Mutex
+	priorityQueue pq.PriorityQueue
 	initialized   bool
 }
 
@@ -68,6 +71,8 @@ func (m *Migration) Init() error {
 
 	m.chkLock = new(sync.Mutex)
 	m.logLock = new(sync.Mutex)
+	m.pqLock = new(sync.Mutex)
+	m.priorityQueue = pq.New()
 	m.initialized = true
 
 	return nil
@@ -131,6 +136,13 @@ func (m *Migration) Migrate() error {
 	close(schemaJobs)
 	wgSchema.Wait()
 
+	// Add all tables to priority queue
+	for _, keyspaceTables := range tables {
+		for _, table := range keyspaceTables {
+			m.priorityQueue.Insert(table, 1)
+		}
+	}
+
 	// Start listening to proxy communications
 	go m.startCommunication()
 
@@ -141,11 +153,16 @@ func (m *Migration) Migrate() error {
 	// TODO: in all the send helper functions, add the type of request sent to a map of requests
 	// after sleeping, check if map value has been sent to 1 (or whatever)
 
-	for _, keyspaceTables := range tables {
-		for _, table := range keyspaceTables {
-			wgTables.Add(1)
-			tableJobs <- table
+	for m.priorityQueue.Len() > 0 {
+		m.pqLock.Lock()
+		nextTable, err := m.priorityQueue.Pop()
+		m.pqLock.Unlock()
+		if err != nil {
+			print(err.Error())
+			break
 		}
+		wgTables.Add(1)
+		tableJobs <- nextTable.(*gocql.TableMetadata)
 	}
 
 	close(tableJobs)
@@ -572,15 +589,23 @@ func (m *Migration) handleRequest(req *updates.Update) error {
 		// TODO: figure out how to restart automatically
 		log.Fatal("Proxy Service failed, need to restart services")
 	case updates.TableUpdate:
-		// 2) On TableUpdate, update priority queue with the next table that needs to be migrated (in progress)
-		var table Table
-		err := json.Unmarshal(req.Data, &table)
+		// 2) On TableUpdate, update priority queue with the next table that needs to be migrated
+		var newTable Table
+		err := json.Unmarshal(req.Data, &newTable)
 		if err != nil {
-			// log error
+			print(err.Error())
 			return err
 		}
-		m.status.Tables[table.Keyspace][table.Name].Priority = table.Priority
-		// TODO: priority queue logic here (in progress)
+		var table *Table
+		table = m.status.Tables[newTable.Keyspace][newTable.Name]
+		currPriority := table.Priority + 1
+		m.pqLock.Lock()
+		m.priorityQueue.UpdatePriority(table, float64(currPriority))
+		m.pqLock.Unlock()
+
+		table.Lock.Lock()
+		table.Priority = currPriority
+		table.Lock.Unlock()
 	case updates.Success:
 		// 3) On Success, updates "map" of requestss
 		// TODO: delete from map / stop go routine that will resend on timer
