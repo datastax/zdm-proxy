@@ -25,7 +25,7 @@ func newStatus() *Status {
 	return &status
 }
 
-// StepsPerTable something
+// StepsPerTable are considered to be 1. Migrating Schema, 2. Unloading Data, 3. Loading Data
 var StepsPerTable int = 3
 
 // Populates the Status with initial values in accordance w/ the given TableMetadata

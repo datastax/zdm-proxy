@@ -54,8 +54,7 @@ func main() {
 
 	go m.Migrate()
 
-	for {
-	}
+	select {}
 }
 
 // Most of these will change to environment variables rather than flags

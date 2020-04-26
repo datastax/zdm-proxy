@@ -8,7 +8,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// ConnectToCluster something
+// ConnectToCluster is used to connect to source and destination clusters
 func ConnectToCluster(hostname string, username string, password string, port int) (*gocql.Session, error) {
 	cluster := gocql.NewCluster(hostname)
 	cluster.Authenticator = gocql.PasswordAuthenticator{

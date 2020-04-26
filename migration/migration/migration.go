@@ -84,7 +84,10 @@ func (m *Migration) Migrate() error {
 	defer m.sourceSession.Close()
 	defer m.destSession.Close()
 
-	m.getKeyspaces()
+	err := m.getKeyspaces()
+	if err != nil {
+		log.Fatal(err)
+	}
 	tables, err := m.getTables(m.Keyspaces)
 	if err != nil {
 		log.Fatal(err)
@@ -115,8 +118,8 @@ func (m *Migration) Migrate() error {
 	var wgTables sync.WaitGroup
 
 	for worker := 1; worker <= m.Workers; worker++ {
-		go m.schemaPool(worker, &wgSchema, schemaJobs)
-		go m.tablePool(worker, &wgTables, tableJobs)
+		go m.schemaPool(&wgSchema, schemaJobs)
+		go m.tablePool(&wgTables, tableJobs)
 	}
 
 	for _, keyspaceTables := range tables {
@@ -163,12 +166,16 @@ func (m *Migration) Migrate() error {
 
 	m.writeCheckpoint()
 
-	m.sendComplete()
+	if m.status.Steps == m.status.TotalSteps {
+		m.sendComplete()
+	} else {
+		return errors.New("Migration ended early")
+	}
 
 	return nil
 }
 
-func (m *Migration) schemaPool(worker int, wg *sync.WaitGroup, jobs <-chan *gocql.TableMetadata) {
+func (m *Migration) schemaPool(wg *sync.WaitGroup, jobs <-chan *gocql.TableMetadata) {
 	for table := range jobs {
 		// If we already migrated schema, skip this
 		if m.status.Tables[table.Keyspace][table.Name].Step < MigratingSchemaComplete {
@@ -234,7 +241,7 @@ func (m *Migration) migrateSchema(keyspace string, table *gocql.TableMetadata) e
 	return nil
 }
 
-func (m *Migration) tablePool(worker int, wg *sync.WaitGroup, jobs <-chan *gocql.TableMetadata) {
+func (m *Migration) tablePool(wg *sync.WaitGroup, jobs <-chan *gocql.TableMetadata) {
 	for table := range jobs {
 		if m.status.Tables[table.Keyspace][table.Name].Step != LoadingDataComplete {
 			err := m.migrateData(table)
@@ -337,19 +344,22 @@ func (m *Migration) loadTable(table *gocql.TableMetadata) error {
 	return nil
 }
 
-func (m *Migration) getKeyspaces() {
+func (m *Migration) getKeyspaces() error {
 	ignoreKeyspaces := []string{"system_auth", "system_schema", "dse_system_local", "dse_system", "dse_leases", "solr_admin",
 		"dse_insights", "dse_insights_local", "system_distributed", "system", "dse_perf", "system_traces", "dse_security"}
 
 	kQuery := `SELECT keyspace_name FROM system_schema.keyspaces;`
 	itr := m.sourceSession.Query(kQuery).Iter()
-
+	if itr == nil {
+		return errors.New("Did not find any keyspaces to migrate")
+	}
 	var keyspaceName string
 	for itr.Scan(&keyspaceName) {
 		if !utils.Contains(ignoreKeyspaces, keyspaceName) {
 			m.Keyspaces = append(m.Keyspaces, keyspaceName)
 		}
 	}
+	return nil
 }
 
 // getTables gets table information from a keyspace in the source cluster
@@ -395,6 +405,8 @@ func (m *Migration) writeCheckpoint() {
 }
 
 // readCheckpoint fills in the Status w/ the checkpoint on file
+// "s" shows the table schema has been successfully migrated
+// "d" shows the table data has been successfully migrated
 func (m *Migration) readCheckpoint() {
 	m.chkLock.Lock()
 	defer m.chkLock.Unlock()
@@ -484,6 +496,7 @@ func (m *Migration) processRequest(conn net.Conn) error {
 	}
 }
 
+//TODO: handle failures for all requests sent
 func (m *Migration) sendStart() error {
 	bytes, err := json.Marshal(m.status)
 	if err != nil {
@@ -527,7 +540,6 @@ func (m *Migration) sendTableUpdate(table *Table) error {
 }
 
 // sendRequest will notify the proxy service about the migration progress
-// For now, because proxy port is not set up and we cannot test with proxy, we return on error
 func (m *Migration) sendRequest(req *updates.Update) error {
 	conn, err := net.Dial("tcp", fmt.Sprintf(":%d", m.ProxyPort)) // TODO: call this only once, keep the connection open
 	if err != nil || conn == nil {
@@ -552,17 +564,15 @@ func (m *Migration) sendRequest(req *updates.Update) error {
 	return nil
 }
 
-// handleRequest takes the notification from proxy service and either
-// 1) stops the migration process due to a failure
-// 2) update priority queue with the next table that needs to be migrated (Have not yet implemented)
+// handleRequest handles the notifications from proxy service
 func (m *Migration) handleRequest(req *updates.Update) error {
-	// TODO: figure out what kind of requests from the proxy service we need to handle
-	// 1. shutdown 2. pq update
 	switch req.Type {
 	case updates.Shutdown:
-		// TODO: something something figure out how to restart automatically
+		// 1) On Shutdown, restarts the migration process due to proxy service failure
+		// TODO: figure out how to restart automatically
 		log.Fatal("Proxy Service failed, need to restart services")
 	case updates.TableUpdate:
+		// 2) On TableUpdate, update priority queue with the next table that needs to be migrated (in progress)
 		var table Table
 		err := json.Unmarshal(req.Data, &table)
 		if err != nil {
@@ -570,13 +580,12 @@ func (m *Migration) handleRequest(req *updates.Update) error {
 			return err
 		}
 		m.status.Tables[table.Keyspace][table.Name].Priority = table.Priority
-		// TODO: something something priority queue
-		// pqLock.Lock()
-		// change table priority value
-		// pqLock.Unlock()
+		// TODO: priority queue logic here (in progress)
 	case updates.Success:
+		// 3) On Success, updates "map" of requestss
 		// TODO: delete from map / stop go routine that will resend on timer
 	case updates.Failure:
+		// 4) On Failure, resend
 		// TODO: resend original update
 	}
 	return nil

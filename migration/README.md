@@ -135,7 +135,7 @@ The Migration Service expects requests from the Proxy Service when:
 2. The proxy service errors and shuts down
 ## Checkpoints
 
-We save checkpoints by writing to a `migration.chk` file. We overwrite the checkpoint when a table’s schema is done migrating, or when dsbulk finishes migrating a table’s data. The checkpoint file contains data on which tables are done migrating schema and/or data. The below checkpoint file shows that the schemas for `k1.tasks` and `k2.todos` are done migrating, and that dsbulk has finished migrating data for `k1.tasks`. As mentioned below, this file will be saved to a S3 bucket for volume purposes.
+We save checkpoints by writing to a `migration.chk` file. We overwrite the checkpoint when a table’s schema is done migrating, or when dsbulk finishes migrating a table’s data. The checkpoint file contains data on which tables are done migrating schema and/or data. The "s" prefix means the table schema has been successfully migrated, and the "d" prefix means the table data has been successfully unloaded and loaded. The below checkpoint file shows that the schemas for `k1.tasks` and `k2.todos` are done migrating, and that dsbulk has finished migrating data for `k1.tasks`. As mentioned below, this file will be saved to a S3 bucket for volume purposes.
 
 
     s:k1.tasks
