@@ -41,8 +41,7 @@ func (s *Status) initTableData(tables map[string]map[string]*gocql.TableMetadata
 				Name:     table,
 				Step:     Waiting,
 				Error:    nil,
-				Priority: 1,
-				Lock:     new(sync.Mutex),
+				Priority: 0,
 			})
 		}
 	}
