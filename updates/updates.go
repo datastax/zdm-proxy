@@ -1,10 +1,10 @@
 package updates
 
 import (
+	"encoding/binary"
 	"encoding/json"
 
 	"github.com/google/uuid"
-	log "github.com/sirupsen/logrus"
 )
 
 // UpdateType is an enum of types of update between the proxy and migration services
@@ -39,32 +39,35 @@ func New(updateType UpdateType, data []byte) *Update {
 }
 
 // Success returns a serialized success response for the Update struct
-func (u *Update) Success() []byte {
+func (u *Update) Success() ([]byte, error) {
 	resp := Update{
 		ID:   u.ID,
 		Type: Success,
 	}
 
-	marshaled, err := json.Marshal(resp)
-	if err != nil {
-		log.Error(err)
-	}
-
-	return marshaled
+	return resp.Serialize()
 }
 
 // Failure returns a serialized failure response for the Update struct
-func (u *Update) Failure(err error) []byte {
+func (u *Update) Failure(err error) ([]byte, error) {
 	resp := Update{
 		ID:    u.ID,
 		Type:  Failure,
 		Error: err.Error(),
 	}
 
-	marshaled, err := json.Marshal(resp)
+	return resp.Serialize()
+}
+
+func (u *Update) Serialize() ([]byte, error) {
+	marshaled, err := json.Marshal(u)
 	if err != nil {
-		log.Error(err)
+		return nil, err
 	}
 
-	return marshaled
+	length := make([]byte, 4)
+	binary.BigEndian.PutUint32(length, uint32(len(marshaled)))
+	withLen := append(length, marshaled...)
+
+	return withLen, nil
 }

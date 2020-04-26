@@ -230,10 +230,9 @@ func (p *CQLProxy) handleClientConnection(conn net.Conn) {
 func (p *CQLProxy) handleMigrationCommunication(conn net.Conn) {
 	defer conn.Close()
 
-	// TODO: change buffer size
-	buf := make([]byte, 0xfffffff)
+	length := make([]byte, 4)
 	for {
-		bytesRead, err := conn.Read(buf)
+		bytesRead, err := conn.Read(length)
 		if err != nil {
 			if err == io.EOF {
 				log.Error(err)
@@ -243,9 +242,21 @@ func (p *CQLProxy) handleMigrationCommunication(conn net.Conn) {
 			}
 		}
 
-		b := buf[:bytesRead]
+		if bytesRead < 4 {
+			log.Error("not full update length header")
+			continue
+		}
+
+		updateLen := binary.BigEndian.Uint32(length)
+		buf := make([]byte, updateLen)
+		bytesRead, err = conn.Read(buf)
+		if uint32(bytesRead) < updateLen {
+			log.Error("full update not sent")
+			continue
+		}
+
 		var update updates.Update
-		err = json.Unmarshal(b, &update)
+		err = json.Unmarshal(buf, &update)
 		if err != nil {
 			log.Error(err)
 			continue
@@ -254,9 +265,14 @@ func (p *CQLProxy) handleMigrationCommunication(conn net.Conn) {
 		var resp []byte
 		err = p.handleUpdate(&update)
 		if err != nil {
-			resp = update.Failure(err)
+			resp, err = update.Failure(err)
 		} else {
-			resp = update.Success()
+			resp, err = update.Success()
+		}
+
+		// Failure marshaling a response
+		if err != nil {
+			continue
 		}
 
 		_, err = p.migrationSession.Write(resp)
