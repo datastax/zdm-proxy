@@ -1,6 +1,8 @@
 package migration
 
 import (
+	"cloud-gate/updates"
+	"cloud-gate/utils"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,31 +17,13 @@ import (
 	"sync"
 	"time"
 
-	"cloud-gate/updates"
-	"cloud-gate/utils"
-
 	"github.com/gocql/gocql"
 )
 
 // Migration contains necessary setup information
 type Migration struct {
+	Conf          *Config
 	Keyspaces     []string
-	DsbulkPath    string
-	HardRestart   bool
-	Workers       int
-	MigrationPort int
-	ProxyPort     int
-
-	SourceHostname string
-	SourceUsername string
-	SourcePassword string
-	SourcePort     int
-
-	DestHostname string
-	DestUsername string
-	DestPassword string
-	DestPort     int
-
 	status        *Status
 	directory     string
 	sourceSession *gocql.Session
@@ -56,12 +40,12 @@ func (m *Migration) Init() error {
 	os.Mkdir(m.directory, 0755)
 
 	var err error
-	m.sourceSession, err = utils.ConnectToCluster(m.SourceHostname, m.SourceUsername, m.SourcePassword, m.SourcePort)
+	m.sourceSession, err = utils.ConnectToCluster(m.Conf.SourceHostname, m.Conf.SourceUsername, m.Conf.SourcePassword, m.Conf.SourcePort)
 	if err != nil {
 		return err
 	}
 
-	m.destSession, err = utils.ConnectToCluster(m.DestHostname, m.DestUsername, m.DestPassword, m.DestPort)
+	m.destSession, err = utils.ConnectToCluster(m.Conf.AstraHostname, m.Conf.AstraUsername, m.Conf.AstraPassword, m.Conf.AstraPort)
 	if err != nil {
 		return err
 	}
@@ -96,7 +80,7 @@ func (m *Migration) Migrate() error {
 	m.status.initTableData(tables)
 	m.readCheckpoint()
 
-	if m.HardRestart {
+	if m.Conf.HardRestart {
 		// On hard restart, clear Astra cluster of all data
 		for keyspace, keyspaceTables := range m.status.Tables {
 			for tableName, table := range keyspaceTables {
@@ -117,7 +101,7 @@ func (m *Migration) Migrate() error {
 	var wgSchema sync.WaitGroup
 	var wgTables sync.WaitGroup
 
-	for worker := 1; worker <= m.Workers; worker++ {
+	for worker := 1; worker <= m.Conf.Threads; worker++ {
 		go m.schemaPool(&wgSchema, schemaJobs)
 		go m.tablePool(&wgTables, tableJobs)
 	}
@@ -296,8 +280,8 @@ func (m *Migration) unloadTable(table *gocql.TableMetadata) error {
 	m.sendTableUpdate(m.status.Tables[table.Keyspace][table.Name])
 
 	query := m.buildUnloadQuery(table)
-	cmdArgs := []string{"unload", "-port", strconv.Itoa(m.SourcePort), "-query", query, "-url", m.directory + table.Keyspace + "." + table.Name, "-logDir", m.directory}
-	_, err := exec.Command(m.DsbulkPath, cmdArgs...).Output()
+	cmdArgs := []string{"unload", "-port", strconv.Itoa(m.Conf.SourcePort), "-query", query, "-url", m.directory + table.Keyspace + "." + table.Name, "-logDir", m.directory}
+	_, err := exec.Command(m.Conf.DsbulkPath, cmdArgs...).Output()
 	if err != nil {
 		m.status.Tables[table.Keyspace][table.Name].Step = Errored
 		m.status.Tables[table.Keyspace][table.Name].Error = err
@@ -333,8 +317,8 @@ func (m *Migration) loadTable(table *gocql.TableMetadata) error {
 	m.sendTableUpdate(m.status.Tables[table.Keyspace][table.Name])
 
 	query := m.buildLoadQuery(table)
-	cmdArgs := []string{"load", "-h", m.DestHostname, "-port", strconv.Itoa(m.DestPort), "-query", query, "-url", m.directory + table.Keyspace + "." + table.Name, "-logDir", m.directory, "--batch.mode", "DISABLED"}
-	_, err := exec.Command(m.DsbulkPath, cmdArgs...).Output()
+	cmdArgs := []string{"load", "-h", m.Conf.AstraHostname, "-port", strconv.Itoa(m.Conf.AstraPort), "-query", query, "-url", m.directory + table.Keyspace + "." + table.Name, "-logDir", m.directory, "--batch.mode", "DISABLED"}
+	_, err := exec.Command(m.Conf.DsbulkPath, cmdArgs...).Output()
 	if err != nil {
 		m.status.Tables[table.Keyspace][table.Name].Step = Errored
 		m.status.Tables[table.Keyspace][table.Name].Error = err
@@ -442,7 +426,7 @@ func print(s string) {
 
 // startCommunication sets up communication between migration and proxy service using web sockets
 func (m *Migration) startCommunication() error {
-	l, err := net.Listen("tcp", fmt.Sprintf(":%d", m.MigrationPort))
+	l, err := net.Listen("tcp", fmt.Sprintf(":%d", m.Conf.MigrationCommunicationPort))
 	if err != nil {
 		return err
 	}
@@ -541,7 +525,7 @@ func (m *Migration) sendTableUpdate(table *Table) error {
 
 // sendRequest will notify the proxy service about the migration progress
 func (m *Migration) sendRequest(req *updates.Update) error {
-	conn, err := net.Dial("tcp", fmt.Sprintf(":%d", m.ProxyPort)) // TODO: call this only once, keep the connection open
+	conn, err := net.Dial("tcp", fmt.Sprintf(":%d", m.Conf.ProxyCommunicationPort)) // TODO: call this only once, keep the connection open
 	if err != nil || conn == nil {
 		print("Can't reach proxy service...\n")
 		return err

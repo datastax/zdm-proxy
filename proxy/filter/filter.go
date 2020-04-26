@@ -18,7 +18,6 @@ import (
 	"cloud-gate/proxy/cqlparser"
 	"cloud-gate/updates"
 
-	"github.com/jpillora/backoff"
 	log "github.com/sirupsen/logrus"
 )
 
