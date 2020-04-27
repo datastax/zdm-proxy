@@ -91,6 +91,8 @@ func (m *Migration) Migrate() {
 		for keyspace, keyspaceTables := range m.status.Tables {
 			for tableName, table := range keyspaceTables {
 				if table.Step >= MigratingSchemaComplete {
+					keyspace = utils.HasUpper(keyspace)
+					tableName = utils.HasUpper(tableName)
 					query := fmt.Sprintf("DROP TABLE %s.%s;", keyspace, tableName)
 					m.destSession.Query(query).Exec()
 				}
@@ -205,13 +207,17 @@ func (m *Migration) schemaPool(wg *sync.WaitGroup, jobs <-chan *gocql.TableMetad
 }
 
 func generateSchemaMigrationQuery(table *gocql.TableMetadata, compactionMap map[string]string) string {
-	query := fmt.Sprintf("CREATE TABLE %s.%s (", table.Keyspace, table.Name)
+	keyspace := utils.HasUpper(table.Keyspace)
+	tableName := utils.HasUpper(table.Name)
+	query := fmt.Sprintf("CREATE TABLE %s.%s (", keyspace, tableName)
 	for cname, column := range table.Columns {
+		cname = utils.HasUpper(cname)
 		query += fmt.Sprintf("%s %s, ", cname, column.Type.Type().String())
 	}
 
 	for _, column := range table.PartitionKey {
-		query += fmt.Sprintf("PRIMARY KEY (%s),", column.Name)
+		primaryKey := utils.HasUpper(column.Name)
+		query += fmt.Sprintf("PRIMARY KEY (%s),", primaryKey)
 	}
 
 	query += ") "
@@ -290,14 +296,16 @@ func (m *Migration) migrateData(table *gocql.TableMetadata) error {
 func (m *Migration) buildUnloadQuery(table *gocql.TableMetadata) string {
 	query := "SELECT "
 	for colName, column := range table.Columns {
+		cname := utils.DsbulkUpper(colName)
 		if column.Kind == gocql.ColumnPartitionKey {
-			query += colName + ", "
+			query += cname + ", "
 			continue
 		}
-		query += fmt.Sprintf("%[1]s, WRITETIME(%[1]s) AS w_%[1]s, TTL(%[1]s) AS l_%[1]s, ", colName)
+		writeTime := utils.DsbulkUpper("w_" + colName)
+		ttl := utils.DsbulkUpper("l_" + colName)
+		query += fmt.Sprintf("%[1]s, WRITETIME(%[1]s) AS %[2]s, TTL(%[1]s) AS %[3]s, ", cname, writeTime, ttl)
 	}
-
-	return query[0:len(query)-2] + fmt.Sprintf(" FROM %s.%s", table.Keyspace, table.Name)
+	return query[0:len(query)-2] + fmt.Sprintf(" FROM %s", utils.DsbulkUpper(table.Name))
 }
 
 // unloadTable exports a table CSV from the source cluster into DIRECTORY
@@ -307,8 +315,10 @@ func (m *Migration) unloadTable(table *gocql.TableMetadata) error {
 	m.sendTableUpdate(m.status.Tables[table.Keyspace][table.Name])
 
 	query := m.buildUnloadQuery(table)
-	cmdArgs := []string{"unload", "-port", strconv.Itoa(m.Conf.SourcePort), "-query", query, "-url", m.directory + table.Keyspace + "." + table.Name, "-logDir", m.directory}
-	_, err := exec.Command(m.Conf.DsbulkPath, cmdArgs...).Output()
+	print(query)
+	cmdArgs := []string{"unload", "-k", table.Keyspace, "-port", strconv.Itoa(m.SourcePort), "-query", query,
+		"-url", m.directory + table.Keyspace + "." + table.Name, "-logDir", m.directory}
+	_, err := exec.Command(m.DsbulkPath, cmdArgs...).Output()
 	if err != nil {
 		m.status.Tables[table.Keyspace][table.Name].Step = Errored
 		m.status.Tables[table.Keyspace][table.Name].Error = err
@@ -325,12 +335,17 @@ func (m *Migration) unloadTable(table *gocql.TableMetadata) error {
 
 func (m *Migration) buildLoadQuery(table *gocql.TableMetadata) string {
 	query := "BEGIN BATCH "
-	partitionKey := table.PartitionKey[0].Name
+	partitionKey := utils.DsbulkUpper(table.PartitionKey[0].Name)
+	tableName := utils.DsbulkUpper(table.Name)
 	for colName := range table.Columns {
-		if colName == partitionKey {
+		cname := utils.DsbulkUpper(colName)
+		if cname == partitionKey {
 			continue
 		}
-		query += fmt.Sprintf("INSERT INTO %[1]s.%[2]s(%[3]s, %[4]s) VALUES (:%[3]s, :%[4]s) USING TIMESTAMP :w_%[4]s AND TTL :l_%[4]s; ", table.Keyspace, table.Name, partitionKey, colName)
+		writeTime := utils.DsbulkUpper("w_" + colName)
+		ttl := utils.DsbulkUpper("l_" + colName)
+		query += fmt.Sprintf("INSERT INTO %[1]s(%[2]s, %[3]s) VALUES (:%[2]s, :%[3]s) USING TIMESTAMP :%[4]s AND TTL :%[5]s; ",
+			tableName, partitionKey, cname, writeTime, ttl)
 	}
 	query += "APPLY BATCH;"
 	return query
@@ -344,8 +359,9 @@ func (m *Migration) loadTable(table *gocql.TableMetadata) error {
 	m.sendTableUpdate(m.status.Tables[table.Keyspace][table.Name])
 
 	query := m.buildLoadQuery(table)
-	cmdArgs := []string{"load", "-h", m.Conf.AstraHostname, "-port", strconv.Itoa(m.Conf.AstraPort), "-query", query, "-url", m.directory + table.Keyspace + "." + table.Name, "-logDir", m.directory, "--batch.mode", "DISABLED"}
-	_, err := exec.Command(m.Conf.DsbulkPath, cmdArgs...).Output()
+	cmdArgs := []string{"load", "-k", table.Keyspace, "-h", m.DestHostname, "-port", strconv.Itoa(m.DestPort), "-query", query,
+		"-url", m.directory + table.Keyspace + "." + table.Name, "-logDir", m.directory, "--batch.mode", "DISABLED"}
+	_, err := exec.Command(m.DsbulkPath, cmdArgs...).Output()
 	if err != nil {
 		m.status.Tables[table.Keyspace][table.Name].Step = Errored
 		m.status.Tables[table.Keyspace][table.Name].Error = err

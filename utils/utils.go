@@ -6,6 +6,8 @@ import (
 
 	"github.com/gocql/gocql"
 	log "github.com/sirupsen/logrus"
+	"strconv"
+	"unicode"
 )
 
 // ConnectToCluster is used to connect to source and destination clusters
@@ -50,4 +52,31 @@ func Contains(keys []string, elem string) bool {
 		}
 	}
 	return false
+}
+
+// checkUpper returns true if any letters are uppercase
+func checkUpper(name string) bool {
+	runes := []rune(name)
+	for _, r := range runes {
+		if unicode.IsUpper(r) {
+			return true
+		}
+	}
+	return false
+}
+
+// DsbulkUpper returns a properly formatted string if any letters are uppercase
+func DsbulkUpper(name string) string {
+	if checkUpper(name) {
+		return "\\\"" + name + "\\\""
+	}
+	return name
+}
+
+// HasUpper returns the string in quotation marks if any letters are uppercase
+func HasUpper(name string) string {
+	if checkUpper(name) {
+		return strconv.Quote(name)
+	}
+	return name
 }
