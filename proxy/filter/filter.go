@@ -335,7 +335,7 @@ func (p *CQLProxy) sendPriorityUpdate(table *migration.Table) error {
 	}
 
 	update := updates.New(updates.TableUpdate, marshaledTable)
-	marshaledUpdate, err := json.Marshal(update)
+	marshaledUpdate, err := update.Serialize()
 	if err != nil {
 		return err
 	}
