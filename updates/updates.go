@@ -3,8 +3,11 @@ package updates
 import (
 	"encoding/binary"
 	"encoding/json"
+	"io"
+	"net"
 
 	"github.com/google/uuid"
+	log "github.com/sirupsen/logrus"
 )
 
 // UpdateType is an enum of types of update between the proxy and migration services
@@ -70,4 +73,60 @@ func (u *Update) Serialize() ([]byte, error) {
 	withLen := append(length, marshaled...)
 
 	return withLen, nil
+}
+
+func CommunicationHandler(src net.Conn, dst net.Conn, handler func(update *Update) error) {
+	defer src.Close()
+
+	length := make([]byte, 4)
+	for {
+		bytesRead, err := src.Read(length)
+		if err != nil {
+			if err == io.EOF {
+				log.Error(err)
+				continue
+			} else {
+				return
+			}
+		}
+
+		if bytesRead < 4 {
+			log.Error("not full update length header")
+			continue
+		}
+
+		updateLen := binary.BigEndian.Uint32(length)
+		buf := make([]byte, updateLen)
+		bytesRead, err = src.Read(buf)
+		if uint32(bytesRead) < updateLen {
+			log.Error("full update not sent")
+			continue
+		}
+
+		var update Update
+		err = json.Unmarshal(buf, &update)
+		if err != nil {
+			log.Error(err)
+			continue
+		}
+
+		var resp []byte
+		err = handler(&update)
+		if err != nil {
+			resp, err = update.Failure(err)
+		} else {
+			resp, err = update.Success()
+		}
+
+		// Failure marshaling a response
+		if err != nil {
+			continue
+		}
+
+		_, err = dst.Write(resp)
+		if err != nil {
+			log.Error(err)
+		}
+	}
+
 }
