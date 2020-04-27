@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/jpillora/backoff"
 	"io"
 	"net"
 	"net/http"
