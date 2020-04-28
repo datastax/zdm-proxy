@@ -6,9 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/ioutil"
-	"log"
 	"net"
 	"os"
 	"os/exec"
@@ -19,6 +17,7 @@ import (
 
 	"github.com/gocql/gocql"
 	"github.com/jpillora/backoff"
+	log "github.com/sirupsen/logrus"
 )
 
 // Migration contains necessary setup information
@@ -26,14 +25,16 @@ type Migration struct {
 	Conf      *Config
 	Keyspaces []string
 
-	conn          net.Conn
-	status        *Status
-	directory     string
-	sourceSession *gocql.Session
-	destSession   *gocql.Session
-	chkLock       *sync.Mutex
-	logLock       *sync.Mutex
-	initialized   bool
+	conn               net.Conn
+	status             *Status
+	directory          string
+	sourceSession      *gocql.Session
+	destSession        *gocql.Session
+	chkLock            *sync.Mutex
+	logLock            *sync.Mutex
+	outstandingUpdates map[string]int
+	updateLock         *sync.Mutex
+	initialized        bool
 }
 
 // Init creates the connections to the databases and locks needed for checkpoint and logging
@@ -55,18 +56,20 @@ func (m *Migration) Init() error {
 
 	m.chkLock = new(sync.Mutex)
 	m.logLock = new(sync.Mutex)
+	m.updateLock = new(sync.Mutex)
+	m.outstandingUpdates = make(map[string]int)
 	m.initialized = true
 
 	return nil
 }
 
 // Migrate executes the migration
-func (m *Migration) Migrate() error {
+func (m *Migration) Migrate() {
 	if !m.initialized {
-		return errors.New("Migration must be initialized before migration can begin")
+		log.Fatal(errors.New("Migration must be initialized before migration can begin"))
 	}
 
-	print(fmt.Sprintf("== BEGIN MIGRATION ==\n"))
+	log.Info(fmt.Sprintf("== BEGIN MIGRATION =="))
 
 	defer m.sourceSession.Close()
 	defer m.destSession.Close()
@@ -126,7 +129,10 @@ func (m *Migration) Migrate() error {
 	defer m.conn.Close()
 
 	// Notify proxy service that schemas are finished migrating, unload/load starting
-	m.sendStart()
+	err = m.sendStart()
+	if err != nil {
+		log.Fatal(err)
+	}
 	// TODO: wait for proxy to send success back before beginning data migration
 	time.Sleep(2 * time.Second)
 	// TODO: in all the send helper functions, add the type of request sent to a map of requests
@@ -141,13 +147,16 @@ func (m *Migration) Migrate() error {
 
 	close(tableJobs)
 	wgTables.Wait()
-	print("COMPLETED MIGRATION\n")
+	log.Info("COMPLETED MIGRATION")
 
 	// Calculate total file size of migrated data
 	var size int64
 	for keyspace, keyspaceTables := range tables {
 		for tableName := range keyspaceTables {
-			dSize, _ := utils.DirSize(m.directory + keyspace + "." + tableName)
+			dSize, err := utils.DirSize(m.directory + keyspace + "." + tableName)
+			if err != nil {
+				log.Fatal(err)
+			}
 			size += dSize
 		}
 	}
@@ -158,12 +167,15 @@ func (m *Migration) Migrate() error {
 	m.writeCheckpoint()
 
 	if m.status.Steps == m.status.TotalSteps {
-		m.sendComplete()
+		err := m.sendComplete()
+		if err != nil {
+			log.Fatal(err)
+		}
 	} else {
-		return errors.New("Migration ended early")
+		log.Fatal(errors.New("Migration ended early"))
 	}
 
-	return nil
+	select {}
 }
 
 func (m *Migration) schemaPool(wg *sync.WaitGroup, jobs <-chan *gocql.TableMetadata) {
@@ -177,7 +189,7 @@ func (m *Migration) schemaPool(wg *sync.WaitGroup, jobs <-chan *gocql.TableMetad
 
 			m.status.Steps++
 			m.status.Tables[table.Keyspace][table.Name].Step = MigratingSchemaComplete
-			print(fmt.Sprintf("COMPLETED MIGRATING TABLE SCHEMA: %s.%s\n", table.Keyspace, table.Name))
+			log.Info(fmt.Sprintf("COMPLETED MIGRATING TABLE SCHEMA: %s.%s", table.Keyspace, table.Name))
 			m.writeCheckpoint()
 		}
 		wg.Done()
@@ -210,7 +222,7 @@ func generateSchemaMigrationQuery(table *gocql.TableMetadata, compactionMap map[
 // column names and types, primary keys, and compaction information
 func (m *Migration) migrateSchema(keyspace string, table *gocql.TableMetadata) error {
 	m.status.Tables[keyspace][table.Name].Step = MigratingSchema
-	print(fmt.Sprintf("MIGRATING TABLE SCHEMA: %s.%s... \n", table.Keyspace, table.Name))
+	log.Info(fmt.Sprintf("MIGRATING TABLE SCHEMA: %s.%s... ", table.Keyspace, table.Name))
 
 	// Fetch table compaction metadata
 	cQuery := `SELECT compaction FROM system_schema.tables
@@ -242,7 +254,7 @@ func (m *Migration) tablePool(wg *sync.WaitGroup, jobs <-chan *gocql.TableMetada
 
 			m.status.Steps += 2
 			m.status.Tables[table.Keyspace][table.Name].Step = LoadingDataComplete
-			print(fmt.Sprintf("COMPLETED LOADING TABLE DATA: %s.%s\n", table.Keyspace, table.Name))
+			log.Info(fmt.Sprintf("COMPLETED LOADING TABLE DATA: %s.%s", table.Keyspace, table.Name))
 			m.writeCheckpoint()
 
 			m.sendTableUpdate(m.status.Tables[table.Keyspace][table.Name])
@@ -283,7 +295,7 @@ func (m *Migration) buildUnloadQuery(table *gocql.TableMetadata) string {
 // unloadTable exports a table CSV from the source cluster into DIRECTORY
 func (m *Migration) unloadTable(table *gocql.TableMetadata) error {
 	m.status.Tables[table.Keyspace][table.Name].Step = UnloadingData
-	print(fmt.Sprintf("UNLOADING TABLE: %s.%s...\n", table.Keyspace, table.Name))
+	log.Info(fmt.Sprintf("UNLOADING TABLE: %s.%s...", table.Keyspace, table.Name))
 	m.sendTableUpdate(m.status.Tables[table.Keyspace][table.Name])
 
 	query := m.buildUnloadQuery(table)
@@ -296,7 +308,7 @@ func (m *Migration) unloadTable(table *gocql.TableMetadata) error {
 	}
 
 	m.status.Tables[table.Keyspace][table.Name].Step = UnloadingDataComplete
-	print(fmt.Sprintf("COMPLETED UNLOADING TABLE: %s.%s\n", table.Keyspace, table.Name))
+	log.Info(fmt.Sprintf("COMPLETED UNLOADING TABLE: %s.%s", table.Keyspace, table.Name))
 
 	m.sendTableUpdate(m.status.Tables[table.Keyspace][table.Name])
 
@@ -320,7 +332,7 @@ func (m *Migration) buildLoadQuery(table *gocql.TableMetadata) string {
 // into the target cluster
 func (m *Migration) loadTable(table *gocql.TableMetadata) error {
 	m.status.Tables[table.Keyspace][table.Name].Step = LoadingData
-	print(fmt.Sprintf("LOADING TABLE: %s.%s...\n", table.Keyspace, table.Name))
+	log.Info(fmt.Sprintf("LOADING TABLE: %s.%s...", table.Keyspace, table.Name))
 	m.sendTableUpdate(m.status.Tables[table.Keyspace][table.Name])
 
 	query := m.buildLoadQuery(table)
@@ -359,8 +371,8 @@ func (m *Migration) getTables(keyspaces []string) (map[string]map[string]*gocql.
 	for _, keyspace := range keyspaces {
 		md, err := m.sourceSession.KeyspaceMetadata(keyspace)
 		if err != nil {
-			print(fmt.Sprintf("ERROR GETTING KEYSPACE %s...\n", keyspace))
-			log.Fatal(err)
+			log.Error(fmt.Sprintf("ERROR GETTING KEYSPACE %s...", keyspace))
+			return nil, err
 		}
 		tableMetadata[keyspace] = md.Tables
 	}
@@ -391,7 +403,7 @@ func (m *Migration) writeCheckpoint() {
 	content := []byte(str)
 	err := ioutil.WriteFile("migration.chk", content, 0644)
 	if err != nil {
-		log.Fatal(err)
+		log.Error(err)
 	}
 }
 
@@ -426,12 +438,6 @@ func (m *Migration) readCheckpoint() {
 	}
 }
 
-func print(s string) {
-	msg := s
-	// msg := fmt.Sprintf("[%s] %s", time.Now().String(), s)
-	fmt.Printf(msg)
-}
-
 func (m *Migration) establishConnection() net.Conn {
 	hostname := fmt.Sprintf("%s:%d", m.Conf.ProxyServiceHostname, m.Conf.ProxyCommunicationPort)
 	b := &backoff.Backoff{
@@ -441,16 +447,16 @@ func (m *Migration) establishConnection() net.Conn {
 		Jitter: false,
 	}
 
-	print(fmt.Sprintf("Attempting to connect to Proxy Service at %s...\n", hostname))
+	log.Info(fmt.Sprintf("Attempting to connect to Proxy Service at %s...", hostname))
 	for {
 		conn, err := net.Dial("tcp", hostname)
 		if err != nil {
 			nextDuration := b.Duration()
-			print(fmt.Sprintf("Couldn't connect to Proxy Service, retrying in %s...\n", nextDuration.String()))
+			log.Info(fmt.Sprintf("Couldn't connect to Proxy Service, retrying in %s...", nextDuration.String()))
 			time.Sleep(nextDuration)
 			continue
 		}
-		print("Successfully established connection with Proxy Service\n")
+		log.Info("Successfully established connection with Proxy Service")
 		return conn
 	}
 }
@@ -467,51 +473,12 @@ func (m *Migration) listenProxy() error {
 		if err != nil {
 			select {
 			default:
-				print(err.Error() + "\n")
+				log.Error(err)
 				continue
 			}
 		}
-		go m.processRequest(conn)
-	}
-}
 
-// processRequest reads in the request and sends it to the handleRequest method
-func (m *Migration) processRequest(conn net.Conn) error {
-	// TODO: change buffer size
-	buf := make([]byte, 100)
-	for {
-		bytesRead, err := conn.Read(buf)
-		if err != nil {
-			if err == io.EOF {
-				print(err.Error() + "\n")
-			}
-			return err
-		}
-		b := buf[:bytesRead]
-		print("RECEIVED: " + string(b) + "\n")
-		var req updates.Update
-		err = json.Unmarshal(b, &req)
-		if err != nil {
-			print(err.Error())
-			return err
-		}
-
-		err = m.handleRequest(&req)
-		if err != nil {
-			b, err = req.Failure(err)
-		} else {
-			b, err = req.Success()
-		}
-
-		if err != nil {
-			continue
-		}
-
-		_, err = conn.Write(b)
-		if err != nil {
-			print(err.Error())
-			continue
-		}
+		updates.CommunicationHandler(conn, conn, m.handleRequest)
 	}
 }
 
@@ -522,9 +489,7 @@ func (m *Migration) sendStart() error {
 		return err
 	}
 
-	m.sendRequest(updates.New(updates.Start, bytes))
-
-	return nil
+	return m.sendRequest(updates.New(updates.Start, bytes))
 }
 
 func (m *Migration) sendComplete() error {
@@ -533,42 +498,53 @@ func (m *Migration) sendComplete() error {
 		return err
 	}
 
-	m.sendRequest(updates.New(updates.Complete, bytes))
-
-	return nil
+	return m.sendRequest(updates.New(updates.Complete, bytes))
 }
 
 func (m *Migration) sendTableUpdate(table *Table) error {
 	bytes, err := json.Marshal(table)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
-	m.sendRequest(updates.New(updates.TableUpdate, bytes))
-	return nil
+	return m.sendRequest(updates.New(updates.TableUpdate, bytes))
 }
 
 // sendRequest will notify the proxy service about the migration progress
 func (m *Migration) sendRequest(req *updates.Update) error {
-	bytes, err := json.Marshal(req)
+	bytes, err := req.Serialize()
 	if err != nil {
-		print(err.Error() + "\n")
 		return err
 	}
 
-	_, err = m.conn.Write(bytes)
-
-	print("SENT: " + string(bytes) + "\n")
+	log.Debug("SENT: " + string(bytes))
 	if err != nil {
-		print(err.Error() + "\n")
 		return err
 	}
 
-	//maxRetries := 5x
-	//time.Sleep(2 * time.Second)
-	// TODO: after sending, add the sent data to a map, wait for some amount of time then check map to see if it's been cleared
-	// else resend the data
-	// after retrying 3 (??) times then just shutdown?? idk
+	b := &backoff.Backoff{
+		Min:    200 * time.Millisecond,
+		Max:    10 * time.Second,
+		Factor: 2,
+		Jitter: false,
+	}
+
+	go func() {
+		for {
+			if m.outstandingUpdates[req.ID] > 0 {
+				return
+			}
+
+			_, err = m.conn.Write(bytes)
+			if err != nil {
+				log.Error(err)
+			}
+
+			duration := b.Duration()
+			time.Sleep(duration)
+		}
+	}()
+
 	return nil
 }
 
@@ -590,11 +566,16 @@ func (m *Migration) handleRequest(req *updates.Update) error {
 		m.status.Tables[table.Keyspace][table.Name].Priority = table.Priority
 		// TODO: priority queue logic here (in progress)
 	case updates.Success:
-		// 3) On Success, updates "map" of requestss
-		// TODO: delete from map / stop go routine that will resend on timer
+		// TODO: make this update map of request statuses, and kill the thread thats
+		// sending requests w/ exp backoff once a success or fail has been received
+
+		m.updateLock.Lock()
+		m.outstandingUpdates[req.ID] = 1
+		m.updateLock.Unlock()
 	case updates.Failure:
-		// 4) On Failure, resend
-		// TODO: resend original update
+		m.updateLock.Lock()
+		m.outstandingUpdates[req.ID] = 0
+		m.updateLock.Unlock()
 	}
 	return nil
 }

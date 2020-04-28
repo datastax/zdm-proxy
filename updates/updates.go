@@ -103,6 +103,7 @@ func CommunicationHandler(src net.Conn, dst net.Conn, handler func(update *Updat
 			continue
 		}
 
+		log.Debug("RECEIVED: " + string(buf))
 		var update Update
 		err = json.Unmarshal(buf, &update)
 		if err != nil {
@@ -110,23 +111,23 @@ func CommunicationHandler(src net.Conn, dst net.Conn, handler func(update *Updat
 			continue
 		}
 
-		var resp []byte
-		err = handler(&update)
-		if err != nil {
-			resp, err = update.Failure(err)
-		} else {
-			resp, err = update.Success()
-		}
+		handlerErr := handler(&update)
+		if update.Type != Success && update.Type != Failure {
+			var resp []byte
+			if handlerErr != nil {
+				resp, err = update.Failure(err)
+			} else {
+				resp, err = update.Success()
+			}
 
-		// Failure marshaling a response
-		if err != nil {
-			continue
-		}
+			if err != nil {
+				log.Error(err)
+			}
 
-		_, err = dst.Write(resp)
-		if err != nil {
-			log.Error(err)
+			_, err = dst.Write(resp)
+			if err != nil {
+				log.Error(err)
+			}
 		}
 	}
-
 }

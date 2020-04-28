@@ -24,6 +24,7 @@ type Config struct {
 	DsbulkPath  string `default:"/Users/terranceli/Documents/projects/codebase/datastax-s20/dsbulk-1.4.1/bin/dsbulk"`
 	HardRestart bool   `default:"false"`
 	Threads     int    `default:"1"`
+	Debug       bool   `default:"false"`
 }
 
 // NewConfig returns an empty Config struct

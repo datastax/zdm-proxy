@@ -10,6 +10,12 @@ import (
 func main() {
 	conf := migration.NewConfig().ParseEnvVars()
 
+	if conf.Debug {
+		log.SetLevel(log.DebugLevel)
+	} else {
+		log.SetLevel(log.InfoLevel)
+	}
+
 	m := migration.Migration{
 		Conf: conf,
 	}
