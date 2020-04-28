@@ -2,6 +2,7 @@ package main
 
 import (
 	"cloud-gate/migration/migration"
+
 	log "github.com/sirupsen/logrus"
 )
 

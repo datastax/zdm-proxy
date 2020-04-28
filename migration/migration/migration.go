@@ -18,12 +18,15 @@ import (
 	"time"
 
 	"github.com/gocql/gocql"
+	"github.com/jpillora/backoff"
 )
 
 // Migration contains necessary setup information
 type Migration struct {
-	Conf          *Config
-	Keyspaces     []string
+	Conf      *Config
+	Keyspaces []string
+
+	conn          net.Conn
 	status        *Status
 	directory     string
 	sourceSession *gocql.Session
@@ -116,7 +119,11 @@ func (m *Migration) Migrate() error {
 	wgSchema.Wait()
 
 	// Start listening to proxy communications
-	go m.startCommunication()
+	go m.listenProxy()
+
+	// Establish a connection to the proxy service
+	m.conn = m.establishConnection()
+	defer m.conn.Close()
 
 	// Notify proxy service that schemas are finished migrating, unload/load starting
 	m.sendStart()
@@ -420,12 +427,36 @@ func (m *Migration) readCheckpoint() {
 }
 
 func print(s string) {
-	msg := fmt.Sprintf("[%s] %s", time.Now().String(), s)
+	msg := s
+	// msg := fmt.Sprintf("[%s] %s", time.Now().String(), s)
 	fmt.Printf(msg)
 }
 
-// startCommunication sets up communication between migration and proxy service using web sockets
-func (m *Migration) startCommunication() error {
+func (m *Migration) establishConnection() net.Conn {
+	hostname := fmt.Sprintf("%s:%d", m.Conf.ProxyServiceHostname, m.Conf.ProxyCommunicationPort)
+	b := &backoff.Backoff{
+		Min:    100 * time.Millisecond,
+		Max:    10 * time.Second,
+		Factor: 2,
+		Jitter: false,
+	}
+
+	print(fmt.Sprintf("Attempting to connect to Proxy Service at %s...\n", hostname))
+	for {
+		conn, err := net.Dial("tcp", hostname)
+		if err != nil {
+			nextDuration := b.Duration()
+			print(fmt.Sprintf("Couldn't connect to Proxy Service, retrying in %s...\n", nextDuration.String()))
+			time.Sleep(nextDuration)
+			continue
+		}
+		print("Successfully established connection with Proxy Service\n")
+		return conn
+	}
+}
+
+// listenProxy sets up communication between migration and proxy service using web sockets
+func (m *Migration) listenProxy() error {
 	l, err := net.Listen("tcp", fmt.Sprintf(":%d", m.Conf.MigrationCommunicationPort))
 	if err != nil {
 		return err
@@ -436,7 +467,7 @@ func (m *Migration) startCommunication() error {
 		if err != nil {
 			select {
 			default:
-				print(err.Error())
+				print(err.Error() + "\n")
 				continue
 			}
 		}
@@ -452,12 +483,12 @@ func (m *Migration) processRequest(conn net.Conn) error {
 		bytesRead, err := conn.Read(buf)
 		if err != nil {
 			if err == io.EOF {
-				print(err.Error())
+				print(err.Error() + "\n")
 			}
 			return err
 		}
 		b := buf[:bytesRead]
-		print(string(b) + "\n")
+		print("RECEIVED: " + string(b) + "\n")
 		var req updates.Update
 		err = json.Unmarshal(b, &req)
 		if err != nil {
@@ -487,10 +518,7 @@ func (m *Migration) sendStart() error {
 		return err
 	}
 
-	m.sendRequest(&updates.Update{
-		Type: updates.Start,
-		Data: bytes,
-	})
+	m.sendRequest(updates.New(updates.Start, bytes))
 
 	return nil
 }
@@ -501,10 +529,7 @@ func (m *Migration) sendComplete() error {
 		return err
 	}
 
-	m.sendRequest(&updates.Update{
-		Type: updates.Complete,
-		Data: bytes,
-	})
+	m.sendRequest(updates.New(updates.Complete, bytes))
 
 	return nil
 }
@@ -515,32 +540,27 @@ func (m *Migration) sendTableUpdate(table *Table) error {
 		log.Fatal(err)
 	}
 
-	m.sendRequest(&updates.Update{
-		Type: updates.TableUpdate,
-		Data: bytes,
-	})
-
+	m.sendRequest(updates.New(updates.TableUpdate, bytes))
 	return nil
 }
 
 // sendRequest will notify the proxy service about the migration progress
 func (m *Migration) sendRequest(req *updates.Update) error {
-	conn, err := net.Dial("tcp", fmt.Sprintf(":%d", m.Conf.ProxyCommunicationPort)) // TODO: call this only once, keep the connection open
-	if err != nil || conn == nil {
-		print("Can't reach proxy service...\n")
-		return err
-	}
-
-	defer conn.Close()
-
 	bytes, err := json.Marshal(req)
-	_, err = conn.Write(bytes)
 	if err != nil {
-		print(err.Error())
+		print(err.Error() + "\n")
 		return err
 	}
 
-	//maxRetries := 5
+	_, err = m.conn.Write(bytes)
+
+	print("SENT: " + string(bytes) + "\n")
+	if err != nil {
+		print(err.Error() + "\n")
+		return err
+	}
+
+	//maxRetries := 5x
 	//time.Sleep(2 * time.Second)
 	// TODO: after sending, add the sent data to a map, wait for some amount of time then check map to see if it's been cleared
 	// else resend the data

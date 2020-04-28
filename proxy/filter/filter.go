@@ -5,13 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/jpillora/backoff"
 	"io"
 	"net"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/jpillora/backoff"
 
 	"cloud-gate/config"
 	"cloud-gate/migration/migration"
@@ -236,13 +237,14 @@ func (p *CQLProxy) handleMigrationCommunication(conn net.Conn) {
 		if err != nil {
 			if err == io.EOF {
 				log.Error(err)
-				continue
-			} else {
 				return
+			} else {
+				continue
 			}
 		}
 
 		b := buf[:bytesRead]
+		log.Debug(string(b))
 		var update updates.Update
 		err = json.Unmarshal(b, &update)
 		if err != nil {
