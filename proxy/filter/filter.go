@@ -46,7 +46,6 @@ type CQLProxy struct {
 
 	queues         map[string]map[string]chan *Query
 	queueLocks     map[string]map[string]*sync.Mutex
-	queueSizes     map[string]map[string]int
 	tablePaused    map[string]map[string]bool
 	queryResponses map[uint16]chan bool
 	lock           *sync.Mutex
@@ -86,15 +85,13 @@ type CQLProxy struct {
 func (p *CQLProxy) Start() error {
 	p.reset()
 
-	var err error
-	// Attempt to connect to astra database using given credentials
-	p.astraSession = p.establishConnection("Astra", "tcp", p.astraIP)
-	p.migrationSession = p.establishConnection("Migration Service", "tcp", p.migrationServiceIP)
+	p.astraSession = p.establishConnection(p.astraIP)
+	p.migrationSession = p.establishConnection(p.migrationServiceIP)
 
 	go p.statusLoop()
 	go p.runMetrics()
 
-	err = p.listen(p.Conf.ProxyCommunicationPort, p.handleMigrationConnection)
+	err := p.listen(p.Conf.ProxyCommunicationPort, p.handleMigrationConnection)
 	if err != nil {
 		return err
 	}
@@ -105,11 +102,11 @@ func (p *CQLProxy) Start() error {
 		return err
 	}
 
-	log.Infof("Proxy started and ready to accept queries on port %d", p.Conf.ProxyQueryPort)
+	log.Infof("Proxy connected and ready to accept queries on port %d", p.Conf.ProxyQueryPort)
 	return nil
 }
 
-func (p *CQLProxy) establishConnection(name string, network string, port string) net.Conn {
+func (p *CQLProxy) establishConnection(ip string) net.Conn {
 	b := &backoff.Backoff{
 		Min:    100 * time.Millisecond,
 		Max:    10 * time.Second,
@@ -117,16 +114,16 @@ func (p *CQLProxy) establishConnection(name string, network string, port string)
 		Jitter: false,
 	}
 
-	log.Debugf("Attempting to connect to %s at %s...", name, port)
+	log.Debugf("Attempting to connect to %s...", ip)
 	for {
-		conn, err := net.Dial(network, port)
+		conn, err := net.Dial("tcp", ip)
 		if err != nil {
 			nextDuration := b.Duration()
-			log.Debugf("Couldn't connect to %s, retrying in %s...", name, nextDuration.String())
+			log.Errorf("Couldn't connect to %s, retrying in %s...", ip, nextDuration.String())
 			time.Sleep(nextDuration)
 			continue
 		}
-		log.Infof("Successfully established connection with %s", name)
+		log.Infof("Successfully established connection with %s", ip)
 		return conn
 	}
 }
@@ -164,7 +161,6 @@ func (p *CQLProxy) loadMigrationInfo(status *migration.Status) {
 	for keyspace, tables := range status.Tables {
 		p.queues[keyspace] = make(map[string]chan *Query)
 		p.queueLocks[keyspace] = make(map[string]*sync.Mutex)
-		p.queueSizes[keyspace] = make(map[string]int)
 		p.tablePaused[keyspace] = make(map[string]bool)
 		for tableName := range tables {
 			p.queues[keyspace][tableName] = make(chan *Query, queueSize)
@@ -277,38 +273,15 @@ func (p *CQLProxy) handleUpdate(update *updates.Update) error {
 // updated priority value for the table. We do this as if there is a table
 // with a very large queue, we want that to be migrated ASAP, so we communicate
 // the priority of a table's migration
-func (p *CQLProxy) sendPriorityUpdate(table *migration.Table) error {
+func (p *CQLProxy) sendPriorityUpdate(table *migration.Table, newPriority int) error {
+	table.SetPriority(newPriority)
 	marshaledTable, err := json.Marshal(table)
 	if err != nil {
 		return err
 	}
 
 	update := updates.New(updates.TableUpdate, marshaledTable)
-	marshaledUpdate, err := update.Serialize()
-	if err != nil {
-		return err
-	}
-
-	b := &backoff.Backoff{
-		Min:    200 * time.Millisecond,
-		Max:    10 * time.Second,
-		Factor: 2,
-		Jitter: false,
-	}
-
-	go func() {
-		for {
-			_, err = p.migrationSession.Write(marshaledUpdate)
-			if err != nil {
-				duration := b.Duration()
-				log.Debugf("Unable to send update %s to migration service. Retrying in %s...",
-					update.ID, duration.String())
-				time.Sleep(duration)
-			}
-		}
-	}()
-
-	return nil
+	return updates.Send(update, p.migrationSession)
 }
 
 func (p *CQLProxy) forward(src, dst net.Conn) {
@@ -570,10 +543,6 @@ func (p *CQLProxy) handleBatchQuery(query []byte, paths []string) error {
 
 func (p *CQLProxy) queueQuery(query *Query) {
 	p.queues[query.Table.Keyspace][query.Table.Name] <- query
-
-	p.lock.Lock()
-	defer p.lock.Unlock()
-	p.queueSizes[query.Table.Keyspace][query.Table.Name]++
 }
 
 // consumeQueue executes all queries for a particular table, in the order that they are received.
@@ -597,10 +566,6 @@ func (p *CQLProxy) consumeQueue(keyspace string, table string) {
 				p.Metrics.incrementWrites()
 			}
 
-			p.lock.Lock()
-			p.queueSizes[keyspace][table]--
-			p.lock.Unlock()
-
 			p.queueLocks[keyspace][table].Unlock()
 		}
 
@@ -610,20 +575,20 @@ func (p *CQLProxy) consumeQueue(keyspace string, table string) {
 // TODO: Change stream when retrying or else cassandra doesn't respond
 // executeWrite will keep retrying a query up to maxQueryRetries number of times
 // if it's unsuccessful
-func (p *CQLProxy) executeWrite(q *Query, attempts ...int) error {
-	attempt := 1
-	if attempts != nil {
-		attempt = attempts[0]
+func (p *CQLProxy) executeWrite(q *Query, retries ...int) error {
+	retry := 0
+	if retries != nil {
+		retry = retries[0]
 	}
 
-	if attempt > maxQueryRetries {
+	if retry > maxQueryRetries {
 		return fmt.Errorf("query on stream %d unsuccessful", q.Stream)
 	}
 
 	err := p.executeAndCheckReply(q)
 	if err != nil {
 		log.Errorf("%s. Retrying query %d", err.Error(), q.Stream)
-		return p.executeWrite(q, attempt+1)
+		return p.executeWrite(q, retry+1)
 	}
 
 	return nil
@@ -633,13 +598,8 @@ func (p *CQLProxy) executeWrite(q *Query, attempts ...int) error {
 // Returns an error if the duration of queryTimeout passes without a response,
 // or if the Astra DB responds saying that there was an error with the query.
 func (p *CQLProxy) executeAndCheckReply(q *Query) error {
-	resp := p.createQueryResponseChan(q)
-	defer func() {
-		p.lock.Lock()
-		delete(p.queryResponses, q.Stream)
-		close(resp)
-		p.lock.Unlock()
-	}()
+	resp := p.createResponseChan(q)
+	defer p.closeResponseChan(q, resp)
 
 	err := p.execute(q)
 	if err != nil {
@@ -661,7 +621,7 @@ func (p *CQLProxy) executeAndCheckReply(q *Query) error {
 	}
 }
 
-func (p *CQLProxy) createQueryResponseChan(q *Query) chan bool {
+func (p *CQLProxy) createResponseChan(q *Query) chan bool {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
@@ -669,6 +629,14 @@ func (p *CQLProxy) createQueryResponseChan(q *Query) chan bool {
 	p.queryResponses[q.Stream] = respChan
 
 	return respChan
+}
+
+func (p *CQLProxy) closeResponseChan(q *Query, resp chan bool) {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+
+	delete(p.queryResponses, q.Stream)
+	close(resp)
 }
 
 // TODO: is this function even needed? Do we need to be retrying here too?
@@ -742,7 +710,6 @@ func (p *CQLProxy) Shutdown() {
 func (p *CQLProxy) reset() {
 	p.queues = make(map[string]map[string]chan *Query)
 	p.queueLocks = make(map[string]map[string]*sync.Mutex)
-	p.queueSizes = make(map[string]map[string]int)
 	p.tablePaused = make(map[string]map[string]bool)
 	p.queryResponses = make(map[uint16]chan bool)
 	p.ReadyChan = make(chan struct{})
@@ -770,19 +737,15 @@ func (p *CQLProxy) reset() {
 // Given a FROM argument, extract the table name
 // ex: table, keyspace.table, keyspace.table;, keyspace.table(, etc..
 func extractTableInfo(fromClause string) (string, string) {
-	var keyspace string
+	fromClause = strings.TrimSuffix(fromClause, ";")
 
-	// Remove keyspace if table in format keyspace.table
+	keyspace := ""
+	tableName := fromClause
+
+	// Separate keyspace & tableName if together
 	if i := strings.IndexRune(fromClause, '.'); i != -1 {
 		keyspace = fromClause[:i]
-	}
-
-	// Remove semicolon if it is attached to the table name from the query
-	tableName := strings.TrimSuffix(fromClause, ";")
-
-	// Remove keyspace if table in format keyspace.table
-	if i := strings.IndexRune(tableName, '.'); i != -1 {
-		tableName = tableName[i+1:]
+		tableName = fromClause[i+1:]
 	}
 
 	// Remove column names if part of an INSERT query: ex: TABLE(col, col)

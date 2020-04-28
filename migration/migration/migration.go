@@ -257,7 +257,10 @@ func (m *Migration) tablePool(wg *sync.WaitGroup, jobs <-chan *gocql.TableMetada
 			log.Info(fmt.Sprintf("COMPLETED LOADING TABLE DATA: %s.%s", table.Keyspace, table.Name))
 			m.writeCheckpoint()
 
-			m.sendTableUpdate(m.status.Tables[table.Keyspace][table.Name])
+			err = m.sendTableUpdate(m.status.Tables[table.Keyspace][table.Name])
+			if err != nil {
+				log.Error(err)
+			}
 		}
 		wg.Done()
 	}
@@ -296,11 +299,14 @@ func (m *Migration) buildUnloadQuery(table *gocql.TableMetadata) string {
 func (m *Migration) unloadTable(table *gocql.TableMetadata) error {
 	m.status.Tables[table.Keyspace][table.Name].Step = UnloadingData
 	log.Info(fmt.Sprintf("UNLOADING TABLE: %s.%s...", table.Keyspace, table.Name))
-	m.sendTableUpdate(m.status.Tables[table.Keyspace][table.Name])
+	err := m.sendTableUpdate(m.status.Tables[table.Keyspace][table.Name])
+	if err != nil {
+		log.Error(err)
+	}
 
 	query := m.buildUnloadQuery(table)
 	cmdArgs := []string{"unload", "-port", strconv.Itoa(m.Conf.SourcePort), "-query", query, "-url", m.directory + table.Keyspace + "." + table.Name, "-logDir", m.directory}
-	_, err := exec.Command(m.Conf.DsbulkPath, cmdArgs...).Output()
+	_, err = exec.Command(m.Conf.DsbulkPath, cmdArgs...).Output()
 	if err != nil {
 		m.status.Tables[table.Keyspace][table.Name].Step = Errored
 		m.status.Tables[table.Keyspace][table.Name].Error = err
@@ -310,7 +316,10 @@ func (m *Migration) unloadTable(table *gocql.TableMetadata) error {
 	m.status.Tables[table.Keyspace][table.Name].Step = UnloadingDataComplete
 	log.Info(fmt.Sprintf("COMPLETED UNLOADING TABLE: %s.%s", table.Keyspace, table.Name))
 
-	m.sendTableUpdate(m.status.Tables[table.Keyspace][table.Name])
+	err = m.sendTableUpdate(m.status.Tables[table.Keyspace][table.Name])
+	if err != nil {
+		log.Error(err)
+	}
 
 	return nil
 }
@@ -333,11 +342,14 @@ func (m *Migration) buildLoadQuery(table *gocql.TableMetadata) string {
 func (m *Migration) loadTable(table *gocql.TableMetadata) error {
 	m.status.Tables[table.Keyspace][table.Name].Step = LoadingData
 	log.Info(fmt.Sprintf("LOADING TABLE: %s.%s...", table.Keyspace, table.Name))
-	m.sendTableUpdate(m.status.Tables[table.Keyspace][table.Name])
+	err := m.sendTableUpdate(m.status.Tables[table.Keyspace][table.Name])
+	if err != nil {
+		log.Error(err)
+	}
 
 	query := m.buildLoadQuery(table)
 	cmdArgs := []string{"load", "-h", m.Conf.AstraHostname, "-port", strconv.Itoa(m.Conf.AstraPort), "-query", query, "-url", m.directory + table.Keyspace + "." + table.Name, "-logDir", m.directory, "--batch.mode", "DISABLED"}
-	_, err := exec.Command(m.Conf.DsbulkPath, cmdArgs...).Output()
+	_, err = exec.Command(m.Conf.DsbulkPath, cmdArgs...).Output()
 	if err != nil {
 		m.status.Tables[table.Keyspace][table.Name].Step = Errored
 		m.status.Tables[table.Keyspace][table.Name].Error = err
@@ -482,7 +494,6 @@ func (m *Migration) listenProxy() error {
 	}
 }
 
-//TODO: handle failures for all requests sent
 func (m *Migration) sendStart() error {
 	bytes, err := json.Marshal(m.status)
 	if err != nil {

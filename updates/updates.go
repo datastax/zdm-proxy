@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"io"
 	"net"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/jpillora/backoff"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -74,6 +76,38 @@ func (u *Update) Serialize() ([]byte, error) {
 	withLen := append(length, marshaled...)
 
 	return withLen, nil
+}
+
+// Send sends an update to the connection
+func Send(update *Update, dst net.Conn) error {
+	marshaledUpdate, err := update.Serialize()
+	if err != nil {
+		return err
+	}
+
+	b := &backoff.Backoff{
+		Min:    200 * time.Millisecond,
+		Max:    10 * time.Second,
+		Factor: 2,
+		Jitter: false,
+	}
+
+	go func() {
+		for {
+			_, err = dst.Write(marshaledUpdate)
+			if err != nil {
+				duration := b.Duration()
+				log.Debugf("Unable to send update %v to %s. Retrying in %s...", update, dst.RemoteAddr(),
+					duration.String())
+				time.Sleep(duration)
+			} else {
+				log.Debugf("Sent update %v to %s.", update, dst.RemoteAddr())
+				return
+			}
+		}
+	}()
+
+	return nil
 }
 
 // CommunicationHandler is used to handle incoming updates

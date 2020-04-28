@@ -22,8 +22,6 @@ func main() {
 
 	if conf.Debug {
 		log.SetLevel(log.DebugLevel)
-	} else {
-		log.SetLevel(log.InfoLevel)
 	}
 
 	p = &filter.CQLProxy{
