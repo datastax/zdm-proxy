@@ -94,7 +94,7 @@ func (p *CQLProxy) Start() error {
 	go p.statusLoop()
 	go p.runMetrics()
 
-	err = p.listen(p.Conf.ProxyCommunicationPort, p.handleMigrationCommunication)
+	err = p.listen(p.Conf.ProxyCommunicationPort, p.handleMigrationConnection)
 	if err != nil {
 		return err
 	}
@@ -227,45 +227,8 @@ func (p *CQLProxy) handleClientConnection(conn net.Conn) {
 	go p.forward(dst, conn)
 }
 
-func (p *CQLProxy) handleMigrationCommunication(conn net.Conn) {
-	defer conn.Close()
-
-	// TODO: change buffer size
-	buf := make([]byte, 0xfffffff)
-	for {
-		bytesRead, err := conn.Read(buf)
-		if err != nil {
-			if err == io.EOF {
-				log.Error(err)
-				return
-			} else {
-				continue
-			}
-		}
-
-		b := buf[:bytesRead]
-		log.Debug(string(b))
-		var update updates.Update
-		err = json.Unmarshal(b, &update)
-		if err != nil {
-			log.Error(err)
-			continue
-		}
-
-		var resp []byte
-		err = p.handleUpdate(&update)
-		if err != nil {
-			resp = update.Failure(err)
-		} else {
-			resp = update.Success()
-		}
-
-		_, err = p.migrationSession.Write(resp)
-		if err != nil {
-			log.Error(err)
-		}
-	}
-
+func (p *CQLProxy) handleMigrationConnection(conn net.Conn) {
+	updates.CommunicationHandler(conn, p.migrationSession, p.handleUpdate)
 }
 
 func (p *CQLProxy) handleUpdate(update *updates.Update) error {
@@ -321,7 +284,7 @@ func (p *CQLProxy) sendPriorityUpdate(table *migration.Table) error {
 	}
 
 	update := updates.New(updates.TableUpdate, marshaledTable)
-	marshaledUpdate, err := json.Marshal(update)
+	marshaledUpdate, err := update.Serialize()
 	if err != nil {
 		return err
 	}

@@ -498,9 +498,13 @@ func (m *Migration) processRequest(conn net.Conn) error {
 
 		err = m.handleRequest(&req)
 		if err != nil {
-			b = req.Failure(err)
+			b, err = req.Failure(err)
 		} else {
-			b = req.Success()
+			b, err = req.Success()
+		}
+
+		if err != nil {
+			continue
 		}
 
 		_, err = conn.Write(b)
