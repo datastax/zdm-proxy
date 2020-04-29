@@ -316,9 +316,9 @@ func (m *Migration) unloadTable(table *gocql.TableMetadata) error {
 
 	query := m.buildUnloadQuery(table)
 	print(query)
-	cmdArgs := []string{"unload", "-k", table.Keyspace, "-port", strconv.Itoa(m.SourcePort), "-query", query,
+	cmdArgs := []string{"unload", "-k", table.Keyspace, "-port", strconv.Itoa(m.Conf.SourcePort), "-query", query,
 		"-url", m.directory + table.Keyspace + "." + table.Name, "-logDir", m.directory}
-	_, err := exec.Command(m.DsbulkPath, cmdArgs...).Output()
+	_, err := exec.Command(m.Conf.DsbulkPath, cmdArgs...).Output()
 	if err != nil {
 		m.status.Tables[table.Keyspace][table.Name].Step = Errored
 		m.status.Tables[table.Keyspace][table.Name].Error = err
@@ -359,9 +359,9 @@ func (m *Migration) loadTable(table *gocql.TableMetadata) error {
 	m.sendTableUpdate(m.status.Tables[table.Keyspace][table.Name])
 
 	query := m.buildLoadQuery(table)
-	cmdArgs := []string{"load", "-k", table.Keyspace, "-h", m.DestHostname, "-port", strconv.Itoa(m.DestPort), "-query", query,
+	cmdArgs := []string{"load", "-k", table.Keyspace, "-h", m.Conf.AstraHostname, "-port", strconv.Itoa(m.Conf.AstraPort), "-query", query,
 		"-url", m.directory + table.Keyspace + "." + table.Name, "-logDir", m.directory, "--batch.mode", "DISABLED"}
-	_, err := exec.Command(m.DsbulkPath, cmdArgs...).Output()
+	_, err := exec.Command(m.Conf.DsbulkPath, cmdArgs...).Output()
 	if err != nil {
 		m.status.Tables[table.Keyspace][table.Name].Step = Errored
 		m.status.Tables[table.Keyspace][table.Name].Error = err
