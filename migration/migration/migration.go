@@ -22,9 +22,9 @@ import (
 
 // Migration contains necessary setup information
 type Migration struct {
-	Conf      *Config
-	Keyspaces []string
+	Conf *Config
 
+	keyspaces          []string
 	conn               net.Conn
 	status             *Status
 	directory          string
@@ -59,6 +59,7 @@ func (m *Migration) Init() error {
 	m.updateLock = new(sync.Mutex)
 	m.outstandingUpdates = make(map[string]*updates.Update)
 	m.initialized = true
+	m.keyspaces = make([]string, 0)
 
 	return nil
 }
@@ -78,7 +79,7 @@ func (m *Migration) Migrate() {
 	if err != nil {
 		log.WithError(err).Fatal(err)
 	}
-	tables, err := m.getTables(m.Keyspaces)
+	tables, err := m.getTables(m.keyspaces)
 	if err != nil {
 		log.WithError(err).Fatal(err)
 	}
@@ -383,7 +384,7 @@ func (m *Migration) getKeyspaces() error {
 	var keyspaceName string
 	for itr.Scan(&keyspaceName) {
 		if !utils.Contains(ignoreKeyspaces, keyspaceName) {
-			m.Keyspaces = append(m.Keyspaces, keyspaceName)
+			m.keyspaces = append(m.keyspaces, keyspaceName)
 		}
 	}
 	return nil
