@@ -583,7 +583,7 @@ func (m *Migration) handleRequest(req *updates.Update) error {
 		table := m.status.Tables[newTable.Keyspace][newTable.Name]
 		currPriority := table.Priority + 1
 		m.pqLock.Lock()
-		if m.status.Tables[table.Keyspace][table.Name] < UnloadingData {
+		if m.status.Tables[table.Keyspace][table.Name].Step < UnloadingData {
 			m.priorityQueue.UpdatePriority(table, float64(currPriority))
 		}
 		m.pqLock.Unlock()
