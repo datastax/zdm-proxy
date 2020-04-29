@@ -1,6 +1,7 @@
 package filter
 
 import (
+	"cloud-gate/proxy/frame"
 	"encoding/binary"
 	"strings"
 	"time"
@@ -28,15 +29,17 @@ type Query struct {
 
 	Type  QueryType
 	Query []byte
+	Source string
 }
 
-func newQuery(table *migration.Table, queryType QueryType, query []byte) *Query {
+func newQuery(table *migration.Table, queryType QueryType, f *frame.Frame, source string) *Query {
 	return &Query{
 		Timestamp: uint64(time.Now().UnixNano() / 1000000),
 		Table:     table,
 		Type:      queryType,
-		Query:     query,
-		Stream:    binary.BigEndian.Uint16(query[2:4]),
+		Query:     f.RawBytes,
+		Stream:    f.Stream,
+		Source:    source,
 	}
 }
 
