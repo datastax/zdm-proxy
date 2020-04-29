@@ -22,7 +22,7 @@ func main() {
 
 	err := m.Init()
 	if err != nil {
-		log.Fatal(err)
+		log.WithError(err).Fatal("Migration initialization failed")
 	}
 
 	go m.Migrate()

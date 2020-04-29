@@ -170,6 +170,7 @@ func (p *CQLProxy) loadMigrationInfo(status *migration.Status) {
 		}
 	}
 
+	log.Debug("FINISHED INITIALIZING")
 	p.ReadyChan <- struct{}{}
 }
 
@@ -234,6 +235,12 @@ func (p *CQLProxy) handleUpdate(update *updates.Update) error {
 		err := json.Unmarshal(update.Data, &status)
 		if err != nil {
 			return errors.New("unable to unmarshal json")
+		}
+
+		for _, keyspaceMap := range status.Tables {
+			for _, table := range keyspaceMap {
+				table.Lock = &sync.Mutex{}
+			}
 		}
 
 		p.MigrationStart <- &status

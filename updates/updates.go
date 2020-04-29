@@ -97,11 +97,11 @@ func Send(update *Update, dst net.Conn) error {
 			_, err = dst.Write(marshaledUpdate)
 			if err != nil {
 				duration := b.Duration()
-				log.Debugf("Unable to send update %v to %s. Retrying in %s...", update, dst.RemoteAddr(),
+				log.Errorf("Unable to send update %v to %s. Retrying in %s...", update, dst.RemoteAddr(),
 					duration.String())
 				time.Sleep(duration)
 			} else {
-				log.Debugf("Sent update %v to %s.", update, dst.RemoteAddr())
+				log.Debugf("SENT: %v", string(marshaledUpdate))
 				return
 			}
 		}
