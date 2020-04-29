@@ -88,14 +88,14 @@ func (p *CQLProxy) Start() error {
 	p.reset()
 
 	// Ensure source is up and running
-	conn := p.establishConnection(p.sourceIP)
-	conn.Close()
+	//conn := p.establishConnection(p.sourceIP)
+	//conn.Close()
 
 	// Ensure Astra is up and running
-	conn = p.establishConnection(p.astraIP)
-	conn.Close()
+	//conn = p.establishConnection(p.astraIP)
+	//conn.Close()
 
-	p.migrationSession = p.establishConnection(p.migrationServiceIP)
+	//p.migrationSession = p.establishConnection(p.migrationServiceIP)
 
 	go p.statusLoop()
 	go p.runMetrics()
@@ -223,6 +223,8 @@ func (p *CQLProxy) handleClientConnection(client net.Conn) {
 	p.astraSessions[client.RemoteAddr().String()] = p.establishConnection(p.astraIP)
 	p.lock.Unlock()
 
+	go p.astraReplyHandler(client.RemoteAddr().String())
+
 	// Begin two way packet forwarding
 	go p.forward(client, database)
 	go p.forward(database, client)
@@ -265,13 +267,17 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 
 		bodyLen := binary.BigEndian.Uint32(frameHeader[5:9])
 		frameBody := make([]byte, bodyLen)
-		_, err = src.Read(frameBody)
-		if err != nil {
-			log.Error(err)
-			continue
+		if bodyLen != 0 {
+			_, err := src.Read(frameBody)
+			if err != nil {
+				log.Error(err)
+				continue
+			}
 		}
 
+
 		data := append(frameHeader, frameBody...)
+		log.Debugf("------------------------- %d", len(data))
 
 		if len(data) > cassMaxLen {
 			log.Error("query larger than max allowed by Cassandra, ignoring.")
@@ -292,13 +298,16 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 			if f.Opcode == 0x00 {
 				// ERROR
 				delete(p.outstandingQueries[destAddress], f.Stream)
+				log.Debug("Source errored")
 			} else if _, ok := p.outstandingQueries[destAddress][f.Stream]; ok {
 				// SUCCESS
 				go p.mirrorToAstra(destAddress, f.Stream)
+				log.Debugf("success, mirroring to Astra %s %d", destAddress, f.Stream)
 			}
 			p.lock.Unlock()
 		}
 
+		log.Debugf("writing %v from %s -> %s", data[:9], src.RemoteAddr(), dst.RemoteAddr())
 		_, err = dst.Write(data)
 		if err != nil {
 			log.Error(err)
@@ -394,17 +403,22 @@ func (p *CQLProxy) astraReplyHandler(clientIP string) {
 
 		bodyLen := binary.BigEndian.Uint32(frameHeader[5:9])
 		frameBody := make([]byte, bodyLen)
-		_, err = session.Read(frameBody)
-		if err != nil {
-			log.Error(err)
-			continue
+		if bodyLen != 0 {
+			_, err = session.Read(frameBody)
+			if err != nil {
+				log.Error(err)
+				continue
+			}
 		}
 
 		data := append(frameHeader, frameBody...)
 
+		log.Debugf("Got reply from Astra: %v", data)
+
 		resp := frame.New(data)
 
 		p.lock.Lock()
+		log.Debugf("GOT HERE")
 		if _, ok := p.outstandingQueries[clientIP][resp.Stream]; ok {
 			if resp.Opcode == 0x00 {
 				// Failure, retry
@@ -414,6 +428,14 @@ func (p *CQLProxy) astraReplyHandler(clientIP string) {
 				// SUCCESS
 				delete(p.outstandingQueries[clientIP], resp.Stream)
 				log.Debugf("received success response from Astra for stream %d", resp.Stream)
+
+				// If this is a response to a previous query we ran, send result over success channel
+				// Failed query only if opcode is ERROR (0x0000)
+				streamID := binary.BigEndian.Uint16(data[2:4])
+				if success, ok := p.queryResponses[streamID]; ok {
+					success <- true
+					return
+				}
 			}
 		}
 		p.lock.Unlock()
@@ -589,6 +611,7 @@ func (p *CQLProxy) execute(query *Query) error {
 	log.Debugf("Executing %v", *query)
 	p.lock.Lock()
 	session := p.astraSessions[query.Source]
+	p.lock.Unlock()
 
 	var err error
 	for i := 1; i <= 5; i++ {
@@ -767,7 +790,7 @@ func (p *CQLProxy) reset() {
 	p.ReadyChan = make(chan struct{})
 	p.ShutdownChan = make(chan struct{})
 	p.shutdown = false
-	p.outstandingQueries = make(map[uint16]*frame.Frame)
+	p.outstandingQueries = make(map[string]map[uint16]*frame.Frame)
 	p.outstandingUpdates = make(map[string]chan bool)
 	p.migrationComplete = p.Conf.MigrationComplete
 	p.listeners = []net.Listener{}
