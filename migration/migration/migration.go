@@ -131,10 +131,23 @@ func (m *Migration) Migrate() {
 	// Notify proxy service that schemas are finished migrating, unload/load starting
 	m.sendStart()
 
-	// TODO: wait for proxy to send READY back before beginning data migration
-	time.Sleep(2 * time.Second)
-	// TODO: in all the send helper functions, add the type of request sent to a map of requests
-	// after sleeping, check if map value has been sent to 1 (or whatever)
+	// Ensure the start signal has been received and processed before continuing
+	for {
+		startReceived := true
+		for _, update := range m.outstandingUpdates {
+			if update.Type == updates.Start {
+				startReceived = false
+				break
+			}
+		}
+
+		if startReceived {
+			break
+		}
+
+		time.Sleep(500 * time.Millisecond)
+		log.Debug("Waiting for start signal to be received...")
+	}
 
 	for _, keyspaceTables := range tables {
 		for _, table := range keyspaceTables {
