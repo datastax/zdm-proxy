@@ -224,18 +224,25 @@ func (p *CQLProxy) listen(port int, handler func(net.Conn)) error {
 // handleClientConnection takes a connection from the client and begins forwarding
 // packets to/from the client's old DB, and mirroring writes to the Astra DB.
 func (p *CQLProxy) handleClientConnection(client net.Conn) {
-	database := p.establishConnection(p.sourceIP)
+	// If our service has not completed yet
+	if !p.queuesComplete {
+		database := p.establishConnection(p.sourceIP)
 
-	p.lock.Lock()
-	p.outstandingQueries[client.RemoteAddr().String()] = make(map[uint16]*frame.Frame)
-	p.astraSessions[client.RemoteAddr().String()] = p.establishConnection(p.astraIP)
-	p.lock.Unlock()
+		p.lock.Lock()
+		p.outstandingQueries[client.RemoteAddr().String()] = make(map[uint16]*frame.Frame)
+		p.astraSessions[client.RemoteAddr().String()] = p.establishConnection(p.astraIP)
+		p.lock.Unlock()
 
-	go p.astraReplyHandler(client)
+		go p.astraReplyHandler(client)
 
-	// Begin two way packet forwarding
-	go p.forward(client, database)
-	go p.forward(database, client)
+		// Begin two way packet forwarding
+		go p.forward(client, database)
+		go p.forward(database, client)
+	} else {
+		astra := p.establishConnection(p.astraIP)
+		go p.forwardDirect(client, astra)
+		go p.forwardDirect(astra, client)
+	}
 }
 
 // Should only be called when migration is currently running
@@ -355,6 +362,39 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 				// uses astraReplyHandler to write replies to client
 				return
 			}
+		}
+	}
+}
+
+// ForwardDirect handles the direct forwarding of traffic between SRC and DST with no modifications
+func (p *CQLProxy) forwardDirect(src, dst net.Conn) {
+	defer src.Close()
+	defer dst.Close()
+
+	if dst.RemoteAddr().String() == p.astraIP {
+		p.Metrics.incrementConnections()
+		defer func() {
+			p.Metrics.decrementConnections()
+			p.checkRedirect()
+		}()
+	}
+
+	buffer := make([]byte, 0xffff)
+	for {
+		bytesRead, err := src.Read(buffer)
+		if err != nil {
+			if err != io.EOF {
+				log.Debugf("%s disconnected from Astra", src.RemoteAddr())
+			} else {
+				log.Error(err)
+			}
+			return
+		}
+
+		_, err = dst.Write(buffer[:bytesRead])
+		if err != nil {
+			log.Error(err)
+			continue
 		}
 	}
 }
