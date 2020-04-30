@@ -25,6 +25,8 @@ const (
 	// TODO: Finalize queue size to use
 	queueSize = 1000
 
+	thresholdToRedirect = 5
+
 	cassHdrLen = 9
 	cassMaxLen = 268435456 // 256 MB, per spec
 
@@ -55,6 +57,11 @@ type CQLProxy struct {
 	outstandingUpdates map[string]chan bool
 	migrationStatus    *migration.Status
 	migrationComplete  bool
+
+	// Used to broadcast to all suspended forward threads once all queues are empty
+	queuesCompleteCond     *sync.Cond
+	queuesComplete         bool
+	redirectActiveConns    bool
 
 	// Channels for dealing with updates from migration service
 	MigrationStart chan *migration.Status
@@ -152,6 +159,7 @@ func (p *CQLProxy) statusLoop() {
 			case <-p.MigrationDone:
 				log.Info("Migration Complete. Directing all new connections to Astra Database.")
 				p.migrationComplete = true
+				go p.redirectActiveConnectionsToAstra()
 				p.checkRedirect()
 
 			case <-p.ShutdownChan:
@@ -223,19 +231,31 @@ func (p *CQLProxy) handleClientConnection(client net.Conn) {
 	p.astraSessions[client.RemoteAddr().String()] = p.establishConnection(p.astraIP)
 	p.lock.Unlock()
 
-	go p.astraReplyHandler(client.RemoteAddr().String())
+	go p.astraReplyHandler(client)
 
 	// Begin two way packet forwarding
 	go p.forward(client, database)
 	go p.forward(database, client)
 }
 
+// Should only be called when migration is currently running
 func (p *CQLProxy) forward(src, dst net.Conn) {
-	defer src.Close()
-	defer dst.Close()
-
 	sourceAddress := src.RemoteAddr().String()
 	destAddress := dst.RemoteAddr().String()
+
+	// So we don't close the src twice.
+	// Allows us to stop (oldDB -> client) goroutine for existing connections when migration is complete
+	if destAddress == p.sourceIP {
+		defer src.Close()
+		defer dst.Close()
+	}
+
+	var pointsToSource bool
+	// TODO: not sure if this check is necessary, since we will be having two forward function.
+	// TODO: One for forwarding to oldDB and one to astra direct for later
+	if sourceAddress == p.sourceIP || destAddress == p.sourceIP {
+		pointsToSource = true
+	}
 
 	defer func() {
 		p.lock.Lock()
@@ -275,45 +295,67 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 			}
 		}
 
-
 		data := append(frameHeader, frameBody...)
-		log.Debugf("------------------------- %d", len(data))
 
 		if len(data) > cassMaxLen {
 			log.Error("query larger than max allowed by Cassandra, ignoring.")
 			continue
 		}
+		// || pointsToSource is to allow the first query after beginning redirect to go through
+		// this makes it so the forward from dst -> client doesn't permanently block in src.Read
+		if !p.redirectActiveConns || pointsToSource {
+			p.Metrics.incrementFrames()
+			f := frame.New(data)
 
-		p.Metrics.incrementFrames()
-		f := frame.New(data)
-
-		// Sent from client
-		if f.Direction == 0 {
-			p.lock.Lock()
-			p.outstandingQueries[sourceAddress][f.Stream] = f
-			p.lock.Unlock()
-		} else {
-			// Response from database
-			p.lock.Lock()
-			if f.Opcode == 0x00 {
-				// ERROR
-				delete(p.outstandingQueries[destAddress], f.Stream)
-				log.Debug("Source errored")
-			} else if _, ok := p.outstandingQueries[destAddress][f.Stream]; ok {
-				// SUCCESS
-				go p.mirrorToAstra(destAddress, f.Stream)
-				log.Debugf("success, mirroring to Astra %s %d", destAddress, f.Stream)
+			// Sent from client
+			if f.Direction == 0 {
+				p.lock.Lock()
+				p.outstandingQueries[sourceAddress][f.Stream] = f
+				p.lock.Unlock()
+			} else {
+				// Response from database
+				p.lock.Lock()
+				if f.Opcode == 0x00 {
+					// ERROR
+					delete(p.outstandingQueries[destAddress], f.Stream)
+					log.Debug("Source errored")
+				} else if _, ok := p.outstandingQueries[destAddress][f.Stream]; ok {
+					// SUCCESS
+					go p.mirrorToAstra(destAddress, f.Stream)
+					log.Debugf("success, mirroring to Astra %s %d", destAddress, f.Stream)
+				}
+				p.lock.Unlock()
 			}
-			p.lock.Unlock()
 		}
 
-		log.Debugf("writing %v from %s -> %s", data[:9], src.RemoteAddr(), dst.RemoteAddr())
+		log.Debugf("writing %s -> %s", sourceAddress, destAddress)
 		_, err = dst.Write(data)
 		if err != nil {
 			log.Error(err)
 			continue
 		}
 
+		// handle redirect, if necessary
+		if p.redirectActiveConns && pointsToSource {
+			// Suspends forwarding until all queues have finished consuming their contents
+			p.queuesCompleteCond.L.Lock()
+			if !p.queuesComplete {
+				log.Debugf("Sleeping connection %s -> %s", src.RemoteAddr(), dst.RemoteAddr())
+				p.queuesCompleteCond.Wait()
+			}
+			p.queuesCompleteCond.L.Unlock()
+
+			log.Debugf("Redirecting connection %s -> %s", src.RemoteAddr(), dst.RemoteAddr())
+			if destAddress == p.sourceIP {
+				clientIP := sourceAddress
+				dst = p.astraSessions[clientIP]
+				pointsToSource = false
+			} else if sourceAddress == p.sourceIP {
+				src.Close()
+				// uses astraReplyHandler to write replies to client
+				return
+			}
+		}
 	}
 }
 
@@ -388,7 +430,8 @@ func (p *CQLProxy) writeToAstra(f *frame.Frame, client string) error {
 	return nil
 }
 
-func (p *CQLProxy) astraReplyHandler(clientIP string) {
+func (p *CQLProxy) astraReplyHandler(client net.Conn) {
+	clientIP := client.RemoteAddr().String()
 	p.lock.Lock()
 	session := p.astraSessions[clientIP]
 	p.lock.Unlock()
@@ -413,12 +456,9 @@ func (p *CQLProxy) astraReplyHandler(clientIP string) {
 
 		data := append(frameHeader, frameBody...)
 
-		log.Debugf("Got reply from Astra: %v", data)
-
 		resp := frame.New(data)
 
 		p.lock.Lock()
-		log.Debugf("GOT HERE")
 		if _, ok := p.outstandingQueries[clientIP][resp.Stream]; ok {
 			if resp.Opcode == 0x00 {
 				// Failure, retry
@@ -434,11 +474,18 @@ func (p *CQLProxy) astraReplyHandler(clientIP string) {
 				streamID := binary.BigEndian.Uint16(data[2:4])
 				if success, ok := p.queryResponses[streamID]; ok {
 					success <- true
-					return
 				}
 			}
 		}
 		p.lock.Unlock()
+
+		if p.queuesComplete {
+			_, err = client.Write(data)
+			if err != nil {
+				log.Error(err)
+				continue
+			}
+		}
 	}
 }
 
@@ -497,7 +544,6 @@ func (p *CQLProxy) handleWriteQuery(fromClause string, queryType QueryType, f *f
 			p.stopTable(keyspace, tableName)
 		}
 	}
-
 	p.queueQuery(q)
 
 	return nil
@@ -809,6 +855,57 @@ func (p *CQLProxy) reset() {
 	p.MigrationDone = make(chan struct{})
 	p.Keyspaces = make(map[string]string)
 	p.astraSessions = make(map[string]net.Conn)
+	p.queuesCompleteCond = sync.NewCond(&sync.Mutex{})
+}
+
+func (p *CQLProxy) redirectActiveConnectionsToAstra() {
+	redirected := false
+	var queuesAllSmall, queuesAllComplete bool
+
+	for !redirected {
+		queuesAllSmall, queuesAllComplete = p.checkQueueLens()
+
+		if queuesAllSmall {
+			p.redirectActiveConns = true
+		}
+		if queuesAllComplete {
+			p.queuesCompleteCond.L.Lock()
+			p.queuesComplete = true
+			p.queuesCompleteCond.Broadcast()
+			p.queuesCompleteCond.L.Unlock()
+			redirected = true
+		}
+
+		if p.redirectActiveConns {
+			time.Sleep(100)
+		} else {
+			time.Sleep(5000)
+		}
+	}
+}
+
+// Returns (all queues < thresholdToRedirect, all queues empty) as (bool, bool)
+func (p *CQLProxy) checkQueueLens()  (bool, bool) {
+	allSmall := true
+	allComplete := true
+	for keyspace, tableMap := range p.migrationStatus.Tables {
+		for tablename, _ := range tableMap {
+			p.queueLocks[keyspace][tablename].Lock()
+			queueLen := len(p.queues[keyspace][tablename])
+			p.queueLocks[keyspace][tablename].Unlock()
+
+			if queueLen > 0 {
+				allComplete = false
+			}
+			if queueLen > thresholdToRedirect {
+				allSmall = false
+			}
+			if !allSmall && !allComplete {
+				return false, false
+			}
+		}
+	}
+	return allSmall, allComplete
 }
 
 // Given a FROM argument, extract the table name
