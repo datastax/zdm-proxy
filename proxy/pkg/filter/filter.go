@@ -105,7 +105,7 @@ func (p *CQLProxy) Start() error {
 	//conn = p.establishConnection(p.astraIP)
 	//conn.Close()
 
-	//p.migrationSession = p.establishConnection(p.migrationServiceIP)
+	p.migrationSession = p.establishConnection(p.migrationServiceIP)
 
 	go p.statusLoop()
 	go p.runMetrics()
