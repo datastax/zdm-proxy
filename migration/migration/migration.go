@@ -97,6 +97,7 @@ func (m *Migration) Migrate() {
 	m.readCheckpoint()
 
 	if m.Conf.HardRestart {
+		log.Debug("=== HARD RESTARTING ===")
 		// On hard restart, clear Astra cluster of all data
 		for keyspace, keyspaceTables := range m.status.Tables {
 			for tableName, table := range keyspaceTables {
@@ -106,10 +107,17 @@ func (m *Migration) Migrate() {
 					query := fmt.Sprintf("DROP TABLE %s.%s;", keyspace, tableName)
 					m.destSession.Query(query).Exec()
 				}
+
+				table.Step = Waiting
 			}
 		}
+		m.status.Steps = 0
 
-		os.Remove("./migration.chk")
+		err := os.Remove("migration.chk")
+		if err != nil {
+			log.WithError(err).Error("Error removing migration checkpoint file.")
+		}
+
 		m.readCheckpoint()
 	}
 
