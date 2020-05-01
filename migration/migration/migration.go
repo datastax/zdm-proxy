@@ -1,11 +1,13 @@
 package migration
 
 import (
+	"bytes"
 	"cloud-gate/updates"
 	"cloud-gate/utils"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net"
 	"os"
@@ -15,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	pipe "github.com/b4b4r07/go-pipe"
 	pq "github.com/jupp0r/go-priority-queue"
 
 	"github.com/gocql/gocql"
@@ -44,7 +47,7 @@ type Migration struct {
 // Init creates the connections to the databases and locks needed for checkpoint and logging
 func (m *Migration) Init() error {
 	m.status = newStatus()
-	m.directory = fmt.Sprintf("./migration-%s/", strconv.FormatInt(time.Now().Unix(), 10))
+	m.directory = fmt.Sprintf("migration-%s/", strconv.FormatInt(time.Now().Unix(), 10))
 	os.Mkdir(m.directory, 0755)
 
 	var err error
@@ -110,7 +113,7 @@ func (m *Migration) Migrate() {
 		m.readCheckpoint()
 	}
 
-	begin := time.Now()
+	// begin := time.Now()
 	schemaJobs := make(chan *gocql.TableMetadata, len(tables))
 	tableJobs := make(chan *gocql.TableMetadata, len(tables))
 	var wgSchema sync.WaitGroup
@@ -170,7 +173,7 @@ func (m *Migration) Migrate() {
 		nextTable, err := m.priorityQueue.Pop()
 		m.pqLock.Unlock()
 		if err != nil {
-			print(err.Error())
+			log.WithError(err).Error("Error popping priority queue.")
 			break
 		}
 		wgTables.Add(1)
@@ -182,19 +185,23 @@ func (m *Migration) Migrate() {
 	log.Info("COMPLETED MIGRATION")
 
 	// Calculate total file size of migrated data
-	var size int64
-	for keyspace, keyspaceTables := range tables {
-		for tableName := range keyspaceTables {
-			dSize, err := utils.DirSize(m.directory + keyspace + "." + tableName)
-			if err != nil {
-				log.WithError(err).Fatal(err)
-			}
-			size += dSize
-		}
-	}
+	// This below code worked before S3 by measuring data dump size
+	// There is no simple way to do this with S3, so this is temporarily removed
+
+	// var size int64
+	// for keyspace, keyspaceTables := range tables {
+	// 	for tableName := range keyspaceTables {
+	// 		dSize, err := utils.DirSize(m.directory + keyspace + "." + tableName)
+	// 		if err != nil {
+	// 			log.WithError(err).Fatal(err)
+	// 		}
+	// 		size += dSize
+	// 	}
+	// }
 
 	// Calculate average speed in megabytes per second
-	m.status.Speed = (float64(size) / 1024 / 1024) / (float64(time.Now().UnixNano()-begin.UnixNano()) / 1000000000)
+	m.status.Speed = 0 // TODO: find another way to calculate migration speed
+	// m.status.Speed = (float64(size) / 1024 / 1024) / (float64(time.Now().UnixNano()-begin.UnixNano()) / 1000000000)
 
 	m.writeCheckpoint()
 
@@ -334,13 +341,24 @@ func (m *Migration) unloadTable(table *gocql.TableMetadata) error {
 	m.sendTableUpdate(m.status.Tables[table.Keyspace][table.Name])
 
 	query := m.buildUnloadQuery(table)
-	print(query)
-	cmdArgs := []string{"unload", "-k", table.Keyspace, "-port", strconv.Itoa(m.Conf.SourcePort), "-query", query,
-		"-url", m.directory + table.Keyspace + "." + table.Name, "-logDir", m.directory}
-	_, err := exec.Command(m.Conf.DsbulkPath, cmdArgs...).Output()
+	// log.Debug(query)
+	// cmdArgs := []string{"unload", "-k", table.Keyspace, "-port", strconv.Itoa(m.Conf.SourcePort), "-query", query, "-logDir", m.directory,
+	// 	"-url", m.directory + table.Keyspace + "." + table.Name}
+	unloadCmdArgs := []string{"unload", "-k", table.Keyspace, "-port", strconv.Itoa(m.Conf.SourcePort), "-query", query, "-logDir", m.directory}
+	awsStreamArgs := []string{"s3", "cp", "-", "s3://codebase-datastax-test/" + m.directory + table.Keyspace + "." + table.Name}
+
+	// Start both dsbulk unload, pipe to aws s3 cp
+	var b bytes.Buffer
+	err := pipe.Command(&b,
+		exec.Command(m.Conf.DsbulkPath, unloadCmdArgs...),
+		exec.Command("aws", awsStreamArgs...),
+	)
+	io.Copy(os.Stdout, &b)
+
 	if err != nil {
 		m.status.Tables[table.Keyspace][table.Name].Step = Errored
 		m.status.Tables[table.Keyspace][table.Name].Error = err
+		log.WithError(err).Error(err.Error())
 		return err
 	}
 
@@ -378,9 +396,24 @@ func (m *Migration) loadTable(table *gocql.TableMetadata) error {
 	m.sendTableUpdate(m.status.Tables[table.Keyspace][table.Name])
 
 	query := m.buildLoadQuery(table)
-	cmdArgs := []string{"load", "-k", table.Keyspace, "-h", m.Conf.AstraHostname, "-port", strconv.Itoa(m.Conf.AstraPort), "-query", query,
-		"-url", m.directory + table.Keyspace + "." + table.Name, "-logDir", m.directory, "--batch.mode", "DISABLED"}
-	_, err := exec.Command(m.Conf.DsbulkPath, cmdArgs...).Output()
+	// cmdArgs := []string{
+	// 	"load", "-k", table.Keyspace, "-h", m.Conf.AstraHostname, "-port", strconv.Itoa(m.Conf.AstraPort), "-query", query,
+	// 	"-url", m.directory + table.Keyspace + "." + table.Name,
+	// 	"-logDir", m.directory, "--batch.mode", "DISABLED"}
+
+	loadCmdArgs := []string{
+		"load", "-k", table.Keyspace, "-h", m.Conf.AstraHostname, "-port", strconv.Itoa(m.Conf.AstraPort), "-query", query,
+		"-logDir", m.directory, "--batch.mode", "DISABLED"}
+	awsStreamArgs := []string{"s3", "cp", "s3://codebase-datastax-test/" + m.directory + table.Keyspace + "." + table.Name, "-"}
+
+	// Start aws s3 cp, pipe to dsbulk load
+	var b bytes.Buffer
+	err := pipe.Command(&b,
+		exec.Command("aws", awsStreamArgs...),
+		exec.Command(m.Conf.DsbulkPath, loadCmdArgs...),
+	)
+	io.Copy(os.Stdout, &b)
+
 	if err != nil {
 		m.status.Tables[table.Keyspace][table.Name].Step = Errored
 		m.status.Tables[table.Keyspace][table.Name].Error = err
