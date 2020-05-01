@@ -1,38 +1,38 @@
-package filter
+package query
 
 import (
-	"cloud-gate/proxy/frame"
 	"encoding/binary"
 	"strings"
 	"time"
 
 	"cloud-gate/migration/migration"
+	"cloud-gate/proxy/pkg/frame"
 )
 
 const (
-	selectQuery   = QueryType("select")
-	useQuery      = QueryType("use")
-	insertQuery   = QueryType("insert")
-	updateQuery   = QueryType("update")
-	deleteQuery   = QueryType("delete")
-	truncateQuery = QueryType("truncate")
-	prepareQuery  = QueryType("prepare")
-	miscQuery     = QueryType("misc")
+	SELECT   = Type("select")
+	USE      = Type("use")
+	INSERT   = Type("insert")
+	UPDATE   = Type("update")
+	DELETE   = Type("delete")
+	TRUNCATE = Type("truncate")
+	PREPARE  = Type("prepare")
+	MISC     = Type("misc")
 )
 
-type QueryType string
+type Type string
 
 type Query struct {
 	Timestamp uint64
 	Stream    uint16
 	Table     *migration.Table
 
-	Type  QueryType
-	Query []byte
+	Type   Type
+	Query  []byte
 	Source string
 }
 
-func newQuery(table *migration.Table, queryType QueryType, f *frame.Frame, source string) *Query {
+func New(table *migration.Table, queryType Type, f *frame.Frame, source string) *Query {
 	return &Query{
 		Timestamp: uint64(time.Now().UnixNano() / 1000000),
 		Table:     table,
@@ -45,7 +45,7 @@ func newQuery(table *migration.Table, queryType QueryType, f *frame.Frame, sourc
 
 // TODO: Handle Batch statements. Currently assumes Query is QUERY or EXECUTE
 // usingTimestamp will add a timestamp within the query, if one is not already present.
-func (q *Query) usingTimestamp() *Query {
+func (q *Query) UsingTimestamp() *Query {
 	opcode := q.Query[4]
 
 	//index represents start of <query_parameters> in binary protocol
@@ -90,7 +90,7 @@ func (q *Query) usingTimestamp() *Query {
 // 		INSERT INTO tasks(id, task) VALUES(now(), 'task')
 // this function will change the query to
 // 		INSERT INTO codebase.tasks(id, task) VALUES(now(), 'task')
-func (q *Query) addKeyspace(keyspace string) *Query {
+func (q *Query) AddKeyspace(keyspace string) *Query {
 	// Find table in original query
 	index := strings.Index(string(q.Query), q.Table.Name)
 

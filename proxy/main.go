@@ -5,9 +5,9 @@ import (
 	"os"
 	"sync"
 
-	"cloud-gate/config"
 	"cloud-gate/migration/migration"
-	"cloud-gate/proxy/filter"
+	"cloud-gate/proxy/pkg/config"
+	"cloud-gate/proxy/pkg/filter"
 
 	log "github.com/sirupsen/logrus"
 )

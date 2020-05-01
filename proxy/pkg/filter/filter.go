@@ -12,12 +12,13 @@ import (
 	"sync"
 	"time"
 
-	"cloud-gate/config"
 	"cloud-gate/migration/migration"
-	"cloud-gate/proxy/cqlparser"
-	"cloud-gate/proxy/frame"
+	"cloud-gate/proxy/pkg/auth"
+	"cloud-gate/proxy/pkg/config"
+	"cloud-gate/proxy/pkg/cqlparser"
+	"cloud-gate/proxy/pkg/frame"
+	"cloud-gate/proxy/pkg/query"
 	"cloud-gate/updates"
-	"cloud-gate/proxy/auth"
 
 	"github.com/jpillora/backoff"
 	log "github.com/sirupsen/logrus"
@@ -47,7 +48,7 @@ type CQLProxy struct {
 
 	listeners []net.Listener
 
-	queues         map[string]map[string]chan *Query
+	queues         map[string]map[string]chan *query.Query
 	queueLocks     map[string]map[string]*sync.Mutex
 	tablePaused    map[string]map[string]bool
 	queryResponses map[uint16]chan bool
@@ -61,9 +62,9 @@ type CQLProxy struct {
 	migrationComplete  bool
 
 	// Used to broadcast to all suspended forward threads once all queues are empty
-	queuesCompleteCond     *sync.Cond
-	queuesComplete         bool
-	redirectActiveConns    bool
+	queuesCompleteCond  *sync.Cond
+	queuesComplete      bool
+	redirectActiveConns bool
 
 	// Channels for dealing with updates from migration service
 	MigrationStart chan *migration.Status
@@ -124,7 +125,6 @@ func (p *CQLProxy) Start() error {
 	return nil
 }
 
-
 func (p *CQLProxy) establishConnection(ip string) net.Conn {
 	b := &backoff.Backoff{
 		Min:    100 * time.Millisecond,
@@ -179,18 +179,17 @@ func (p *CQLProxy) loadMigrationInfo(status *migration.Status) {
 	p.migrationStatus = status
 
 	for keyspace, tables := range status.Tables {
-		p.queues[keyspace] = make(map[string]chan *Query)
+		p.queues[keyspace] = make(map[string]chan *query.Query)
 		p.queueLocks[keyspace] = make(map[string]*sync.Mutex)
 		p.tablePaused[keyspace] = make(map[string]bool)
 		for tableName := range tables {
-			p.queues[keyspace][tableName] = make(chan *Query, queueSize)
+			p.queues[keyspace][tableName] = make(chan *query.Query, queueSize)
 			p.queueLocks[keyspace][tableName] = &sync.Mutex{}
 
 			go p.consumeQueue(keyspace, tableName)
 		}
 	}
 
-	log.Debug("FINISHED INITIALIZING")
 	p.ReadyChan <- struct{}{}
 }
 
@@ -318,7 +317,6 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 
 		//log.Infof("%s sent %v", src.RemoteAddr(), data)
 
-
 		if isClient && !authenticated {
 			// STARTUP packet from client
 			if data[4] == 0x01 {
@@ -339,8 +337,6 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 			}
 			continue
 		}
-
-
 
 		// || pointsToSource is to allow the first query after beginning redirect to go through
 		// this makes it so the forward from dst -> client doesn't permanently block in src.Read
@@ -447,7 +443,7 @@ func (p *CQLProxy) mirrorToAstra(clientIP string, streamID uint16) {
 
 // writeToAstra takes a query frame and ensures it is properly relayed to the Astra DB
 func (p *CQLProxy) writeToAstra(f *frame.Frame, client string) error {
-	if f.Flags & 0x01 == 1 {
+	if f.Flags&0x01 == 1 {
 		return errors.New("compression flag set, unable to parse reply beyond header")
 	}
 
@@ -480,24 +476,24 @@ func (p *CQLProxy) writeToAstra(f *frame.Frame, client string) error {
 	fields := strings.Split(paths[0], "/")
 	if len(fields) > 2 {
 		if fields[1] == "prepare" {
-			q := newQuery(nil, prepareQuery, f, client)
+			q := query.New(nil, query.PREPARE, f, client)
 			return p.execute(q)
 		} else if fields[1] == "query" || fields[1] == "execute" {
-			queryType := QueryType(fields[2])
+			queryType := query.Type(fields[2])
 
 			switch queryType {
-			case useQuery:
+			case query.USE:
 				return p.handleUseQuery(fields[3], f, client)
-			case insertQuery, updateQuery, deleteQuery, truncateQuery:
+			case query.INSERT, query.UPDATE, query.DELETE, query.TRUNCATE:
 				return p.handleWriteQuery(fields[3], queryType, f, client)
-			case selectQuery:
+			case query.SELECT:
 				p.Metrics.incrementReads()
 			}
 		}
 	} else {
 		// path is '/opcode' case
 		// FIXME: decide if there are any cases we need to handle here
-		q := newQuery(nil, miscQuery, f, client)
+		q := query.New(nil, query.MISC, f, client)
 		return p.execute(q)
 	}
 
@@ -563,7 +559,6 @@ func (p *CQLProxy) astraReplyHandler(client net.Conn) {
 	}
 }
 
-
 func (p *CQLProxy) handleUseQuery(keyspace string, f *frame.Frame, client string) error {
 	// Cassandra assumes case-insensitive unless keyspace is encased in quotation marks
 	if strings.HasPrefix(keyspace, "\"") && strings.HasSuffix(keyspace, "\"") {
@@ -580,12 +575,12 @@ func (p *CQLProxy) handleUseQuery(keyspace string, f *frame.Frame, client string
 	p.Keyspaces[client] = keyspace
 	p.lock.Unlock()
 
-	q := newQuery(nil, useQuery, f, client)
+	q := query.New(nil, query.USE, f, client)
 
 	return p.execute(q)
 }
 
-func (p *CQLProxy) handleWriteQuery(fromClause string, queryType QueryType, f *frame.Frame, client string) error {
+func (p *CQLProxy) handleWriteQuery(fromClause string, queryType query.Type, f *frame.Frame, client string) error {
 	keyspace, tableName := extractTableInfo(fromClause)
 
 	// Is the keyspace already in the table clause of the query, or do we need to add it
@@ -604,15 +599,15 @@ func (p *CQLProxy) handleWriteQuery(fromClause string, queryType QueryType, f *f
 		return fmt.Errorf("table %s.%s does not exist", keyspace, tableName)
 	}
 
-	q := newQuery(table, queryType, f, client).usingTimestamp()
+	q := query.New(table, queryType, f, client).UsingTimestamp()
 	if addKeyspace {
-		q = q.addKeyspace(keyspace)
+		q = q.AddKeyspace(keyspace)
 	}
 
 	// If we have a write query that depends on all values already being present in the database,
 	// if migration of this table is currently in progress (or about to begin), then pause consumption
 	// of queries for this table.
-	if queryType != insertQuery {
+	if queryType != query.INSERT {
 		status := p.tableStatus(keyspace, tableName)
 		if !p.tablePaused[keyspace][tableName] && status >= migration.WaitingToUnload && status < migration.LoadingDataComplete {
 			p.stopTable(keyspace, tableName)
@@ -628,7 +623,7 @@ func (p *CQLProxy) handleBatchQuery(query []byte, paths []string) error {
 	return nil
 }
 
-func (p *CQLProxy) queueQuery(query *Query) {
+func (p *CQLProxy) queueQuery(query *query.Query) {
 	p.queues[query.Table.Keyspace][query.Table.Name] <- query
 }
 
@@ -662,7 +657,7 @@ func (p *CQLProxy) consumeQueue(keyspace string, table string) {
 // TODO: Change stream when retrying or else cassandra doesn't respond
 // executeWrite will keep retrying a query up to maxQueryRetries number of times
 // if it's unsuccessful
-func (p *CQLProxy) executeWrite(q *Query, retries ...int) error {
+func (p *CQLProxy) executeWrite(q *query.Query, retries ...int) error {
 	retry := 0
 	if retries != nil {
 		retry = retries[0]
@@ -684,7 +679,7 @@ func (p *CQLProxy) executeWrite(q *Query, retries ...int) error {
 // executeAndCheckReply will send a query to the Astra DB, and listen for a response.
 // Returns an error if the duration of queryTimeout passes without a response,
 // or if the Astra DB responds saying that there was an error with the query.
-func (p *CQLProxy) executeAndCheckReply(q *Query) error {
+func (p *CQLProxy) executeAndCheckReply(q *query.Query) error {
 	resp := p.createResponseChan(q)
 	defer p.closeResponseChan(q, resp)
 
@@ -708,7 +703,7 @@ func (p *CQLProxy) executeAndCheckReply(q *Query) error {
 	}
 }
 
-func (p *CQLProxy) createResponseChan(q *Query) chan bool {
+func (p *CQLProxy) createResponseChan(q *query.Query) chan bool {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
@@ -718,7 +713,7 @@ func (p *CQLProxy) createResponseChan(q *Query) chan bool {
 	return respChan
 }
 
-func (p *CQLProxy) closeResponseChan(q *Query, resp chan bool) {
+func (p *CQLProxy) closeResponseChan(q *query.Query, resp chan bool) {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
@@ -727,7 +722,7 @@ func (p *CQLProxy) closeResponseChan(q *Query, resp chan bool) {
 }
 
 // TODO: is this function even needed? Do we need to be retrying here too?
-func (p *CQLProxy) execute(query *Query) error {
+func (p *CQLProxy) execute(query *query.Query) error {
 	log.Debugf("Executing %v", *query)
 	p.lock.Lock()
 	session := p.astraSessions[query.Source]
@@ -903,7 +898,7 @@ func (p *CQLProxy) Shutdown() {
 }
 
 func (p *CQLProxy) reset() {
-	p.queues = make(map[string]map[string]chan *Query)
+	p.queues = make(map[string]map[string]chan *query.Query)
 	p.queueLocks = make(map[string]map[string]*sync.Mutex)
 	p.tablePaused = make(map[string]map[string]bool)
 	p.queryResponses = make(map[uint16]chan bool)
@@ -959,7 +954,7 @@ func (p *CQLProxy) redirectActiveConnectionsToAstra() {
 }
 
 // Returns (all queues < thresholdToRedirect, all queues empty) as (bool, bool)
-func (p *CQLProxy) checkQueueLens()  (bool, bool) {
+func (p *CQLProxy) checkQueueLens() (bool, bool) {
 	allSmall := true
 	allComplete := true
 	for keyspace, tableMap := range p.migrationStatus.Tables {

@@ -76,7 +76,7 @@ func HandleStartup(client net.Conn, db net.Conn, username string, password strin
 
 // Returns a proper response frame to authenticate using passed in username and password
 // Utilizes the users initial startup frame to mimic version & streamID.
-func authFrame(username string, password string, startupFrame []byte) []byte{
+func authFrame(username string, password string, startupFrame []byte) []byte {
 	resp := make([]byte, 2+len(username)+len(password))
 	resp[0] = 0
 	copy(resp[1:], username)
@@ -89,7 +89,7 @@ func authFrame(username string, password string, startupFrame []byte) []byte{
 	resp = append(respLen, resp...)
 
 	authFrame := make([]byte, 9)
-	authFrame[0] = startupFrame[0]		                          // Protocol version from client
+	authFrame[0] = startupFrame[0]                                // Protocol version from client
 	authFrame[1] = 0x00                                           // No flags
 	authFrame[2] = startupFrame[2]                                // Stream ID from client
 	authFrame[3] = startupFrame[3]                                // Stream ID from client
@@ -104,7 +104,7 @@ func authFrame(username string, password string, startupFrame []byte) []byte{
 // TODO: Make sure we don't need to match stream id's
 func readyMessage(startupFrame []byte) []byte {
 	f := make([]byte, 9)
-	f[0] = startupFrame[0] | 0x80	// Maintain user's version
+	f[0] = startupFrame[0] | 0x80 // Maintain user's version
 	f[4] = 2
 
 	return f
