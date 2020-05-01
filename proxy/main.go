@@ -18,7 +18,29 @@ var (
 
 // Method mainly to test the proxy service for now
 func main() {
-	conf := config.New().ParseEnvVars()
+	//conf := config.New().ParseEnvVars()
+	conf := &config.Config{
+		SourceHostname: "192.168.99.100",
+		SourceUsername: "",
+		SourcePassword: "",
+		SourcePort: 9042,
+
+		AstraHostname: "192.168.99.100",
+		AstraUsername: "",
+		AstraPassword: "",
+		AstraPort: 9043,
+
+		MigrationComplete:          false,
+		MigrationServiceHostname:   "127.0.0.1",
+		MigrationCommunicationPort: 1500,
+		ProxyServiceHostname:       "127.0.0.1",
+		ProxyCommunicationPort: 14000,
+		ProxyMetricsPort: 8080,
+		ProxyQueryPort: 3001,
+
+		Test: true,
+		Debug: true,
+	}
 
 	if conf.Debug {
 		log.SetLevel(log.DebugLevel)
