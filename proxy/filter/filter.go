@@ -17,6 +17,7 @@ import (
 	"cloud-gate/proxy/cqlparser"
 	"cloud-gate/proxy/frame"
 	"cloud-gate/updates"
+	"cloud-gate/proxy/auth"
 
 	"github.com/jpillora/backoff"
 	log "github.com/sirupsen/logrus"
@@ -122,6 +123,7 @@ func (p *CQLProxy) Start() error {
 	log.Infof("Proxy connected and ready to accept queries on port %d", p.Conf.ProxyQueryPort)
 	return nil
 }
+
 
 func (p *CQLProxy) establishConnection(ip string) net.Conn {
 	b := &backoff.Backoff{
@@ -239,7 +241,7 @@ func (p *CQLProxy) handleClientConnection(client net.Conn) {
 
 		// Begin two way packet forwarding
 		go p.forward(client, database)
-		go p.forward(database, client)
+		//go p.forward(database, client)
 	} else {
 		astra := p.establishConnection(p.astraIP)
 		go p.forwardDirect(client, astra)
@@ -282,6 +284,9 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 		}()
 	}
 
+	isClient := sourceAddress != p.sourceIP && sourceAddress != p.astraIP
+	authenticated := false
+
 	frameHeader := make([]byte, cassHdrLen)
 	for {
 		_, err := src.Read(frameHeader)
@@ -310,6 +315,33 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 			log.Error("query larger than max allowed by Cassandra, ignoring.")
 			continue
 		}
+
+		//log.Infof("%s sent %v", src.RemoteAddr(), data)
+
+
+		if isClient && !authenticated {
+			// STARTUP packet from client
+			if data[4] == 0x01 {
+				username := p.Conf.SourceUsername
+				password := p.Conf.SourcePassword
+
+				err := auth.HandleStartup(src, dst, username, password, data)
+				if err != nil {
+					// TODO: probably write an error back in CQL protocol, so it can be displayed on client correctly
+					// 	Maybe just make a method that will do this
+					log.Errorf("Could not start session for client %s", sourceAddress)
+					return
+				}
+
+				// Start sending responses from database back to client
+				go p.forward(dst, src)
+				authenticated = true
+			}
+			continue
+		}
+
+
+
 		// || pointsToSource is to allow the first query after beginning redirect to go through
 		// this makes it so the forward from dst -> client doesn't permanently block in src.Read
 		if !p.redirectActiveConns || pointsToSource {
@@ -337,7 +369,7 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 			}
 		}
 
-		log.Debugf("writing %s -> %s", sourceAddress, destAddress)
+		//log.Debugf("writing %s -> %s", sourceAddress, destAddress)
 		_, err = dst.Write(data)
 		if err != nil {
 			log.Error(err)
