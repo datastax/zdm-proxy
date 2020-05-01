@@ -12,19 +12,21 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jpillora/backoff"
-
 	"cloud-gate/config"
 	"cloud-gate/migration/migration"
 	"cloud-gate/proxy/cqlparser"
+	"cloud-gate/proxy/frame"
 	"cloud-gate/updates"
 
+	"github.com/jpillora/backoff"
 	log "github.com/sirupsen/logrus"
 )
 
 const (
 	// TODO: Finalize queue size to use
 	queueSize = 1000
+
+	thresholdToRedirect = 5
 
 	cassHdrLen = 9
 	cassMaxLen = 268435456 // 256 MB, per spec
@@ -50,9 +52,17 @@ type CQLProxy struct {
 	queryResponses map[uint16]chan bool
 	lock           *sync.Mutex
 
+	astraSessions map[string]net.Conn
+
+	outstandingQueries map[string]map[uint16]*frame.Frame
 	outstandingUpdates map[string]chan bool
 	migrationStatus    *migration.Status
 	migrationComplete  bool
+
+	// Used to broadcast to all suspended forward threads once all queues are empty
+	queuesCompleteCond     *sync.Cond
+	queuesComplete         bool
+	redirectActiveConns    bool
 
 	// Channels for dealing with updates from migration service
 	MigrationStart chan *migration.Status
@@ -85,8 +95,15 @@ type CQLProxy struct {
 func (p *CQLProxy) Start() error {
 	p.reset()
 
-	p.astraSession = p.establishConnection(p.astraIP)
-	p.migrationSession = p.establishConnection(p.migrationServiceIP)
+	// Ensure source is up and running
+	//conn := p.establishConnection(p.sourceIP)
+	//conn.Close()
+
+	// Ensure Astra is up and running
+	//conn = p.establishConnection(p.astraIP)
+	//conn.Close()
+
+	//p.migrationSession = p.establishConnection(p.migrationServiceIP)
 
 	go p.statusLoop()
 	go p.runMetrics()
@@ -143,6 +160,7 @@ func (p *CQLProxy) statusLoop() {
 			case <-p.MigrationDone:
 				log.Info("Migration Complete. Directing all new connections to Astra Database.")
 				p.migrationComplete = true
+				go p.redirectActiveConnectionsToAstra()
 				p.checkRedirect()
 
 			case <-p.ShutdownChan:
@@ -207,96 +225,46 @@ func (p *CQLProxy) listen(port int, handler func(net.Conn)) error {
 
 // handleClientConnection takes a connection from the client and begins forwarding
 // packets to/from the client's old DB, and mirroring writes to the Astra DB.
-func (p *CQLProxy) handleClientConnection(conn net.Conn) {
-	hostname := p.sourceIP
-	if p.migrationComplete {
-		hostname = p.astraIP
-	}
+func (p *CQLProxy) handleClientConnection(client net.Conn) {
+	// If our service has not completed yet
+	if !p.queuesComplete {
+		database := p.establishConnection(p.sourceIP)
 
-	dst, err := net.Dial("tcp", hostname)
-	if err != nil {
-		log.Error(err)
-		return
-	}
-
-	// Begin two way packet forwarding
-	go p.forward(conn, dst)
-	go p.forward(dst, conn)
-}
-
-func (p *CQLProxy) handleMigrationConnection(conn net.Conn) {
-	updates.CommunicationHandler(conn, p.migrationSession, p.handleUpdate)
-}
-
-func (p *CQLProxy) handleUpdate(update *updates.Update) error {
-	switch update.Type {
-	case updates.Start:
-		var status migration.Status
-		err := json.Unmarshal(update.Data, &status)
-		if err != nil {
-			return errors.New("unable to unmarshal json")
-		}
-
-		for _, keyspaceMap := range status.Tables {
-			for _, table := range keyspaceMap {
-				table.Lock = &sync.Mutex{}
-			}
-		}
-
-		p.MigrationStart <- &status
-	case updates.TableUpdate:
-		var tableUpdate migration.Table
-		err := json.Unmarshal(update.Data, &tableUpdate)
-		if err != nil {
-			return errors.New("unable to unmarshal json")
-		}
-
-		if table, ok := p.migrationStatus.Tables[tableUpdate.Keyspace][tableUpdate.Name]; ok {
-			if p.tablePaused[table.Keyspace][table.Name] && tableUpdate.Step == migration.LoadingDataComplete {
-				p.startTable(table.Keyspace, table.Name)
-			}
-			table.Update(&tableUpdate)
-		} else {
-			return fmt.Errorf("table %s.%s does not exist", tableUpdate.Keyspace, tableUpdate.Name)
-		}
-
-	case updates.Complete:
-		p.MigrationDone <- struct{}{}
-	case updates.Shutdown:
-		p.ShutdownChan <- struct{}{}
-	case updates.Success, updates.Failure:
 		p.lock.Lock()
-		if resp, ok := p.outstandingUpdates[update.ID]; ok {
-			resp <- update.Type == updates.Success
-		}
+		p.outstandingQueries[client.RemoteAddr().String()] = make(map[uint16]*frame.Frame)
+		p.astraSessions[client.RemoteAddr().String()] = p.establishConnection(p.astraIP)
 		p.lock.Unlock()
-	}
 
-	return nil
+		go p.astraReplyHandler(client)
+
+		// Begin two way packet forwarding
+		go p.forward(client, database)
+		go p.forward(database, client)
+	} else {
+		astra := p.establishConnection(p.astraIP)
+		go p.forwardDirect(client, astra)
+		go p.forwardDirect(astra, client)
+	}
 }
 
-// --Unused for now, but will be used in the near future--
-// sendPriorityUpdate will send a tableUpdate to the migration service with an
-// updated priority value for the table. We do this as if there is a table
-// with a very large queue, we want that to be migrated ASAP, so we communicate
-// the priority of a table's migration
-func (p *CQLProxy) sendPriorityUpdate(table *migration.Table, newPriority int) error {
-	table.SetPriority(newPriority)
-	marshaledTable, err := json.Marshal(table)
-	if err != nil {
-		return err
-	}
-
-	update := updates.New(updates.TableUpdate, marshaledTable)
-	return updates.Send(update, p.migrationSession)
-}
-
+// Should only be called when migration is currently running
 func (p *CQLProxy) forward(src, dst net.Conn) {
-	defer src.Close()
-	defer dst.Close()
-
 	sourceAddress := src.RemoteAddr().String()
 	destAddress := dst.RemoteAddr().String()
+
+	// So we don't close the src twice.
+	// Allows us to stop (oldDB -> client) goroutine for existing connections when migration is complete
+	if destAddress == p.sourceIP {
+		defer src.Close()
+		defer dst.Close()
+	}
+
+	var pointsToSource bool
+	// TODO: not sure if this check is necessary, since we will be having two forward function.
+	// TODO: One for forwarding to oldDB and one to astra direct for later
+	if sourceAddress == p.sourceIP || destAddress == p.sourceIP {
+		pointsToSource = true
+	}
 
 	defer func() {
 		p.lock.Lock()
@@ -314,10 +282,9 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 		}()
 	}
 
-	buf := make([]byte, 0xffff)
-	data := make([]byte, 0)
+	frameHeader := make([]byte, cassHdrLen)
 	for {
-		bytesRead, err := src.Read(buf)
+		_, err := src.Read(frameHeader)
 		if err != nil {
 			if err != io.EOF {
 				log.Debugf("%s disconnected", src.RemoteAddr())
@@ -326,107 +293,129 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 			}
 			return
 		}
-		data = append(data, buf[:bytesRead]...)
 
-		// Build queries reading in at most 0xffff size at a time.
-		for true {
-
-			//if there is not a full CQL header
-			if len(data) < cassHdrLen {
-				break
+		bodyLen := binary.BigEndian.Uint32(frameHeader[5:9])
+		frameBody := make([]byte, bodyLen)
+		if bodyLen != 0 {
+			_, err := src.Read(frameBody)
+			if err != nil {
+				log.Error(err)
+				continue
 			}
+		}
 
-			bodyLength := binary.BigEndian.Uint32(data[5:9])
-			fullLength := cassHdrLen + int(bodyLength)
-			if len(data) < fullLength {
-				break
-			} else if fullLength > cassMaxLen {
-				log.Error("query larger than max allowed by Cassandra, ignoring.")
-				data = data[fullLength:]
-				break
-			}
+		data := append(frameHeader, frameBody...)
 
+		if len(data) > cassMaxLen {
+			log.Error("query larger than max allowed by Cassandra, ignoring.")
+			continue
+		}
+		// || pointsToSource is to allow the first query after beginning redirect to go through
+		// this makes it so the forward from dst -> client doesn't permanently block in src.Read
+		if !p.redirectActiveConns || pointsToSource {
 			p.Metrics.incrementFrames()
-			frame := data[:fullLength]
+			f := frame.New(data)
 
-			// If the frame is a reply from Astra, handle the reply. If the frame
-			// is a query from the user, always send to Astra through writeToAstra()
-			if frame[0] > 0x80 {
-				if sourceAddress == p.astraIP {
-					p.handleAstraReply(frame)
-				}
+			// Sent from client
+			if f.Direction == 0 {
+				p.lock.Lock()
+				p.outstandingQueries[sourceAddress][f.Stream] = f
+				p.lock.Unlock()
 			} else {
-				err := p.writeToAstra(frame, sourceAddress)
-				if err != nil {
-					log.Error(err)
+				// Response from database
+				p.lock.Lock()
+				if f.Opcode == 0x00 {
+					// ERROR
+					delete(p.outstandingQueries[destAddress], f.Stream)
+					log.Debug("Source errored")
+				} else if _, ok := p.outstandingQueries[destAddress][f.Stream]; ok {
+					// SUCCESS
+					go p.mirrorToAstra(destAddress, f.Stream)
+					log.Debugf("success, mirroring to Astra %s %d", destAddress, f.Stream)
 				}
+				p.lock.Unlock()
 			}
+		}
 
-			// Only tunnel packets through if we are directly connected to the source DB.
-			// If we are connected directly to the Astra DB, we don't need to write to dst,
-			// as the write was already handled by writeToAstra above
-			if sourceAddress == p.sourceIP || destAddress == p.sourceIP {
-				_, err := dst.Write(frame)
-				if err != nil {
-					log.Error(err)
-					continue
-				}
+		log.Debugf("writing %s -> %s", sourceAddress, destAddress)
+		_, err = dst.Write(data)
+		if err != nil {
+			log.Error(err)
+			continue
+		}
+
+		// handle redirect, if necessary
+		if p.redirectActiveConns && pointsToSource {
+			// Suspends forwarding until all queues have finished consuming their contents
+			p.queuesCompleteCond.L.Lock()
+			if !p.queuesComplete {
+				log.Debugf("Sleeping connection %s -> %s", src.RemoteAddr(), dst.RemoteAddr())
+				p.queuesCompleteCond.Wait()
 			}
+			p.queuesCompleteCond.L.Unlock()
 
-			// Keep any extra bytes in the buffer that are part of the next query
-			data = data[fullLength:]
+			log.Debugf("Redirecting connection %s -> %s", src.RemoteAddr(), dst.RemoteAddr())
+			if destAddress == p.sourceIP {
+				clientIP := sourceAddress
+				dst = p.astraSessions[clientIP]
+				pointsToSource = false
+			} else if sourceAddress == p.sourceIP {
+				src.Close()
+				// uses astraReplyHandler to write replies to client
+				return
+			}
 		}
 	}
 }
 
-// handleAstraReply checks if this frame was a reply from a recently sent PREPARE statement
-// and if it was successful, then it stores the path. If this reply was Astra's success response
-// from us running a write query, then we send the success/failure message to the channel
-// corresponding to the Stream ID of the response
-func (p *CQLProxy) handleAstraReply(data []byte) {
-	streamID := binary.BigEndian.Uint16(data[2:4])
-	opcode := data[4]
+// ForwardDirect handles the direct forwarding of traffic between SRC and DST with no modifications
+func (p *CQLProxy) forwardDirect(src, dst net.Conn) {
+	defer src.Close()
+	defer dst.Close()
 
-	log.Debugf("Reply with opcode %d and stream-id %d", data[4], streamID)
-
-	// if this is an opcode == RESULT message of type 'prepared', associate the prepared
-	// statement id with the full query string that was included in the
-	// associated PREPARE request.  The stream-id in this reply allows us to
-	// find the associated prepare query string.
-	if opcode == 0x08 {
-		resultKind := binary.BigEndian.Uint32(data[9:13])
-		log.Debugf("resultKind = %d", resultKind)
-		if resultKind == 0x0004 {
-			idLen := binary.BigEndian.Uint16(data[13:15])
-			preparedID := string(data[15 : 15+idLen])
-			log.Debugf("Result with prepared-id = '%s' for stream-id %d", preparedID, streamID)
-			path := p.preparedQueries.PreparedQueryPathByStreamID[streamID]
-			if len(path) > 0 {
-				// found cached query path to associate with this preparedID
-				p.preparedQueries.PreparedQueryPathByPreparedID[preparedID] = path
-				log.Debugf("Associating query path '%s' with prepared-id %s as part of stream-id %d",
-					path, preparedID, streamID)
-			} else {
-				log.Warnf("Unable to find prepared query path associated with stream-id %d", streamID)
-			}
-		}
+	if dst.RemoteAddr().String() == p.astraIP {
+		p.Metrics.incrementConnections()
+		defer func() {
+			p.Metrics.decrementConnections()
+			p.checkRedirect()
+		}()
 	}
 
-	p.lock.Lock()
-	defer p.lock.Unlock()
+	buffer := make([]byte, 0xffff)
+	for {
+		bytesRead, err := src.Read(buffer)
+		if err != nil {
+			if err != io.EOF {
+				log.Debugf("%s disconnected from Astra", src.RemoteAddr())
+			} else {
+				log.Error(err)
+			}
+			return
+		}
 
-	// If this is a response to a previous query we ran, send result over success channel
-	// Failed query only if opcode is ERROR (0x0000)
-	if success, ok := p.queryResponses[streamID]; ok {
-		success <- opcode != 0x0000
+		_, err = dst.Write(buffer[:bytesRead])
+		if err != nil {
+			log.Error(err)
+			continue
+		}
+	}
+}
+
+func (p *CQLProxy) mirrorToAstra(clientIP string, streamID uint16) {
+	p.lock.Lock()
+	f := p.outstandingQueries[clientIP][streamID]
+	p.lock.Unlock()
+
+	err := p.writeToAstra(f, clientIP)
+	if err != nil {
+		log.Error(err)
 		return
 	}
 }
 
 // writeToAstra takes a query frame and ensures it is properly relayed to the Astra DB
-func (p *CQLProxy) writeToAstra(data []byte, client string) error {
-	compressionFlag := data[1] & 0x01
-	if compressionFlag == 1 {
+func (p *CQLProxy) writeToAstra(f *frame.Frame, client string) error {
+	if f.Flags & 0x01 == 1 {
 		return errors.New("compression flag set, unable to parse reply beyond header")
 	}
 
@@ -434,7 +423,7 @@ func (p *CQLProxy) writeToAstra(data []byte, client string) error {
 	// opcode is "startup", "query", "batch", etc.
 	// action is "select", "insert", "update", etc,
 	// table is the table as written in the command
-	paths, err := cqlparser.CassandraParseRequest(p.preparedQueries, data)
+	paths, err := cqlparser.CassandraParseRequest(p.preparedQueries, f.RawBytes)
 	if err != nil {
 		return err
 	}
@@ -459,16 +448,16 @@ func (p *CQLProxy) writeToAstra(data []byte, client string) error {
 	fields := strings.Split(paths[0], "/")
 	if len(fields) > 2 {
 		if fields[1] == "prepare" {
-			q := newQuery(nil, prepareQuery, data)
+			q := newQuery(nil, prepareQuery, f, client)
 			return p.execute(q)
 		} else if fields[1] == "query" || fields[1] == "execute" {
 			queryType := QueryType(fields[2])
 
 			switch queryType {
 			case useQuery:
-				return p.handleUseQuery(fields[3], data, client)
+				return p.handleUseQuery(fields[3], f, client)
 			case insertQuery, updateQuery, deleteQuery, truncateQuery:
-				return p.handleWriteQuery(fields[3], queryType, data, client)
+				return p.handleWriteQuery(fields[3], queryType, f, client)
 			case selectQuery:
 				p.Metrics.incrementReads()
 			}
@@ -476,14 +465,74 @@ func (p *CQLProxy) writeToAstra(data []byte, client string) error {
 	} else {
 		// path is '/opcode' case
 		// FIXME: decide if there are any cases we need to handle here
-		q := newQuery(nil, miscQuery, data)
+		q := newQuery(nil, miscQuery, f, client)
 		return p.execute(q)
 	}
 
 	return nil
 }
 
-func (p *CQLProxy) handleUseQuery(keyspace string, query []byte, client string) error {
+func (p *CQLProxy) astraReplyHandler(client net.Conn) {
+	clientIP := client.RemoteAddr().String()
+	p.lock.Lock()
+	session := p.astraSessions[clientIP]
+	p.lock.Unlock()
+
+	frameHeader := make([]byte, cassHdrLen)
+	for {
+		_, err := session.Read(frameHeader)
+		if err != nil {
+			log.Error(err)
+			return
+		}
+
+		bodyLen := binary.BigEndian.Uint32(frameHeader[5:9])
+		frameBody := make([]byte, bodyLen)
+		if bodyLen != 0 {
+			_, err = session.Read(frameBody)
+			if err != nil {
+				log.Error(err)
+				continue
+			}
+		}
+
+		data := append(frameHeader, frameBody...)
+
+		resp := frame.New(data)
+
+		p.lock.Lock()
+		if _, ok := p.outstandingQueries[clientIP][resp.Stream]; ok {
+			if resp.Opcode == 0x00 {
+				// Failure, retry
+				log.Debugf("received failure response from Astra for stream %d, retrying...", resp.Stream)
+				go p.mirrorToAstra(clientIP, resp.Stream)
+			} else {
+				// SUCCESS
+				delete(p.outstandingQueries[clientIP], resp.Stream)
+				log.Debugf("received success response from Astra for stream %d", resp.Stream)
+
+				// If this is a response to a previous query we ran, send result over success channel
+				// Failed query only if opcode is ERROR (0x0000)
+				streamID := binary.BigEndian.Uint16(data[2:4])
+				if success, ok := p.queryResponses[streamID]; ok {
+					success <- true
+				}
+			}
+		}
+		p.lock.Unlock()
+
+		if p.queuesComplete {
+			_, err = client.Write(data)
+			if err != nil {
+				log.Error(err)
+				continue
+			}
+		}
+	}
+}
+
+
+func (p *CQLProxy) handleUseQuery(keyspace string, f *frame.Frame, client string) error {
 	// Cassandra assumes case-insensitive unless keyspace is encased in quotation marks
 	if strings.HasPrefix(keyspace, "\"") && strings.HasSuffix(keyspace, "\"") {
 		keyspace = keyspace[1 : len(keyspace)-1]
@@ -499,12 +548,12 @@ func (p *CQLProxy) handleUseQuery(keyspace string, query []byte, client string) 
 	p.Keyspaces[client] = keyspace
 	p.lock.Unlock()
 
-	q := newQuery(nil, useQuery, query)
+	q := newQuery(nil, useQuery, f, client)
 
 	return p.execute(q)
 }
 
-func (p *CQLProxy) handleWriteQuery(fromClause string, queryType QueryType, data []byte, client string) error {
+func (p *CQLProxy) handleWriteQuery(fromClause string, queryType QueryType, f *frame.Frame, client string) error {
 	keyspace, tableName := extractTableInfo(fromClause)
 
 	// Is the keyspace already in the table clause of the query, or do we need to add it
@@ -523,7 +572,7 @@ func (p *CQLProxy) handleWriteQuery(fromClause string, queryType QueryType, data
 		return fmt.Errorf("table %s.%s does not exist", keyspace, tableName)
 	}
 
-	q := newQuery(table, queryType, data).usingTimestamp()
+	q := newQuery(table, queryType, f, client).usingTimestamp()
 	if addKeyspace {
 		q = q.addKeyspace(keyspace)
 	}
@@ -537,7 +586,6 @@ func (p *CQLProxy) handleWriteQuery(fromClause string, queryType QueryType, data
 			p.stopTable(keyspace, tableName)
 		}
 	}
-
 	p.queueQuery(q)
 
 	return nil
@@ -649,10 +697,13 @@ func (p *CQLProxy) closeResponseChan(q *Query, resp chan bool) {
 // TODO: is this function even needed? Do we need to be retrying here too?
 func (p *CQLProxy) execute(query *Query) error {
 	log.Debugf("Executing %v", *query)
+	p.lock.Lock()
+	session := p.astraSessions[query.Source]
+	p.lock.Unlock()
 
 	var err error
 	for i := 1; i <= 5; i++ {
-		_, err := p.astraSession.Write(query.Query)
+		_, err := session.Write(query.Query)
 		if err == nil {
 			break
 		}
@@ -661,6 +712,111 @@ func (p *CQLProxy) execute(query *Query) error {
 	}
 
 	return err
+}
+
+// handleAstraReply checks if this frame was a reply from a recently sent PREPARE statement
+// and if it was successful, then it stores the path. If this reply was Astra's success response
+// from us running a write query, then we send the success/failure message to the channel
+// corresponding to the Stream ID of the response
+func (p *CQLProxy) handleAstraReply(data []byte) {
+	streamID := binary.BigEndian.Uint16(data[2:4])
+	opcode := data[4]
+
+	log.Debugf("Reply with opcode %d and stream-id %d", data[4], streamID)
+
+	// if this is an opcode == RESULT message of type 'prepared', associate the prepared
+	// statement id with the full query string that was included in the
+	// associated PREPARE request.  The stream-id in this reply allows us to
+	// find the associated prepare query string.
+	if opcode == 0x08 {
+		resultKind := binary.BigEndian.Uint32(data[9:13])
+		log.Debugf("resultKind = %d", resultKind)
+		if resultKind == 0x0004 {
+			idLen := binary.BigEndian.Uint16(data[13:15])
+			preparedID := string(data[15 : 15+idLen])
+			log.Debugf("Result with prepared-id = '%s' for stream-id %d", preparedID, streamID)
+			path := p.preparedQueries.PreparedQueryPathByStreamID[streamID]
+			if len(path) > 0 {
+				// found cached query path to associate with this preparedID
+				p.preparedQueries.PreparedQueryPathByPreparedID[preparedID] = path
+				log.Debugf("Associating query path '%s' with prepared-id %s as part of stream-id %d",
+					path, preparedID, streamID)
+			} else {
+				log.Warnf("Unable to find prepared query path associated with stream-id %d", streamID)
+			}
+		}
+	}
+
+	p.lock.Lock()
+	defer p.lock.Unlock()
+
+	// If this is a response to a previous query we ran, send result over success channel
+	// Failed query only if opcode is ERROR (0x0000)
+	if success, ok := p.queryResponses[streamID]; ok {
+		success <- opcode != 0x0000
+		return
+	}
+}
+
+func (p *CQLProxy) handleMigrationConnection(conn net.Conn) {
+	updates.CommunicationHandler(conn, p.migrationSession, p.handleUpdate)
+}
+
+func (p *CQLProxy) handleUpdate(update *updates.Update) error {
+	switch update.Type {
+	case updates.Start:
+		var status migration.Status
+		err := json.Unmarshal(update.Data, &status)
+		if err != nil {
+			return errors.New("unable to unmarshal json")
+		}
+
+		p.MigrationStart <- &status
+	case updates.TableUpdate:
+		var tableUpdate migration.Table
+		err := json.Unmarshal(update.Data, &tableUpdate)
+		if err != nil {
+			return errors.New("unable to unmarshal json")
+		}
+
+		if table, ok := p.migrationStatus.Tables[tableUpdate.Keyspace][tableUpdate.Name]; ok {
+			if p.tablePaused[table.Keyspace][table.Name] && tableUpdate.Step == migration.LoadingDataComplete {
+				p.startTable(table.Keyspace, table.Name)
+			}
+			table.Update(&tableUpdate)
+		} else {
+			return fmt.Errorf("table %s.%s does not exist", tableUpdate.Keyspace, tableUpdate.Name)
+		}
+
+	case updates.Complete:
+		p.MigrationDone <- struct{}{}
+	case updates.Shutdown:
+		p.ShutdownChan <- struct{}{}
+	case updates.Success, updates.Failure:
+		p.lock.Lock()
+		if resp, ok := p.outstandingUpdates[update.ID]; ok {
+			resp <- update.Type == updates.Success
+		}
+		p.lock.Unlock()
+	}
+
+	return nil
+}
+
+// --Unused for now, but will be used in the near future--
+// sendPriorityUpdate will send a tableUpdate to the migration service with an
+// updated priority value for the table. We do this as if there is a table
+// with a very large queue, we want that to be migrated ASAP, so we communicate
+// the priority of a table's migration
+func (p *CQLProxy) sendPriorityUpdate(table *migration.Table, newPriority int) error {
+	table.SetPriority(newPriority)
+	marshaledTable, err := json.Marshal(table)
+	if err != nil {
+		return err
+	}
+
+	update := updates.New(updates.TableUpdate, marshaledTable)
+	return updates.Send(update, p.migrationSession)
 }
 
 func (p *CQLProxy) tableStatus(keyspace string, tableName string) migration.Step {
@@ -722,6 +878,7 @@ func (p *CQLProxy) reset() {
 	p.ReadyChan = make(chan struct{})
 	p.ShutdownChan = make(chan struct{})
 	p.shutdown = false
+	p.outstandingQueries = make(map[string]map[uint16]*frame.Frame)
 	p.outstandingUpdates = make(map[string]chan bool)
 	p.migrationComplete = p.Conf.MigrationComplete
 	p.listeners = []net.Listener{}
@@ -739,6 +896,58 @@ func (p *CQLProxy) reset() {
 	p.MigrationStart = make(chan *migration.Status, 1)
 	p.MigrationDone = make(chan struct{})
 	p.Keyspaces = make(map[string]string)
+	p.astraSessions = make(map[string]net.Conn)
+	p.queuesCompleteCond = sync.NewCond(&sync.Mutex{})
+}
+
+func (p *CQLProxy) redirectActiveConnectionsToAstra() {
+	redirected := false
+	var queuesAllSmall, queuesAllComplete bool
+
+	for !redirected {
+		queuesAllSmall, queuesAllComplete = p.checkQueueLens()
+
+		if queuesAllSmall {
+			p.redirectActiveConns = true
+		}
+		if queuesAllComplete {
+			p.queuesCompleteCond.L.Lock()
+			p.queuesComplete = true
+			p.queuesCompleteCond.Broadcast()
+			p.queuesCompleteCond.L.Unlock()
+			redirected = true
+		}
+
+		if p.redirectActiveConns {
+			time.Sleep(100)
+		} else {
+			time.Sleep(5000)
+		}
+	}
+}
+
+// Returns (all queues < thresholdToRedirect, all queues empty) as (bool, bool)
+func (p *CQLProxy) checkQueueLens()  (bool, bool) {
+	allSmall := true
+	allComplete := true
+	for keyspace, tableMap := range p.migrationStatus.Tables {
+		for tablename, _ := range tableMap {
+			p.queueLocks[keyspace][tablename].Lock()
+			queueLen := len(p.queues[keyspace][tablename])
+			p.queueLocks[keyspace][tablename].Unlock()
+
+			if queueLen > 0 {
+				allComplete = false
+			}
+			if queueLen > thresholdToRedirect {
+				allSmall = false
+			}
+			if !allSmall && !allComplete {
+				return false, false
+			}
+		}
+	}
+	return allSmall, allComplete
 }
 
 // Given a FROM argument, extract the table name
