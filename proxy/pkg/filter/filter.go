@@ -530,21 +530,17 @@ func (p *CQLProxy) astraReplyHandler(client net.Conn) {
 
 		p.lock.Lock()
 		if _, ok := p.outstandingQueries[clientIP][resp.Stream]; ok {
-			if resp.Opcode == 0x00 {
-				// Failure, retry
-				log.Debugf("received failure response from Astra for stream %d, retrying...", resp.Stream)
-				go p.mirrorToAstra(clientIP, resp.Stream)
-			} else {
-				// SUCCESS
-				delete(p.outstandingQueries[clientIP], resp.Stream)
-				log.Debugf("received success response from Astra for stream %d", resp.Stream)
+			success := resp.Opcode != 0x00
+			if resp, ok := p.queryResponses[resp.Stream]; ok {
+				resp <- success
+			}
 
-				// If this is a response to a previous query we ran, send result over success channel
-				// Failed query only if opcode is ERROR (0x0000)
-				streamID := binary.BigEndian.Uint16(data[2:4])
-				if success, ok := p.queryResponses[streamID]; ok {
-					success <- true
-				}
+			if success {
+				log.Debugf("Received success response from Astra from query %d", resp.Stream)
+				delete(p.outstandingQueries[clientIP], resp.Stream)
+			} else {
+				log.Debugf("Received error response from Astra from query %d", resp.Stream)
+				p.checkError(resp.Body)
 			}
 		}
 		p.lock.Unlock()
@@ -557,6 +553,22 @@ func (p *CQLProxy) astraReplyHandler(client net.Conn) {
 			}
 		}
 	}
+}
+
+func (p *CQLProxy) checkError(body []byte) {
+	errCode := binary.BigEndian.Uint32(body[0:3])
+	switch errCode {
+	case 0x0000:
+		// Server Error
+		p.Metrics.incrementServerErrors()
+	case 0x1100:
+		// Write Timeout
+		p.Metrics.incrementWriteFails()
+	case 0x1200:
+		// Read Timeout
+		p.Metrics.incrementReadFails()
+	}
+
 }
 
 func (p *CQLProxy) handleUseQuery(keyspace string, f *frame.Frame, client string) error {
@@ -1009,8 +1021,9 @@ type Metrics struct {
 	Reads      int
 	Writes     int
 
-	WriteFails int
-	ReadFails  int
+	ServerErrors int
+	WriteFails   int
+	ReadFails    int
 
 	ConnectionsToSource int
 
@@ -1061,6 +1074,13 @@ func (m *Metrics) incrementReadFails() {
 	defer m.lock.Unlock()
 
 	m.ReadFails++
+}
+
+func (m *Metrics) incrementServerErrors() {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
+	m.ServerErrors++
 }
 
 func (m *Metrics) incrementConnections() {
