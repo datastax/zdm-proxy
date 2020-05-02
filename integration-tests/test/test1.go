@@ -5,10 +5,7 @@ import (
 )
 
 // Test1 test
-func Test1() {
+func Test1(c chan int) {
 	log.Print("hello")
-}
-
-func sendComplete() {
-
+	c <- 0
 }
