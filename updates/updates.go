@@ -18,6 +18,7 @@ type UpdateType int
 // TableUpdate, Start, Complete, ... are the enums of the update types
 const (
 	TableUpdate = iota
+	TableRestart
 	Start
 	Complete
 	Shutdown

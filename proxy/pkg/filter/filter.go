@@ -709,7 +709,7 @@ func (p *CQLProxy) queueQuery(query *query.Query) {
 	queue <- query
 
 	queriesRemaining := len(queue)
-	if queriesRemaining > 0 && queriesRemaining % priorityUpdateSize == 0 {
+	if queriesRemaining > 0 && queriesRemaining%priorityUpdateSize == 0 {
 		err := p.sendPriorityUpdate(query.Table.Keyspace, query.Table.Name, queriesRemaining)
 		if err != nil {
 			log.Error(err)
@@ -736,11 +736,30 @@ func (p *CQLProxy) consumeQueue(keyspace string, table string) {
 			// Driver is async, so we don't need a lock around query execution
 			err := p.executeWrite(q)
 			if err != nil {
-				// TODO: Figure out exactly what to do if we're unable to write
-				// 	If it's a bad query, no issue, but if it's a good query that isn't working for some reason
-				// 	we need to figure out what to do
+				// If for some reason, on the off chance that Astra cannot handle this query (but the client
+				// database was able to), we must maintain consistency, so we need the migration service to
+				// restart the migration of this table from the start, since the query is already reflected
+				// in the client's database.
 				log.Error(err)
-				p.Metrics.incrementWriteFails()
+
+				// Save queue length before we send the update, as once we send the update we have no
+				// guarantees if the queries in the queue came before or after they restarted the migration,
+				// and we don't want to delete any of them that occured after the restart.
+				queueLen := len(queue)
+
+				err = p.sendTableRestart(keyspace, table)
+				if err != nil {
+					// This should honestly never happen
+					log.Error(err)
+				}
+
+				// We can clear the queue (up to the point when we told the migration service to restart)
+				// as we know that any queries that are currently in the queue were already executed on
+				// the client's database and thus will already be reflected in the new migration of the table.
+				for i := 0; i < queueLen; i++ {
+					_ = <-queue
+				}
+
 			} else {
 				p.Metrics.incrementWrites()
 			}
@@ -818,7 +837,6 @@ func (p *CQLProxy) closeResponseChan(q *query.Query, resp chan bool) {
 	close(resp)
 }
 
-// TODO: is this function even needed? Do we need to be retrying here too?
 func (p *CQLProxy) execute(query *query.Query) error {
 	log.Debugf("Executing %v", *query)
 	p.lock.Lock()
@@ -928,17 +946,25 @@ func (p *CQLProxy) handleUpdate(update *updates.Update) error {
 	return nil
 }
 
-// --Unused for now, but will be used in the near future--
+func (p *CQLProxy) sendTableRestart(keyspace string, tableName string) error {
+	table := p.getTable(keyspace, tableName)
+	marshaledTable, err := json.Marshal(table)
+	if err != nil {
+		return err
+	}
+
+	update := updates.New(updates.TableRestart, marshaledTable)
+	return updates.Send(update, p.migrationSession)
+}
+
 // sendPriorityUpdate will send a tableUpdate to the migration service with an
 // updated priority value for the table. We do this as if there is a table
 // with a very large queue, we want that to be migrated ASAP, so we communicate
 // the priority of a table's migration
 func (p *CQLProxy) sendPriorityUpdate(keyspace string, tableName string, newPriority int) error {
-	p.migrationStatus.Lock.Lock()
-	table := p.migrationStatus.Tables[keyspace][tableName]
-	p.migrationStatus.Lock.Unlock()
-
+	table := p.getTable(keyspace, tableName)
 	table.SetPriority(newPriority)
+
 	marshaledTable, err := json.Marshal(table)
 	if err != nil {
 		return err
@@ -958,8 +984,15 @@ func (p *CQLProxy) checkStop(keyspace string, tableName string) {
 	}
 }
 
+func (p *CQLProxy) getTable(keyspace string, tableName string) *migration.Table {
+	p.migrationStatus.Lock.Lock()
+	defer p.migrationStatus.Lock.Unlock()
+
+	return p.migrationStatus.Tables[keyspace][tableName]
+}
+
 func (p *CQLProxy) tableStatus(keyspace string, tableName string) migration.Step {
-	table := p.migrationStatus.Tables[keyspace][tableName]
+	table := p.getTable(keyspace, tableName)
 	table.Lock.Lock()
 	defer table.Lock.Unlock()
 
