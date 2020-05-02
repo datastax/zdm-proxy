@@ -96,17 +96,9 @@ type CQLProxy struct {
 // creates a communication channel with the migration service and then begins listening
 // on $PROXY_QUERY_PORT for queries to the database.
 func (p *CQLProxy) Start() error {
-	p.reset()
+	p.waitForDatabases()
 
-	// Ensure source is up and running
-	//conn := p.establishConnection(p.sourceIP)
-	//conn.Close()
-
-	// Ensure Astra is up and running
-	//conn = p.establishConnection(p.astraIP)
-	//conn.Close()
-
-	p.migrationSession = p.establishConnection(p.migrationServiceIP)
+	p.migrationSession = establishConnection(p.migrationServiceIP)
 
 	go p.statusLoop()
 	go p.runMetrics()
@@ -126,26 +118,14 @@ func (p *CQLProxy) Start() error {
 	return nil
 }
 
-func (p *CQLProxy) establishConnection(ip string) net.Conn {
-	b := &backoff.Backoff{
-		Min:    100 * time.Millisecond,
-		Max:    10 * time.Second,
-		Factor: 2,
-		Jitter: false,
-	}
+func (p *CQLProxy) waitForDatabases() {
+	// Wait until the source database is up and ready to accept TCP connections.
+	source := establishConnection(p.sourceIP)
+	source.Close()
 
-	log.Debugf("Attempting to connect to %s...", ip)
-	for {
-		conn, err := net.Dial("tcp", ip)
-		if err != nil {
-			nextDuration := b.Duration()
-			log.Errorf("Couldn't connect to %s, retrying in %s...", ip, nextDuration.String())
-			time.Sleep(nextDuration)
-			continue
-		}
-		log.Infof("Successfully established connection with %s", ip)
-		return conn
-	}
+	// Wait until the Astra database is up and ready to accept TCP connections.
+	astra := establishConnection(p.astraIP)
+	astra.Close()
 }
 
 // TODO: May just get rid of this entire function, as it can all be handled by p.handleUpdate() directly
@@ -230,17 +210,17 @@ func (p *CQLProxy) listen(port int, handler func(net.Conn)) error {
 func (p *CQLProxy) handleClientConnection(client net.Conn) {
 	// If our service has not completed yet
 	if !p.queuesComplete {
-		database := p.establishConnection(p.sourceIP)
+		database := establishConnection(p.sourceIP)
 
 		p.lock.Lock()
 		p.outstandingQueries[client.RemoteAddr().String()] = make(map[uint16]*frame.Frame)
-		p.astraSessions[client.RemoteAddr().String()] = p.establishConnection(p.astraIP)
+		p.astraSessions[client.RemoteAddr().String()] = establishConnection(p.astraIP)
 		p.lock.Unlock()
 
 		// Begin two way packet forwarding
 		go p.forward(client, database)
 	} else {
-		astra := p.establishConnection(p.astraIP)
+		astra := establishConnection(p.astraIP)
 		go p.forwardDirect(client, astra)
 		go p.forwardDirect(astra, client)
 	}
@@ -321,21 +301,24 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 		if isClient && !authenticated {
 			// STARTUP packet from client
 			if data[4] == 0x01 {
-				username := p.Conf.SourceUsername
-				password := p.Conf.SourcePassword
-
-				err := auth.HandleStartup(src, dst, username, password, data, true)
+				// Start CQL session to source database
+				err := auth.HandleStartup(src, dst, p.Conf.SourceUsername, p.Conf.SourcePassword, data, true)
 				if err != nil {
 					// TODO: probably write an error back in CQL protocol, so it can be displayed on client correctly
 					// 	Maybe just make a method that will do this
-					log.Errorf("Could not start session for client %s", sourceAddress)
+					log.Errorf("could not start session to source database for client %s", sourceAddress)
 					return
 				}
 
-				username = p.Conf.AstraUsername
-				password = p.Conf.AstraPassword
+				// Start CQL session to Astra database
+				astraSession := p.getAstraSession(sourceAddress)
+				err = auth.HandleStartup(src, astraSession,
+					p.Conf.AstraUsername, p.Conf.AstraPassword, data, false)
+				if err != nil {
+					log.Errorf("could not start session to Astra database for client %s", sourceAddress)
+					return
+				}
 
-				err = auth.HandleStartup(src, p.astraSessions[src.RemoteAddr().String()], username, password, data, false)
 				// Start sending responses from database back to client
 				go p.forward(dst, src)
 				go p.astraReplyHandler(src)
@@ -351,13 +334,11 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 			f := frame.New(data)
 
 			// Sent from client
+			p.lock.Lock()
 			if f.Direction == 0 {
-				p.lock.Lock()
 				p.outstandingQueries[sourceAddress][f.Stream] = f
-				p.lock.Unlock()
 			} else {
 				// Response from database
-				p.lock.Lock()
 				if f.Opcode == 0x00 {
 					// ERROR
 					delete(p.outstandingQueries[destAddress], f.Stream)
@@ -367,8 +348,9 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 					go p.mirrorToAstra(destAddress, f.Stream)
 					log.Debugf("success, mirroring to Astra %s %d", destAddress, f.Stream)
 				}
-				p.lock.Unlock()
 			}
+			p.lock.Unlock()
+
 		}
 
 		//log.Debugf("writing %s -> %s", sourceAddress, destAddress)
@@ -402,18 +384,10 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 	}
 }
 
-// ForwardDirect handles the direct forwarding of traffic between SRC and DST with no modifications
+// forwardDirect directly forwards traffic from src to dst.
 func (p *CQLProxy) forwardDirect(src, dst net.Conn) {
 	defer src.Close()
 	defer dst.Close()
-
-	if dst.RemoteAddr().String() == p.astraIP {
-		p.Metrics.incrementConnections()
-		defer func() {
-			p.Metrics.decrementConnections()
-			p.checkRedirect()
-		}()
-	}
 
 	buffer := make([]byte, 0xffff)
 	for {
@@ -586,7 +560,7 @@ func (p *CQLProxy) handleUseQuery(keyspace string, f *frame.Frame, client string
 	}
 
 	if _, ok := p.migrationStatus.Tables[keyspace]; !ok {
-		return errors.New("invalid keyspace")
+		return fmt.Errorf("keyspace %s does not exist", keyspace)
 	}
 
 	p.lock.Lock()
@@ -647,9 +621,10 @@ func (p *CQLProxy) queueQuery(query *query.Query) {
 
 	queriesRemaining := len(queue)
 	if queriesRemaining > 0 && queriesRemaining%priorityUpdateSize == 0 {
-		err := p.sendPriorityUpdate(query.Table.Keyspace, query.Table.Name, queriesRemaining)
+		err := p.sendPriorityUpdate(query.Table, queriesRemaining)
 		if err != nil {
-			log.Error(err)
+			log.Errorf("Unable to send priority update (%s.%s : %d)",
+				query.Table.Keyspace, query.Table.Name, queriesRemaining)
 		}
 	}
 }
@@ -677,9 +652,11 @@ func (p *CQLProxy) consumeQueue(keyspace string, table string) {
 				// and we don't want to delete any of them that occured after the restart.
 				queueLen := len(queue)
 
-				err = p.sendTableRestart(keyspace, table)
+				err = p.sendTableRestart(q.Table)
 				if err != nil {
-					// This should honestly never happen
+					// If this happens, there is a much bigger issue with the current state of the entire
+					// proxy service.
+					// TODO: maybe just send hard restart to Migration Service & restart proxy
 					log.Error(err)
 				}
 
@@ -690,8 +667,6 @@ func (p *CQLProxy) consumeQueue(keyspace string, table string) {
 					_ = <-queue
 				}
 
-			} else {
-				p.Metrics.incrementWrites()
 			}
 
 			p.queueLocks[keyspace][table].Unlock()
@@ -700,7 +675,6 @@ func (p *CQLProxy) consumeQueue(keyspace string, table string) {
 	}
 }
 
-// TODO: Change stream when retrying or else cassandra doesn't respond
 // executeWrite will keep retrying a query up to maxQueryRetries number of times
 // if it's unsuccessful
 func (p *CQLProxy) executeWrite(q *query.Query, retries ...int) error {
@@ -719,6 +693,7 @@ func (p *CQLProxy) executeWrite(q *query.Query, retries ...int) error {
 		return p.executeWrite(q, retry+1)
 	}
 
+	p.Metrics.incrementWrites()
 	return nil
 }
 
@@ -727,7 +702,7 @@ func (p *CQLProxy) executeWrite(q *query.Query, retries ...int) error {
 // or if the Astra DB responds saying that there was an error with the query.
 func (p *CQLProxy) executeAndCheckReply(q *query.Query) error {
 	resp := p.createResponseChan(q)
-	defer p.closeResponseChan(q, resp)
+	defer p.closeResponseChan(q)
 
 	err := p.execute(q)
 	if err != nil {
@@ -759,12 +734,14 @@ func (p *CQLProxy) createResponseChan(q *query.Query) chan bool {
 	return respChan
 }
 
-func (p *CQLProxy) closeResponseChan(q *query.Query, resp chan bool) {
+func (p *CQLProxy) closeResponseChan(q *query.Query) {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
+	respChan := p.queryResponses[q.Stream]
+
 	delete(p.queryResponses, q.Stream)
-	close(resp)
+	close(respChan)
 }
 
 func (p *CQLProxy) execute(query *query.Query) error {
@@ -844,6 +821,9 @@ func (p *CQLProxy) handleUpdate(update *updates.Update) error {
 		}
 		status.Lock = &sync.Mutex{}
 
+		// TODO: Should probably restart the entire service, if it's already running
+		//p.restartIfRunning()
+		p.reset()
 		p.MigrationStart <- &status
 	case updates.TableUpdate:
 		var tableUpdate migration.Table
@@ -876,8 +856,7 @@ func (p *CQLProxy) handleUpdate(update *updates.Update) error {
 	return nil
 }
 
-func (p *CQLProxy) sendTableRestart(keyspace string, tableName string) error {
-	table := p.getTable(keyspace, tableName)
+func (p *CQLProxy) sendTableRestart(table *migration.Table) error {
 	marshaledTable, err := json.Marshal(table)
 	if err != nil {
 		return err
@@ -891,8 +870,7 @@ func (p *CQLProxy) sendTableRestart(keyspace string, tableName string) error {
 // updated priority value for the table. We do this as if there is a table
 // with a very large queue, we want that to be migrated ASAP, so we communicate
 // the priority of a table's migration
-func (p *CQLProxy) sendPriorityUpdate(keyspace string, tableName string, newPriority int) error {
-	table := p.getTable(keyspace, tableName)
+func (p *CQLProxy) sendPriorityUpdate(table *migration.Table, newPriority int) error {
 	table.SetPriority(newPriority)
 
 	marshaledTable, err := json.Marshal(table)
@@ -902,6 +880,13 @@ func (p *CQLProxy) sendPriorityUpdate(keyspace string, tableName string, newPrio
 
 	update := updates.New(updates.TableUpdate, marshaledTable)
 	return updates.Send(update, p.migrationSession)
+}
+
+func (p *CQLProxy) getAstraSession(client string) net.Conn {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+
+	return p.astraSessions[client]
 }
 
 func (p *CQLProxy) getTable(keyspace string, tableName string) *migration.Table {
@@ -1040,6 +1025,29 @@ func (p *CQLProxy) checkQueueLens() (bool, bool) {
 		}
 	}
 	return allSmall, allComplete
+}
+
+// Establishes a TCP connection with the passed in IP. Retries using exponential backoff.
+func establishConnection(ip string) net.Conn {
+	b := &backoff.Backoff{
+		Min:    100 * time.Millisecond,
+		Max:    10 * time.Second,
+		Factor: 2,
+		Jitter: false,
+	}
+
+	log.Debugf("Attempting to connect to %s...", ip)
+	for {
+		conn, err := net.Dial("tcp", ip)
+		if err != nil {
+			nextDuration := b.Duration()
+			log.Errorf("Couldn't connect to %s, retrying in %s...", ip, nextDuration.String())
+			time.Sleep(nextDuration)
+			continue
+		}
+		log.Infof("Successfully established connection with %s", ip)
+		return conn
+	}
 }
 
 // Given a FROM argument, extract the table name
