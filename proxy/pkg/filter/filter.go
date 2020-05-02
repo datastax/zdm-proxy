@@ -646,7 +646,7 @@ func (p *CQLProxy) queueQuery(query *query.Query) {
 	queue <- query
 
 	queriesRemaining := len(queue)
-	if queriesRemaining > 0 && queriesRemaining % priorityUpdateSize == 0 {
+	if queriesRemaining > 0 && queriesRemaining%priorityUpdateSize == 0 {
 		err := p.sendPriorityUpdate(query.Table.Keyspace, query.Table.Name, queriesRemaining)
 		if err != nil {
 			log.Error(err)
@@ -687,7 +687,7 @@ func (p *CQLProxy) consumeQueue(keyspace string, table string) {
 				// as we know that any queries that are currently in the queue were already executed on
 				// the client's database and thus will already be reflected in the new migration of the table.
 				for i := 0; i < queueLen; i++ {
-					_ := <- queue
+					_ := <-queue
 				}
 
 			} else {
