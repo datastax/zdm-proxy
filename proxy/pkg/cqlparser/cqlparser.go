@@ -103,7 +103,7 @@ func CassandraParseRequest(p *PreparedQueries, data []byte) ([]string, error) {
 				paths[i] = path
 				path = "batch" // reset for next item
 				offset = offset + 5 + queryLen
-				offset = readPastBatchValues(data, offset)
+				offset = ReadPastBatchValues(data, offset)
 			} else if kind == 1 {
 				// prepared query id
 
@@ -120,7 +120,7 @@ func CassandraParseRequest(p *PreparedQueries, data []byte) ([]string, error) {
 				}
 				offset = offset + 3 + idLen
 
-				offset = readPastBatchValues(data, offset)
+				offset = ReadPastBatchValues(data, offset)
 			} else {
 				log.Errorf("unexpected value of 'kind' in batch query: %d", kind)
 				return nil, errors.New("processing batch command failed")
@@ -151,14 +151,16 @@ func CassandraParseRequest(p *PreparedQueries, data []byte) ([]string, error) {
 	}
 }
 
-// Taken from
+// Modified from
 // https://github.com/cilium/cilium/blob/2bc1fdeb97331761241f2e4b3fb88ad524a0681b/proxylib/cassandra/cassandraparser.go
+// to return lowercase action and as-is table (including quotations and case-sensitivity)
 func parseCassandra(query string) (string, string) {
 	var action string
 	var table string
 
 	query = strings.TrimRight(query, ";")            // remove potential trailing ;
 	fields := strings.Fields(strings.ToLower(query)) // handles all whitespace
+	originalFields := strings.Fields(query)			 // maintains case-sensitiviy for table
 
 	// we currently do not strip comments.  It seems like cqlsh does
 	// strip comments, but its not clear if that can be assumed of all clients
@@ -187,7 +189,7 @@ func parseCassandra(query string) (string, string) {
 	case "select", "delete":
 		for i := 1; i < len(fields); i++ {
 			if fields[i] == "from" {
-				table = strings.ToLower(fields[i+1])
+				table = originalFields[i+1]
 			}
 		}
 		if len(table) == 0 {
@@ -199,12 +201,12 @@ func parseCassandra(query string) (string, string) {
 		if len(fields) < 3 {
 			goto invalidQuery
 		}
-		table = strings.ToLower(fields[2])
+		table = originalFields[2]
 	case "update":
 		// UPDATE <table-name>
-		table = strings.ToLower(fields[1])
+		table = originalFields[1]
 	case "use":
-		table = fields[1]
+		table = originalFields[1]
 	case "alter", "create", "drop", "truncate", "list":
 
 		action = strings.Join([]string{action, fields[1]}, "-")
@@ -213,26 +215,26 @@ func parseCassandra(query string) (string, string) {
 			if len(fields) < 3 {
 				goto invalidQuery
 			}
-			table = fields[2]
-			if table == "if" {
+			table = originalFields[2]
+			if strings.ToLower(table) == "if" {
 				if action == "create-table" {
 					if len(fields) < 6 {
 						goto invalidQuery
 					}
 					// handle optional "IF NOT EXISTS"
-					table = fields[5]
+					table = originalFields[5]
 				} else if action == "drop-table" || action == "drop-keyspace" {
 					if len(fields) < 5 {
 						goto invalidQuery
 					}
 					// handle optional "IF EXISTS"
-					table = fields[4]
+					table = originalFields[4]
 				}
 			}
 		}
 		if action == "truncate" && len(fields) == 2 {
 			// special case, truncate can just be passed table name
-			table = fields[1]
+			table = originalFields[1]
 		}
 		if fields[1] == "materialized" {
 			action = action + "-view"
@@ -253,7 +255,8 @@ invalidQuery:
 
 // Taken from
 // https://github.com/cilium/cilium/blob/2bc1fdeb97331761241f2e4b3fb88ad524a0681b/proxylib/cassandra/cassandraparser.go
-func readPastBatchValues(data []byte, initialOffset int) int {
+// Advances offset to account for potential bound variables in the <query>
+func ReadPastBatchValues(data []byte, initialOffset int) int {
 	numValues := int(binary.BigEndian.Uint16(data[initialOffset : initialOffset+2]))
 	offset := initialOffset + 2
 	for i := 0; i < numValues; i++ {
