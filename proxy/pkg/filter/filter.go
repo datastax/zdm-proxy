@@ -259,8 +259,6 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 	}
 
 	var pointsToSource bool
-	// TODO: not sure if this check is necessary, since we will be having two forward function.
-	// TODO: One for forwarding to oldDB and one to astra direct for later
 	if sourceAddress == p.sourceIP || destAddress == p.sourceIP {
 		pointsToSource = true
 	}
@@ -470,7 +468,6 @@ func (p *CQLProxy) writeToAstra(f *frame.Frame, client string) error {
 	// currently handles query and prepare statements that involve 'use, insert, update, delete, and truncate'
 	if len(paths) > 1 {
 		return p.handleBatchQuery(f, paths, client)
-		// TODO: Handle batch statements
 	}
 
 	if paths[0] == cqlparser.UnknownPreparedQueryPath {
@@ -639,7 +636,6 @@ func (p *CQLProxy) handleWriteQuery(fromClause string, queryType query.Type, f *
 	return nil
 }
 
-//TODO: Handle batch statements
 func (p *CQLProxy) handleBatchQuery(f *frame.Frame, paths []string, client string) error {
 	currKeyspace := p.Keyspaces[client]
 
