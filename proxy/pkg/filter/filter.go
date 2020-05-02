@@ -540,7 +540,7 @@ func (p *CQLProxy) astraReplyHandler(client net.Conn) {
 				delete(p.outstandingQueries[clientIP], resp.Stream)
 			} else {
 				log.Debugf("Received error response from Astra from query %d", resp.Stream)
-				p.checkError(resp.Body)
+				p.checkError(resp.RawBytes)
 			}
 		}
 		p.lock.Unlock()
@@ -556,7 +556,7 @@ func (p *CQLProxy) astraReplyHandler(client net.Conn) {
 }
 
 func (p *CQLProxy) checkError(body []byte) {
-	errCode := binary.BigEndian.Uint32(body[0:3])
+	errCode := binary.BigEndian.Uint16(body[0:2])
 	switch errCode {
 	case 0x0000:
 		// Server Error
