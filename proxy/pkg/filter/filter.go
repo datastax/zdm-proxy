@@ -469,8 +469,7 @@ func (p *CQLProxy) writeToAstra(f *frame.Frame, client string) error {
 	// FIXME: Handle more actions based on paths
 	// currently handles query and prepare statements that involve 'use, insert, update, delete, and truncate'
 	if len(paths) > 1 {
-		return nil
-		// return p.handleBatchQuery(data, paths)
+		return p.handleBatchQuery(f, paths, client)
 		// TODO: Handle batch statements
 	}
 
@@ -482,24 +481,27 @@ func (p *CQLProxy) writeToAstra(f *frame.Frame, client string) error {
 	fields := strings.Split(paths[0], "/")
 	if len(fields) > 2 {
 		if fields[1] == "prepare" {
-			q := query.New(nil, query.PREPARE, f, client)
+			q := query.New(nil, query.PREPARE, f, client, paths)
 			return p.execute(q)
 		} else if fields[1] == "query" || fields[1] == "execute" {
 			queryType := query.Type(fields[2])
 
 			switch queryType {
 			case query.USE:
-				return p.handleUseQuery(fields[3], f, client)
+				return p.handleUseQuery(fields[3], f, client, paths)
 			case query.INSERT, query.UPDATE, query.DELETE, query.TRUNCATE:
-				return p.handleWriteQuery(fields[3], queryType, f, client)
+				return p.handleWriteQuery(fields[3], queryType, f, client, paths)
 			case query.SELECT:
 				p.Metrics.incrementReads()
 			}
+		} else if fields[1] == "batch" {
+			// handles case of 1 command BATCH statement
+			return p.handleBatchQuery(f, paths, client)
 		}
 	} else {
 		// path is '/opcode' case
 		// FIXME: decide if there are any cases we need to handle here
-		q := query.New(nil, query.MISC, f, client)
+		q := query.New(nil, query.MISC, f, client, paths)
 		return p.execute(q)
 	}
 
@@ -577,7 +579,7 @@ func (p *CQLProxy) checkError(body []byte) {
 
 }
 
-func (p *CQLProxy) handleUseQuery(keyspace string, f *frame.Frame, client string) error {
+func (p *CQLProxy) handleUseQuery(keyspace string, f *frame.Frame, client string, parsedPaths []string) error {
 	// Cassandra assumes case-insensitive unless keyspace is encased in quotation marks
 	if strings.HasPrefix(keyspace, "\"") && strings.HasSuffix(keyspace, "\"") {
 		keyspace = keyspace[1 : len(keyspace)-1]
@@ -593,12 +595,13 @@ func (p *CQLProxy) handleUseQuery(keyspace string, f *frame.Frame, client string
 	p.Keyspaces[client] = keyspace
 	p.lock.Unlock()
 
-	q := query.New(nil, query.USE, f, client)
+	q := query.New(nil, query.USE, f, client, parsedPaths)
 
 	return p.execute(q)
 }
 
-func (p *CQLProxy) handleWriteQuery(fromClause string, queryType query.Type, f *frame.Frame, client string) error {
+// HandleWriteQuery can handle QUERY and EXECUTE opcodes of type INSERT, UPDATE, DELETE, TRUNCATE
+func (p *CQLProxy) handleWriteQuery(fromClause string, queryType query.Type, f *frame.Frame, client string, parsedPaths []string) error {
 	keyspace, tableName := extractTableInfo(fromClause)
 
 	// Is the keyspace already in the table clause of the query, or do we need to add it
@@ -609,7 +612,10 @@ func (p *CQLProxy) handleWriteQuery(fromClause string, queryType query.Type, f *
 			return errors.New("invalid keyspace")
 		}
 
-		addKeyspace = true
+		// if not an EXECUTE command
+		if f.Opcode != 0x0a {
+			addKeyspace = true
+		}
 	}
 
 	table, ok := p.migrationStatus.Tables[keyspace][tableName]
@@ -617,7 +623,7 @@ func (p *CQLProxy) handleWriteQuery(fromClause string, queryType query.Type, f *
 		return fmt.Errorf("table %s.%s does not exist", keyspace, tableName)
 	}
 
-	q := query.New(table, queryType, f, client).UsingTimestamp()
+	q := query.New(table, queryType, f, client, parsedPaths).UsingTimestamp()
 	if addKeyspace {
 		q = q.AddKeyspace(keyspace)
 	}
@@ -626,10 +632,7 @@ func (p *CQLProxy) handleWriteQuery(fromClause string, queryType query.Type, f *
 	// if migration of this table is currently in progress (or about to begin), then pause consumption
 	// of queries for this table.
 	if queryType != query.INSERT {
-		status := p.tableStatus(keyspace, tableName)
-		if !p.tablePaused[keyspace][tableName] && status >= migration.WaitingToUnload && status < migration.LoadingDataComplete {
-			p.stopTable(keyspace, tableName)
-		}
+		p.checkStop(keyspace, tableName)
 	}
 	p.queueQuery(q)
 
@@ -637,7 +640,67 @@ func (p *CQLProxy) handleWriteQuery(fromClause string, queryType query.Type, f *
 }
 
 //TODO: Handle batch statements
-func (p *CQLProxy) handleBatchQuery(query []byte, paths []string) error {
+func (p *CQLProxy) handleBatchQuery(f *frame.Frame, paths []string, client string) error {
+	currKeyspace := p.Keyspaces[client]
+
+	waitgroup := sync.WaitGroup{}
+	queries := []*query.Query{}
+	addKeyspace := false
+
+	// Set to hold which tables we've already included queries for
+	includedTables := make(map[string]bool)
+
+	for i, path := range paths {
+		fields := strings.Split(path, "/")
+		keyspace, tableName := extractTableInfo(fields[3])
+		if keyspace == "" {
+			keyspace = currKeyspace
+			addKeyspace = true
+		}
+
+		table, ok := p.migrationStatus.Tables[keyspace][tableName]
+		if !ok {
+			return fmt.Errorf("table %s.%s does not exist", keyspace, tableName)
+		}
+
+		explicitTable := fmt.Sprintf("%s.%s", keyspace, tableName)
+
+		// Only create max one dummy query per table
+		if _, ok := includedTables[explicitTable]; ok {
+			continue
+		}
+
+		// Only put data in the first batch statement. The other batch statements act like dummy
+		// statements so that each tables query are consumed only up until the point that the batch
+		// statement was ran. This ensures that the state of the Astra database is consistent with the
+		// state of the client database when the batch statement was queried.
+		var q *query.Query
+		if i == 0 {
+			q = query.New(table, query.BATCH, f, client, paths).WithWaitGroup(&waitgroup).UsingTimestamp()
+		} else {
+			q = query.New(table, query.BATCH, &frame.Frame{}, client, paths).WithWaitGroup(&waitgroup)
+		}
+		waitgroup.Add(1)
+
+		// BATCH statements only contain INSERT, DELETE, and UPDATE. This stops any tables corresponding
+		// to DELETE or UPDATE queries, as we need to ensure that they are fully migrated before we can
+		// run those types of queries on them
+		if query.Type(fields[2]) != query.INSERT {
+			p.checkStop(keyspace, tableName)
+		}
+
+		queries = append(queries, q)
+		includedTables[explicitTable] = true
+	}
+
+	if addKeyspace {
+		queries[0] = queries[0].AddKeyspace(currKeyspace)
+	}
+
+	for _, q := range queries {
+		p.queueQuery(q)
+	}
+
 	return nil
 }
 
@@ -661,11 +724,17 @@ func (p *CQLProxy) consumeQueue(keyspace string, table string) {
 
 	for {
 		select {
-		case query := <-queue:
+		case q := <-queue:
 			p.queueLocks[keyspace][table].Lock()
 
+			// Pauses all tables in a BATCH statement until it executes
+			if q.Type == query.BATCH {
+				q.WG.Done()
+				q.WG.Wait()
+			}
+
 			// Driver is async, so we don't need a lock around query execution
-			err := p.executeWrite(query)
+			err := p.executeWrite(q)
 			if err != nil {
 				// TODO: Figure out exactly what to do if we're unable to write
 				// 	If it's a bad query, no issue, but if it's a good query that isn't working for some reason
@@ -879,6 +948,16 @@ func (p *CQLProxy) sendPriorityUpdate(keyspace string, tableName string, newPrio
 	return updates.Send(update, p.migrationSession)
 }
 
+func (p *CQLProxy) checkStop(keyspace string, tableName string) {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+
+	status := p.tableStatus(keyspace, tableName)
+	if !p.tablePaused[keyspace][tableName] && status >= migration.WaitingToUnload && status < migration.LoadingDataComplete {
+		p.stopTable(keyspace, tableName)
+	}
+}
+
 func (p *CQLProxy) tableStatus(keyspace string, tableName string) migration.Step {
 	table := p.migrationStatus.Tables[keyspace][tableName]
 	table.Lock.Lock()
@@ -887,8 +966,9 @@ func (p *CQLProxy) tableStatus(keyspace string, tableName string) migration.Step
 	return table.Step
 }
 
-// stopTable grabs the queueLock for a table so that the consumeQueue function cannot
-// continue processing queries for the table.
+// stopTable grabs the queueLock for a table so that the corresponding consumeQueue
+// function for the table cannot continue processing queries.
+// Assumes caller has p.lock acquired.
 func (p *CQLProxy) stopTable(keyspace string, tableName string) {
 	log.Debugf("Stopping query consumption on %s.%s", keyspace, tableName)
 	p.lock.Lock()
@@ -1027,6 +1107,22 @@ func extractTableInfo(fromClause string) (string, string) {
 	// Remove column names if part of an INSERT query: ex: TABLE(col, col)
 	if i := strings.IndexRune(tableName, '('); i != -1 {
 		tableName = tableName[:i]
+	}
+
+	// Make keyspace and tablename lowercase if necessary.
+	// Othewise, leave case as-is but trim quotations marks
+	if strings.HasPrefix(keyspace, "\"") && strings.HasSuffix(keyspace, "\"") {
+		keyspace = strings.TrimPrefix(keyspace, "\"")
+		keyspace = strings.TrimSuffix(keyspace, "\"")
+	} else {
+		keyspace = strings.ToLower(keyspace)
+	}
+
+	if strings.HasPrefix(tableName, "\"") && strings.HasSuffix(tableName, "\"") {
+		tableName = strings.TrimPrefix(tableName, "\"")
+		tableName = strings.TrimSuffix(tableName, "\"")
+	} else {
+		tableName = strings.ToLower(tableName)
 	}
 
 	return keyspace, tableName
