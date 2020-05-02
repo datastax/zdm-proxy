@@ -35,6 +35,8 @@ const (
 
 	maxQueryRetries = 5
 	queryTimeout    = 2 * time.Second
+
+	priorityUpdateSize = 50
 )
 
 type CQLProxy struct {
@@ -640,16 +642,26 @@ func (p *CQLProxy) handleBatchQuery(query []byte, paths []string) error {
 }
 
 func (p *CQLProxy) queueQuery(query *query.Query) {
-	p.queues[query.Table.Keyspace][query.Table.Name] <- query
+	queue := p.queues[query.Table.Keyspace][query.Table.Name]
+	queue <- query
+
+	queriesRemaining := len(queue)
+	if queriesRemaining > 0 && queriesRemaining % priorityUpdateSize == 0 {
+		err := p.sendPriorityUpdate(query.Table.Keyspace, query.Table.Name, queriesRemaining)
+		if err != nil {
+			log.Error(err)
+		}
+	}
 }
 
 // consumeQueue executes all queries for a particular table, in the order that they are received.
 func (p *CQLProxy) consumeQueue(keyspace string, table string) {
 	log.Debugf("Beginning consumption of queries for %s.%s", keyspace, table)
+	queue := p.queues[keyspace][table]
 
 	for {
 		select {
-		case query := <-p.queues[keyspace][table]:
+		case query := <-queue:
 			p.queueLocks[keyspace][table].Lock()
 
 			// Driver is async, so we don't need a lock around query execution
@@ -813,6 +825,7 @@ func (p *CQLProxy) handleUpdate(update *updates.Update) error {
 		if err != nil {
 			return errors.New("unable to unmarshal json")
 		}
+		status.Lock = &sync.Mutex{}
 
 		p.MigrationStart <- &status
 	case updates.TableUpdate:
@@ -851,7 +864,11 @@ func (p *CQLProxy) handleUpdate(update *updates.Update) error {
 // updated priority value for the table. We do this as if there is a table
 // with a very large queue, we want that to be migrated ASAP, so we communicate
 // the priority of a table's migration
-func (p *CQLProxy) sendPriorityUpdate(table *migration.Table, newPriority int) error {
+func (p *CQLProxy) sendPriorityUpdate(keyspace string, tableName string, newPriority int) error {
+	p.migrationStatus.Lock.Lock()
+	table := p.migrationStatus.Tables[keyspace][tableName]
+	p.migrationStatus.Lock.Unlock()
+
 	table.SetPriority(newPriority)
 	marshaledTable, err := json.Marshal(table)
 	if err != nil {
