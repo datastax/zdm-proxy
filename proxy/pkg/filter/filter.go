@@ -544,7 +544,7 @@ func (p *CQLProxy) astraReplyHandler(client net.Conn) {
 				delete(p.outstandingQueries[clientIP], resp.Stream)
 			} else {
 				log.Debugf("Received error response from Astra from query %d", resp.Stream)
-				p.checkError(resp.Body)
+				p.checkError(resp.RawBytes)
 			}
 		}
 		p.lock.Unlock()

@@ -50,6 +50,11 @@ func HandleStartup(client net.Conn, db net.Conn, username string, password strin
 			return nil
 		case 0x03, 0x0E:
 			// Authenticate
+			if authAttempts >= maxAuthRetries {
+				return fmt.Errorf("failed to successfully authenticate connection to %s",
+					db.RemoteAddr().String())
+			}
+
 			log.Debug("%s requested authentication for connection %s",
 				db.RemoteAddr().String(), client.RemoteAddr().String())
 
@@ -60,10 +65,6 @@ func HandleStartup(client net.Conn, db net.Conn, username string, password strin
 			}
 
 			authAttempts++
-			if authAttempts == maxAuthRetries {
-				return fmt.Errorf("failed to successfully authenticate connection to %s",
-					db.RemoteAddr().String())
-			}
 		case 0x10:
 			// Auth successful, mimic ready response back to client
 			// Response is of form [VERSION 0 0 0 2 0 0 0 0]
