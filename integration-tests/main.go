@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cloud-gate/integration-tests/test"
 	"cloud-gate/utils"
 	"errors"
 	"fmt"
@@ -90,7 +91,7 @@ func main() {
 	log.Info("MIGRATION STARTED")
 
 	// Run test package here
-	go Test1()
+	go test.Test1()
 
 	for {
 	}
