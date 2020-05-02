@@ -16,8 +16,10 @@ const (
 // the user. To the client, it appears as if they are connecting to a database that does not need
 // any credentials.
 // Currently only supports Username/Password authentication.
-func HandleStartup(client net.Conn, db net.Conn, username string, password string, startupFrame []byte) error {
-	log.Info("Setting up connection from %s to %s", client.RemoteAddr().String(), db.RemoteAddr().String())
+func HandleStartup(client net.Conn, db net.Conn, username string, password string, startupFrame []byte, writeBack bool) error {
+
+	log.Infof("Setting up connection from %s to %s", client.RemoteAddr().String(), db.RemoteAddr().String())
+
 	authAttempts := 0
 
 	// Send client's initial startup frame to the database
@@ -38,9 +40,11 @@ func HandleStartup(client net.Conn, db net.Conn, username string, password strin
 			// READY (server didn't ask for authentication), relay it back to client
 			log.Debugf("%s did not request authorization for connection %s",
 				db.RemoteAddr().String(), client.RemoteAddr().String())
-			_, err := client.Write(f)
-			if err != nil {
-				return err
+			if writeBack {
+				_, err := client.Write(f)
+				if err != nil {
+					return err
+				}
 			}
 
 			return nil
@@ -64,9 +68,12 @@ func HandleStartup(client net.Conn, db net.Conn, username string, password strin
 			// Auth successful, mimic ready response back to client
 			// Response is of form [VERSION 0 0 0 2 0 0 0 0]
 			log.Info("Connection %s authenticated", client.RemoteAddr().String())
-			_, err := client.Write(readyMessage(startupFrame))
-			if err != nil {
-				return err
+
+			if writeBack {
+				_, err := client.Write(readyMessage(startupFrame))
+				if err != nil {
+					return err
+				}
 			}
 
 			return nil

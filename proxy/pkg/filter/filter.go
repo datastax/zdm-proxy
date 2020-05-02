@@ -42,7 +42,6 @@ type CQLProxy struct {
 
 	sourceIP           string
 	astraIP            string
-	astraSession       net.Conn
 	migrationServiceIP string
 	migrationSession   net.Conn
 
@@ -236,11 +235,8 @@ func (p *CQLProxy) handleClientConnection(client net.Conn) {
 		p.astraSessions[client.RemoteAddr().String()] = p.establishConnection(p.astraIP)
 		p.lock.Unlock()
 
-		go p.astraReplyHandler(client)
-
 		// Begin two way packet forwarding
 		go p.forward(client, database)
-		//go p.forward(database, client)
 	} else {
 		astra := p.establishConnection(p.astraIP)
 		go p.forwardDirect(client, astra)
@@ -310,6 +306,9 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 
 		data := append(frameHeader, frameBody...)
 
+		// log.Debugf("body len %s", bodyLen)
+		log.Debugf("%s -> %s: %v", src.RemoteAddr(), dst.RemoteAddr(), data)
+
 		if len(data) > cassMaxLen {
 			log.Error("query larger than max allowed by Cassandra, ignoring.")
 			continue
@@ -323,7 +322,7 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 				username := p.Conf.SourceUsername
 				password := p.Conf.SourcePassword
 
-				err := auth.HandleStartup(src, dst, username, password, data)
+				err := auth.HandleStartup(src, dst, username, password, data, true)
 				if err != nil {
 					// TODO: probably write an error back in CQL protocol, so it can be displayed on client correctly
 					// 	Maybe just make a method that will do this
@@ -331,8 +330,13 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 					return
 				}
 
+				username = p.Conf.AstraUsername
+				password = p.Conf.AstraPassword
+
+				err = auth.HandleStartup(src, p.astraSessions[src.RemoteAddr().String()], username, password, data, false)
 				// Start sending responses from database back to client
 				go p.forward(dst, src)
+				go p.astraReplyHandler(src)
 				authenticated = true
 			}
 			continue
@@ -556,7 +560,7 @@ func (p *CQLProxy) astraReplyHandler(client net.Conn) {
 }
 
 func (p *CQLProxy) checkError(body []byte) {
-	errCode := binary.BigEndian.Uint32(body[0:3])
+	errCode := binary.BigEndian.Uint16(body[0:2])
 	switch errCode {
 	case 0x0000:
 		// Server Error
