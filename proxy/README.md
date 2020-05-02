@@ -138,6 +138,8 @@ Based on the `Type` of each `Update`, we know how to unmarshal `Data`.
 
 Upon receiving a message from migration service and properly handling it, the proxy service sends back a `Success` or `Failure` update to inform migration service that the message was received and processed in some form.
 
+Proxy also communicates to migration service about the size of queries. This is so that migration can expedite the export of tables with a big backlog of queries. This is handled in `filter.queueQuery`.
+
 ### Authentication
 Proxy service handles authentication of user to both Astra and the client's database. Currently, only username and password authentication is supported. During migration, all users are authenticated with the username and password supplied in the environment variables:
 ```
@@ -153,5 +155,4 @@ After migration is complete, users will need to specify their own username and p
 TODO’s:
 
     - Batch query support
-    - Migration priority support (request some tables be migrated ASAP)
 
