@@ -3,7 +3,6 @@ package main
 import (
 	"cloud-gate/integration-tests/test"
 	"cloud-gate/utils"
-	"errors"
 	"fmt"
 	"os/exec"
 
@@ -12,42 +11,62 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-func getKeyspaces(session *gocql.Session) ([]string, error) {
-	ignoreKeyspaces := []string{"system_auth", "system_schema", "dse_system_local", "dse_system", "dse_leases", "solr_admin",
-		"dse_insights", "dse_insights_local", "system_distributed", "system", "dse_perf", "system_traces", "dse_security"}
-
-	kQuery := `SELECT keyspace_name FROM system_schema.keyspaces;`
-	itr := session.Query(kQuery).Iter()
-	if itr == nil {
-		return nil, errors.New("Did not find any keyspaces to migrate")
-	}
-	existingKeyspaces := make([]string, 0)
-	var keyspaceName string
-	for itr.Scan(&keyspaceName) {
-		if !utils.Contains(ignoreKeyspaces, keyspaceName) {
-			existingKeyspaces = append(existingKeyspaces, keyspaceName)
-		}
-	}
-	return existingKeyspaces, nil
-}
+// TestKeyspace is the dedicated keyspace for testing
+// no other keyspaces will be modified
+const TestKeyspace = "cloudgate_test"
 
 func dropExistingKeyspaces(session *gocql.Session) {
-	keyspaces, err := getKeyspaces(session)
+	session.Query(fmt.Sprintf("DROP KEYSPACE %s;", TestKeyspace)).Exec()
+}
+
+func seedKeyspace(session *gocql.Session) {
+	log.Info("Seeding keyspace")
+	session.Query(fmt.Sprintf("CREATE KEYSPACE %s WITH replication = {'class':'SimpleStrategy', 'replication_factor':1};", TestKeyspace)).Exec()
+}
+
+func seedData(session *gocql.Session) {
+	tableName := "tasks"
+
+	// Create the table
+	err := session.Query(fmt.Sprintf("CREATE TABLE %s.%s(id UUID, task text, PRIMARY KEY(id));", TestKeyspace, tableName)).Exec()
 	if err != nil {
-		log.WithError(err).Fatal(err)
+		log.WithError(err).Error(err)
 	}
 
-	for _, keyspace := range keyspaces {
-		session.Query(fmt.Sprintf("DROP KEYSPACE %s;", keyspace)).Exec()
+	// Seed data
+	ids := []string{
+		"d1b05da0-8c20-11ea-9fc6-6d2c86545d91",
+		"eed574b0-8c20-11ea-9fc6-6d2c86545d91",
+		"cf0f4cf0-8c20-11ea-9fc6-6d2c86545d91",
+		"d4b2ef40-8c20-11ea-9fc6-6d2c86545d91",
+		"da9e7000-8c20-11ea-9fc6-6d2c86545d91",
+		"cac98cf0-8c20-11ea-9fc6-6d2c86545d91",
+		"c617ebc0-8c20-11ea-9fc6-6d2c86545d91",
+		"d0b69450-8c20-11ea-9fc6-6d2c86545d91",
+		"c3539ba0-8c20-11ea-9fc6-6d2c86545d91",
+		"d2293720-8c20-11ea-9fc6-6d2c86545d91"}
+
+	tasks := []string{
+		"MSzZMTWA9hw6tkYWPTxT0XfGL9nGQUpy",
+		"IH0FC3aWM4ynriOFvtr5TfiKxziR5aB1",
+		"FgQfJesbNcxAebzFPRRcW2p1bBtoz1P1",
+		"pzRxykuPkQ13oXv8cFzlOGsz51Zy68lS",
+		"R3xkC90pKxGzkAQbmGGIYdI24Bo82RaL",
+		"lsgVQ912cUYiL6TxR6ykiH7qRej6Lkfe",
+		"So5O5ai4snEwD3aq1EXgzuoFeoUplLhD",
+		"WW00H9IOC9JOslNwUVBKhCi3M2W9SfSD",
+		"CFgmMRUzLcZdKuwdIKHPO5ohKJrThm5R",
+		"g5qVsck8edpGfVA7NaHiSJOAmIGqo3dl",
 	}
-}
 
-func seedKeyspace(session *gocql.Session, keyspace string) {
-	session.Query(fmt.Sprintf("CREATE KEYSPACE %s;", keyspace)).Exec() // TODO:
-}
-
-func seedData(session *gocql.Session, keyspace string) {
-	// TODO:
+	// Seed 10 rows
+	for i := 0; i < len(ids); i++ {
+		id, task := ids[i], tasks[i]
+		err = session.Query(fmt.Sprintf("INSERT INTO %s.%s(id, task) VALUES (%s, '%s');", TestKeyspace, tableName, id, task)).Exec()
+		if err != nil {
+			log.WithError(err).Error(err)
+		}
+	}
 }
 
 func main() {
@@ -68,11 +87,11 @@ func main() {
 	dropExistingKeyspaces(destSession)
 
 	// Seed source and dest with keyspace
-	seedKeyspace(sourceSession, "test_keyspace")
-	seedKeyspace(destSession, "test_keyspace")
+	seedKeyspace(sourceSession)
+	seedKeyspace(destSession)
 
 	// Seed source with test data
-	seedData(sourceSession, "test_keyspace")
+	seedData(sourceSession)
 
 	err = exec.Command("go", "run", "./proxy/main.go").Start()
 	if err != nil {

@@ -1,8 +1,14 @@
 package test
 
-import "fmt"
+import (
+	log "github.com/sirupsen/logrus"
+)
 
 // Test1 test
 func Test1() {
-	fmt.Print("hello")
+	log.Print("hello")
+}
+
+func sendComplete() {
+
 }
