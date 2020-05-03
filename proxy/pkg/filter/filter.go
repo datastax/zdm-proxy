@@ -541,6 +541,29 @@ func (p *CQLProxy) astraReplyHandler(client net.Conn) {
 			}
 
 			if success {
+				// if this is an opcode == RESULT message of type 'prepared', associate the prepared
+				// statement id with the full query string that was included in the
+				// associated PREPARE request.  The stream-id in this reply allows us to
+				// find the associated prepare query string.
+				if resp.Opcode == 0x08 {
+					resultKind := binary.BigEndian.Uint32(data[9:13])
+					log.Debugf("resultKind = %d", resultKind)
+					if resultKind == 0x0004 {
+						idLen := binary.BigEndian.Uint16(data[13:15])
+						preparedID := string(data[15 : 15+idLen])
+						log.Debugf("Result with prepared-id = '%s' for stream-id %d", preparedID, resp.Stream)
+						path := p.preparedQueries.PreparedQueryPathByStreamID[resp.Stream]
+						if len(path) > 0 {
+							// found cached query path to associate with this preparedID
+							p.preparedQueries.PreparedQueryPathByPreparedID[preparedID] = path
+							log.Debugf("Associating query path '%s' with prepared-id %s as part of stream-id %d",
+								path, preparedID, resp.Stream)
+						} else {
+							log.Warnf("Unable to find prepared query path associated with stream-id %d", resp.Stream)
+						}
+					}
+				}
+
 				log.Debugf("Received success response from Astra from query %d", resp.Stream)
 				delete(p.outstandingQueries[clientIP], resp.Stream)
 			} else {
