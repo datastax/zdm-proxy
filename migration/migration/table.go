@@ -9,6 +9,7 @@ type Table struct {
 	Step     Step
 	Error    error
 	Priority int
+	Redo     bool
 
 	Lock *sync.Mutex
 }
