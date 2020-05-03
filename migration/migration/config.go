@@ -23,7 +23,6 @@ type Config struct {
 
 	DsbulkPath  string `required:"true" split_words:"true"`
 	HardRestart bool   `default:"false" split_words:"true"`
-	DryRun      bool   `default:"false" split_words:"true"`
 	Threads     int    `default:"1"`
 	Debug       bool   `default:"false"`
 }

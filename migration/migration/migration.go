@@ -165,11 +165,6 @@ func (m *Migration) Migrate() {
 	// Notify proxy service that schemas are finished migrating, unload/load starting
 	m.sendStart()
 
-	if m.Conf.DryRun {
-		log.Debug("Dry run, loop forever...")
-		select {}
-	}
-
 	// Ensure the start signal has been received and processed before continuing
 	for {
 		startReceived := true

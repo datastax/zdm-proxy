@@ -3,9 +3,10 @@ package main
 import (
 	"cloud-gate/utils"
 	"fmt"
-	"log"
 	"math/rand"
 	"time"
+
+	log "github.com/sirupsen/logrus"
 
 	"github.com/gocql/gocql"
 )
@@ -44,9 +45,11 @@ func main() {
 			break
 		}
 
-		query := "BEGIN BATCH "
+		if i%100 == 0 {
+			log.Info(i)
+		}
 
-		go sourceSession.Query(fmt.Sprintf("INSERT INTO test.tasks(id, task) VALUES (now(), '%s');", RandString(32))).Exec()
+		sourceSession.Query(fmt.Sprintf("INSERT INTO cloudgate_test.tasks(id, task) VALUES (now(), '%s');", RandString(32))).Exec()
 		i++
 	}
 }
