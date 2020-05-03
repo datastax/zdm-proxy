@@ -300,6 +300,31 @@ func (m *Migration) tablePool(wg *sync.WaitGroup, jobs <-chan *gocql.TableMetada
 				log.Fatal(err)
 			}
 
+			currTable := m.status.Tables[table.Keyspace][table.Name]
+			currTable.Lock.Lock()
+			if currTable.Redo {
+				log.Info(fmt.Sprintf("REMIGRATING TABLE: %s.%s... ", table.Keyspace, table.Name))
+				keyspace := utils.HasUpper(table.Keyspace)
+				name := utils.HasUpper(table.Name)
+				truncateQuery := fmt.Sprintf("TRUNCATE %s.%s;", keyspace, name)
+				err := m.destSession.Query(truncateQuery, keyspace, name).Exec()
+				if err != nil {
+					log.WithError(err).Error(err.Error())
+				}
+				// (not needed for S3, will be deleted)
+				// err = os.RemoveAll(fmt.Sprintf("%s/%s.%s", m.directory, table.Keyspace, table.Name))
+				// if err != nil {
+				// 	log.Info("error deleting directory")
+				// }
+
+				err = m.migrateData(table)
+				if err != nil {
+					log.Fatal(err)
+				}
+				currTable.Redo = false
+			}
+			currTable.Lock.Unlock()
+
 			m.status.Steps += 2
 			m.status.Tables[table.Keyspace][table.Name].Step = LoadingDataComplete
 			log.Info(fmt.Sprintf("COMPLETED LOADING TABLE DATA: %s.%s", table.Keyspace, table.Name))
@@ -644,6 +669,20 @@ func (m *Migration) handleRequest(req *updates.Update) error {
 		toSend = m.outstandingUpdates[req.ID]
 		m.updateLock.Unlock()
 		m.sendRequest(toSend)
+	case updates.TableRestart:
+		// Restart single table migration
+		var toMigrate Table
+		err := json.Unmarshal(req.Data, &toMigrate)
+		if err != nil {
+			log.WithError(err).Error("Error unmarhsalling received update")
+			return err
+		}
+		table := m.status.Tables[toMigrate.Keyspace][toMigrate.Name]
+		if table.Step >= UnloadingData && table.Step <= LoadingData {
+			table.Lock.Lock()
+			table.Redo = true
+			table.Lock.Unlock()
+		}
 	}
 	return nil
 }
