@@ -296,8 +296,15 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 		}
 
 		//log.Infof("%s sent %v", src.RemoteAddr(), data)
-
 		if isClient && !authenticated {
+			// if OPTIONS request from client. Assumes that clientDB and Astra will support same Options.
+			if data[4] == 0x05 {
+				err = auth.HandleOptions(src, dst, data)
+				if err != nil {
+					log.Error("Cannot get options from database")
+					return
+				}
+			}
 			// STARTUP packet from client
 			if data[4] == 0x01 {
 				// Start CQL session to source database

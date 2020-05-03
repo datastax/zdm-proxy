@@ -55,7 +55,7 @@ func HandleStartup(client net.Conn, db net.Conn, username string, password strin
 					db.RemoteAddr().String())
 			}
 
-			log.Debug("%s requested authentication for connection %s",
+			log.Debugf("%s requested authentication for connection %s",
 				db.RemoteAddr().String(), client.RemoteAddr().String())
 
 			authResp := authFrame(username, password, startupFrame)
@@ -71,7 +71,7 @@ func HandleStartup(client net.Conn, db net.Conn, username string, password strin
 			log.Info("Connection %s authenticated", client.RemoteAddr().String())
 
 			if writeBack {
-				_, err := client.Write(readyMessage(startupFrame))
+				_, err := client.Write(readyMessage(f))
 				if err != nil {
 					return err
 				}
@@ -110,10 +110,26 @@ func authFrame(username string, password string, startupFrame []byte) []byte {
 }
 
 // TODO: Make sure we don't need to match stream id's
-func readyMessage(startupFrame []byte) []byte {
+func readyMessage(responseFrame []byte) []byte {
 	f := make([]byte, 9)
-	f[0] = startupFrame[0] | 0x80 // Maintain user's version
+	f[0] = responseFrame[0] | 0x80 // Maintain user's version
+	f[2] = responseFrame[2]
+	f[3] = responseFrame[3]
 	f[4] = 2
 
 	return f
+}
+
+func HandleOptions (client net.Conn, db net.Conn, f []byte) error {
+	db.Write(f)
+	buf := make([]byte, 0xffffff)
+
+	bytesRead, err := db.Read(buf)
+	if err != nil {
+		return err
+	}
+
+	client.Write(buf[:bytesRead])
+
+	return nil
 }
