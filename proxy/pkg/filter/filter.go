@@ -90,6 +90,12 @@ type CQLProxy struct {
 
 	// Metrics
 	Metrics *metrics.Metrics
+
+	preparedIDs map[uint16]string
+	mappedPreparedIDs map[string]string
+	outstandingPrepares map[uint16][]byte
+	preparedQueryBytes map[string][]byte
+
 }
 
 // Start starts up the proxy. The proxy creates a connection with the Astra Database,
@@ -332,6 +338,7 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 			continue
 		}
 
+
 		// || pointsToSource is to allow the first query after beginning redirect to go through
 		// this makes it so the forward from dst -> client doesn't permanently block in src.Read
 		if !p.redirectActiveConns || pointsToSource {
@@ -342,6 +349,9 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 			p.lock.Lock()
 			if f.Direction == 0 {
 				p.outstandingQueries[sourceAddress][f.Stream] = f
+				if f.Opcode == 0x09 {
+					p.outstandingPrepares[f.Stream] = f.RawBytes
+				}
 			} else {
 				// Response from database
 				if f.Opcode == 0x00 {
@@ -349,6 +359,20 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 					delete(p.outstandingQueries[destAddress], f.Stream)
 					log.Debug("Source errored")
 				} else if _, ok := p.outstandingQueries[destAddress][f.Stream]; ok {
+					if f.Opcode == 0x08 {
+						resultKind := binary.BigEndian.Uint32(data[9:13])
+						log.Debugf("resultKind = %d", resultKind)
+						if resultKind == 0x0004 {
+							idLen := binary.BigEndian.Uint16(data[13:15])
+							preparedID := string(data[15 : 15+idLen])
+							if _, ok := p.outstandingPrepares[f.Stream]; ok {
+								log.Debugf("Mapped stream %d to prepared ID %s", f.Stream, preparedID)
+								p.preparedIDs[f.Stream] = preparedID
+								p.preparedQueryBytes[preparedID] = p.outstandingPrepares[f.Stream]
+							}
+						}
+					}
+
 					// SUCCESS
 					go p.mirrorToAstra(destAddress, f.Stream)
 					log.Debugf("success, mirroring to Astra %s %d", destAddress, f.Stream)
@@ -436,7 +460,7 @@ func (p *CQLProxy) writeToAstra(f *frame.Frame, client string) error {
 	// opcode is "startup", "query", "batch", etc.
 	// action is "select", "insert", "update", etc,
 	// table is the table as written in the command
-	paths, err := cqlparser.CassandraParseRequest(p.preparedQueries, f.RawBytes)
+	paths, err := cqlparser.CassandraParseRequest(&(p.preparedQueryBytes), f.RawBytes)
 	if err != nil {
 		return err
 	}
@@ -464,6 +488,13 @@ func (p *CQLProxy) writeToAstra(f *frame.Frame, client string) error {
 		} else if fields[1] == "query" || fields[1] == "execute" {
 			queryType := query.Type(fields[2])
 
+			if fields[1] == "execute" {
+				err = p.updatePrepareID(f)
+				if err != nil {
+					return err
+				}
+			}
+
 			switch queryType {
 			case query.USE:
 				return p.handleUseQuery(fields[3], f, client, paths)
@@ -484,6 +515,33 @@ func (p *CQLProxy) writeToAstra(f *frame.Frame, client string) error {
 	}
 
 	return nil
+}
+
+func (p *CQLProxy) updatePrepareID(f *frame.Frame) error {
+	data := f.RawBytes
+	idLength := binary.BigEndian.Uint16(data[9:11])
+	preparedID := data[11:11+idLength]
+	if newPreparedID, ok := p.mappedPreparedIDs[string(preparedID)]; ok {
+		before := make([]byte, cassHdrLen)
+		copy(before, data[:cassHdrLen])
+		after := data[11+idLength:]
+
+		newLen := make([]byte, 2)
+		binary.BigEndian.PutUint16(newLen, uint16(len(newPreparedID)))
+
+		newBytes := before
+		newBytes = append(before, newLen...)
+		newBytes = append(newBytes, []byte(newPreparedID)...)
+		newBytes = append(newBytes, after...)
+
+		f.RawBytes = newBytes
+		binary.BigEndian.PutUint32(f.RawBytes[5:9], uint32(len(newBytes) - cassHdrLen))
+		f.Length = uint32(len(newBytes) - cassHdrLen)
+
+		return nil
+	}
+
+	return fmt.Errorf("no mapping for source prepared id %s to astra prepared id found", preparedID)
 }
 
 func (p *CQLProxy) astraReplyHandler(client net.Conn) {
@@ -530,18 +588,24 @@ func (p *CQLProxy) astraReplyHandler(client net.Conn) {
 					resultKind := binary.BigEndian.Uint32(data[9:13])
 					log.Debugf("resultKind = %d", resultKind)
 					if resultKind == 0x0004 {
-						idLen := binary.BigEndian.Uint16(data[13:15])
-						preparedID := string(data[15 : 15+idLen])
-						log.Debugf("Result with prepared-id = '%s' for stream-id %d", preparedID, resp.Stream)
-						path := p.preparedQueries.PreparedQueryPathByStreamID[resp.Stream]
-						if len(path) > 0 {
-							// found cached query path to associate with this preparedID
-							p.preparedQueries.PreparedQueryPathByPreparedID[preparedID] = path
-							log.Debugf("Associating query path '%s' with prepared-id %s as part of stream-id %d",
-								path, preparedID, resp.Stream)
-						} else {
-							log.Warnf("Unable to find prepared query path associated with stream-id %d", resp.Stream)
+						if sourcePreparedID, ok := p.preparedIDs[resp.Stream]; ok {
+							idLen := binary.BigEndian.Uint16(data[13:15])
+							astraPreparedID := string(data[15 : 15+idLen])
+
+							p.mappedPreparedIDs[sourcePreparedID] = astraPreparedID
 						}
+
+
+						//log.Debugf("Result with prepared-id = '%s' for stream-id %d", preparedID, resp.Stream)
+						//path := p.preparedQueries.PreparedQueryPathByStreamID[resp.Stream]
+						//if len(path) > 0 {
+						//	// found cached query path to associate with this preparedID
+						//	p.preparedQueries.PreparedQueryPathByPreparedID[preparedID] = path
+						//	log.Debugf("Associating query path '%s' with prepared-id %s as part of stream-id %d",
+						//		path, preparedID, resp.Stream)
+						//} else {
+						//	log.Warnf("Unable to find prepared query path associated with stream-id %d", resp.Stream)
+						//}
 					}
 				}
 
@@ -1087,6 +1151,10 @@ func (p *CQLProxy) reset() {
 	p.Keyspaces = make(map[string]string)
 	p.astraSessions = make(map[string]net.Conn)
 	p.queuesCompleteCond = sync.NewCond(&sync.Mutex{})
+	p.preparedIDs = make(map[uint16]string)
+	p.mappedPreparedIDs = make(map[string]string)
+	p.outstandingPrepares = make(map[uint16][]byte)
+	p.preparedQueryBytes = make(map[string][]byte)
 }
 
 func (p *CQLProxy) redirectActiveConnectionsToAstra() {
