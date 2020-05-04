@@ -5,6 +5,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// Config holds the values of environment variables necessary for proper Proxy function.
 type Config struct {
 	SourceHostname string `required:"true" split_words:"true"`
 	SourceUsername string `required:"true" split_words:"true"`
@@ -33,7 +34,7 @@ func New() *Config {
 	return &Config{}
 }
 
-// ParseEnvVars fills out the fields of the Config struct according to envconfig rules.
+// ParseEnvVars fills out the fields of the Config struct according to envconfig rules
 // See: Usage @ https://github.com/kelseyhightower/envconfig
 func (c *Config) ParseEnvVars() *Config {
 	err := envconfig.Process("", c)

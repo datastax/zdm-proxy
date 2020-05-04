@@ -3,22 +3,30 @@
 ## Overview
 
 The Migration Service creates two sessions, to a source cluster and destination cluster. We first create the tables in the destination cluster, and then use `dsbulk` to unload and load each table. 
-We track the status of each table and communicate w/ the proxy service with our own protocol on top of TCP. The status of the migration is also persisted onto disk in a .chk file that shows where migration stopped, in case any of the services fail during the process.
+We track the status of each table and communicate w/ the proxy service with our own protocol on top of TCP. The status of the migration is also stored on S3 in a .chk file that shows where migration stopped, in case any of the services fail during the process.
 
-## Script Flags
-    go run main.go
-      [-source_hostname Source cluster host (127.0.0.1)]
-      [-source_username Source cluster username]
-      [-source_password Source cluster password]
-      [-source_port Source cluster port (9042)]
-      [-astra_hostname Destination cluster host (127.0.0.1)]
-      [-astra_username Destinationcluster username]
-      [-astra_password Destination cluster password]
-      [-astra_port Destination cluster port (9042)]
-      [-d Dsbulk path]
-      [-r Boolean, ignores checkpoints if present (false)]
-      [-t Number of threads to use (1)]
-      [-pp Proxy service port, used to communicate w/ proxy service]
+## Environment Variables
+```
+export SOURCE_HOSTNAME            // Hostname of client's DB           (string)
+export SOURCE_USERNAME            // Username to access client's DB    (string) 
+export SOURCE_PASSWORD            // Password to access client's DB    (string)
+export SOURCE_PORT                // Port of client's DB               (int)
+export ASTRA_HOSTNAME             // Hostname of Astra DB              (string)
+export ASTRA_USERNAME             // Username to access Astra DB       (string) 
+export ASTRA_PASSWORD             // Password to access Astra DB       (string)
+export ASTRA_PORT                 // Port of Astra DB                  (int)
+export PROXY_QUERY_PORT           // Port proxy listens on for queries (int)
+export MIGRATION_COMPLETE         // Flag of migration status          (bool)
+export MIGRATION_SERVICE_HOSTNAME // Hostname of migration service     (string)
+export MIGRATION_PORT             // Port of migration service         (int)
+export PROXY_SERVICE_HOSTNAME     // Hostname of proxy service         (string)
+export PROXY_PORT                 // Port of proxy service             (int)
+export DSBULK_PATH		  // Dsbulk path		       (string)
+export THREADS			  // Size of worker pool	       (int)
+export HARD_RESTART		  // Restarts migration		       (bool)
+export DEBUG			  // For testing		       (bool)
+```
+These environment variables are read and processed into a Config struct, which is passed into the Migration Service.
 ## Migrating Schema
 
 Our script uses GoCQL to pull schema information from the source cluster. We then build and run queries to create identical tables on the Astra cluster. The pseudocode is shown below:
@@ -53,13 +61,17 @@ Migration pseudocode is shown below:
     // wait for all threads to complete migrating data
     notifyProxy() // notify that migration has been completed
 
-Unloading data from the source database:
+Unloading data from the source database (store dsbulk CSVs in S3):
 
-    cmdArgs := []string{"unload", "-port", strconv.Itoa(sourcePort), "-query", query, -k", table.Keyspace, "-t", table.Name, "-url", directory + table.Name}
+    unloadCmdArgs := []string{"unload", "-k", table.Keyspace, "-port", strconv.Itoa(m.Conf.SourcePort), "-query", query, "-logDir", m.directory}
+	awsStreamArgs := []string{"s3", "cp", "-", "s3://codebase-datastax-test/" + m.directory + table.Keyspace + "." + table.Name}
 
-Loading data into destination database:
+Loading data into destination database (get dsbulk CSVs from S3):
 
-    cmdArgs := []string{"load", "-h", destinationHost, "-port", strconv.Itoa(destinationPort), "-query", query, "-k", table.Keyspace, "-t", table.Name, "-url", directory + table.Name}
+    loadCmdArgs := []string{
+		"load", "-k", table.Keyspace, "-h", m.Conf.AstraHostname, "-port", strconv.Itoa(m.Conf.AstraPort), "-query", query,
+		"-logDir", m.directory, "--batch.mode", "DISABLED"}
+	awsStreamArgs := []string{"s3", "cp", "s3://codebase-datastax-test/" + m.directory + table.Keyspace + "." + table.Name, "-"}
 
 The query parameter passed into the dsbulk unload command allows us to preserve the writetime and TTL of each column. Then when we are loading the data into Astra, we will load using batch statements to ensure the last write persists. An example can be found here: https://www.datastax.com/blog/2019/12/datastax-bulk-loader-examples-loading-other-locations 
 
@@ -92,10 +104,31 @@ Building the Load query:
         return query
     }
 
+In each of the queries above, we are also accounting for case-sensitive keyspace/table/column names by putting names with uppercase letters in quotes.
+
+Formatting the uppercase names for gocql:
+```
+func HasUpper(name string) string {
+  if checkUpper(name) {
+    return strconv.Quote(name)
+  }
+  return name
+}
+```
+
+Formatting the uppercase names for dsbulk:
+```
+func DsbulkUpper(name string) string {
+  if checkUpper(name) {
+    return "\\\"" + name + "\\\""
+  }
+  return name
+}
+```
 
 ## Priority Queue
 
-(In progress) To handle edge cases such as updating table data as it is being migrated, we implement a priority queue which will order the tables based on table.Priority. The proxy service will hold update queries until the migration service notifies it that the table to be queried has been successfully migrated.
+To handle edge cases such as updating table data as it is being migrated, we implement a priority queue which will order the tables based on table.Priority. The proxy service will hold update queries until the migration service notifies it that the table to be queried has been successfully migrated. When the proxy service sends us a TableUpdate update, we will increment the table's priority in the priority queue if it hasn't already been migrated.
 
 ## Communicating w/ Proxy Service
 
@@ -107,6 +140,7 @@ We use Golang’s `net` package to communicate w/ the proxy service using our ow
     // TableUpdate, Start, Complete, ... are the enums of the update types
     const (
         TableUpdate = iota
+        TableRestart
         Start
         Complete
         Shutdown
@@ -132,7 +166,9 @@ The migration service sends an update to the proxy service when:
 The Migration Service expects requests from the Proxy Service when:
 
 1. There is an update to the migration priority for a table
-2. The proxy service errors and shuts down
+2. A single table's migration needs to be restarted
+3. Proxy has successfully received and handled a migration update
+4. Proxy has failed handling a migration update
 ## Checkpoints
 
 We save checkpoints by writing to a `migration.chk` file. We overwrite the checkpoint when a table’s schema is done migrating, or when dsbulk finishes migrating a table’s data. The checkpoint file contains data on which tables are done migrating schema and/or data. The "s" prefix means the table schema has been successfully migrated, and the "d" prefix means the table data has been successfully unloaded and loaded. The below checkpoint file shows that the schemas for `k1.tasks` and `k2.todos` are done migrating, and that dsbulk has finished migrating data for `k1.tasks`. As mentioned below, this file will be saved to a S3 bucket for volume purposes.
@@ -169,19 +205,20 @@ We log information to standard output. We also create a unique directory `migrat
     [2020-04-15 17:13:29.596774 -0700 PDT m=+14.636570478] COMPLETED MIGRATION
 ## S3
 
-(In progress) With very large tables, storing the dsbulk CSVs in local disk on the k8 nodes is not scalable. Therefore we will be saving the CSVs as well as the migration checkpoint file to an S3 bucket (by passing the S3 bucket’s URL into dsbulk) to handle the volume.
+With very large tables, storing the dsbulk CSVs in local disk on the k8 nodes is not scalable. Therefore we will be saving the CSVs as well as the migration checkpoint file to an S3 bucket (by piping the output of dsbulk to S3) to handle the volume.
 
 ## Testing
 
 (In progress) 
 
 ## Constraints/Assumptions
-- dsbulk will not fail
-- Client will not be able to alter the schema of their keyspace (or tables?)
-- No weird stuff
+- Client and Astra DB permissions will be provided to the service
+- S3 credentials will be provided to the service
+- Keyspace(s) will already exist in both databases
+- Dsbulk will not fail, if dsbulk returns an error, the migration process will halt.
+- Client will not be able to alter the schema of their keyspace or tables. Since our service only notifies proxy that the migration service is starting after migrating all of the schema, a dsbulk load into a table whose keyspace has been changed will fail.
+- Migration service will not automatically restart if the proxy service fails. Currently needs to be restarted manually.
+
 ## TODOs
-- Integrate S3 buckets to store exports, logs, checkpoint files, etc.
-- Handle updates from the proxy service
-- Priority queue for ordering table migrations
 - Write tests
 
