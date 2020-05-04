@@ -1,0 +1,14 @@
+2020-05-02 18:56:42 INFO  Operation directory: /Users/isabellezhou/go/src/cloud-gate/logs/UNLOAD_20200502-185642-193863
+2020-05-02 18:56:45 ERROR Operation UNLOAD_20200502-185642-193863 failed: Undefined column name tasks.
+com.datastax.oss.driver.api.core.servererrors.InvalidQueryException: Undefined column name tasks
+	at com.datastax.oss.driver.api.core.servererrors.InvalidQueryException.copy(InvalidQueryException.java:48)
+	at com.datastax.oss.driver.internal.core.util.concurrent.CompletableFutures.getUninterruptibly(CompletableFutures.java:149)
+	at com.datastax.oss.driver.internal.core.cql.CqlPrepareSyncProcessor.process(CqlPrepareSyncProcessor.java:59)
+	at com.datastax.oss.driver.internal.core.cql.CqlPrepareSyncProcessor.process(CqlPrepareSyncProcessor.java:31)
+	at com.datastax.oss.driver.internal.core.session.DefaultSession.execute(DefaultSession.java:210)
+	at com.datastax.oss.driver.api.core.cql.SyncCqlSession.prepare(SyncCqlSession.java:165)
+	at com.datastax.dsbulk.engine.internal.settings.SchemaSettings.prepareStatementAndCreateMapping(SchemaSettings.java:623)
+	at com.datastax.dsbulk.engine.internal.settings.SchemaSettings.createReadResultMapper(SchemaSettings.java:459)
+	at com.datastax.dsbulk.engine.UnloadWorkflow.init(UnloadWorkflow.java:145)
+	at com.datastax.dsbulk.engine.DataStaxBulkLoader$WorkflowThread.run(DataStaxBulkLoader.java:127)
+2020-05-02 18:56:48 INFO  Final stats:

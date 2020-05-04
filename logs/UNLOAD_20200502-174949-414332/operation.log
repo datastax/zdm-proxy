@@ -1,0 +1,9 @@
+2020-05-02 17:49:49 INFO  Operation directory: /Users/isabellezhou/go/src/cloud-gate/logs/UNLOAD_20200502-174949-414332
+2020-05-02 17:49:53 WARN  Continuous paging is not available, read performance will not be optimal. Check your remote DSE cluster configuration, and ensure that the configured consistency level is either ONE or LOCAL_ONE.
+2020-05-02 17:49:55 INFO  Operation UNLOAD_20200502-174949-414332 completed successfully in 1 seconds.
+2020-05-02 17:49:57 INFO  Final stats:
+2020-05-02 17:49:57 INFO  Records: total: 3, successful: 3, failed: 0
+2020-05-02 17:49:57 INFO  Memory usage: used: 42 MB, free: 213 MB, allocated: 256 MB, available: 4,096 MB, total gc count: 4, total gc time: 31 ms
+2020-05-02 17:49:57 INFO  Reads: total: 3, successful: 3, failed: 0, in-flight: 0
+2020-05-02 17:49:57 INFO  Throughput: 1 reads/second
+2020-05-02 17:49:57 INFO  Latencies: mean 50.33, 75p 79.69, 99p 79.69, 999p 79.69 milliseconds

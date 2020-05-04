@@ -1,0 +1,10 @@
+2020-05-02 18:43:46 INFO  Operation directory: /Users/isabellezhou/go/src/cloud-gate/logs/LOAD_20200502-184345-595696
+2020-05-02 18:43:51 INFO  Operation LOAD_20200502-184345-595696 completed successfully in 0 seconds.
+2020-05-02 18:43:53 INFO  Final stats:
+2020-05-02 18:43:53 INFO  Records: total: 3, successful: 3, failed: 0
+2020-05-02 18:43:53 INFO  Batches: total: 3, size: 1.00 mean, 1 min, 1 max
+2020-05-02 18:43:53 INFO  Memory usage: used: 52 MB, free: 203 MB, allocated: 256 MB, available: 4,096 MB, total gc count: 5, total gc time: 32 ms
+2020-05-02 18:43:53 INFO  Writes: total: 3, successful: 3, failed: 0, in-flight: 0
+2020-05-02 18:43:53 INFO  Throughput: 1 writes/second
+2020-05-02 18:43:53 INFO  Latencies: mean 20.04, 75p 26.21, 99p 26.21, 999p 26.21 milliseconds
+2020-05-02 18:43:53 INFO  Last processed positions can be found in positions.txt
