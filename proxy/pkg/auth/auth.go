@@ -128,6 +128,11 @@ func readyMessage(startupFrame []byte) []byte {
 // HandleOptions tunnels the OPTIONS request from the client to the database, and then
 // tunnels the corresponding SUPPORTED response back from the database to the client.
 func HandleOptions(client net.Conn, db net.Conn, f []byte) error {
+	if f[4] != 0x05 {
+		return fmt.Errorf("non OPTIONS frame sent into HandleOption for connection %s -> %s",
+			client.RemoteAddr(), db.RemoteAddr())
+	}
+
 	_, err := db.Write(f)
 	if err != nil {
 		return err
@@ -139,7 +144,18 @@ func HandleOptions(client net.Conn, db net.Conn, f []byte) error {
 		return err
 	}
 
-	_, err = client.Write(buf[:bytesRead])
+	if bytesRead < 9 {
+		return fmt.Errorf("received invalid CQL response from database while setting up OPTIONS for " +
+			"connection %s -> %s", client.RemoteAddr(), db.RemoteAddr())
+	}
+
+	resp := buf[:bytesRead]
+	if resp[4] != 0x06 {
+		return fmt.Errorf("non SUPPORTED frame received from database for connection %s -> %s",
+			client.RemoteAddr(), db.RemoteAddr())
+	}
+
+	_, err = client.Write(resp)
 	if err != nil {
 		return err
 	}
