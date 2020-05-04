@@ -276,8 +276,7 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 		}
 
 		data := append(frameHeader, frameBody...)
-
-		log.Debugf("%s -> %s: %v", src.RemoteAddr(), dst.RemoteAddr(), data)
+		log.Debugf("(%s -> %s): %v", src.RemoteAddr(), dst.RemoteAddr(), data)
 
 		if len(data) > cassMaxLen {
 			log.Error("query larger than max allowed by Cassandra, ignoring.")
@@ -291,8 +290,6 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 			log.Errorf("compression flag for stream %d set, unable to parse query beyond header", f.Stream)
 			continue
 		}
-
-		//log.Infof("%s sent %v", src.RemoteAddr(), data)
 
 		// Frame from an unauthenticated client
 		if f.Direction == 0 && !authenticated {
@@ -343,7 +340,6 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 			p.lock.Unlock()
 		}
 
-		//log.Debugf("writing %s -> %s", sourceAddress, destAddress)
 		_, err = dst.Write(data)
 		if err != nil {
 			log.Error(err)
@@ -584,17 +580,6 @@ func (p *CQLProxy) astraReplyHandler(client net.Conn) {
 
 							p.mappedPreparedIDs[sourcePreparedID] = astraPreparedID
 						}
-
-						//log.Debugf("Result with prepared-id = '%s' for stream-id %d", preparedID, resp.Stream)
-						//path := p.preparedQueries.PreparedQueryPathByStreamID[resp.Stream]
-						//if len(path) > 0 {
-						//	// found cached query path to associate with this preparedID
-						//	p.preparedQueries.PreparedQueryPathByPreparedID[preparedID] = path
-						//	log.Debugf("Associating query path '%s' with prepared-id %s as part of stream-id %d",
-						//		path, preparedID, resp.Stream)
-						//} else {
-						//	log.Warnf("Unable to find prepared query path associated with stream-id %d", resp.Stream)
-						//}
 					}
 				}
 

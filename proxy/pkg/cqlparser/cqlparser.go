@@ -67,13 +67,6 @@ func CassandraParseRequest(preparedQueryBytes map[string][]byte, data []byte) ([
 		}
 
 		path = "/" + path + "/" + action + "/" + table
-		//if opcode == 0x09 {
-		//	// stash 'path' for this prepared query based on stream id
-		//	// rewrite 'opcode' portion of the path to be 'execute' rather than 'prepare'
-		//	streamID := binary.BigEndian.Uint16(data[2:4])
-		//	log.Debugf("Prepare query path '%s' with stream-id %d", path, streamID)
-		//	p.PreparedQueryPathByStreamID[streamID] = strings.Replace(path, "prepare", "execute", 1)
-		//}
 		return []string{path}, nil
 	} else if opcode == 0x0d {
 		// batch
@@ -118,16 +111,7 @@ func CassandraParseRequest(preparedQueryBytes map[string][]byte, data []byte) ([
 					return []string{UnknownPreparedQueryPath}, nil
 				}
 
-				//path := p.PreparedQueryPathByPreparedID[preparedID]
-				//if len(path) > 0 {
-				//	paths[i] = path
-				//} else {
-				//	log.Warnf("No cached entry for prepared-id = '%s' in batch", preparedID)
-				//
-				//	return []string{UnknownPreparedQueryPath}, nil
-				//}
 				offset = offset + 3 + idLen
-
 				offset = ReadPastBatchValues(data, offset)
 			} else {
 				log.Errorf("unexpected value of 'kind' in batch query: %d", kind)
@@ -158,7 +142,6 @@ func CassandraParseRequest(preparedQueryBytes map[string][]byte, data []byte) ([
 
 	} else {
 		// other opcode, just return type of opcode
-
 		return []string{"/" + path}, nil
 	}
 }
