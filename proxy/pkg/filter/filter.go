@@ -526,8 +526,9 @@ func (p *CQLProxy) updatePrepareID(f *frame.Frame) error {
 	for {
 		_, ok := p.mappedPreparedIDs[string(preparedID)]
 		if ok {
-			break;
+			break
 		}
+		time.Sleep(100 * time.Millisecond)
 	}
 
 	if newPreparedID, ok := p.mappedPreparedIDs[string(preparedID)]; ok {
