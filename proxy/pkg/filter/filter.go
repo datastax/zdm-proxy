@@ -229,11 +229,15 @@ func (p *CQLProxy) handleClientConnection(client net.Conn) {
 
 // Should only be called when migration is currently running
 func (p *CQLProxy) forward(src, dst net.Conn) {
-	defer src.Close()
-	defer dst.Close()
-
 	sourceAddress := src.RemoteAddr().String()
 	destAddress := dst.RemoteAddr().String()
+
+	// Upon redirecting active connections, forward from source->client will close.
+	// We don't want to close connections in that case.
+	if destAddress == p.sourceIP {
+		defer src.Close()
+		defer dst.Close()
+	}
 
 	pointsToSource := sourceAddress == p.sourceIP || destAddress == p.sourceIP
 	authenticated := false
@@ -276,7 +280,7 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 		}
 
 		data := append(frameHeader, frameBody...)
-		log.Debugf("(%s -> %s): %v", src.RemoteAddr(), dst.RemoteAddr(), data)
+		// log.Debugf("(%s -> %s): %v", src.RemoteAddr(), dst.RemoteAddr(), data)
 
 		if len(data) > cassMaxLen {
 			log.Error("query larger than max allowed by Cassandra, ignoring.")
