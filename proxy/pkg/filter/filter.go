@@ -521,6 +521,15 @@ func (p *CQLProxy) updatePrepareID(f *frame.Frame) error {
 	data := f.RawBytes
 	idLength := binary.BigEndian.Uint16(data[9:11])
 	preparedID := data[11:11+idLength]
+
+	// Ensures that the mapping of source preparedID to astraPreparedID has finished executing
+	for {
+		_, ok := p.mappedPreparedIDs[string(preparedID)]
+		if ok {
+			break;
+		}
+	}
+
 	if newPreparedID, ok := p.mappedPreparedIDs[string(preparedID)]; ok {
 		before := make([]byte, cassHdrLen)
 		copy(before, data[:cassHdrLen])
