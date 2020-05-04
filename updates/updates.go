@@ -126,7 +126,7 @@ func CommunicationHandler(src net.Conn, dst net.Conn, handler func(update *Updat
 		}
 
 		if bytesRead < 4 {
-			log.Error("not full update length header")
+			log.Error("Received updated does not have full update length header")
 			continue
 		}
 
@@ -134,7 +134,7 @@ func CommunicationHandler(src net.Conn, dst net.Conn, handler func(update *Updat
 		buf := make([]byte, updateLen)
 		bytesRead, err = src.Read(buf)
 		if uint32(bytesRead) < updateLen {
-			log.Error("full update not sent")
+			log.Error("Received update has missing bytes")
 			continue
 		}
 
@@ -142,7 +142,7 @@ func CommunicationHandler(src net.Conn, dst net.Conn, handler func(update *Updat
 		var update Update
 		err = json.Unmarshal(buf, &update)
 		if err != nil {
-			log.Error(err)
+			log.WithError(err).Error("Error unmarshalling received")
 			continue
 		}
 
@@ -156,12 +156,12 @@ func CommunicationHandler(src net.Conn, dst net.Conn, handler func(update *Updat
 			}
 
 			if err != nil {
-				log.Error(err)
+				log.WithError(err).Error("Error creating success/failure response")
 			}
 
 			_, err = dst.Write(resp)
 			if err != nil {
-				log.Error(err)
+				log.WithError(err).Error("Error sending success/failure response")
 			}
 		}
 	}
