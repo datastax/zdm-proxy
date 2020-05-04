@@ -220,5 +220,9 @@ With very large tables, storing the dsbulk CSVs in local disk on the k8 nodes is
 - Migration service will not automatically restart if the proxy service fails. Currently needs to be restarted manually.
 
 ## TODOs
-- Write tests
+- Complete automatic restart functionality
+- Fix TTLs in dsbulk queries
+- Show metrics (?)
+- Ignore compaction map in schema
+- Code cleanup
 
