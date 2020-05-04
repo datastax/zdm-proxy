@@ -928,10 +928,8 @@ func (p *CQLProxy) handleUpdate(update *updates.Update) error {
 		}
 
 		if table, ok := p.migrationStatus.Tables[tableUpdate.Keyspace][tableUpdate.Name]; ok {
-			if p.tablePaused[table.Keyspace][table.Name] && tableUpdate.Step == migration.LoadingDataComplete {
-				p.startTable(table.Keyspace, table.Name)
-			}
 			table.Update(&tableUpdate)
+			p.checkStart(tableUpdate.Keyspace, tableUpdate.Name)
 		} else {
 			return fmt.Errorf("table %s.%s does not exist", tableUpdate.Keyspace, tableUpdate.Name)
 		}
@@ -984,6 +982,16 @@ func (p *CQLProxy) getAstraSession(client string) net.Conn {
 	return p.astraSessions[client]
 }
 
+func (p *CQLProxy) checkStart(keyspace string, tableName string) {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+
+	status := p.tableStatus(keyspace, tableName)
+	if p.tablePaused[keyspace][tableName] && status == migration.LoadingDataComplete {
+		p.startTable(keyspace, tableName)
+	}
+}
+
 func (p *CQLProxy) checkStop(keyspace string, tableName string) {
 	p.lock.Lock()
 	defer p.lock.Unlock()
@@ -1014,8 +1022,6 @@ func (p *CQLProxy) tableStatus(keyspace string, tableName string) migration.Step
 // Assumes caller has p.lock acquired.
 func (p *CQLProxy) stopTable(keyspace string, tableName string) {
 	log.Debugf("Stopping query consumption on %s.%s", keyspace, tableName)
-	p.lock.Lock()
-	defer p.lock.Unlock()
 
 	p.tablePaused[keyspace][tableName] = true
 	p.queueLocks[keyspace][tableName].Lock()
@@ -1023,10 +1029,9 @@ func (p *CQLProxy) stopTable(keyspace string, tableName string) {
 
 // startTable releases the queueLock for a table so that the consumeQueue function
 // can resume processing queries for the table.
+// Assumes caller has p.lock acquired.
 func (p *CQLProxy) startTable(keyspace string, tableName string) {
 	log.Debugf("Starting query consumption on %s.%s", keyspace, tableName)
-	p.lock.Lock()
-	defer p.lock.Unlock()
 
 	p.tablePaused[keyspace][tableName] = false
 	p.queueLocks[keyspace][tableName].Unlock()
