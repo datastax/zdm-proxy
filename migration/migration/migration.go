@@ -249,19 +249,40 @@ func generateSchemaMigrationQuery(table *gocql.TableMetadata, compactionMap map[
 		query += fmt.Sprintf("%s %s, ", cname, column.Type.Type().String())
 	}
 
+	query += fmt.Sprintf("PRIMARY KEY (")
+
 	for _, column := range table.PartitionKey {
 		primaryKey := utils.HasUpper(column.Name)
-		query += fmt.Sprintf("PRIMARY KEY (%s),", primaryKey)
+		query += fmt.Sprintf("%s, ", primaryKey)
 	}
 
-	query += ") "
+	clustering := false
+	clusterDesc := ""
+	if len(table.ClusteringColumns) > 0 {
+		clustering = true
+		for _, column := range table.ClusteringColumns {
+			clusterKey := utils.HasUpper(column.Name)
+			query += fmt.Sprintf("%s, ", clusterKey)
+			clusterDesc += fmt.Sprintf("%s %s, ", clusterKey, column.ClusteringOrder)
+		}
+	}
+
+	query = query[0:(len(query) - 2)]
+	query += ")) "
+
+	if clustering {
+		clusterDesc = clusterDesc[0:(len(clusterDesc) - 2)]
+		query += fmt.Sprintf("WITH CLUSTERING ORDER BY (%s) AND ", clusterDesc)
+	} else {
+		query += "WITH "
+	}
 
 	cString := "{"
 	for key, value := range compactionMap {
 		cString += fmt.Sprintf("'%s': '%s', ", key, value)
 	}
 	cString = cString[0:(len(cString)-2)] + "}"
-	query += fmt.Sprintf("WITH compaction = %s;", cString)
+	query += fmt.Sprintf("compaction = %s;", cString)
 
 	return query
 }
@@ -356,7 +377,7 @@ func (m *Migration) buildUnloadQuery(table *gocql.TableMetadata) string {
 	query := "SELECT "
 	for colName, column := range table.Columns {
 		cname := utils.DsbulkUpper(colName)
-		if column.Kind == gocql.ColumnPartitionKey {
+		if column.Kind == gocql.ColumnPartitionKey || column.Kind == gocql.ColumnClusteringKey {
 			query += cname + ", "
 			continue
 		}
@@ -405,17 +426,31 @@ func (m *Migration) unloadTable(table *gocql.TableMetadata) error {
 
 func (m *Migration) buildLoadQuery(table *gocql.TableMetadata) string {
 	query := "BEGIN BATCH "
-	partitionKey := utils.DsbulkUpper(table.PartitionKey[0].Name)
+	partitionKeys := ""
+	partitionKeysColons := ""
+	for _, column := range table.PartitionKey {
+		primaryKey := utils.HasUpper(column.Name)
+		partitionKeys += fmt.Sprintf("%s, ", primaryKey)
+		partitionKeysColons += fmt.Sprintf(":%s, ", primaryKey)
+	}
+
+	if len(table.ClusteringColumns) > 0 {
+		for _, column := range table.ClusteringColumns {
+			clusterKey := utils.HasUpper(column.Name)
+			partitionKeys += fmt.Sprintf("%s, ", clusterKey)
+			partitionKeysColons += fmt.Sprintf(":%s, ", clusterKey)
+		}
+	}
 	tableName := utils.DsbulkUpper(table.Name)
-	for colName := range table.Columns {
+	for colName, column := range table.Columns {
 		cname := utils.DsbulkUpper(colName)
-		if cname == partitionKey {
+		if column.Kind == gocql.ColumnPartitionKey || column.Kind == gocql.ColumnClusteringKey {
 			continue
 		}
 		writeTime := utils.DsbulkUpper("w_" + colName)
 		ttl := utils.DsbulkUpper("l_" + colName)
-		query += fmt.Sprintf("INSERT INTO %[1]s(%[2]s, %[3]s) VALUES (:%[2]s, :%[3]s) USING TIMESTAMP :%[4]s AND TTL :%[5]s; ",
-			tableName, partitionKey, cname, writeTime, ttl)
+		query += fmt.Sprintf("INSERT INTO %[1]s(%[2]s%[3]s) VALUES (%[6]s:%[3]s) USING TIMESTAMP :%[4]s AND TTL :%[5]s; ",
+			tableName, partitionKeys, cname, writeTime, ttl, partitionKeysColons)
 	}
 	query += "APPLY BATCH;"
 	return query
