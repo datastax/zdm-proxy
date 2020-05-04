@@ -14,6 +14,8 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+var reqMap = make(map[string]chan bool)
+
 // EstablishConnection connects to Proxy Service
 func EstablishConnection(hostname string) net.Conn {
 	b := &backoff.Backoff{
@@ -28,7 +30,7 @@ func EstablishConnection(hostname string) net.Conn {
 		conn, err := net.Dial("tcp", hostname)
 		if err != nil {
 			nextDuration := b.Duration()
-			log.Info(fmt.Sprintf("Couldn't connect to Proxy Service, retrying in %s...", nextDuration.String()))
+			log.WithError(err).Info(fmt.Sprintf("Couldn't connect to Proxy Service, retrying in %s...", nextDuration.String()))
 			time.Sleep(nextDuration)
 			continue
 		}
@@ -56,6 +58,7 @@ func ListenProxy() error {
 
 		updates.CommunicationHandler(conn, conn, func(req *updates.Update) error {
 			log.Info("RECEIVED UPDATE: ", req)
+			reqMap[req.ID] <- req.Type == updates.Success
 			return nil
 		})
 	}
@@ -129,12 +132,12 @@ func SendMigrationComplete(conn net.Conn) {
 
 // SendRequest will notify the proxy service about the migration progress
 func SendRequest(req *updates.Update, conn net.Conn) {
+	reqMap[req.ID] = make(chan bool)
 	err := updates.Send(req, conn)
 	if err != nil {
 		log.WithError(err).Errorf("Error sending request %s", req.ID)
 	}
 	log.Info(fmt.Sprintf("SEND UPDATE: Type %d; ID %s", req.Type, req.ID))
 
-	log.Info("Sleeping...")
-	time.Sleep(time.Second * 2)
+	<-reqMap[req.ID]
 }

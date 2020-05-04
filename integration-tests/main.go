@@ -5,12 +5,16 @@ import (
 	"cloud-gate/integration-tests/test1"
 	"cloud-gate/utils"
 	"fmt"
-	"time"
+
+	"github.com/gocql/gocql"
 
 	log "github.com/sirupsen/logrus"
 )
 
 func main() {
+	gocql.TimeoutLimit = 5
+	log.SetLevel(log.DebugLevel)
+
 	// Initialize test data
 	test.DataIds = []string{
 		"cf0f4cf0-8c20-11ea-9fc6-6d2c86545d91",
@@ -35,27 +39,18 @@ func main() {
 	}
 	defer destSession.Close()
 
-	// Drop all existing data
-	test.DropExistingKeyspace(sourceSession, destSession)
-
 	// Seed source and dest with keyspace
 	test.SeedKeyspace(sourceSession, destSession)
 
 	// Seed source and dest w/ schema and data
 	test.SeedData(sourceSession, destSession)
 
-	// TODO:
 	// proxyCommand := exec.Command("go", "run", "./proxy/main.go")
 	// proxyCommand.Env = os.Environ()
+	// proxyCommand.Start()
+	// log.Info("PROXY STARTED")
 
 	go test.ListenProxy()
-
-	// proxyCommand.Start() TODO:
-
-	log.Info("PROXY STARTED")
-
-	log.Info("Sleeping...")
-	time.Sleep(time.Second * 10)
 
 	// Establish connection w/ proxy
 	conn := test.EstablishConnection(fmt.Sprintf("127.0.0.1:14000"))

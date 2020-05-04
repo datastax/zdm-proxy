@@ -21,29 +21,15 @@ var DataIds []string
 // DataTasks is the seed task column data
 var DataTasks []string
 
-// DropExistingKeyspace drops TestKeyspace from the specified session
-func DropExistingKeyspace(source *gocql.Session, dest *gocql.Session) {
-	log.Info("Dropping existing data...")
-	err := source.Query(fmt.Sprintf("DROP KEYSPACE %s;", TestKeyspace)).Exec()
-	if err != nil {
-		log.WithError(err).Error("Failed to drop keyspace from source cluster.")
-	}
-
-	err = dest.Query(fmt.Sprintf("DROP KEYSPACE %s;", TestKeyspace)).Exec()
-	if err != nil {
-		log.WithError(err).Error("Failed to drop keyspace from dest cluster.")
-	}
-}
-
 // SeedKeyspace seeds the specified source and dest sessions with TestKeyspace
 func SeedKeyspace(source *gocql.Session, dest *gocql.Session) {
 	log.Info("Seeding keyspace...")
-	err := source.Query(fmt.Sprintf("CREATE KEYSPACE %s WITH replication = {'class':'SimpleStrategy', 'replication_factor':1};", TestKeyspace)).Exec()
+	err := source.Query(fmt.Sprintf("CREATE KEYSPACE IF NOT EXISTS %s WITH replication = {'class':'SimpleStrategy', 'replication_factor':1};", TestKeyspace)).Exec()
 	if err != nil {
 		log.WithError(err).Error("Failed to seed keyspace in source cluster.")
 	}
 
-	err = dest.Query(fmt.Sprintf("CREATE KEYSPACE %s WITH replication = {'class':'SimpleStrategy', 'replication_factor':1};", TestKeyspace)).Exec()
+	err = dest.Query(fmt.Sprintf("CREATE KEYSPACE IF NOT EXISTS %s WITH replication = {'class':'SimpleStrategy', 'replication_factor':1};", TestKeyspace)).Exec()
 	if err != nil {
 		log.WithError(err).Error("Failed to seed keyspace in dest cluster.")
 	}
@@ -52,9 +38,21 @@ func SeedKeyspace(source *gocql.Session, dest *gocql.Session) {
 // SeedData seeds the specified source and dest sessions with data in data.go
 // Currently, this includes DataIds and DataTasks
 func SeedData(source *gocql.Session, dest *gocql.Session) {
+	log.Info("Drop existing data...")
+	// Create the table in source
+	err := source.Query(fmt.Sprintf("DROP TABLE IF EXISTS %s.%s;", TestKeyspace, TestTable)).Exec()
+	if err != nil {
+		log.WithError(err).Error("Error dropping table in source cluster.")
+	}
+
+	err = dest.Query(fmt.Sprintf("DROP TABLE IF EXISTS %s.%s;", TestKeyspace, TestTable)).Exec()
+	if err != nil {
+		log.WithError(err).Error("Error dropping table in dest cluster.")
+	}
+
 	log.Info("Seeding tables...")
 	// Create the table in source
-	err := source.Query(fmt.Sprintf("CREATE TABLE %s.%s(id UUID, task text, PRIMARY KEY(id));", TestKeyspace, TestTable)).Exec()
+	err = source.Query(fmt.Sprintf("CREATE TABLE %s.%s(id UUID, task text, PRIMARY KEY(id));", TestKeyspace, TestTable)).Exec()
 	if err != nil {
 		log.WithError(err).Error("Error creating table in source cluster.")
 	}
