@@ -72,9 +72,7 @@ func (q *Query) UsingTimestamp() *Query {
 
 	flags := q.Query[flagsByte]
 
-	// Query already includes timestamp, ignore
-	// Byte 0x20 of the flags portion of the query represent whether or not a timestamp
-	// will be included with this query
+	// Query already includes timestamp
 	if flags&timestampBit == timestampBit {
 		return q
 	}
@@ -104,7 +102,7 @@ func (q *Query) getFlagsByte() int {
 		return 15 + int(queryLen)
 	case 0x0a:
 		// EXECUTE query
-		queryLen := binary.BigEndian.Uint32(q.Query[9:11])
+		queryLen := binary.BigEndian.Uint16(q.Query[9:11])
 		return 13 + int(queryLen)
 	case 0x0d:
 		// BATCH query
