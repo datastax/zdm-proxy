@@ -6,7 +6,6 @@ import (
 	"cloud-gate/utils"
 	"fmt"
 	"net"
-	"os"
 
 	"github.com/gocql/gocql"
 	log "github.com/sirupsen/logrus"
@@ -63,5 +62,4 @@ func Test1(c net.Conn, source *gocql.Session, dest *gocql.Session) {
 	test.Assert("terrance", task.Task)
 
 	log.Info("Success!")
-	os.Exit(0)
 }

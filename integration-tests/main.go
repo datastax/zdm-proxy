@@ -5,6 +5,9 @@ import (
 	"cloud-gate/integration-tests/test1"
 	"cloud-gate/utils"
 	"fmt"
+	"os"
+	"os/exec"
+	"syscall"
 
 	"github.com/gocql/gocql"
 
@@ -45,10 +48,11 @@ func main() {
 	// Seed source and dest w/ schema and data
 	test.SeedData(sourceSession, destSession)
 
-	// proxyCommand := exec.Command("go", "run", "./proxy/main.go")
-	// proxyCommand.Env = os.Environ()
-	// proxyCommand.Start()
-	// log.Info("PROXY STARTED")
+	proxyCommand := exec.Command("go", "run", "./proxy/main.go")
+	proxyCommand.Env = os.Environ()
+	proxyCommand.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	proxyCommand.Start()
+	log.Info("PROXY STARTED")
 
 	go test.ListenProxy()
 
@@ -57,4 +61,13 @@ func main() {
 
 	// Run test package here
 	test1.Test1(conn, sourceSession, destSession)
+
+	// Kill the proxy
+	pgid, err := syscall.Getpgid(proxyCommand.Process.Pid)
+	if err == nil {
+		syscall.Kill(-pgid, 15)
+	}
+	proxyCommand.Wait()
+
+	os.Exit(0)
 }
