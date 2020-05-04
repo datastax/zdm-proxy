@@ -61,7 +61,7 @@ func ListenProxy() error {
 	}
 }
 
-// PrintProxyOutput logs proxy info
+// PrintProxyOutput logs prox
 func PrintProxyOutput(proxyOut io.ReadCloser) {
 	for {
 		var b []byte
@@ -133,4 +133,5 @@ func SendRequest(req *updates.Update, conn net.Conn) {
 	if err != nil {
 		log.WithError(err).Errorf("Error sending request %s", req.ID)
 	}
+	log.Info(fmt.Sprintf("SEND UPDATE: Type %d; ID %s", req.Type, req.ID))
 }

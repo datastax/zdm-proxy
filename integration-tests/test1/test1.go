@@ -3,8 +3,10 @@ package test1
 import (
 	"cloud-gate/integration-tests/test"
 	"cloud-gate/migration/migration"
+	"cloud-gate/utils"
 	"fmt"
 	"net"
+	"time"
 
 	"github.com/gocql/gocql"
 	log "github.com/sirupsen/logrus"
@@ -14,9 +16,20 @@ import (
 // Unloads the source database,
 // performs an update where through the proxy
 // then loads the unloaded data into the destination
-func Test1(c net.Conn, source *gocql.Session, dest *gocql.Session, proxy *gocql.Session) {
+func Test1(c net.Conn, source *gocql.Session, dest *gocql.Session) {
 	// Send start
 	test.SendStart(c)
+
+	log.Info("Sleeping...")
+	time.Sleep(time.Second * 2)
+	log.Info("Attempting to connect to db as client through proxy...")
+
+	// Connect to proxy as a "client"
+	proxy, err := utils.ConnectToCluster("127.0.0.1", "", "", 14002)
+
+	if err != nil {
+		log.WithError(err).Error("Unable to connect to proxy session.")
+	}
 
 	// Send unload table
 	test.SendTableUpdate(migration.UnloadingData, c)
@@ -25,7 +38,7 @@ func Test1(c net.Conn, source *gocql.Session, dest *gocql.Session, proxy *gocql.
 	unloadedData := test.UnloadData(source)
 
 	// Run query on proxied connection
-	proxy.Query(fmt.Sprintf("UPDATE %s.%s SET task = 'kelvin' WHERE id = d1b05da0-8c20-11ea-9fc6-6d2c86545d91;", test.TestKeyspace, test.TestTable)).Exec()
+	proxy.Query(fmt.Sprintf("UPDATE %s.%s SET task = 'terrance' WHERE id = d1b05da0-8c20-11ea-9fc6-6d2c86545d91;", test.TestKeyspace, test.TestTable)).Exec()
 
 	// Send load table
 	test.SendTableUpdate(migration.LoadingData, c)
@@ -40,12 +53,14 @@ func Test1(c net.Conn, source *gocql.Session, dest *gocql.Session, proxy *gocql.
 	test.SendMigrationComplete(c)
 
 	// Assertions!
-	itr := proxy.Query(fmt.Sprintf("SELECT * FROM %s.%s WHERE id = d1b05da0-8c20-11ea-9fc6-6d2c86545d91;", test.TestKeyspace, test.TestTable)).Iter()
+	time.Sleep(time.Second * 2)
+	itr := dest.Query(fmt.Sprintf("SELECT * FROM %s.%s WHERE id = d1b05da0-8c20-11ea-9fc6-6d2c86545d91;", test.TestKeyspace, test.TestTable)).Iter()
 	row := make(map[string]interface{})
+
 	itr.MapScan(row)
 	task := test.MapToTask(row)
 
-	if task.Task != "kelvin" {
-		log.Error(fmt.Sprintf("Assertion failed:\n%s\n------\n%s", task.Task, "kelvin"))
-	}
+	test.Assert("terrance", task.Task)
+
+	log.Info("Sucesss!")
 }

@@ -22,15 +22,31 @@ var DataIds []string
 var DataTasks []string
 
 // DropExistingKeyspace drops TestKeyspace from the specified session
-func DropExistingKeyspace(session *gocql.Session) {
-	session.Query(fmt.Sprintf("DROP KEYSPACE %s;", TestKeyspace)).Exec()
+func DropExistingKeyspace(source *gocql.Session, dest *gocql.Session) {
+	log.Info("Dropping existing data...")
+	err := source.Query(fmt.Sprintf("DROP KEYSPACE %s;", TestKeyspace)).Exec()
+	if err != nil {
+		log.WithError(err).Error("Failed to drop keyspace from source cluster.")
+	}
+
+	err = dest.Query(fmt.Sprintf("DROP KEYSPACE %s;", TestKeyspace)).Exec()
+	if err != nil {
+		log.WithError(err).Error("Failed to drop keyspace from dest cluster.")
+	}
 }
 
 // SeedKeyspace seeds the specified source and dest sessions with TestKeyspace
 func SeedKeyspace(source *gocql.Session, dest *gocql.Session) {
 	log.Info("Seeding keyspace...")
-	source.Query(fmt.Sprintf("CREATE KEYSPACE %s WITH replication = {'class':'SimpleStrategy', 'replication_factor':1};", TestKeyspace)).Exec()
-	dest.Query(fmt.Sprintf("CREATE KEYSPACE %s WITH replication = {'class':'SimpleStrategy', 'replication_factor':1};", TestKeyspace)).Exec()
+	err := source.Query(fmt.Sprintf("CREATE KEYSPACE %s WITH replication = {'class':'SimpleStrategy', 'replication_factor':1};", TestKeyspace)).Exec()
+	if err != nil {
+		log.WithError(err).Error("Failed to seed keyspace in source cluster.")
+	}
+
+	err = dest.Query(fmt.Sprintf("CREATE KEYSPACE %s WITH replication = {'class':'SimpleStrategy', 'replication_factor':1};", TestKeyspace)).Exec()
+	if err != nil {
+		log.WithError(err).Error("Failed to seed keyspace in dest cluster.")
+	}
 }
 
 // SeedData seeds the specified source and dest sessions with data in data.go
@@ -40,12 +56,12 @@ func SeedData(source *gocql.Session, dest *gocql.Session) {
 	// Create the table in source
 	err := source.Query(fmt.Sprintf("CREATE TABLE %s.%s(id UUID, task text, PRIMARY KEY(id));", TestKeyspace, TestTable)).Exec()
 	if err != nil {
-		log.WithError(err).Error(err)
+		log.WithError(err).Error("Error creating table in source cluster.")
 	}
 
 	err = dest.Query(fmt.Sprintf("CREATE TABLE %s.%s(id UUID, task text, PRIMARY KEY(id));", TestKeyspace, TestTable)).Exec()
 	if err != nil {
-		log.WithError(err).Error(err)
+		log.WithError(err).Error("Error creating table in dest cluster.")
 	}
 
 	// Seed the rows
@@ -53,18 +69,26 @@ func SeedData(source *gocql.Session, dest *gocql.Session) {
 		id, task := DataIds[i], DataTasks[i]
 		err = source.Query(fmt.Sprintf("INSERT INTO %s.%s(id, task) VALUES (%s, '%s');", TestKeyspace, TestTable, id, task)).Exec()
 		if err != nil {
-			log.WithError(err).Error(err)
+			log.WithError(err).Error("Error inserting into table for source cluster.")
 		}
+	}
+}
+
+// MapToTaskWithTimestamps converts a map loaded by Iter.MapScan() into a Task
+func MapToTaskWithTimestamps(row map[string]interface{}) Task {
+	return Task{
+		ID:        row["id"].(gocql.UUID),
+		Task:      row["task"].(string),
+		WriteTime: row["w_task"].(int64),
+		TTL:       row["l_task"].(int),
 	}
 }
 
 // MapToTask converts a map loaded by Iter.MapScan() into a Task
 func MapToTask(row map[string]interface{}) Task {
 	return Task{
-		ID:        row["id"].(gocql.UUID),
-		Task:      row["task"].(string),
-		WriteTime: row["w_task"].(int64),
-		TTL:       row["l_task"].(int),
+		ID:   row["id"].(gocql.UUID),
+		Task: row["task"].(string),
 	}
 }
 
@@ -81,7 +105,7 @@ func UnloadData(source *gocql.Session) []Task {
 			break
 		}
 
-		unloadedData = append(unloadedData, MapToTask(row))
+		unloadedData = append(unloadedData, MapToTaskWithTimestamps(row))
 	}
 	return unloadedData
 }
@@ -90,7 +114,7 @@ func UnloadData(source *gocql.Session) []Task {
 func LoadData(dest *gocql.Session, unloadedData []Task) {
 	query := "BEGIN BATCH "
 	for _, task := range unloadedData {
-		query += fmt.Sprintf("INSERT INTO test.tasks(id, task) VALUES (%s, '%s') USING TIMESTAMP %d AND TTL %d; ",
+		query += fmt.Sprintf("INSERT INTO cloudgate_test.tasks(id, task) VALUES (%s, '%s') USING TIMESTAMP %d AND TTL %d; ",
 			task.ID, task.Task, task.WriteTime, task.TTL)
 	}
 	query += "APPLY BATCH;"

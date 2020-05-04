@@ -27,17 +27,18 @@ func main() {
 	var err error
 	sourceSession, err := utils.ConnectToCluster("127.0.0.1", "", "", 9042)
 	if err != nil {
-		log.WithError(err).Error(err)
+		log.WithError(err).Error("Error connecting to source cluster.")
 	}
+	defer sourceSession.Close()
 
 	destSession, err := utils.ConnectToCluster("127.0.0.1", "", "", 9043)
 	if err != nil {
-		log.WithError(err).Error(err)
+		log.WithError(err).Error("Error connecting to dest cluster.")
 	}
+	defer destSession.Close()
 
 	// Drop all existing data
-	test.DropExistingKeyspace(sourceSession)
-	test.DropExistingKeyspace(destSession)
+	test.DropExistingKeyspace(sourceSession, destSession)
 
 	// Seed source and dest with keyspace
 	test.SeedKeyspace(sourceSession, destSession)
@@ -56,23 +57,12 @@ func main() {
 
 	log.Info("PROXY STARTED")
 
+	log.Info("Sleeping...")
+	time.Sleep(time.Second * 10)
+
 	// Establish connection w/ proxy
 	conn := test.EstablishConnection(fmt.Sprintf("127.0.0.1:14000"))
 
-	log.Info("Sleeping...")
-	time.Sleep(time.Second * 2)
-	log.Info("Attempting to connect to db as client through proxy...")
-
-	// Connect to proxy as a "client"
-	proxySession, err := utils.ConnectToCluster("127.0.0.1", "", "", 14002)
-
-	if err != nil {
-		log.WithError(err).Error("Unable to connect to proxy session.")
-	}
-
 	// Run test package here
-	go test1.Test1(conn, sourceSession, destSession, proxySession)
-
-	for {
-	}
+	test1.Test1(conn, sourceSession, destSession)
 }
