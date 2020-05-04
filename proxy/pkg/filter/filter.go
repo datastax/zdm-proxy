@@ -1,13 +1,13 @@
 package filter
 
 import (
+	"cloud-gate/proxy/pkg/metrics"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
-	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -89,7 +89,7 @@ type CQLProxy struct {
 	Keyspaces map[string]string
 
 	// Metrics
-	Metrics Metrics
+	Metrics *metrics.Metrics
 }
 
 // Start starts up the proxy. The proxy creates a connection with the Astra Database,
@@ -102,7 +102,6 @@ func (p *CQLProxy) Start() error {
 	p.migrationSession = establishConnection(p.migrationServiceIP)
 
 	go p.statusLoop()
-	go p.runMetrics()
 
 	err := p.listen(p.Conf.ProxyCommunicationPort, p.handleMigrationConnection)
 	if err != nil {
@@ -253,9 +252,9 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 	}()
 
 	if destAddress == p.sourceIP {
-		p.Metrics.incrementConnections()
+		p.Metrics.IncrementConnections()
 		defer func() {
-			p.Metrics.decrementConnections()
+			p.Metrics.DecrementConnections()
 			p.checkRedirect()
 		}()
 	}
@@ -336,7 +335,7 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 		// || pointsToSource is to allow the first query after beginning redirect to go through
 		// this makes it so the forward from dst -> client doesn't permanently block in src.Read
 		if !p.redirectActiveConns || pointsToSource {
-			p.Metrics.incrementFrames()
+			p.Metrics.IncrementFrames()
 			f := frame.New(data)
 
 			// Sent from client
@@ -471,7 +470,7 @@ func (p *CQLProxy) writeToAstra(f *frame.Frame, client string) error {
 			case query.INSERT, query.UPDATE, query.DELETE, query.TRUNCATE:
 				return p.handleWriteQuery(fields[3], queryType, f, client, paths)
 			case query.SELECT:
-				p.Metrics.incrementReads()
+				p.Metrics.IncrementReads()
 			}
 		} else if fields[1] == "batch" {
 			// handles case of 1 command BATCH statement
@@ -570,13 +569,13 @@ func (p *CQLProxy) checkError(body []byte) {
 	switch errCode {
 	case 0x0000:
 		// Server Error
-		p.Metrics.incrementServerErrors()
+		p.Metrics.IncrementServerErrors()
 	case 0x1100:
 		// Write Timeout
-		p.Metrics.incrementWriteFails()
+		p.Metrics.IncrementWriteFails()
 	case 0x1200:
 		// Read Timeout
-		p.Metrics.incrementReadFails()
+		p.Metrics.IncrementReadFails()
 	}
 
 }
@@ -790,7 +789,7 @@ func (p *CQLProxy) executeWrite(q *query.Query, retries ...int) error {
 		return p.executeWrite(q, retry+1)
 	}
 
-	p.Metrics.incrementWrites()
+	p.Metrics.IncrementWrites()
 	return nil
 }
 
@@ -1037,7 +1036,7 @@ func (p *CQLProxy) startTable(keyspace string, tableName string) {
 // and there are no direct connections to the client's source DB any longer
 // (envoy can point directly to the Astra DB now, skipping over proxy)
 func (p *CQLProxy) checkRedirect() {
-	if p.migrationComplete && p.Metrics.sourceConnections() == 0 {
+	if p.migrationComplete && p.Metrics.SourceConnections() == 0 {
 		log.Debug("No more connections to client database; ready for redirect.")
 		p.ReadyForRedirect <- struct{}{}
 	}
@@ -1068,8 +1067,9 @@ func (p *CQLProxy) reset() {
 	p.listeners = []net.Listener{}
 	p.ReadyForRedirect = make(chan struct{})
 	p.lock = &sync.Mutex{}
-	p.Metrics = Metrics{}
-	p.Metrics.lock = &sync.Mutex{}
+	p.Metrics = metrics.New(p.Conf.ProxyMetricsPort)
+	p.Metrics.Expose()
+
 	p.sourceIP = fmt.Sprintf("%s:%d", p.Conf.SourceHostname, p.Conf.SourcePort)
 	p.astraIP = fmt.Sprintf("%s:%d", p.Conf.AstraHostname, p.Conf.AstraPort)
 	p.migrationServiceIP = fmt.Sprintf("%s:%d", p.Conf.MigrationServiceHostname, p.Conf.MigrationCommunicationPort)
@@ -1193,97 +1193,4 @@ func extractTableInfo(fromClause string) (string, string) {
 	}
 
 	return keyspace, tableName
-}
-
-func (p *CQLProxy) runMetrics() {
-	http.HandleFunc("/", p.Metrics.write)
-	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", p.Conf.ProxyMetricsPort), nil))
-}
-
-type Metrics struct {
-	FrameCount int
-	Reads      int
-	Writes     int
-
-	ServerErrors int
-	WriteFails   int
-	ReadFails    int
-
-	ConnectionsToSource int
-
-	lock *sync.Mutex
-}
-
-func (m *Metrics) write(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	marshaled, err := json.Marshal(m)
-	if err != nil {
-		w.Write([]byte(`{"error": "unable to grab metrics"}`))
-		w.Write([]byte(err.Error()))
-		return
-	}
-	w.Write(marshaled)
-}
-
-func (m *Metrics) incrementFrames() {
-	m.lock.Lock()
-	defer m.lock.Unlock()
-
-	m.FrameCount++
-}
-
-func (m *Metrics) incrementReads() {
-	m.lock.Lock()
-	defer m.lock.Unlock()
-
-	m.Reads++
-}
-
-func (m *Metrics) incrementWrites() {
-	m.lock.Lock()
-	defer m.lock.Unlock()
-
-	m.Writes++
-}
-
-func (m *Metrics) incrementWriteFails() {
-	m.lock.Lock()
-	defer m.lock.Unlock()
-
-	m.WriteFails++
-}
-
-func (m *Metrics) incrementReadFails() {
-	m.lock.Lock()
-	defer m.lock.Unlock()
-
-	m.ReadFails++
-}
-
-func (m *Metrics) incrementServerErrors() {
-	m.lock.Lock()
-	defer m.lock.Unlock()
-
-	m.ServerErrors++
-}
-
-func (m *Metrics) incrementConnections() {
-	m.lock.Lock()
-	defer m.lock.Unlock()
-
-	m.ConnectionsToSource++
-}
-
-func (m *Metrics) decrementConnections() {
-	m.lock.Lock()
-	defer m.lock.Unlock()
-
-	m.ConnectionsToSource--
-}
-
-func (m *Metrics) sourceConnections() int {
-	m.lock.Lock()
-	defer m.lock.Unlock()
-
-	return m.ConnectionsToSource
 }

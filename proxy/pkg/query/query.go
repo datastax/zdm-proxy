@@ -142,16 +142,14 @@ func flagsByteFromBatch(frame []byte) int {
 // Assumes Query is a BATCH or QUERY
 func (q *Query) AddKeyspace(keyspace string) *Query {
 	if q.Opcode == 0x0d {
-		// BATCH query
+		// BATCH queries must be treated differently
 		return q.batchQueryAddKeyspace(keyspace)
-	} else {
-		// All others
-		return q.nonBatchAddKeyspace(keyspace)
 	}
+
+	return q.nonBatchAddKeyspace(keyspace)
 }
 
 func (q *Query) nonBatchAddKeyspace(keyspace string) *Query {
-	// if QUERY
 	tablename := strings.Split(q.Paths[0], "/")[3]
 	if strings.Contains(tablename, ".") {
 		return q
