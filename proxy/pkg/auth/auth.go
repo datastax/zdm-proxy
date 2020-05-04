@@ -13,19 +13,21 @@ const (
 )
 
 // HandleStartup will do the startup handshake and authentication to the database on behalf of
-// the user. To the client, it appears as if they are connecting to a database that does not need
-// any credentials.
+// the user. To the client, it appears as if they are connecting to a database that does not require
+// credentials.
 // Currently only supports Username/Password authentication.
 func HandleStartup(client net.Conn, db net.Conn, username string, password string, startupFrame []byte, writeBack bool) error {
-
-	log.Infof("Setting up connection from %s to %s", client.RemoteAddr().String(), db.RemoteAddr().String())
-
-	authAttempts := 0
+	log.Debugf("Setting up connection from %s to %s", client.RemoteAddr().String(), db.RemoteAddr().String())
 
 	// Send client's initial startup frame to the database
-	db.Write(startupFrame)
+	_, err := db.Write(startupFrame)
+	if err != nil {
+		return fmt.Errorf("unable to send startup from to %s from client %s",
+			db.RemoteAddr().String(), client.RemoteAddr().String())
+	}
 
-	buf := make([]byte, 0xfffff)
+	authAttempts := 0
+	buf := make([]byte, 0xffffff)
 	for {
 		bytesRead, err := db.Read(buf)
 		if err != nil {
@@ -33,13 +35,14 @@ func HandleStartup(client net.Conn, db net.Conn, username string, password strin
 		}
 
 		f := buf[:bytesRead]
+		opcode := f[4]
 
-		// OPCode of message received from database
-		switch f[4] {
+		switch opcode {
 		case 0x02:
-			// READY (server didn't ask for authentication), relay it back to client
+			// READY (server didn't ask for authentication)
 			log.Debugf("%s did not request authorization for connection %s",
 				db.RemoteAddr().String(), client.RemoteAddr().String())
+
 			if writeBack {
 				_, err := client.Write(f)
 				if err != nil {
@@ -49,10 +52,10 @@ func HandleStartup(client net.Conn, db net.Conn, username string, password strin
 
 			return nil
 		case 0x03, 0x0E:
-			// Authenticate
+			// AUTHENTICATE/AUTH_CHALLENGE (server requests authentication)
 			if authAttempts >= maxAuthRetries {
-				return fmt.Errorf("failed to successfully authenticate connection to %s",
-					db.RemoteAddr().String())
+				return fmt.Errorf("failed to authenticate connection to %s for %s",
+					db.RemoteAddr().String(), client.RemoteAddr().String())
 			}
 
 			log.Debugf("%s requested authentication for connection %s",
@@ -66,11 +69,12 @@ func HandleStartup(client net.Conn, db net.Conn, username string, password strin
 
 			authAttempts++
 		case 0x10:
-			// Auth successful, mimic ready response back to client
-			// Response is of form [VERSION 0 0 0 2 0 0 0 0]
-			log.Info("Connection %s authenticated", client.RemoteAddr().String())
-
+			// AUTH_SUCCESS (authentication successful)
 			if writeBack {
+				// Write a ready message back to client
+				// To the client this makes it seem like they sent a STARTUP message and
+				// immediately received a READY message, signifying that no authentication
+				// was necessary.
 				_, err := client.Write(readyMessage(f))
 				if err != nil {
 					return err
@@ -83,53 +87,62 @@ func HandleStartup(client net.Conn, db net.Conn, username string, password strin
 }
 
 // Returns a proper response frame to authenticate using passed in username and password
-// Utilizes the users initial startup frame to mimic version & streamID.
+// Utilizes the users initial startup frame to maintain the correct version & stream id.
 func authFrame(username string, password string, startupFrame []byte) []byte {
-	resp := make([]byte, 2+len(username)+len(password))
-	resp[0] = 0
-	copy(resp[1:], username)
-	resp[len(username)+1] = 0
-	copy(resp[2+len(username):], password)
+	respBody := make([]byte, 2+len(username)+len(password))
+	respBody[0] = 0
+	copy(respBody[1:], username)
+	respBody[len(username)+1] = 0
+	copy(respBody[2+len(username):], password)
 
-	respLen := make([]byte, 4)
-	binary.BigEndian.PutUint32(respLen, uint32(len(resp)))
+	bodyLen := make([]byte, 4)
+	binary.BigEndian.PutUint32(bodyLen, uint32(len(respBody)))
 
-	resp = append(respLen, resp...)
+	respBody = append(bodyLen, respBody...)
 
-	authFrame := make([]byte, 9)
-	authFrame[0] = startupFrame[0]                                // Protocol version from client
-	authFrame[1] = 0x00                                           // No flags
-	authFrame[2] = startupFrame[2]                                // Stream ID from client
-	authFrame[3] = startupFrame[3]                                // Stream ID from client
-	authFrame[4] = 0x0F                                           // AUTH_RESP OpCode
-	binary.BigEndian.PutUint32(authFrame[5:9], uint32(len(resp))) // Length of body
+	authResp := make([]byte, 9)
+	authResp[0] = startupFrame[0]                                    // Protocol version from client
+	authResp[1] = 0x00                                               // No flags
+	authResp[2] = startupFrame[2]                                    // Stream ID from client
+	authResp[3] = startupFrame[3]                                    // Stream ID from client
+	authResp[4] = 0x0F                                               // AUTH_RESP opcode
+	binary.BigEndian.PutUint32(authResp[5:9], uint32(len(respBody))) // Length of body
 
-	authFrame = append(authFrame, resp...)
+	authResp = append(authResp, respBody...)
 
-	return authFrame
+	return authResp
 }
 
-// TODO: Make sure we don't need to match stream id's
-func readyMessage(responseFrame []byte) []byte {
+// readyMessage creates the correct READY frame response for a given client's
+// STARTUP request.
+func readyMessage(startupFrame []byte) []byte {
 	f := make([]byte, 9)
-	f[0] = responseFrame[0] | 0x80 // Maintain user's version
-	f[2] = responseFrame[2]
-	f[3] = responseFrame[3]
-	f[4] = 2
+	f[0] = startupFrame[0] | 0x80 // Maintain user's version & ensure direction bit is 1
+	f[2] = startupFrame[2]        // Maintain user's streamID
+	f[3] = startupFrame[3]        // Maintain user's streamID
+	f[4] = 2                      // READY opcode
 
 	return f
 }
 
-func HandleOptions (client net.Conn, db net.Conn, f []byte) error {
-	db.Write(f)
-	buf := make([]byte, 0xffffff)
+// HandleOptions tunnels the OPTIONS request from the client to the database, and then
+// tunnels the corresponding SUPPORTED response back from the database to the client.
+func HandleOptions(client net.Conn, db net.Conn, f []byte) error {
+	_, err := db.Write(f)
+	if err != nil {
+		return err
+	}
 
+	buf := make([]byte, 0xffffff)
 	bytesRead, err := db.Read(buf)
 	if err != nil {
 		return err
 	}
 
-	client.Write(buf[:bytesRead])
+	_, err = client.Write(buf[:bytesRead])
+	if err != nil {
+		return err
+	}
 
 	return nil
 }

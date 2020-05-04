@@ -160,7 +160,7 @@ func parseCassandra(query string) (string, string) {
 
 	query = strings.TrimRight(query, ";")            // remove potential trailing ;
 	fields := strings.Fields(strings.ToLower(query)) // handles all whitespace
-	originalFields := strings.Fields(query)			 // maintains case-sensitiviy for table
+	originalFields := strings.Fields(query)          // maintains case-sensitiviy for table
 
 	// we currently do not strip comments.  It seems like cqlsh does
 	// strip comments, but its not clear if that can be assumed of all clients
