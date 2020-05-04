@@ -94,6 +94,7 @@ type CQLProxy struct {
 	preparedIDs map[uint16]string
 	mappedPreparedIDs map[string]string
 	outstandingPrepares map[uint16][]byte
+	preparedQueryBytes map[string][]byte
 
 }
 
@@ -459,7 +460,7 @@ func (p *CQLProxy) writeToAstra(f *frame.Frame, client string) error {
 	// opcode is "startup", "query", "batch", etc.
 	// action is "select", "insert", "update", etc,
 	// table is the table as written in the command
-	paths, err := cqlparser.CassandraParseRequest(p.preparedQueries, f.RawBytes)
+	paths, err := cqlparser.CassandraParseRequest(&(p.preparedQueryBytes), f.RawBytes)
 	if err != nil {
 		return err
 	}
@@ -1153,6 +1154,7 @@ func (p *CQLProxy) reset() {
 	p.preparedIDs = make(map[uint16]string)
 	p.mappedPreparedIDs = make(map[string]string)
 	p.outstandingPrepares = make(map[uint16][]byte)
+	p.preparedQueryBytes = make(map[string][]byte)
 }
 
 func (p *CQLProxy) redirectActiveConnectionsToAstra() {

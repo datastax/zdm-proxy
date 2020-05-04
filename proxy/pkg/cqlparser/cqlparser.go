@@ -43,7 +43,7 @@ type PreparedQueries struct {
 
 // Taken with small modifications from
 // https://github.com/cilium/cilium/blob/2bc1fdeb97331761241f2e4b3fb88ad524a0681b/proxylib/cassandra/cassandraparser.go
-func CassandraParseRequest(p *PreparedQueries, data []byte) ([]string, error) {
+func CassandraParseRequest(preparedQueryBytes *map[string][]byte, data []byte) ([]string, error) {
 	opcode := data[4]
 	path := opcodeMap[opcode]
 
@@ -67,13 +67,13 @@ func CassandraParseRequest(p *PreparedQueries, data []byte) ([]string, error) {
 		}
 
 		path = "/" + path + "/" + action + "/" + table
-		if opcode == 0x09 {
-			// stash 'path' for this prepared query based on stream id
-			// rewrite 'opcode' portion of the path to be 'execute' rather than 'prepare'
-			streamID := binary.BigEndian.Uint16(data[2:4])
-			log.Debugf("Prepare query path '%s' with stream-id %d", path, streamID)
-			p.PreparedQueryPathByStreamID[streamID] = strings.Replace(path, "prepare", "execute", 1)
-		}
+		//if opcode == 0x09 {
+		//	// stash 'path' for this prepared query based on stream id
+		//	// rewrite 'opcode' portion of the path to be 'execute' rather than 'prepare'
+		//	streamID := binary.BigEndian.Uint16(data[2:4])
+		//	log.Debugf("Prepare query path '%s' with stream-id %d", path, streamID)
+		//	p.PreparedQueryPathByStreamID[streamID] = strings.Replace(path, "prepare", "execute", 1)
+		//}
 		return []string{path}, nil
 	} else if opcode == 0x0d {
 		// batch
@@ -105,14 +105,27 @@ func CassandraParseRequest(p *PreparedQueries, data []byte) ([]string, error) {
 				idLen := int(binary.BigEndian.Uint16(data[offset+1 : offset+3]))
 				preparedID := string(data[offset+3 : (offset + 3 + idLen)])
 				log.Debugf("Batch entry with prepared-id = '%s'", preparedID)
-				path := p.PreparedQueryPathByPreparedID[preparedID]
-				if len(path) > 0 {
+
+				if queryBytes, ok := (*preparedQueryBytes)[preparedID]; ok {
+					path, err := getPathFromPrepareBytes(queryBytes)
+					if err != nil {
+						return nil, err
+					}
 					paths[i] = path
 				} else {
-					log.Warnf("No cached entry for prepared-id = '%s' in batch", preparedID)
+					log.Warnf("No cached entry for prepared-id = '%s'", preparedID)
 
 					return []string{UnknownPreparedQueryPath}, nil
 				}
+
+				//path := p.PreparedQueryPathByPreparedID[preparedID]
+				//if len(path) > 0 {
+				//	paths[i] = path
+				//} else {
+				//	log.Warnf("No cached entry for prepared-id = '%s' in batch", preparedID)
+				//
+				//	return []string{UnknownPreparedQueryPath}, nil
+				//}
 				offset = offset + 3 + idLen
 
 				offset = ReadPastBatchValues(data, offset)
@@ -126,22 +139,23 @@ func CassandraParseRequest(p *PreparedQueries, data []byte) ([]string, error) {
 		// execute
 
 		// parse out prepared query id, and then look up our
-		// cached query path for policy evaluation.
+		// cached prepare query for policy evaluation.
 		idLen := binary.BigEndian.Uint16(data[9:11])
 		preparedID := string(data[11:(11 + idLen)])
 		log.Debugf("Execute with prepared-id = '%s'", preparedID)
-		path := p.PreparedQueryPathByPreparedID[preparedID]
 
-		// action, table = parseCassandra (raw bytes body)
-		// path = /execute/action/table
-
-		if len(path) == 0 {
+		if queryBytes, ok := (*preparedQueryBytes)[preparedID]; ok {
+			path, err := getPathFromPrepareBytes(queryBytes)
+			if err != nil {
+				return nil, err
+			}
+			return []string{path}, nil
+		} else {
 			log.Warnf("No cached entry for prepared-id = '%s'", preparedID)
 
 			return []string{UnknownPreparedQueryPath}, nil
 		}
 
-		return []string{path}, nil
 	} else {
 		// other opcode, just return type of opcode
 
@@ -265,4 +279,18 @@ func ReadPastBatchValues(data []byte, initialOffset int) int {
 		}
 	}
 	return offset
+}
+
+func getPathFromPrepareBytes(rawBytes []byte) (string, error) {
+	queryLen := binary.BigEndian.Uint32(rawBytes[9:13])
+	endIndex := 13 + queryLen
+	query := string(rawBytes[13:endIndex])
+	action, table := parseCassandra(query)
+
+	if action == "" {
+		return "", errors.New("encountered execute of prepare with invalid frame type")
+	}
+
+	path := "/" + "execute" + "/" + action + "/" + table
+	return path, nil
 }
