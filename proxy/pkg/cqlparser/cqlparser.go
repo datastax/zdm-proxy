@@ -43,7 +43,7 @@ type PreparedQueries struct {
 
 // Taken with small modifications from
 // https://github.com/cilium/cilium/blob/2bc1fdeb97331761241f2e4b3fb88ad524a0681b/proxylib/cassandra/cassandraparser.go
-func CassandraParseRequest(preparedQueryBytes *map[string][]byte, data []byte) ([]string, error) {
+func CassandraParseRequest(preparedQueryBytes map[string][]byte, data []byte) ([]string, error) {
 	opcode := data[4]
 	path := opcodeMap[opcode]
 
@@ -106,7 +106,7 @@ func CassandraParseRequest(preparedQueryBytes *map[string][]byte, data []byte) (
 				preparedID := string(data[offset+3 : (offset + 3 + idLen)])
 				log.Debugf("Batch entry with prepared-id = '%s'", preparedID)
 
-				if queryBytes, ok := (*preparedQueryBytes)[preparedID]; ok {
+				if queryBytes, ok := preparedQueryBytes[preparedID]; ok {
 					path, err := getPathFromPrepareBytes(queryBytes)
 					if err != nil {
 						return nil, err
@@ -144,7 +144,7 @@ func CassandraParseRequest(preparedQueryBytes *map[string][]byte, data []byte) (
 		preparedID := string(data[11:(11 + idLen)])
 		log.Debugf("Execute with prepared-id = '%s'", preparedID)
 
-		if queryBytes, ok := (*preparedQueryBytes)[preparedID]; ok {
+		if queryBytes, ok := preparedQueryBytes[preparedID]; ok {
 			path, err := getPathFromPrepareBytes(queryBytes)
 			if err != nil {
 				return nil, err

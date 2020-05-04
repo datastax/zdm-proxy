@@ -17,13 +17,13 @@ const (
 // credentials.
 // Currently only supports Username/Password authentication.
 func HandleStartup(client net.Conn, db net.Conn, username string, password string, startupFrame []byte, writeBack bool) error {
-	log.Debugf("Setting up connection from %s to %s", client.RemoteAddr().String(), db.RemoteAddr().String())
+	log.Debugf("Setting up connection from %s to %s", client.RemoteAddr(), db.RemoteAddr())
 
 	// Send client's initial startup frame to the database
 	_, err := db.Write(startupFrame)
 	if err != nil {
-		return fmt.Errorf("unable to send startup from to %s from client %s",
-			db.RemoteAddr().String(), client.RemoteAddr().String())
+		return fmt.Errorf("unable to send startup frame from client %s to %s",
+			client.RemoteAddr(), db.RemoteAddr())
 	}
 
 	authAttempts := 0
@@ -41,7 +41,7 @@ func HandleStartup(client net.Conn, db net.Conn, username string, password strin
 		case 0x02:
 			// READY (server didn't ask for authentication)
 			log.Debugf("%s did not request authorization for connection %s",
-				db.RemoteAddr().String(), client.RemoteAddr().String())
+				db.RemoteAddr(), client.RemoteAddr())
 
 			if writeBack {
 				_, err := client.Write(f)
@@ -55,11 +55,11 @@ func HandleStartup(client net.Conn, db net.Conn, username string, password strin
 			// AUTHENTICATE/AUTH_CHALLENGE (server requests authentication)
 			if authAttempts >= maxAuthRetries {
 				return fmt.Errorf("failed to authenticate connection to %s for %s",
-					db.RemoteAddr().String(), client.RemoteAddr().String())
+					db.RemoteAddr(), client.RemoteAddr())
 			}
 
 			log.Debugf("%s requested authentication for connection %s",
-				db.RemoteAddr().String(), client.RemoteAddr().String())
+				db.RemoteAddr(), client.RemoteAddr())
 
 			authResp := authFrame(username, password, startupFrame)
 			_, err := db.Write(authResp)

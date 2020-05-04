@@ -27,20 +27,3 @@ func New(frame []byte) *Frame {
 		RawBytes:  frame,
 	}
 }
-
-func (f *Frame) setBody(body []byte) {
-	f.Body = body
-	f.Length = uint32(len(body))
-}
-
-func (f *Frame) ToBytes() []byte {
-	frame := make([]byte, 9)
-	frame[0] = f.Version
-	frame[1] = f.Flags
-	binary.BigEndian.PutUint16(frame[2:4], f.Stream)
-	frame[4] = f.Opcode
-	binary.BigEndian.PutUint32(frame[5:9], f.Length)
-	frame = append(frame, f.Body...)
-
-	return frame
-}
