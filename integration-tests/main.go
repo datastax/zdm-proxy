@@ -5,8 +5,6 @@ import (
 	"cloud-gate/integration-tests/test1"
 	"cloud-gate/utils"
 	"fmt"
-	"os"
-	"os/exec"
 	"time"
 
 	log "github.com/sirupsen/logrus"
@@ -46,14 +44,13 @@ func main() {
 	// Seed source and dest w/ schema and data
 	test.SeedData(sourceSession, destSession)
 
-	proxyCommand := exec.Command("go", "run", "./proxy/main.go")
-	proxyCommand.Env = os.Environ()
+	// TODO:
+	// proxyCommand := exec.Command("go", "run", "./proxy/main.go")
+	// proxyCommand.Env = os.Environ()
 
-	// proxyOut, _ := proxyCommand.StdoutPipe()
-	// go test.PrintProxyOutput(proxyOut)
 	go test.ListenProxy()
 
-	proxyCommand.Start()
+	// proxyCommand.Start() TODO:
 
 	log.Info("PROXY STARTED")
 

@@ -6,7 +6,6 @@ import (
 	"cloud-gate/utils"
 	"fmt"
 	"net"
-	"time"
 
 	"github.com/gocql/gocql"
 	log "github.com/sirupsen/logrus"
@@ -20,8 +19,6 @@ func Test1(c net.Conn, source *gocql.Session, dest *gocql.Session) {
 	// Send start
 	test.SendStart(c)
 
-	log.Info("Sleeping...")
-	time.Sleep(time.Second * 2)
 	log.Info("Attempting to connect to db as client through proxy...")
 
 	// Connect to proxy as a "client"
@@ -38,7 +35,10 @@ func Test1(c net.Conn, source *gocql.Session, dest *gocql.Session) {
 	unloadedData := test.UnloadData(source)
 
 	// Run query on proxied connection
-	proxy.Query(fmt.Sprintf("UPDATE %s.%s SET task = 'terrance' WHERE id = d1b05da0-8c20-11ea-9fc6-6d2c86545d91;", test.TestKeyspace, test.TestTable)).Exec()
+	err = proxy.Query(fmt.Sprintf("UPDATE %s.%s SET task = 'terrance' WHERE id = d1b05da0-8c20-11ea-9fc6-6d2c86545d91;", test.TestKeyspace, test.TestTable)).Exec()
+	if err != nil {
+		log.WithError(err).Error("Mid-migration update failed.")
+	}
 
 	// Send load table
 	test.SendTableUpdate(migration.LoadingData, c)
@@ -53,7 +53,6 @@ func Test1(c net.Conn, source *gocql.Session, dest *gocql.Session) {
 	test.SendMigrationComplete(c)
 
 	// Assertions!
-	time.Sleep(time.Second * 2)
 	itr := dest.Query(fmt.Sprintf("SELECT * FROM %s.%s WHERE id = d1b05da0-8c20-11ea-9fc6-6d2c86545d91;", test.TestKeyspace, test.TestTable)).Iter()
 	row := make(map[string]interface{})
 

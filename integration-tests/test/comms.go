@@ -134,4 +134,7 @@ func SendRequest(req *updates.Update, conn net.Conn) {
 		log.WithError(err).Errorf("Error sending request %s", req.ID)
 	}
 	log.Info(fmt.Sprintf("SEND UPDATE: Type %d; ID %s", req.Type, req.ID))
+
+	log.Info("Sleeping...")
+	time.Sleep(time.Second * 2)
 }
