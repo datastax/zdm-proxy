@@ -44,11 +44,6 @@ type PreparedQueries struct {
 // Taken with small modifications from
 // https://github.com/cilium/cilium/blob/2bc1fdeb97331761241f2e4b3fb88ad524a0681b/proxylib/cassandra/cassandraparser.go
 func CassandraParseRequest(p *PreparedQueries, data []byte) ([]string, error) {
-	direction := data[0] & 0x80 // top bit
-	if direction != 0 {
-		return nil, errors.New("direction bit is 'reply' but we are trying to parse a request")
-	}
-
 	opcode := data[4]
 	path := opcodeMap[opcode]
 
@@ -136,6 +131,9 @@ func CassandraParseRequest(p *PreparedQueries, data []byte) ([]string, error) {
 		preparedID := string(data[11:(11 + idLen)])
 		log.Debugf("Execute with prepared-id = '%s'", preparedID)
 		path := p.PreparedQueryPathByPreparedID[preparedID]
+
+		// action, table = parseCassandra (raw bytes body)
+		// path = /execute/action/table
 
 		if len(path) == 0 {
 			log.Warnf("No cached entry for prepared-id = '%s'", preparedID)
