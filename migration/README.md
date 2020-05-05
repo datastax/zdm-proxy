@@ -208,6 +208,7 @@ The Migration Service expects requests from the Proxy Service when:
 - Migration service will not automatically restart if the proxy service fails. Currently needs to be restarted manually.
 
 ## TODOs
+- Minor modifications from PR
 - Integrate Datastax S3
 - Finish automatic restart functionality
 - Fix TTL in dsbulk queries
