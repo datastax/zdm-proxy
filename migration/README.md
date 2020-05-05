@@ -207,3 +207,8 @@ The Migration Service expects requests from the Proxy Service when:
 - Client will not be able to alter the schema of their keyspace or tables. Since our service only notifies proxy that the migration service is starting after migrating all of the schema, a dsbulk load into a table whose keyspace has been changed will fail.
 - Migration service will not automatically restart if the proxy service fails. Currently needs to be restarted manually.
 
+## TODOs
+- Finish automatic restart functionality
+- Fix TTL in dsbulk queries
+- Show metrics
+- Code cleanup/refactoring
