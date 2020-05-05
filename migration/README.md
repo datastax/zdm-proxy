@@ -209,7 +209,6 @@ The Migration Service expects requests from the Proxy Service when:
 
 ## TODOs
 - Minor modifications from PR
-- Integrate Datastax S3
 - Finish automatic restart functionality
 - Fix TTL in dsbulk queries
 - Show metrics
