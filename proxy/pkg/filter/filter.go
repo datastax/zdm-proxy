@@ -211,18 +211,19 @@ func (p *CQLProxy) listen(port int, handler func(net.Conn)) error {
 // handleClientConnection takes a connection from the client and begins forwarding
 // packets to/from the client's old DB, and mirroring writes to the Astra DB.
 func (p *CQLProxy) handleClientConnection(client net.Conn) {
-	astraSession := establishConnection(p.astraIP)
-
 	// If our service has not completed yet
 	if !p.queuesComplete {
+		sourceSession := establishConnection(p.sourceIP)
+		astraSession := establishConnection(p.astraIP)
+
 		p.lock.Lock()
 		p.outstandingQueries[client.RemoteAddr().String()] = make(map[uint16]*frame.Frame)
 		p.astraSessions[client.RemoteAddr().String()] = astraSession
 		p.lock.Unlock()
 
-		sourceSession := establishConnection(p.sourceIP)
 		go p.forward(client, sourceSession)
 	} else {
+		astraSession := establishConnection(p.astraIP)
 		p.forwardDirect(client, astraSession)
 	}
 }
@@ -297,9 +298,45 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 
 		// Frame from an unauthenticated client
 		if f.Direction == 0 && !authenticated {
-			authenticated, err = p.handleStartupFrame(f, src, dst)
-			if err != nil {
-				log.Error(err)
+			switch f.Opcode {
+			case 0x05:
+				// OPTIONS
+				err := auth.HandleOptions(src, dst, f.RawBytes)
+				if err != nil {
+					log.Errorf("client %s unable to negotiate options with %s",
+						src.RemoteAddr(), dst.RemoteAddr())
+					return
+				}
+			case 0x01:
+				// STARTUP
+
+				// Ensure that the user provided valid Astra credentials
+				authenticated, err = auth.CheckAuthentication(src, p.Conf.AstraUsername, p.Conf.AstraPassword, f.RawBytes)
+				if err != nil {
+					log.Error(err)
+					return
+				}
+
+				// Start CQL session to source database
+				err = auth.HandleStartup(src, dst, p.Conf.SourceUsername, p.Conf.SourcePassword, f.RawBytes, true)
+				if err != nil {
+					log.Error(err)
+					return
+				}
+
+				// Start CQL session to Astra database
+				astraSession := p.getAstraSession(src.RemoteAddr().String())
+				err = auth.HandleStartup(src, astraSession, p.Conf.AstraUsername, p.Conf.AstraPassword, f.RawBytes, false)
+				if err != nil {
+					log.Error(err)
+					return
+				}
+
+				// Start sending responses from source database back to client
+				go p.forward(dst, src)
+				go p.astraReplyHandler(src)
+			default:
+				log.Debugf("received non STARTUP or OPTIONS query from unauthenticated client %s", src.RemoteAddr())
 			}
 			continue
 		}
@@ -390,46 +427,6 @@ func (p *CQLProxy) forwardDirect(src, dst net.Conn) {
 		defer dst.Close()
 		io.Copy(dst, src)
 	}()
-}
-
-func (p *CQLProxy) handleStartupFrame(f *frame.Frame, src net.Conn, dst net.Conn) (bool, error) {
-	// OPTIONS frame from client.
-	// Assumes that the source database and Astra will have same options available.
-	if f.Opcode == 0x05 {
-		err := auth.HandleOptions(src, dst, f.RawBytes)
-		if err != nil {
-			return false, fmt.Errorf("client %s unable to negotiate options with %s",
-				src.RemoteAddr(), dst.RemoteAddr())
-		}
-		return false, nil
-	}
-
-	// STARTUP frame from client
-	if f.Opcode == 0x01 {
-		astraSession := p.getAstraSession(src.RemoteAddr().String())
-		if astraSession == nil {
-			return false, fmt.Errorf("astra session for client %s nonexistent", src.RemoteAddr())
-		}
-
-		// Start CQL session to source database
-		err := auth.HandleStartup(src, dst, p.Conf.SourceUsername, p.Conf.SourcePassword, f.RawBytes, true)
-		if err != nil {
-			return false, err
-		}
-
-		// Start CQL session to Astra database
-		err = auth.HandleStartup(src, astraSession, p.Conf.AstraUsername, p.Conf.AstraPassword, f.RawBytes, false)
-		if err != nil {
-			return false, err
-		}
-
-		// Start sending responses from source database back to client
-		go p.forward(dst, src)
-		go p.astraReplyHandler(src)
-		return true, nil
-	}
-
-	return false, fmt.Errorf("received non STARTUP or OPTIONS query from unauthenticated client %s", src.RemoteAddr())
 }
 
 func (p *CQLProxy) mirrorToAstra(clientIP string, streamID uint16) {
