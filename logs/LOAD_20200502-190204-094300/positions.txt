@@ -1,2 +1,0 @@
-file:/Users/isabellezhou/go/src/cloud-gate/myData.csv/output-000001.csv:2
-file:/Users/isabellezhou/go/src/cloud-gate/myData.csv/output-000002.csv:1
