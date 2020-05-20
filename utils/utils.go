@@ -65,18 +65,12 @@ func checkUpper(name string) bool {
 	return false
 }
 
-// DsbulkUpper returns a properly formatted string if any letters are uppercase
-func DsbulkUpper(name string) string {
-	if checkUpper(name) {
-		return "\\\"" + name + "\\\""
-	}
-	return name
+// DsbulkQuoteString returns a properly formatted string if any letters are uppercase
+func DsbulkQuoteString(name string) string {
+	return "\\\"" + name + "\\\""
 }
 
-// HasUpper returns the string in quotation marks if any letters are uppercase
-func HasUpper(name string) string {
-	if checkUpper(name) {
-		return strconv.Quote(name)
-	}
-	return name
+// QuoteString returns the string in quotation marks if any letters are uppercase
+func QuoteString(name string) string {
+	return strconv.Quote(name)
 }
