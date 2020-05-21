@@ -6,7 +6,6 @@ import (
 
 	"github.com/gocql/gocql"
 	log "github.com/sirupsen/logrus"
-	"strconv"
 )
 
 // ConnectToCluster is used to connect to source and destination clusters
@@ -51,14 +50,4 @@ func Contains(keys []string, elem string) bool {
 		}
 	}
 	return false
-}
-
-// DsbulkQuoteString returns the string in escaped quotation marks
-func DsbulkQuoteString(name string) string {
-	return "\\\"" + name + "\\\""
-}
-
-// QuoteString returns the string in quotation marks
-func QuoteString(name string) string {
-	return strconv.Quote(name)
 }
