@@ -280,6 +280,10 @@ func (m *Migration) migrateSchema(keyspace string, table *gocql.TableMetadata) e
 	m.status.Tables[keyspace][table.Name].Step = MigratingSchema
 	log.Infof("MIGRATING TABLE SCHEMA: %s.%s... ", table.Keyspace, table.Name)
 
+	if len(table.Columns) > 50 {
+		log.Fatalf("Astra tables can have 50 columns max; table %s.%s has %d columns", keyspace, table.Name, len(table.Columns))
+	}
+
 	// Fetch table compaction metadata
 	cQuery := `SELECT compaction FROM system_schema.tables
 					WHERE keyspace_name = ? and table_name = ?;`
@@ -488,6 +492,11 @@ func (m *Migration) getTables(keyspaces []string) (map[string]map[string]*gocql.
 	tableMetadata := make(map[string]map[string]*gocql.TableMetadata)
 	for _, keyspace := range keyspaces {
 		md, err := m.sourceSession.KeyspaceMetadata(keyspace)
+
+		if len(md.Tables) > 200 {
+			log.Fatalf("Astra keyspaces can have 200 tables max; keyspace %s has %d tables", keyspace, len(md.Tables))
+		}
+
 		if err != nil {
 			log.WithError(err).Fatalf("ERROR GETTING KEYSPACE %s...", keyspace)
 			return nil, err
