@@ -128,7 +128,7 @@ func HandleStartup(client net.Conn, db net.Conn, username string, password strin
 	for {
 		bytesRead, err := db.Read(buf)
 		if err != nil {
-			return err
+			return fmt.Errorf("error occurred while reading from db connection %v", err)
 		}
 
 		f := frame.New(buf[:bytesRead])
