@@ -47,7 +47,7 @@ Our script uses GoCQL to pull schema information from the source cluster. We the
     }
 ## Migrating Data
 
-Our Go script will connect to the source cluster first to pull data and schema information. After creating a predetermined number of threads, we will use the thread pool to first migrate all of the table schema. After all schema has been migrated, the thread pool will be used for table migration, using dsbulk to migrate the tables to the destination cluster concurrently. We are using sync.Mutex locks to ensure that the threads do not overwrite one another in the Checkpoint file nor the Log file. Migration pseudocode is shown below:
+Our Go script will connect to the source cluster first to pull data and schema information. After creating a predetermined number of threads, we will use the thread pool to first migrate all of the table schema. After all schema has been migrated, the thread pool will be used for table migration, using dsbulk to migrate the tables to the destination cluster concurrently. We are using sync.Mutex locks to ensure that the threads do not overwrite one another in the Checkpoint file. Migration pseudocode is shown below:
 
     for each table to be migrated {
       spawn a worker thread to migrate the table schema
