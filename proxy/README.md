@@ -20,7 +20,6 @@ During migration, our proxy acts as a tunnel between the client and the clientâ€
     export PROXY_SERVICE_HOSTNAME     // Hostname of proxy service         (string)
     export PROXY_PORT                 // Port of proxy service             (int)
     
-    // These two will become flags rather than environment variables
     export DEBUG=true
     export TEST=true
 
@@ -193,6 +192,7 @@ After migration is complete, users will need to specify their own username and p
 
 ## Limitations and Assumptions
 - We assume that users are not allowed to alter the database scheme in any fashion during migration. This includes `CREATE TABLE`, `DROP TABLE`, and other such commands
+- We realize that not all UPDATE statements need to pause queues because UPDATE statements without an "IF EXIST" or equivalent function as UPSERTs. However, we did not have the time to properly figure out how to parse for such conditions.
 ## Known Issues
 - Keyspace support: The following edge case is not currently handled (due to logic in `Query.addKeyspace()`)
     - A DELETE statement involves a column with the same name as the table, i.e. `DELETE name FROM name`
