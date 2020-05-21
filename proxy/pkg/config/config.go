@@ -25,6 +25,8 @@ type Config struct {
 	ProxyMetricsPort           int    `required:"true" split_words:"true"`
 	ProxyQueryPort             int    `split_words:"true"`
 
+	MaxQueueSize int `default:"1000" split_words:"true"`
+
 	Test  bool
 	Debug bool
 }

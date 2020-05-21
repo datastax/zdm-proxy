@@ -26,7 +26,6 @@ import (
 
 const (
 	// TODO: Make these configurable
-	queueSize           = 1000
 	thresholdToRedirect = 5
 	maxQueryRetries     = 5
 	queryTimeout        = 2 * time.Second
@@ -167,7 +166,7 @@ func (p *CQLProxy) loadMigrationInfo(status *migration.Status) {
 		p.queueLocks[keyspace] = make(map[string]*sync.Mutex)
 		p.tablePaused[keyspace] = make(map[string]bool)
 		for tableName := range tables {
-			p.queues[keyspace][tableName] = make(chan *query.Query, queueSize)
+			p.queues[keyspace][tableName] = make(chan *query.Query, p.Conf.MaxQueueSize)
 			p.queueLocks[keyspace][tableName] = &sync.Mutex{}
 
 			go p.consumeQueue(keyspace, tableName)
