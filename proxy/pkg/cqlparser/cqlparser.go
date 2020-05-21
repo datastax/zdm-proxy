@@ -41,8 +41,9 @@ type PreparedQueries struct {
 	PreparedQueryPathByPreparedID map[string]string
 }
 
-// Taken with small modifications from
+// Taken with the following modifications from
 // https://github.com/cilium/cilium/blob/2bc1fdeb97331761241f2e4b3fb88ad524a0681b/proxylib/cassandra/cassandraparser.go
+// - parsing of EXECUTE statements was modified to determine EXECUTE's action from the bytes of the original PREPARE message associated with it
 func CassandraParseRequest(preparedQueryBytes map[string][]byte, data []byte) ([]string, error) {
 	opcode := data[4]
 	path := opcodeMap[opcode]
