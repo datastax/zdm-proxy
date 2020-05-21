@@ -669,7 +669,7 @@ func (p *CQLProxy) handleWriteQuery(fromClause string, queryType query.Type, f *
 	// If we have a write query that depends on all values already being present in the database,
 	// if migration of this table is currently in progress (or about to begin), then pause consumption
 	// of queries for this table.
-	if queryType != query.INSERT {
+	if queryType == query.UPDATE || queryType == query.TRUNCATE {
 		p.checkStop(keyspace, tableName)
 	}
 	p.queueQuery(q)
@@ -722,7 +722,7 @@ func (p *CQLProxy) handleBatchQuery(f *frame.Frame, paths []string, client strin
 		// BATCH statements only contain INSERT, DELETE, and UPDATE. This stops any tables corresponding
 		// to DELETE or UPDATE queries, as we need to ensure that they are fully migrated before we can
 		// run those types of queries on them
-		if query.Type(fields[2]) != query.INSERT {
+		if query.Type(fields[2]) == query.UPDATE {
 			p.checkStop(keyspace, tableName)
 		}
 
