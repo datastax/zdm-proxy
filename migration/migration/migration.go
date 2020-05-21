@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -102,13 +103,11 @@ func (m *Migration) Migrate() {
 		for keyspace, keyspaceTables := range m.status.Tables {
 			for tableName, table := range keyspaceTables {
 				if table.Step >= MigratingSchemaComplete {
-					keyspace = utils.QuoteString(keyspace)
-					tableName = utils.QuoteString(tableName)
-					query := fmt.Sprintf("DROP TABLE %s.%s;", keyspace, tableName)
+					query := fmt.Sprintf("DROP TABLE %s.%s;", utils.QuoteString(keyspace), utils.QuoteString(tableName))
 					err := m.destSession.Query(query).Exec()
 
 					if err != nil {
-						log.WithError(err).Fatalf("Failed to drop table %s.%s for hard restart", keyspace, tableName)
+						log.WithError(err).Fatalf("Failed to drop table %s.%s for hard restart", utils.QuoteString(keyspace), utils.QuoteString(tableName))
 					}
 				}
 
@@ -125,7 +124,7 @@ func (m *Migration) Migrate() {
 		m.readCheckpoint()
 	}
 
-	// begin := time.Now()
+	begin := time.Now()
 	schemaJobs := make(chan *gocql.TableMetadata, len(tables))
 	tableJobs := make(chan *gocql.TableMetadata, len(tables))
 	var wgSchema sync.WaitGroup
@@ -197,8 +196,15 @@ func (m *Migration) Migrate() {
 	log.Info("COMPLETED MIGRATION")
 
 	// Calculate average speed in megabytes per second
-	// TODO: Find a way to calculate migration speed
-	m.status.Speed = 0
+	out, err := exec.Command("aws", "s3", "ls", "--summarize", "--recursive", "s3://codebase-datastax-test/"+m.directory).Output()
+	r, _ := regexp.Compile("Total Size: [0-9]+")
+	match := r.FindString(string(out))
+
+	numBytes, _ := strconv.ParseFloat(match[12:], 64)
+
+	// Converts this to MB/s
+	m.status.Speed = (numBytes / 1024 / 1024) / ((float64(time.Now().UnixNano() - begin.UnixNano())) / 1000000000)
+	log.Debugf("Migration Speed: %s MB/s", strconv.FormatFloat(m.status.Speed, 'f', 2, 64))
 
 	m.writeCheckpoint()
 
@@ -232,15 +238,13 @@ func (m *Migration) schemaPool(wg *sync.WaitGroup, jobs <-chan *gocql.TableMetad
 func generateSchemaMigrationQuery(table *gocql.TableMetadata, compactionMap map[string]string) string {
 	query := fmt.Sprintf("CREATE TABLE %s.%s (", utils.QuoteString(table.Keyspace), utils.QuoteString(table.Name))
 	for cname, column := range table.Columns {
-		cname = utils.QuoteString(cname)
-		query += fmt.Sprintf("%s %s, ", cname, column.Type.Type().String())
+		query += fmt.Sprintf("%s %s, ", utils.QuoteString(cname), column.Type.Type().String())
 	}
 
 	query += fmt.Sprintf("PRIMARY KEY (")
 
 	for _, column := range table.PartitionKey {
-		primaryKey := utils.QuoteString(column.Name)
-		query += fmt.Sprintf("%s, ", primaryKey)
+		query += fmt.Sprintf("%s, ", utils.QuoteString(column.Name))
 	}
 
 	clustering := false
@@ -316,8 +320,8 @@ func (m *Migration) tablePool(wg *sync.WaitGroup, jobs <-chan *gocql.TableMetada
 			currTable.Lock.Lock()
 			if currTable.Redo {
 				log.Infof("REMIGRATING TABLE: %s.%s... ", table.Keyspace, table.Name)
-				keyspace := utils.QuoteString(table.Keyspace)
-				name := utils.QuoteString(table.Name)
+				keyspace := strconv.Quote(table.Keyspace)
+				name := strconv.Quote(table.Name)
 				truncateQuery := fmt.Sprintf("TRUNCATE %s.%s;", keyspace, name)
 				err := m.destSession.Query(truncateQuery, keyspace, name).Exec()
 				if err != nil {
@@ -367,9 +371,8 @@ func (m *Migration) buildUnloadQuery(table *gocql.TableMetadata) string {
 			query += cname + ", "
 			continue
 		}
-		writeTime := utils.DsbulkQuoteString("w_" + colName)
-		ttl := utils.DsbulkQuoteString("l_" + colName)
-		query += fmt.Sprintf("%[1]s, WRITETIME(%[1]s) AS %[2]s, TTL(%[1]s) AS %[3]s, ", cname, writeTime, ttl)
+		query += fmt.Sprintf("%[1]s, WRITETIME(%[1]s) AS %[2]s, TTL(%[1]s) AS %[3]s, ", cname,
+			utils.DsbulkQuoteString("w_"+colName), utils.DsbulkQuoteString("l_"+colName))
 	}
 	return query[0:len(query)-2] + fmt.Sprintf(" FROM %s", utils.DsbulkQuoteString(table.Name))
 }
@@ -412,28 +415,24 @@ func (m *Migration) buildLoadQuery(table *gocql.TableMetadata) string {
 	partitionKeys := ""
 	partitionKeysColons := ""
 	for _, column := range table.PartitionKey {
-		primaryKey := utils.QuoteString(column.Name)
+		primaryKey := strconv.Quote(column.Name)
 		partitionKeys += fmt.Sprintf("%s, ", primaryKey)
 		partitionKeysColons += fmt.Sprintf(":%s, ", primaryKey)
 	}
-
 	if len(table.ClusteringColumns) > 0 {
 		for _, column := range table.ClusteringColumns {
-			clusterKey := utils.QuoteString(column.Name)
+			clusterKey := strconv.Quote(column.Name)
 			partitionKeys += fmt.Sprintf("%s, ", clusterKey)
 			partitionKeysColons += fmt.Sprintf(":%s, ", clusterKey)
 		}
 	}
-	tableName := utils.DsbulkQuoteString(table.Name)
 	for colName, column := range table.Columns {
-		cname := utils.DsbulkQuoteString(colName)
 		if column.Kind == gocql.ColumnPartitionKey || column.Kind == gocql.ColumnClusteringKey {
 			continue
 		}
-		writeTime := utils.DsbulkQuoteString("w_" + colName)
-		ttl := utils.DsbulkQuoteString("l_" + colName)
 		query += fmt.Sprintf("INSERT INTO %[1]s(%[2]s%[3]s) VALUES (%[6]s:%[3]s) USING TIMESTAMP :%[4]s AND TTL :%[5]s; ",
-			tableName, partitionKeys, cname, writeTime, ttl, partitionKeysColons)
+			utils.DsbulkQuoteString(table.Name), partitionKeys, utils.DsbulkQuoteString(colName),
+			utils.DsbulkQuoteString("w_"+colName), utils.DsbulkQuoteString("l_"+colName), partitionKeysColons)
 	}
 	query += "APPLY BATCH;"
 	return query
