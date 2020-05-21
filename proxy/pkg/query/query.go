@@ -2,7 +2,6 @@ package query
 
 import (
 	"encoding/binary"
-	"strings"
 	"sync"
 	"time"
 	"unicode"
@@ -130,108 +129,6 @@ func flagsByteFromBatch(frame []byte) int {
 		}
 	}
 	return offset + 2
-}
-
-// addKeyspace adds an explicit keyspace declaration to a query.
-// For example, if the user is in keyspace 'codebase' and they run:
-// 		INSERT INTO tasks(id, task) VALUES(now(), 'task')
-// this function will change the query to
-// 		INSERT INTO codebase.tasks(id, task) VALUES(now(), 'task')
-// Assumes Query is a BATCH or QUERY
-func (q *Query) AddKeyspace(keyspace string) *Query {
-	if q.Opcode == 0x0d {
-		// BATCH queries must be treated differently
-		return q.batchQueryAddKeyspace(keyspace)
-	}
-
-	return q.nonBatchAddKeyspace(keyspace)
-}
-
-func (q *Query) nonBatchAddKeyspace(keyspace string) *Query {
-	tablename := strings.Split(q.Paths[0], "/")[3]
-	if strings.Contains(tablename, ".") {
-		return q
-	}
-
-	// Find table in original query
-	index := strings.Index(string(q.Query), tablename)
-
-	before := make([]byte, index)
-	copy(before, q.Query[:index])
-	after := q.Query[index:]
-
-	// Rebuild query
-	var tablePrefix []byte
-	if isLower(keyspace) {
-		tablePrefix = []byte(keyspace + ".")
-	} else {
-		tablePrefix = []byte("\"" + keyspace + "\".")
-	}
-
-	updatedQuery := append(before, tablePrefix...)
-	updatedQuery = append(updatedQuery, after...)
-
-	// Update body length
-	bodyLen := binary.BigEndian.Uint32(updatedQuery[5:9]) + uint32(len(tablePrefix))
-	binary.BigEndian.PutUint32(updatedQuery[5:9], bodyLen)
-
-	//update query string length
-	queryLen := binary.BigEndian.Uint32(updatedQuery[9:13]) + uint32(len(tablePrefix))
-	binary.BigEndian.PutUint32(updatedQuery[9:13], queryLen)
-
-	q.Query = updatedQuery
-	return q
-}
-
-func (q *Query) batchQueryAddKeyspace(keyspace string) *Query {
-	numQueries := binary.BigEndian.Uint16(q.Query[10:12])
-	offset := 12
-	for i := 0; i < int(numQueries); i++ {
-		kind := q.Query[offset]
-		if kind == 0 {
-			// full query string
-			queryLenIndex := offset + 1
-			queryLen := int(binary.BigEndian.Uint32(q.Query[offset+1 : offset+5]))
-			query := string(q.Query[offset+5 : offset+5+queryLen])
-
-			tablename := strings.Split(q.Paths[i], "/")[3]
-			var bodyLen uint32
-			if strings.Contains(tablename, ".") {
-				bodyLen = uint32(queryLen)
-			} else {
-				tablenameIndex := strings.Index(query, tablename) + offset + 5
-
-				before := make([]byte, tablenameIndex)
-				copy(before, q.Query[:tablenameIndex])
-				after := q.Query[tablenameIndex:]
-
-				// Rebuild query
-				var tablePrefix []byte
-				if isLower(keyspace) {
-					tablePrefix = []byte(keyspace + ".")
-				} else {
-					tablePrefix = []byte("\"" + keyspace + "\".")
-				}
-				updatedQuery := append(before, tablePrefix...)
-				updatedQuery = append(updatedQuery, after...)
-
-				// Update query length
-				bodyLen := uint32(queryLen) + uint32(len(tablePrefix))
-				binary.BigEndian.PutUint32(updatedQuery[queryLenIndex:queryLenIndex+4], bodyLen)
-
-				q.Query = updatedQuery
-			}
-
-			offset = offset + 5 + int(bodyLen)
-			offset = cqlparser.ReadPastBatchValues(q.Query, offset)
-		} else if kind == 1 {
-			// prepared query id
-			idLen := int(binary.BigEndian.Uint16(q.Query[offset+1 : offset+3]))
-			offset = offset + 3 + idLen
-			offset = cqlparser.ReadPastBatchValues(q.Query, offset)
-		}
-	}
-	return q
 }
 
 func (q *Query) WithWaitGroup(waitgroup *sync.WaitGroup) *Query {

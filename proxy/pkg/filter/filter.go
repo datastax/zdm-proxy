@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"net"
 	"strings"
 	"sync"
@@ -52,6 +53,7 @@ type CQLProxy struct {
 	lock           *sync.Mutex // TODO: maybe change this to a RWMutex for better performance
 
 	astraSessions map[string]net.Conn
+	sessionLocks  map[string]*sync.Mutex
 
 	outstandingQueries map[string]map[uint16]*frame.Frame
 	outstandingUpdates map[string]chan bool
@@ -218,6 +220,7 @@ func (p *CQLProxy) handleClientConnection(client net.Conn) {
 		p.lock.Lock()
 		p.outstandingQueries[client.RemoteAddr().String()] = make(map[uint16]*frame.Frame)
 		p.astraSessions[client.RemoteAddr().String()] = astraSession
+		p.sessionLocks[client.RemoteAddr().String()] = &sync.Mutex{}
 		p.lock.Unlock()
 
 		go p.forward(client, sourceSession)
@@ -557,6 +560,7 @@ func (p *CQLProxy) astraReplyHandler(client net.Conn) {
 		data := append(frameHeader, frameBody...)
 
 		resp := frame.New(data)
+		log.Errorf("astraResponse: %v", data)
 
 		p.lock.Lock()
 		if _, ok := p.outstandingQueries[clientIP][resp.Stream]; ok {
@@ -642,16 +646,10 @@ func (p *CQLProxy) handleWriteQuery(fromClause string, queryType query.Type, f *
 	keyspace, tableName := extractTableInfo(fromClause)
 
 	// Is the keyspace already in the table clause of the query, or do we need to add it
-	addKeyspace := false
 	if keyspace == "" {
 		keyspace = p.Keyspaces[client]
 		if keyspace == "" {
 			return errors.New("invalid keyspace")
-		}
-
-		// if not an EXECUTE command
-		if f.Opcode != 0x0a {
-			addKeyspace = true
 		}
 	}
 
@@ -661,9 +659,6 @@ func (p *CQLProxy) handleWriteQuery(fromClause string, queryType query.Type, f *
 	}
 
 	q := query.New(table, queryType, f, client, parsedPaths).UsingTimestamp()
-	if addKeyspace {
-		q = q.AddKeyspace(keyspace)
-	}
 
 	// If we have a write query that depends on all values already being present in the database,
 	// if migration of this table is currently in progress (or about to begin), then pause consumption
@@ -681,7 +676,6 @@ func (p *CQLProxy) handleBatchQuery(f *frame.Frame, paths []string, client strin
 
 	waitgroup := sync.WaitGroup{}
 	queries := []*query.Query{}
-	addKeyspace := false
 
 	// Set to hold which tables we've already included queries for
 	includedTables := make(map[string]bool)
@@ -691,7 +685,6 @@ func (p *CQLProxy) handleBatchQuery(f *frame.Frame, paths []string, client strin
 		keyspace, tableName := extractTableInfo(fields[3])
 		if keyspace == "" {
 			keyspace = currKeyspace
-			addKeyspace = true
 		}
 
 		table, ok := p.migrationStatus.Tables[keyspace][tableName]
@@ -727,10 +720,6 @@ func (p *CQLProxy) handleBatchQuery(f *frame.Frame, paths []string, client strin
 
 		queries = append(queries, q)
 		includedTables[explicitTable] = true
-	}
-
-	if addKeyspace {
-		queries[0] = queries[0].AddKeyspace(currKeyspace)
 	}
 
 	for _, q := range queries {
@@ -872,13 +861,20 @@ func (p *CQLProxy) deleteResponseChan(q *query.Query) {
 	delete(p.queryResponses, q.Stream)
 }
 
-func (p *CQLProxy) execute(query *query.Query) error {
-	log.Debugf("Executing %v", *query)
-	session := p.getAstraSession(query.Source)
+func (p *CQLProxy) execute(q *query.Query) error {
+	log.Debugf("Executing %v", *q)
+	session := p.getAstraSession(q.Source)
+	p.sessionLocks[q.Source].Lock()
+	defer p.sessionLocks[q.Source].Unlock()
+
+	if q.Type != query.MISC {
+		p.switchToQueryKeyspace(session, q)
+		log.Debug("this exited")
+	}
 
 	var err error
 	for i := 1; i <= 5; i++ {
-		_, err := session.Write(query.Query)
+		_, err := session.Write(q.Query)
 		if err == nil {
 			break
 		}
@@ -887,6 +883,32 @@ func (p *CQLProxy) execute(query *query.Query) error {
 	}
 
 	return err
+}
+
+func (p *CQLProxy) switchToQueryKeyspace(session net.Conn, q *query.Query) {
+	query := fmt.Sprintf("USE %s;", q.Table.Keyspace)
+	// length of frame is header length + [long string] + 2 bytes for consistency + 1 byte for flags
+	totalLen := cassHdrLen + 4
+	useFrame := make([]byte, totalLen)
+
+	useFrame[0] = q.Query[0]
+	useFrame[1] = 0x00 // no flags
+
+	streamID := uint16(rand.Int())
+	for _, ok := p.outstandingQueries[q.Source][streamID]; ok; _, ok = p.outstandingQueries[q.Source][streamID]{
+		streamID = uint16(rand.Int())
+	}
+	binary.BigEndian.PutUint16(useFrame[2:4], streamID)
+
+	useFrame[4] = 0x07
+	binary.BigEndian.PutUint32(useFrame[5:9], uint32(len(query) + 2 + 1))
+	binary.BigEndian.PutUint32(useFrame[9:13], uint32(len(query)))
+	body := append([]byte(query), 0x00, 0x01, 0x00)
+	useFrame = append(useFrame, body...)
+
+	log.Debug(useFrame)
+	// TODO: ensure that the use statement succeeded
+	session.Write(useFrame)
 }
 
 func (p *CQLProxy) handleMigrationConnection(conn net.Conn) {
@@ -1086,6 +1108,7 @@ func (p *CQLProxy) reset() {
 	p.MigrationDone = make(chan struct{})
 	p.Keyspaces = make(map[string]string)
 	p.astraSessions = make(map[string]net.Conn)
+	p.sessionLocks = make(map[string]*sync.Mutex)
 	p.queuesCompleteCond = sync.NewCond(&sync.Mutex{})
 	p.preparedIDs = make(map[uint16]string)
 	p.mappedPreparedIDs = make(map[string]string)
