@@ -203,7 +203,15 @@ func parseCassandra(query string) (string, string) {
 	case "use":
 		table = originalFields[1]
 	case "alter", "create", "drop", "truncate", "list":
-
+		if action == "truncate" && len(fields) == 2 {
+			// special case, truncate can just be passed table name
+			table = originalFields[1]
+			break
+		} else if action == "truncate" && len(fields) == 3 {
+			// special case, truncate can be 'truncate table keyspace.tablename'
+			table = originalFields[2]
+			break
+		}
 		action = strings.Join([]string{action, fields[1]}, "-")
 		if fields[1] == "table" || fields[1] == "keyspace" {
 
@@ -226,10 +234,6 @@ func parseCassandra(query string) (string, string) {
 					table = originalFields[4]
 				}
 			}
-		}
-		if action == "truncate" && len(fields) == 2 {
-			// special case, truncate can just be passed table name
-			table = originalFields[1]
 		}
 		if fields[1] == "materialized" {
 			action = action + "-view"
