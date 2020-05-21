@@ -236,7 +236,7 @@ func (m *Migration) schemaPool(wg *sync.WaitGroup, jobs <-chan *gocql.TableMetad
 	}
 }
 
-func generateSchemaMigrationQuery(table *gocql.TableMetadata, compactionMap map[string]string) string {
+func generateSchemaMigrationQuery(table *gocql.TableMetadata) string {
 	query := fmt.Sprintf("CREATE TABLE %s.%s (", strconv.Quote(table.Keyspace), strconv.Quote(table.Name))
 	for cname, column := range table.Columns {
 		query += fmt.Sprintf("%s %s, ", strconv.Quote(cname), column.Type.Type().String())
@@ -264,23 +264,14 @@ func generateSchemaMigrationQuery(table *gocql.TableMetadata, compactionMap map[
 
 	if clustering {
 		clusterDesc = clusterDesc[0:(len(clusterDesc) - 2)]
-		query += fmt.Sprintf("WITH CLUSTERING ORDER BY (%s) AND ", clusterDesc)
-	} else {
-		query += "WITH "
+		query += fmt.Sprintf("WITH CLUSTERING ORDER BY (%s);", clusterDesc)
 	}
-
-	cString := "{"
-	for key, value := range compactionMap {
-		cString += fmt.Sprintf("'%s': '%s', ", key, value)
-	}
-	cString = cString[0:(len(cString)-2)] + "}"
-	query += fmt.Sprintf("compaction = %s;", cString)
 
 	return query
 }
 
 // migrateSchema creates each new table in Astra with
-// column names and types, primary keys, and compaction information
+// column names and types, primary keys, and clustering information
 func (m *Migration) migrateSchema(keyspace string, table *gocql.TableMetadata) error {
 	m.status.Tables[keyspace][table.Name].Step = MigratingSchema
 	log.Infof("MIGRATING TABLE SCHEMA: %s.%s... ", table.Keyspace, table.Name)
@@ -289,16 +280,7 @@ func (m *Migration) migrateSchema(keyspace string, table *gocql.TableMetadata) e
 		log.Fatalf("Astra tables can have 50 columns max; table %s.%s has %d columns", keyspace, table.Name, len(table.Columns))
 	}
 
-	// Fetch table compaction metadata
-	cQuery := `SELECT compaction FROM system_schema.tables
-					WHERE keyspace_name = ? and table_name = ?;`
-	cMap := make(map[string]interface{})
-	itr := m.sourceSession.Query(cQuery, keyspace, table.Name).Iter()
-	itr.MapScan(cMap)
-
-	compactionMap := (cMap["compaction"]).(map[string]string)
-
-	query := generateSchemaMigrationQuery(table, compactionMap)
+	query := generateSchemaMigrationQuery(table)
 	err := m.destSession.Query(query).Exec()
 
 	if err != nil {
