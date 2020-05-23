@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"sync"
 
@@ -51,10 +52,11 @@ func main() {
 func doTesting(p *filter.CQLProxy) {
 	for {
 		scanner := bufio.NewScanner(os.Stdin)
+		var tables map[string]map[string]*migration.Table
 		for scanner.Scan() {
 			switch scanner.Text() {
 			case "start":
-				tables := make(map[string]map[string]*migration.Table)
+				tables = make(map[string]map[string]*migration.Table)
 				tables["codebase"] = make(map[string]*migration.Table)
 				tables["codebase"]["tasks"] = &migration.Table{
 					Name:     "tasks",
@@ -65,8 +67,51 @@ func doTesting(p *filter.CQLProxy) {
 					Lock: &sync.Mutex{},
 				}
 
+				tables["codebase"]["people"] = &migration.Table{
+					Name:     "people",
+					Keyspace: "codebase",
+					Step:     migration.MigratingSchema,
+					Error:    nil,
+
+					Lock: &sync.Mutex{},
+				}
+
+				tables["blueprint"] = make(map[string]*migration.Table)
+				tables["blueprint"]["people"] = &migration.Table{
+					Name:     "people",
+					Keyspace: "blueprint",
+					Step:     migration.MigratingSchema,
+					Error:    nil,
+
+					Lock: &sync.Mutex{},
+				}
+
+				tables["mdb"] = make(map[string]*migration.Table)
+				tables["mdb"]["people"] = &migration.Table{
+					Name:     "people",
+					Keyspace: "mdb",
+					Step:     migration.MigratingSchema,
+					Error:    nil,
+
+					Lock: &sync.Mutex{},
+				}
+
 				p.MigrationStart <- &migration.Status{Tables: tables,
 					Lock: &sync.Mutex{}}
+			case "pause":
+				fmt.Println("Proxy knows to pause codebase.people. Will pause on first TRUNCATE.")
+				tables["codebase"]["people"].Step = migration.UnloadingDataComplete
+				tables["blueprint"]["people"].Step = migration.UnloadingDataComplete
+				tables["mdb"]["people"].Step = migration.UnloadingDataComplete
+
+			case "resume":
+				fmt.Println("Resuming codebase.people")
+				tables["codebase"]["people"].Step = migration.LoadingDataComplete
+				p.CheckStart("codebase", "people")
+				tables["blueprint"]["people"].Step = migration.LoadingDataComplete
+				p.CheckStart("blueprint", "people")
+				tables["mdb"]["people"].Step = migration.LoadingDataComplete
+				p.CheckStart("mdb", "people")
 			case "complete":
 				p.MigrationDone <- struct{}{}
 			case "shutdown":
