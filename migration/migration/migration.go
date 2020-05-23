@@ -145,6 +145,9 @@ func (m *Migration) Migrate() {
 	close(schemaJobs)
 	wgSchema.Wait()
 
+	// Migrate indexes
+	m.migrateIndexes()
+
 	// Add all tables to priority queue
 	for _, keyspaceTables := range tables {
 		for _, table := range keyspaceTables {
@@ -218,6 +221,26 @@ func (m *Migration) Migrate() {
 	select {}
 }
 
+func (m *Migration) migrateIndexes() {
+	itr := m.sourceSession.Query("SELECT keyspace_name, table_name, index_name, options FROM system_schema.indexes;").Iter()
+	var keyspaceName string
+	var tableName string
+	var indexName string
+	var options map[string]string
+
+	for itr.Scan(&keyspaceName, &tableName, &indexName, &options) {
+		query := fmt.Sprintf("CREATE INDEX %s ON %s.%s (%s); ", strconv.Quote(indexName), strconv.Quote(keyspaceName),
+			strconv.Quote(tableName), strconv.Quote(options["target"]))
+
+		log.Debug("INDEX MIGRATION QUERY: " + query)
+		err := m.destSession.Query(query).Exec()
+
+		if err != nil {
+			log.WithError(err).Fatal("Failed to migrate index")
+		}
+	}
+}
+
 func (m *Migration) schemaPool(wg *sync.WaitGroup, jobs <-chan *gocql.TableMetadata) {
 	for table := range jobs {
 		// If we already migrated schema, skip this
@@ -288,6 +311,7 @@ func (m *Migration) migrateSchema(keyspace string, table *gocql.TableMetadata) e
 		m.status.Tables[keyspace][table.Name].Error = err
 		return err
 	}
+
 	return nil
 }
 
