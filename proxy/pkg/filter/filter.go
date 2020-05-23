@@ -901,7 +901,7 @@ func (p *CQLProxy) switchToQueryKeyspace(session net.Conn, q *query.Query) {
 	binary.BigEndian.PutUint16(useFrame[2:4], streamID)
 
 	useFrame[4] = 0x07
-	binary.BigEndian.PutUint32(useFrame[5:9], uint32(len(query) + 2 + 1))
+	binary.BigEndian.PutUint32(useFrame[5:9], 4 + uint32(len(query) + 2 + 1))
 	binary.BigEndian.PutUint32(useFrame[9:13], uint32(len(query)))
 	body := append([]byte(query), 0x00, 0x01, 0x00)
 	useFrame = append(useFrame, body...)
