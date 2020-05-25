@@ -228,7 +228,14 @@ func (m *Migration) migrateIndexes() {
 	var indexName string
 	var options map[string]string
 
+	indexMap := make(map[string]bool)
+
 	for itr.Scan(&keyspaceName, &tableName, &indexName, &options) {
+		if indexMap[fmt.Sprintf("%s.%s", keyspaceName, tableName)] {
+			log.Fatalf("Astra tables can only have one secondary index; %s.%s has multiple", keyspaceName, tableName)
+		}
+
+		indexMap[fmt.Sprintf("%s.%s", keyspaceName, tableName)] = true
 		query := fmt.Sprintf("CREATE INDEX %s ON %s.%s (%s); ", strconv.Quote(indexName), strconv.Quote(keyspaceName),
 			strconv.Quote(tableName), strconv.Quote(options["target"]))
 
