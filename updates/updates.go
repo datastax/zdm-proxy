@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net"
+	"os"
 	"time"
 
 	"github.com/google/uuid"
@@ -121,6 +122,7 @@ func CommunicationHandler(src net.Conn, dst net.Conn, handler func(update *Updat
 		if err != nil {
 			if err == io.EOF {
 				log.Error(err)
+				os.Exit(100)
 				return
 			}
 		}

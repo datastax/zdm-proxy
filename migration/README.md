@@ -28,6 +28,21 @@ The Migration Service creates two sessions, to a source cluster and destination 
 
 These environment variables are read and processed into a `Config` struct, which is passed into the Migration Service.
 
+## Starting Migration
+
+We created a bash script `migrate.sh` which builds the migration service into a binary file in the migration folder, and continues to restart the migration service until it returns exit code 0 (migration complete).
+```
+go build -o ./migration/bin ./migration/main.go
+./migration/bin
+code=$?
+echo $code
+while [ $code -eq 100 ]; do
+  HARD_RESTART=true ./migration/bin
+  code=$?
+done
+```
+If the proxy service fails, the migration service will return exit code 100. The migration service will be run again with `HARD_RESTART=TRUE`. On restart, the service will go through the previously saved checkpoint file, drop all of the tables that had been migrated, and start over, waiting for the proxy to reconnect.  
+
 ## Migrating Schema
 
 Our script uses GoCQL to pull schema information from the source cluster. We then build and run queries to create identical tables on the Astra cluster. The pseudocode is shown below:
@@ -133,6 +148,7 @@ We save checkpoints by writing to a `migration.chk` file. We overwrite the check
     s:k2.todos
     
     d:k1.tasks
+    
 ## Logging
 
 We log information to standard output. We also create a unique directory `migration-<timestamp>` to hold dsbulk logs, exports, etc.
@@ -191,7 +207,6 @@ The migration service sends an update to the proxy service when:
 2. When we begin unloading data for a table
 3. When we finish migrating data for a table
 4. When we complete the entire migration
-5. The migration service errors and shuts down
 
 The Migration Service expects requests from the Proxy Service when:
 
@@ -199,17 +214,11 @@ The Migration Service expects requests from the Proxy Service when:
 2. A single table's migration needs to be restarted
 3. Proxy has successfully received and handled a migration update
 4. Proxy has failed handling a migration update
+
 ## Limitations and Assumptions
+
 - Client and Astra DB permissions will be provided to the service
 - S3 credentials will be provided to the service
 - Keyspace(s) will already exist in both databases
 - Dsbulk will not fail, if dsbulk returns an error, the migration process will halt.
 - Client will not be able to alter the schema of their keyspace or tables. Since our service only notifies proxy that the migration service is starting after migrating all of the schema, a dsbulk load into a table whose keyspace has been changed will fail.
-- Migration service will not automatically restart if the proxy service fails. Currently needs to be restarted manually.
-
-## TODOs
-- Minor modifications from PR
-- Finish automatic restart functionality
-- Fix TTL in dsbulk queries
-- Show metrics
-- Code cleanup/refactoring
