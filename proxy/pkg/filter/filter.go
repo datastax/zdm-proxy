@@ -96,6 +96,7 @@ type CQLProxy struct {
 	mappedPreparedIDs   map[string]string
 	outstandingPrepares map[uint16][]byte
 	preparedQueryBytes  map[string][]byte
+	prepareIDToKeyspace map[string]string
 }
 
 // Start starts up the proxy. The proxy creates a connection with the Astra Database,
@@ -105,7 +106,7 @@ func (p *CQLProxy) Start() error {
 	p.reset()
 	p.checkDatabaseConnections()
 
-	p.migrationSession = establishConnection(p.migrationServiceIP)
+	// p.migrationSession = establishConnection(p.migrationServiceIP)
 
 	go p.statusLoop()
 
@@ -647,11 +648,15 @@ func (p *CQLProxy) handlePrepareQuery(fromClause string, f *frame.Frame, client 
 		}
 	}
 
+	data := f.RawBytes
+	idLength := binary.BigEndian.Uint16(data[9:11])
+	preparedID := data[11 : 11+idLength]
+	p.prepareIDToKeyspace[string(preparedID)] = keyspace
+
 	table, ok := p.migrationStatus.Tables[keyspace][tableName]
 	if !ok {
 		return fmt.Errorf("table %s.%s does not exist", keyspace, tableName)
 	}
-
 
 	q := query.New(table, query.PREPARE, f, client, parsedPaths)
 	return p.execute(q)
@@ -682,7 +687,14 @@ func (p *CQLProxy) handleWriteQuery(fromClause string, queryType query.Type, f *
 
 	// Is the keyspace already in the table clause of the query, or do we need to add it
 	if keyspace == "" {
-		keyspace = p.Keyspaces[client]
+		if f.Opcode == 0x0a { //if execute
+			data := f.RawBytes
+			idLen := binary.BigEndian.Uint16(data[9:11])
+			preparedID := string(data[11:(11 + idLen)])
+			keyspace = p.prepareIDToKeyspace[preparedID]
+		} else {
+			keyspace = p.Keyspaces[client]
+		}
 		if keyspace == "" {
 			return errors.New("invalid keyspace")
 		}
@@ -1189,6 +1201,7 @@ func (p *CQLProxy) reset() {
 	p.mappedPreparedIDs = make(map[string]string)
 	p.outstandingPrepares = make(map[uint16][]byte)
 	p.preparedQueryBytes = make(map[string][]byte)
+	p.prepareIDToKeyspace = make(map[string]string)
 }
 
 func (p *CQLProxy) redirectActiveConnectionsToAstra() {
