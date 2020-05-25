@@ -28,8 +28,8 @@ import (
 
 // Migration contains necessary setup information
 type Migration struct {
-	Conf *Config
-
+	Conf               *Config
+	Metrics            *Metrics
 	keyspaces          []string
 	conn               net.Conn
 	status             *Status
@@ -70,7 +70,6 @@ func (m *Migration) Init() error {
 	m.outstandingUpdates = make(map[string]*updates.Update)
 	m.initialized = true
 	m.keyspaces = make([]string, 0)
-
 	return nil
 }
 
@@ -95,6 +94,8 @@ func (m *Migration) Migrate() {
 	}
 
 	m.status.initTableData(tables)
+	m.Metrics = NewMetrics(m.Conf.MigrationMetricsPort, m.directory, len(m.status.Tables))
+	m.Metrics.Expose()
 	m.readCheckpoint()
 
 	if m.Conf.HardRestart {
@@ -115,7 +116,6 @@ func (m *Migration) Migrate() {
 				table.Step = Waiting
 			}
 		}
-		m.status.Steps = 0
 
 		err := os.Remove("migration.chk")
 		if err != nil && err.Error() != "remove migration.chk: no such file or directory" {
@@ -211,12 +211,7 @@ func (m *Migration) Migrate() {
 	log.Debugf("Migration Speed: %s MB/s", strconv.FormatFloat(m.status.Speed, 'f', 2, 64))
 
 	m.writeCheckpoint()
-
-	if m.status.Steps == m.status.TotalSteps {
-		m.sendComplete()
-	} else {
-		log.Fatal("Migration ended early")
-	}
+	m.sendComplete()
 
 	os.Exit(0)
 }
@@ -257,7 +252,6 @@ func (m *Migration) schemaPool(wg *sync.WaitGroup, jobs <-chan *gocql.TableMetad
 				log.WithError(err).Fatalf("Error migrating schema for table %s.%s", table.Keyspace, table.Name)
 			}
 
-			m.status.Steps++
 			m.status.Tables[table.Keyspace][table.Name].Step = MigratingSchemaComplete
 			log.Infof("COMPLETED MIGRATING TABLE SCHEMA: %s.%s", table.Keyspace, table.Name)
 			m.writeCheckpoint()
@@ -329,10 +323,14 @@ func (m *Migration) tablePool(wg *sync.WaitGroup, jobs <-chan *gocql.TableMetada
 			if err != nil {
 				log.WithError(err).Fatalf("Failed to migrate table data for %s.%s", table.Keyspace, table.Name)
 			}
+			m.Metrics.IncrementTablesMigrated()
+			m.Metrics.DecrementTablesLeft()
 
 			currTable := m.status.Tables[table.Keyspace][table.Name]
 			currTable.Lock.Lock()
 			if currTable.Redo {
+				m.Metrics.DecrementTablesMigrated()
+				m.Metrics.IncrementTablesLeft()
 				log.Infof("REMIGRATING TABLE: %s.%s... ", table.Keyspace, table.Name)
 				keyspace := strconv.Quote(table.Keyspace)
 				name := strconv.Quote(table.Name)
@@ -346,11 +344,12 @@ func (m *Migration) tablePool(wg *sync.WaitGroup, jobs <-chan *gocql.TableMetada
 				if err != nil {
 					log.WithError(err).Fatalf("Failed to remigrate data for table %s.%s", keyspace, name)
 				}
+				m.Metrics.IncrementTablesMigrated()
+				m.Metrics.DecrementTablesLeft()
 				currTable.Redo = false
 			}
 			currTable.Lock.Unlock()
 
-			m.status.Steps += 2
 			m.status.Tables[table.Keyspace][table.Name].Step = LoadingDataComplete
 			log.Infof("COMPLETED LOADING TABLE DATA: %s.%s", table.Keyspace, table.Name)
 			m.writeCheckpoint()
@@ -567,10 +566,8 @@ func (m *Migration) readCheckpoint() {
 		tableName := tableNameTokens[1]
 		if entry[0] == 's' {
 			m.status.Tables[keyspace][tableName].Step = MigratingSchemaComplete
-			m.status.Steps++
 		} else if entry[0] == 'd' {
 			m.status.Tables[keyspace][tableName].Step = LoadingDataComplete
-			m.status.Steps += 2
 		}
 	}
 }
@@ -706,6 +703,8 @@ func (m *Migration) handleRequest(req *updates.Update) error {
 			table.Lock.Lock()
 			table.Redo = true
 			table.Lock.Unlock()
+			m.Metrics.IncrementTablesLeft()
+			m.Metrics.DecrementTablesMigrated()
 		}
 	}
 	return nil

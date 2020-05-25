@@ -18,6 +18,7 @@ type Config struct {
 
 	MigrationServiceHostname   string `required:"true" split_words:"true"`
 	MigrationCommunicationPort int    `required:"true" split_words:"true"`
+	MigrationMetricsPort       int    `default:"8081" split_words:"true"`
 	ProxyServiceHostname       string `required:"true" split_words:"true"`
 	ProxyCommunicationPort     int    `required:"true" split_words:"true"`
 
