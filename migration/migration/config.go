@@ -26,6 +26,7 @@ type Config struct {
 	HardRestart bool   `default:"false" split_words:"true"`
 	Threads     int    `default:"1"`
 	Debug       bool   `default:"false"`
+	MigrationID string `required:"true" split_words:"true"`
 }
 
 // NewConfig returns an empty Config struct

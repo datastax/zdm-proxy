@@ -48,7 +48,7 @@ type Migration struct {
 // Init creates the connections to the databases and locks needed for checkpoint and logging
 func (m *Migration) Init() error {
 	m.status = newStatus()
-	m.directory = fmt.Sprintf("migration-%s/", strconv.FormatInt(time.Now().Unix(), 10))
+	m.directory = m.Conf.MigrationID + "/" + fmt.Sprintf("migration-%s/", strconv.FormatInt(time.Now().Unix(), 10))
 	os.Mkdir(m.directory, 0755)
 
 	var err error
@@ -117,7 +117,7 @@ func (m *Migration) Migrate() {
 			}
 		}
 
-		err := os.Remove("migration.chk")
+		err := os.Remove(m.Conf.MigrationID + "/migration.chk")
 		if err != nil && err.Error() != "remove migration.chk: no such file or directory" {
 			log.WithError(err).Fatal("Error removing migration checkpoint file")
 		}
@@ -536,7 +536,7 @@ func (m *Migration) writeCheckpoint() {
 	str := fmt.Sprintf("%s\n\n%s", m.status.Timestamp.Format(time.RFC3339), data)
 
 	content := []byte(str)
-	err := ioutil.WriteFile("migration.chk", content, 0644)
+	err := ioutil.WriteFile(m.Conf.MigrationID+"/migration.chk", content, 0644)
 	if err != nil {
 		log.WithError(err).Error("Error writing migration checkpoint file")
 	}
@@ -548,7 +548,7 @@ func (m *Migration) writeCheckpoint() {
 func (m *Migration) readCheckpoint() {
 	m.chkLock.Lock()
 	defer m.chkLock.Unlock()
-	data, err := ioutil.ReadFile("migration.chk")
+	data, err := ioutil.ReadFile(m.Conf.MigrationID + "/migration.chk")
 
 	m.status.Timestamp = time.Now()
 
