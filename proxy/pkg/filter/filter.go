@@ -220,11 +220,13 @@ func (p *CQLProxy) handleClientConnection(client net.Conn) {
 		sourceSession := establishConnection(p.sourceIP)
 		astraSession := establishConnection(p.astraIP)
 
+		clientIP := client.RemoteAddr().String()
+
 		p.lock.Lock()
-		p.outstandingQueries[client.RemoteAddr().String()] = make(map[uint16]*frame.Frame)
-		p.outstandingUses[client.RemoteAddr().String()] = make(map[uint16]chan bool)
-		p.astraSessions[client.RemoteAddr().String()] = astraSession
-		p.sessionLocks[client.RemoteAddr().String()] = &sync.Mutex{}
+		p.outstandingQueries[clientIP] = make(map[uint16]*frame.Frame)
+		p.outstandingUses[clientIP] = make(map[uint16]chan bool)
+		p.astraSessions[clientIP] = astraSession
+		p.sessionLocks[clientIP] = &sync.Mutex{}
 		p.lock.Unlock()
 
 		go p.forward(client, sourceSession)
@@ -236,32 +238,19 @@ func (p *CQLProxy) handleClientConnection(client net.Conn) {
 
 // Should only be called when migration is currently running
 func (p *CQLProxy) forward(src, dst net.Conn) {
+	authenticated := false
 	sourceAddress := src.RemoteAddr().String()
 	destAddress := dst.RemoteAddr().String()
-
-	// Upon redirecting active connections, forward from source->client will close.
-	// We don't want to close connections in that case.
-	if destAddress == p.sourceIP {
-		defer src.Close()
-		defer dst.Close()
-	}
-
 	pointsToSource := sourceAddress == p.sourceIP || destAddress == p.sourceIP
-	authenticated := false
-
-	defer func() {
-		p.lock.Lock()
-		defer p.lock.Unlock()
-
-		delete(p.Keyspaces, sourceAddress)
-	}()
 
 	if destAddress == p.sourceIP {
-		p.Metrics.IncrementConnections()
 		defer func() {
-			p.Metrics.DecrementConnections()
-			p.checkRedirect()
+			src.Close()
+			dst.Close()
+
+			p.clientDisconnect(sourceAddress)
 		}()
+
 	}
 
 	frameHeader := make([]byte, cassHdrLen)
@@ -269,7 +258,7 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 		_, err := src.Read(frameHeader)
 		if err != nil {
 			if err != io.EOF {
-				log.Debugf("%s disconnected", src.RemoteAddr())
+				log.Debugf("%s disconnected", sourceAddress)
 			} else {
 				log.Error(err)
 			}
@@ -278,6 +267,7 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 
 		bodyLen := binary.BigEndian.Uint32(frameHeader[5:9])
 		frameBody := make([]byte, bodyLen)
+
 		if bodyLen != 0 {
 			_, err := src.Read(frameBody)
 			if err != nil {
@@ -287,102 +277,69 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 		}
 
 		data := append(frameHeader, frameBody...)
-		// log.Debugf("(%s -> %s): %v", src.RemoteAddr(), dst.RemoteAddr(), data)
 
 		if len(data) > cassMaxLen {
 			log.Error("query larger than max allowed by Cassandra, ignoring.")
 			continue
 		}
 
-		p.Metrics.IncrementFrames()
+		log.Debugf("(%s -> %s): %v", src.RemoteAddr(), dst.RemoteAddr(), data)
+
 		f := frame.New(data)
+		p.Metrics.IncrementFrames()
 
 		if f.Flags&0x01 == 1 {
 			log.Errorf("compression flag for stream %d set, unable to parse query beyond header", f.Stream)
 			continue
 		}
 
-		// Frame from an unauthenticated client
-		if f.Direction == 0 && !authenticated {
-			switch f.Opcode {
-			case 0x05:
-				// OPTIONS
-				err := auth.HandleOptions(src, dst, f.RawBytes)
-				if err != nil {
-					log.Errorf("client %s unable to negotiate options with %s",
-						src.RemoteAddr(), dst.RemoteAddr())
-					return
-				}
-			case 0x01:
-				// STARTUP
-
-				// Ensure that the user provided valid Astra credentials
-				authenticated, err = auth.CheckAuthentication(src, p.Conf.AstraUsername, p.Conf.AstraPassword, f.RawBytes)
+		// Frame from client
+		if f.Direction == 0 {
+			if !authenticated {
+				// Handle client authentication
+				authenticated, err = p.handleStartupFrame(f, src, dst)
 				if err != nil {
 					log.Error(err)
-					return
 				}
-
-				// Start CQL session to source database
-				err = auth.HandleStartup(src, dst, p.Conf.SourceUsername, p.Conf.SourcePassword, f.RawBytes, true)
-				if err != nil {
-					log.Error(err)
-					return
-				}
-
-				// Start CQL session to Astra database
-				astraSession := p.getAstraSession(src.RemoteAddr().String())
-				err = auth.HandleStartup(src, astraSession, p.Conf.AstraUsername, p.Conf.AstraPassword, f.RawBytes, false)
-				if err != nil {
-					log.Error(err)
-					return
-				}
-
-				// Start sending responses from source database back to client
-				go p.forward(dst, src)
-				go p.astraReplyHandler(src)
-			default:
-				log.Debugf("received non STARTUP or OPTIONS query from unauthenticated client %s", src.RemoteAddr())
+				continue
 			}
-			continue
-		}
 
-		// || pointsToSource is to allow the first query after beginning redirect to go through
-		// this makes it so the forward from dst -> client doesn't permanently block in src.Read
-		if !p.redirectActiveConns || pointsToSource {
-			// Sent from client
-			p.lock.Lock()
-			if f.Direction == 0 {
+			if !p.redirectActiveConns || pointsToSource {
+				p.lock.Lock()
 				p.outstandingQueries[sourceAddress][f.Stream] = f
 				if f.Opcode == 0x09 {
 					p.outstandingPrepares[f.Stream] = f.RawBytes
 				}
-			} else {
-				// Response from database
-				if f.Opcode == 0x00 {
-					// ERROR response
-					delete(p.outstandingQueries[destAddress], f.Stream)
-				} else if _, ok := p.outstandingQueries[destAddress][f.Stream]; ok {
-					if f.Opcode == 0x08 {
-						// RESULT response
-						resultKind := binary.BigEndian.Uint32(data[9:13])
-						log.Debugf("resultKind = %d", resultKind)
-						if resultKind == 0x0004 {
-							// PREPARE RESULT
-							if queryBytes, ok := p.outstandingPrepares[f.Stream]; ok {
-								idLen := binary.BigEndian.Uint16(data[13:15])
-								preparedID := string(data[15 : 15+idLen])
-								p.preparedIDs[f.Stream] = preparedID
-								p.preparedQueryBytes[preparedID] = queryBytes
-								log.Debugf("Mapped stream %d to prepared ID %s", f.Stream, preparedID)
-							}
+				p.lock.Unlock()
+			}
+		} else {
+			p.lock.Lock()
+			// Response frame from database
+			if f.Opcode == 0x00 {
+				// ERROR response
+				delete(p.outstandingQueries[destAddress], f.Stream)
+			}
+
+			if _, ok := p.outstandingQueries[destAddress][f.Stream]; ok {
+				if f.Opcode == 0x08 {
+					// RESULT response
+					resultKind := binary.BigEndian.Uint32(data[9:13])
+					log.Debugf("resultKind = %d", resultKind)
+					if resultKind == 0x0004 {
+						// PREPARE RESULT
+						if queryBytes, ok := p.outstandingPrepares[f.Stream]; ok {
+							idLen := binary.BigEndian.Uint16(data[13:15])
+							preparedID := string(data[15 : 15+idLen])
+							p.preparedIDs[f.Stream] = preparedID
+							p.preparedQueryBytes[preparedID] = queryBytes
+							log.Debugf("Mapped stream %d to prepared ID %s", f.Stream, preparedID)
 						}
 					}
-
-					go p.mirrorToAstra(destAddress, f.Stream)
-					log.Debugf("Received success response from source database for stream (%s, %d). Mirroring to "+
-						"Astra database", sourceAddress, f.Stream)
 				}
+
+				go p.mirrorToAstra(destAddress, f.Stream)
+				log.Debugf("Received success response from source database for stream (%s, %d). Mirroring to "+
+					"Astra database", sourceAddress, f.Stream)
 			}
 			p.lock.Unlock()
 		}
@@ -415,6 +372,58 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 			}
 		}
 	}
+}
+
+func (p *CQLProxy) handleStartupFrame(f *frame.Frame, client, db net.Conn) (bool, error) {
+	switch f.Opcode {
+	case 0x05:
+		// OPTIONS
+		err := auth.HandleOptions(client, db, f.RawBytes)
+		if err != nil {
+			return false, fmt.Errorf("client %s unable to negotiate options with %s",
+				client.RemoteAddr(), db.RemoteAddr())
+		}
+	case 0x01:
+		// STARTUP
+
+		// Ensure that the user provided valid Astra credentials
+		err := auth.CheckAuthentication(client, p.Conf.AstraUsername, p.Conf.AstraPassword, f.RawBytes)
+		if err != nil {
+			return false, err
+		}
+
+		// Start CQL session to source database
+		err = auth.HandleStartup(client, db, p.Conf.SourceUsername, p.Conf.SourcePassword, f.RawBytes, false)
+		if err != nil {
+			return false, err
+		}
+
+		// Start CQL session to Astra database
+		astraSession := p.getAstraSession(client.RemoteAddr().String())
+		err = auth.HandleStartup(client, astraSession, p.Conf.AstraUsername, p.Conf.AstraPassword, f.RawBytes, false)
+		if err != nil {
+			return false, err
+		}
+
+		// Start sending responses from source database back to client
+		go p.forward(db, client)
+		go p.astraReplyHandler(client)
+
+		return true, nil
+	}
+
+	return false, fmt.Errorf("received non STARTUP or OPTIONS query from unauthenticated client %s",
+		client.RemoteAddr())
+
+}
+
+func (p *CQLProxy) clientDisconnect(client string) {
+	p.lock.Lock()
+	delete(p.Keyspaces, client)
+	p.lock.Unlock()
+
+	p.Metrics.DecrementConnections()
+	p.checkRedirect()
 }
 
 // forwardDirect directly forwards traffic from src to dst.
@@ -563,7 +572,6 @@ func (p *CQLProxy) astraReplyHandler(client net.Conn) {
 		data := append(frameHeader, frameBody...)
 
 		resp := frame.New(data)
-		log.Errorf("astraResponse: %v", data)
 
 		p.lock.Lock()
 		success := resp.Opcode != 0x00
@@ -579,21 +587,22 @@ func (p *CQLProxy) astraReplyHandler(client net.Conn) {
 				// find the associated prepare query string.
 				if resp.Opcode == 0x08 {
 					resultKind := binary.BigEndian.Uint32(data[9:13])
-					log.Debugf("resultKind = %d", resultKind)
 					if resultKind == 0x0004 {
 						if sourcePreparedID, ok := p.preparedIDs[resp.Stream]; ok {
 							idLen := binary.BigEndian.Uint16(data[13:15])
 							astraPreparedID := string(data[15 : 15+idLen])
 
 							p.mappedPreparedIDs[sourcePreparedID] = astraPreparedID
+							log.Debugf("Mapped source PreparedID %s to Astra PreparedID %s", sourcePreparedID,
+								astraPreparedID)
 						}
 					}
 				}
 
-				log.Debugf("Received success response from Astra from query %d", resp.Stream)
+				log.Debugf("Received success response from Astra from query (%s, %d)", clientIP, resp.Stream)
 				delete(p.outstandingQueries[clientIP], resp.Stream)
 			} else {
-				log.Debugf("Received error response from Astra from query %d", resp.Stream)
+				log.Debugf("Received error response from Astra from query (%s, %d)", clientIP, resp.Stream)
 				p.checkError(resp.RawBytes)
 			}
 		} else if useRespChan, ok := p.outstandingUses[clientIP][resp.Stream]; ok {
@@ -692,15 +701,14 @@ func (p *CQLProxy) handleWriteQuery(fromClause string, queryType query.Type, f *
 	if queryType == query.UPDATE || queryType == query.TRUNCATE {
 		p.checkStop(keyspace, tableName)
 	}
+
 	p.queueQuery(q)
 
 	return nil
 }
 
 func (p *CQLProxy) handleBatchQuery(f *frame.Frame, paths []string, client string) error {
-	currKeyspace := p.Keyspaces[client]
-
-	waitgroup := sync.WaitGroup{}
+	batchWG := sync.WaitGroup{}
 	queries := []*query.Query{}
 
 	// Set to hold which tables we've already included queries for
@@ -710,7 +718,10 @@ func (p *CQLProxy) handleBatchQuery(f *frame.Frame, paths []string, client strin
 		fields := strings.Split(path, "/")
 		keyspace, tableName := extractTableInfo(fields[3])
 		if keyspace == "" {
-			keyspace = currKeyspace
+			keyspace = p.Keyspaces[client]
+			if keyspace == "" {
+				return fmt.Errorf("invalid keyspace for batch query (%s, %d)", client, f.Stream)
+			}
 		}
 
 		table, ok := p.migrationStatus.Tables[keyspace][tableName]
@@ -731,11 +742,11 @@ func (p *CQLProxy) handleBatchQuery(f *frame.Frame, paths []string, client strin
 		// state of the client database when the batch statement was queried.
 		var q *query.Query
 		if i == 0 {
-			q = query.New(table, query.BATCH, f, client, paths).WithWaitGroup(&waitgroup).UsingTimestamp()
+			q = query.New(table, query.BATCH, f, client, paths).WithWaitGroup(&batchWG).UsingTimestamp()
 		} else {
-			q = query.New(table, query.BATCH, &frame.Frame{}, client, paths).WithWaitGroup(&waitgroup)
+			q = query.New(table, query.BATCH, &frame.Frame{}, client, paths).WithWaitGroup(&batchWG)
 		}
-		waitgroup.Add(1)
+		batchWG.Add(1)
 
 		// BATCH statements only contain INSERT, DELETE, and UPDATE. This stops any tables corresponding
 		// to DELETE or UPDATE queries, as we need to ensure that they are fully migrated before we can
@@ -785,7 +796,6 @@ func (p *CQLProxy) consumeQueue(keyspace string, table string) {
 				q.WG.Wait()
 			}
 
-			// Driver is async, so we don't need a lock around query execution
 			err := p.executeWrite(q)
 			if err != nil {
 				// If for some reason, on the off chance that Astra cannot handle this query (but the client
@@ -796,7 +806,7 @@ func (p *CQLProxy) consumeQueue(keyspace string, table string) {
 
 				// Save queue length before we send the update, as once we send the update we have no
 				// guarantees if the queries in the queue came before or after they restarted the migration,
-				// and we don't want to delete any of them that occured after the restart.
+				// and we don't want to delete any of them that occurred after the restart.
 				queueLen := len(queue)
 
 				err = p.sendTableRestart(q.Table)
@@ -892,6 +902,7 @@ func (p *CQLProxy) execute(q *query.Query) error {
 	p.sessionLocks[q.Source].Lock()
 	defer p.sessionLocks[q.Source].Unlock()
 
+	// switch to the keyspace that the query should be ran in
 	if q.Type != query.MISC && q.Type != query.USE {
 		if p.astraKeyspace[q.Source] != q.Table.Keyspace {
 			if err := p.switchToQueryKeyspace(session, q); err != nil {
@@ -900,7 +911,7 @@ func (p *CQLProxy) execute(q *query.Query) error {
 		}
 	}
 
-	log.Debugf("Executing %v", *q)
+	log.Debugf("Executing %v on Astra.", *q)
 
 	var err error
 	for i := 1; i <= 5; i++ {
@@ -915,57 +926,60 @@ func (p *CQLProxy) execute(q *query.Query) error {
 	return err
 }
 
-func (p *CQLProxy) switchToQueryKeyspace(session net.Conn, q *query.Query, attempts ...int) error{
+func (p *CQLProxy) switchToQueryKeyspace(session net.Conn, q *query.Query, attempts ...int) error {
 	attempt := 1
 	if attempts != nil {
 		attempt = attempts[0]
 	}
+
 	if attempt > maxQueryRetries {
 		return fmt.Errorf("failed to switch to keyspace %s for query %d on session %s", q.Table.Keyspace, q.Stream, q.Source)
 	}
-	query := fmt.Sprintf("USE %s;", q.Table.Keyspace)
+
+	queryString := fmt.Sprintf("USE %s;", q.Table.Keyspace)
+
+	// generate a random, unused StreamID for this USE query
+	streamID := uint16(rand.Int())
+	for _, ok := p.outstandingQueries[q.Source][streamID]; ok; _, ok = p.outstandingQueries[q.Source][streamID] {
+		streamID = uint16(rand.Int())
+	}
+
 	// length of frame is header length + [long string] + 2 bytes for consistency + 1 byte for flags
 	totalLen := cassHdrLen + 4
 	useFrame := make([]byte, totalLen)
 
 	useFrame[0] = q.Query[0]
 	useFrame[1] = 0x00 // no flags
-
-	streamID := uint16(rand.Int())
-	for _, ok := p.outstandingQueries[q.Source][streamID]; ok; _, ok = p.outstandingQueries[q.Source][streamID]{
-		streamID = uint16(rand.Int())
-	}
 	binary.BigEndian.PutUint16(useFrame[2:4], streamID)
-
 	useFrame[4] = 0x07
-	binary.BigEndian.PutUint32(useFrame[5:9], 4 + uint32(len(query) + 2 + 1))
-	binary.BigEndian.PutUint32(useFrame[9:13], uint32(len(query)))
-	body := append([]byte(query), 0x00, 0x01, 0x00)
-	useFrame = append(useFrame, body...)
+	binary.BigEndian.PutUint32(useFrame[5:9], 4+uint32(len(queryString)+2+1))
+	binary.BigEndian.PutUint32(useFrame[9:13], uint32(len(queryString)))
 
-	// TODO: ensure that the use statement succeeded
-	log.Debugf("switching to keyspace: %s", q.Table.Keyspace)
-	log.Debug(useFrame)
+	body := append([]byte(queryString), 0x00, 0x01, 0x00)
+	useFrame = append(useFrame, body...)
 
 	useRespChan := make(chan bool, 1)
 	p.lock.Lock()
 	p.outstandingUses[q.Source][streamID] = useRespChan
 	p.lock.Unlock()
 
-	session.Write(useFrame)
+	_, err := session.Write(useFrame)
+	if err != nil {
+		return p.switchToQueryKeyspace(session, q, attempt+1)
+	}
 
-	if success := <- useRespChan; success {
+	if success := <-useRespChan; success {
 		p.lock.Lock()
 		defer p.lock.Unlock()
 
 		close(useRespChan)
 		delete(p.outstandingUses[q.Source], streamID)
 		p.astraKeyspace[q.Source] = q.Table.Keyspace
-		log.Debugf("successfully switched to keyspace %s on stream %d for client %s", q.Table.Keyspace, streamID, q.Source)
+		log.Debugf("Successfully switched to keyspace %s for query (%s, %d)", q.Table.Keyspace, q.Source, streamID)
 		return nil
 	} else {
-		log.Debugf("Unable to switch to keyspace %s on stream %d for client %s. RETRYING", q.Table.Keyspace, streamID, q.Source)
-		return p.switchToQueryKeyspace(session, q, attempt + 1)
+		log.Debugf("Unable to switch to keyspace %s for query (%s, %d). Retrying...", q.Table.Keyspace, q.Source, streamID)
+		return p.switchToQueryKeyspace(session, q, attempt+1)
 	}
 }
 
