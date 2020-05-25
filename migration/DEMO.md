@@ -28,10 +28,5 @@ docker run --name cassandra-dest -p 9043:9042 -d cassandra
 3. Verify tasks table doesn't yet exist
   `cqlsh> SELECT * FROM tasks;`
 
-# Prepare curl to API
-`curl localhost:8080/status`
-
 # Running the Go script
-`go run migrator.go -k test -dport 9043`
-
-# Show logs
+`./migrate.sh`
