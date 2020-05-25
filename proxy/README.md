@@ -196,5 +196,4 @@ After migration is complete, users will need to specify their own username and p
 ## Known Issues
 - Keyspace support: The following edge case is not currently handled (due to logic in `Query.addKeyspace()`)
     - A DELETE statement involves a column with the same name as the table, i.e. `DELETE name FROM name`
-- Keyspace support: PREPARE statements. If a PREPARE statement does not include an explicit keyspace, there is a chance that the EXECUTE statement will be run in a keyspace in Astra that is different from the one run on the old database. This is because we need to queue EXECUTE statements but must allow USE statements to be executed immediately.
 - BATCH query support: currently does not support BATCH commands sent as plaintext with a QUERY opcode (this is how CQLSH sends BATCHs, which doesn't appear to follow the wire protocol)

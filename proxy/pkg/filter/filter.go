@@ -469,8 +469,7 @@ func (p *CQLProxy) writeToAstra(f *frame.Frame, client string) error {
 	if len(fields) > 2 {
 		switch fields[1] {
 		case "prepare":
-			q := query.New(nil, query.PREPARE, f, client, paths)
-			return p.execute(q)
+			return p.handlePrepareQuery(fields[3], f, client, paths);
 		case "query", "execute":
 			if fields[1] == "execute" {
 				err = p.updatePrepareID(f)
@@ -626,6 +625,27 @@ func (p *CQLProxy) checkError(body []byte) {
 		p.Metrics.IncrementReadFails()
 	}
 
+}
+
+func (p *CQLProxy) handlePrepareQuery(fromClause string, f *frame.Frame, client string, parsedPaths []string) error {
+	keyspace, tableName := extractTableInfo(fromClause)
+
+	// Is the keyspace already in the table clause of the query, or do we need to add it
+	if keyspace == "" {
+		keyspace = p.Keyspaces[client]
+		if keyspace == "" {
+			return errors.New("invalid keyspace")
+		}
+	}
+
+	table, ok := p.migrationStatus.Tables[keyspace][tableName]
+	if !ok {
+		return fmt.Errorf("table %s.%s does not exist", keyspace, tableName)
+	}
+
+
+	q := query.New(table, query.PREPARE, f, client, parsedPaths)
+	return p.execute(q)
 }
 
 func (p *CQLProxy) handleUseQuery(keyspace string, f *frame.Frame, client string, parsedPaths []string) error {
