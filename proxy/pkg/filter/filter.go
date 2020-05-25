@@ -317,10 +317,14 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 				// STARTUP
 
 				// Ensure that the user provided valid Astra credentials
-				authenticated, err = auth.CheckAuthentication(src, p.Conf.AstraUsername, p.Conf.AstraPassword, f.RawBytes)
-				if err != nil {
-					log.Error(err)
-					return
+				if len(p.Conf.AstraUsername) > 0 && len(p.Conf.AstraPassword) > 0 {
+					authenticated, err = auth.CheckAuthentication(src, p.Conf.AstraUsername, p.Conf.AstraPassword, f.RawBytes)
+					if err != nil {
+						log.Error(err)
+						return
+					}
+				} else {
+					authenticated = true
 				}
 
 				// Start CQL session to source database
@@ -895,7 +899,7 @@ func (p *CQLProxy) execute(q *query.Query) error {
 	return err
 }
 
-func (p *CQLProxy) switchToQueryKeyspace(session net.Conn, q *query.Query, attempts ...int) error{
+func (p *CQLProxy) switchToQueryKeyspace(session net.Conn, q *query.Query, attempts ...int) error {
 	attempt := 1
 	if attempts != nil {
 		attempt = attempts[0]
@@ -912,13 +916,13 @@ func (p *CQLProxy) switchToQueryKeyspace(session net.Conn, q *query.Query, attem
 	useFrame[1] = 0x00 // no flags
 
 	streamID := uint16(rand.Int())
-	for _, ok := p.outstandingQueries[q.Source][streamID]; ok; _, ok = p.outstandingQueries[q.Source][streamID]{
+	for _, ok := p.outstandingQueries[q.Source][streamID]; ok; _, ok = p.outstandingQueries[q.Source][streamID] {
 		streamID = uint16(rand.Int())
 	}
 	binary.BigEndian.PutUint16(useFrame[2:4], streamID)
 
 	useFrame[4] = 0x07
-	binary.BigEndian.PutUint32(useFrame[5:9], 4 + uint32(len(query) + 2 + 1))
+	binary.BigEndian.PutUint32(useFrame[5:9], 4+uint32(len(query)+2+1))
 	binary.BigEndian.PutUint32(useFrame[9:13], uint32(len(query)))
 	body := append([]byte(query), 0x00, 0x01, 0x00)
 	useFrame = append(useFrame, body...)
@@ -934,7 +938,7 @@ func (p *CQLProxy) switchToQueryKeyspace(session net.Conn, q *query.Query, attem
 
 	session.Write(useFrame)
 
-	if success := <- useRespChan; success {
+	if success := <-useRespChan; success {
 		p.lock.Lock()
 		defer p.lock.Unlock()
 
@@ -945,7 +949,7 @@ func (p *CQLProxy) switchToQueryKeyspace(session net.Conn, q *query.Query, attem
 		return nil
 	} else {
 		log.Debugf("Unable to switch to keyspace %s on stream %d for client %s. RETRYING", q.Table.Keyspace, streamID, q.Source)
-		return p.switchToQueryKeyspace(session, q, attempt + 1)
+		return p.switchToQueryKeyspace(session, q, attempt+1)
 	}
 }
 
