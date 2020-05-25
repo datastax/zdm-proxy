@@ -218,7 +218,7 @@ func (m *Migration) Migrate() {
 		log.Fatal("Migration ended early")
 	}
 
-	select {}
+	os.Exit(0)
 }
 
 func (m *Migration) migrateIndexes() {
@@ -654,12 +654,8 @@ func (m *Migration) sendRequest(req *updates.Update) {
 // handleRequest handles the notifications from proxy service
 func (m *Migration) handleRequest(req *updates.Update) error {
 	switch req.Type {
-	case updates.Shutdown:
-		// 1) On Shutdown, restarts the migration process due to proxy service failure
-		// TODO: figure out how to restart automatically (in progress)
-		log.Fatal("Proxy Service failed, need to restart services")
 	case updates.TableUpdate:
-		// 2) On TableUpdate, update priority queue with the next table that needs to be migrated
+		// On TableUpdate, update priority queue with the next table that needs to be migrated
 		var newTable Table
 		err := json.Unmarshal(req.Data, &newTable)
 		if err != nil {
