@@ -27,6 +27,7 @@ type Config struct {
 	Threads     int    `default:"1"`
 	Debug       bool   `default:"false"`
 	MigrationID string `required:"true" split_words:"true"`
+	MigrationS3 string `required:"true" split_words:"true"`
 }
 
 // NewConfig returns an empty Config struct

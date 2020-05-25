@@ -11,7 +11,6 @@ import (
 type Status struct {
 	Timestamp time.Time
 	Tables    map[string]map[string]*Table
-	Speed     float64
 	Lock      *sync.Mutex
 }
 
