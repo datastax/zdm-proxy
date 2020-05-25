@@ -52,6 +52,7 @@ Run our services:
     export MIGRATION_COMMUNICATION_PORT=15000
     export PROXY_SERVICE_HOSTNAME="127.0.0.1"
     export PROXY_COMMUNICATION_PORT=14000
+    export MIGRATION_ID=<UUID>
     export MIGRATION_COMPLETE=false
     export DEBUG=true
     export TEST=true
