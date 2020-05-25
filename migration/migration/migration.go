@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"os"
 	"os/exec"
@@ -48,7 +47,7 @@ type Migration struct {
 // Init creates the connections to the databases and locks needed for checkpoint and logging
 func (m *Migration) Init() error {
 	m.status = newStatus()
-	m.directory = fmt.Sprintf("migration-%s/", strconv.FormatInt(time.Now().Unix(), 10))
+	m.directory = m.Conf.MigrationID + "/" + fmt.Sprintf("migration-%s/", strconv.FormatInt(time.Now().Unix(), 10))
 	os.Mkdir(m.directory, 0755)
 
 	var err error
@@ -117,8 +116,8 @@ func (m *Migration) Migrate() {
 			}
 		}
 
-		err := os.Remove("migration.chk")
-		if err != nil && err.Error() != "remove migration.chk: no such file or directory" {
+		err := exec.Command("aws", "s3", "rm", "s3://codebase-datastax-test/"+m.Conf.MigrationID+"/migration.chk").Run()
+		if err != nil {
 			log.WithError(err).Fatal("Error removing migration checkpoint file")
 		}
 
@@ -144,9 +143,6 @@ func (m *Migration) Migrate() {
 	}
 	close(schemaJobs)
 	wgSchema.Wait()
-
-	// Migrate indexes
-	m.migrateIndexes()
 
 	// Add all tables to priority queue
 	for _, keyspaceTables := range tables {
@@ -216,42 +212,38 @@ func (m *Migration) Migrate() {
 	os.Exit(0)
 }
 
-func (m *Migration) migrateIndexes() {
-	itr := m.sourceSession.Query("SELECT keyspace_name, table_name, index_name, options FROM system_schema.indexes;").Iter()
-	var keyspaceName string
-	var tableName string
-	var indexName string
-	var options map[string]string
-
-	indexMap := make(map[string]bool)
-
-	for itr.Scan(&keyspaceName, &tableName, &indexName, &options) {
-		if indexMap[fmt.Sprintf("%s.%s", keyspaceName, tableName)] {
-			log.Fatalf("Astra tables can only have one secondary index; %s.%s has multiple", keyspaceName, tableName)
-		}
-
-		indexMap[fmt.Sprintf("%s.%s", keyspaceName, tableName)] = true
-		query := fmt.Sprintf("CREATE INDEX %s ON %s.%s (%s); ", strconv.Quote(indexName), strconv.Quote(keyspaceName),
-			strconv.Quote(tableName), strconv.Quote(options["target"]))
-
-		log.Debug("INDEX MIGRATION QUERY: " + query)
-		err := m.destSession.Query(query).Exec()
-
-		if err != nil {
-			log.WithError(err).Fatal("Failed to migrate index")
-		}
-	}
-}
-
 func (m *Migration) schemaPool(wg *sync.WaitGroup, jobs <-chan *gocql.TableMetadata) {
 	for table := range jobs {
 		// If we already migrated schema, skip this
 		if m.status.Tables[table.Keyspace][table.Name].Step < MigratingSchemaComplete {
+			// Migrate schemas
 			err := m.migrateSchema(table.Keyspace, table)
 			if err != nil {
 				log.WithError(err).Fatalf("Error migrating schema for table %s.%s", table.Keyspace, table.Name)
 			}
 
+			// Migrate indexes
+			itr := m.sourceSession.Query("SELECT index_name, options FROM system_schema.indexes WHERE keyspace_name = ? AND table_name = ?;", table.Keyspace, table.Name).Iter()
+			log.Debug(itr.NumRows())
+			if itr.NumRows() > 1 {
+				log.Fatalf("Astra tables can only have one secondary index; %s.%s has multiple", table.Keyspace, table.Name)
+			} else if itr.NumRows() == 1 {
+				var indexName string
+				var options map[string]string
+				itr.Scan(&indexName, &options)
+
+				query := fmt.Sprintf("CREATE INDEX %s ON %s.%s (%s); ", strconv.Quote(indexName), strconv.Quote(table.Keyspace),
+					strconv.Quote(table.Name), strconv.Quote(options["target"]))
+
+				log.Debug("INDEX MIGRATION QUERY: " + query)
+				err = m.destSession.Query(query).Exec()
+
+				if err != nil {
+					log.WithError(err).Fatal("Failed to migrate index")
+				}
+			}
+
+			// Update status
 			m.status.Tables[table.Keyspace][table.Name].Step = MigratingSchemaComplete
 			log.Infof("COMPLETED MIGRATING TABLE SCHEMA: %s.%s", table.Keyspace, table.Name)
 			m.writeCheckpoint()
@@ -536,7 +528,17 @@ func (m *Migration) writeCheckpoint() {
 	str := fmt.Sprintf("%s\n\n%s", m.status.Timestamp.Format(time.RFC3339), data)
 
 	content := []byte(str)
-	err := ioutil.WriteFile("migration.chk", content, 0644)
+
+	// Write checkpoint file to s3
+	printCommandArgs := []string{string(content)}
+	awsStreamArgs := []string{"s3", "cp", "-", "s3://codebase-datastax-test/" + m.Conf.MigrationID + "/migration.chk"}
+	var b bytes.Buffer
+	err := pipe.Command(&b,
+		exec.Command("printf", printCommandArgs...),
+		exec.Command("aws", awsStreamArgs...),
+	)
+	io.Copy(os.Stdout, &b)
+
 	if err != nil {
 		log.WithError(err).Error("Error writing migration checkpoint file")
 	}
@@ -548,7 +550,7 @@ func (m *Migration) writeCheckpoint() {
 func (m *Migration) readCheckpoint() {
 	m.chkLock.Lock()
 	defer m.chkLock.Unlock()
-	data, err := ioutil.ReadFile("migration.chk")
+	data, err := exec.Command("aws", "s3", "cp", "s3://codebase-datastax-test/"+m.Conf.MigrationID+"/migration.chk", "-").CombinedOutput()
 
 	m.status.Timestamp = time.Now()
 

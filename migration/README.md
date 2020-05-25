@@ -25,6 +25,7 @@ The Migration Service creates two sessions, to a source cluster and destination 
     export THREADS                    // Size of worker pool               (int)
     export HARD_RESTART               // Restarts migration                (bool)
     export DEBUG                      // For testing                       (bool)
+    export MIGRATION_ID               // For distinguishing .chks on s3    (string, UUID)
 
 These environment variables are read and processed into a `Config` struct, which is passed into the Migration Service.
 
@@ -142,7 +143,7 @@ To handle edge cases such as updating table data as it is being migrated, we imp
 
 ## Checkpoints
 
-We save checkpoints by writing to a `migration.chk` file. We overwrite the checkpoint when a table’s schema is done migrating, or when dsbulk finishes migrating a table’s data. The checkpoint file contains data on which tables are done migrating schema and/or data. The "s" prefix means the table schema has been successfully migrated, and the "d" prefix means the table data has been successfully unloaded and loaded. The below checkpoint file shows that the schemas for `k1.tasks` and `k2.todos` are done migrating, and that dsbulk has finished migrating data for `k1.tasks`. As mentioned below, this file will be saved to a S3 bucket for volume purposes.
+We save checkpoints by writing to a `migration.chk`. We overwrite the checkpoint when a table’s schema is done migrating, or when dsbulk finishes migrating a table’s data. The checkpoint file contains data on which tables are done migrating schema and/or data. The "s" prefix means the table schema has been successfully migrated, and the "d" prefix means the table data has been successfully unloaded and loaded. The below checkpoint file shows that the schemas for `k1.tasks` and `k2.todos` are done migrating, and that dsbulk has finished migrating data for `k1.tasks`. As mentioned below, this file will be saved to a S3 bucket for volume purposes.
 
     s:k1.tasks
     s:k2.todos
@@ -173,6 +174,7 @@ We log information to standard output. We also create a unique directory `migrat
     [2020-04-15 17:13:29.576327 -0700 PDT m=+14.616123729] COMPLETED LOADING TABLE DATA: test.tasks
     [2020-04-15 17:13:29.596237 -0700 PDT m=+14.636033438] COMPLETED LOADING TABLE DATA: test2.tasks
     [2020-04-15 17:13:29.596774 -0700 PDT m=+14.636570478] COMPLETED MIGRATION
+
 ## S3
 
 With very large tables, storing the dsbulk CSVs in local disk on the k8 nodes is not scalable. Therefore we will be saving the CSVs as well as the migration checkpoint file to an S3 bucket (by piping the output of dsbulk to S3) to handle the volume.
