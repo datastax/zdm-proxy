@@ -23,7 +23,7 @@ const (
 // authentication. Then, it checks the client's credentials in their AUTH_RESPONSE reply. If the
 // credentials match the passed in username and password, it sends back an AUTH_SUCCESS and
 // returns true, nil. If the credentials do not match, it returns false and an error.
-func CheckAuthentication(client net.Conn, username string, password string, startupFrame []byte) (bool, error) {
+func CheckAuthentication(client net.Conn, username string, password string, startupFrame []byte) error {
 	log.Debugf("Checking provided credentials for client %s", client.RemoteAddr())
 
 	authReq := make([]byte, 11)
@@ -38,13 +38,13 @@ func CheckAuthentication(client net.Conn, username string, password string, star
 
 	_, err := client.Write(authReq)
 	if err != nil {
-		return false, fmt.Errorf("unable to send AUTHENTICATE request to client %s", client.RemoteAddr())
+		return fmt.Errorf("unable to send AUTHENTICATE request to client %s", client.RemoteAddr())
 	}
 
 	buf := make([]byte, 0xfffff)
 	bytesRead, err := client.Read(buf)
 	if err != nil {
-		return false, err
+		return err
 	}
 
 	f := frame.New(buf[:bytesRead])
@@ -57,10 +57,10 @@ func CheckAuthentication(client net.Conn, username string, password string, star
 
 			_, err := client.Write(authSuccess)
 			if err != nil {
-				return false, fmt.Errorf("unable to send AUTH_SUCCESS response to client %s", client.RemoteAddr())
+				return fmt.Errorf("unable to send AUTH_SUCCESS response to client %s", client.RemoteAddr())
 			}
 
-			return true, nil
+			return nil
 		} else {
 			errorMessage := "Failed to login. Please re-try."
 
@@ -78,13 +78,13 @@ func CheckAuthentication(client net.Conn, username string, password string, star
 
 			_, err := client.Write(errResp)
 			if err != nil {
-				return false, fmt.Errorf("unable to send ERROR response to client %s", client.RemoteAddr())
+				return fmt.Errorf("unable to send ERROR response to client %s", client.RemoteAddr())
 			}
 
-			return false, fmt.Errorf("%s responded with invalid credentials", client.RemoteAddr())
+			return fmt.Errorf("%s responded with invalid credentials", client.RemoteAddr())
 		}
 	} else {
-		return false, fmt.Errorf("%s sent non AUTH_RESP response to AUTHENTICATE request", client.RemoteAddr())
+		return fmt.Errorf("%s sent non AUTH_RESP response to AUTHENTICATE request", client.RemoteAddr())
 	}
 }
 
