@@ -5,3 +5,6 @@ const TestKeyspace = "cloudgate_test"
 
 // TestTable is the dedicated table for testing
 const TestTable = "tasks"
+
+// TestTable2 is another dedicated table for testing
+const TestTable2 = "people"

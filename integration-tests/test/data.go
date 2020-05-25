@@ -37,35 +37,35 @@ func SeedKeyspace(source *gocql.Session, dest *gocql.Session) {
 
 // SeedData seeds the specified source and dest sessions with data in data.go
 // Currently, this includes DataIds and DataTasks
-func SeedData(source *gocql.Session, dest *gocql.Session) {
+func SeedData(source *gocql.Session, dest *gocql.Session, table string, dataIds []string, dataEntries []string) {
 	log.Info("Drop existing data...")
 	// Create the table in source
-	err := source.Query(fmt.Sprintf("DROP TABLE IF EXISTS %s.%s;", TestKeyspace, TestTable)).Exec()
+	err := source.Query(fmt.Sprintf("DROP TABLE IF EXISTS %s.%s;", TestKeyspace, table)).Exec()
 	if err != nil {
 		log.WithError(err).Error("Error dropping table in source cluster.")
 	}
 
-	err = dest.Query(fmt.Sprintf("DROP TABLE IF EXISTS %s.%s;", TestKeyspace, TestTable)).Exec()
+	err = dest.Query(fmt.Sprintf("DROP TABLE IF EXISTS %s.%s;", TestKeyspace, table)).Exec()
 	if err != nil {
 		log.WithError(err).Error("Error dropping table in dest cluster.")
 	}
 
 	log.Info("Seeding tables...")
 	// Create the table in source
-	err = source.Query(fmt.Sprintf("CREATE TABLE %s.%s(id UUID, task text, PRIMARY KEY(id));", TestKeyspace, TestTable)).Exec()
+	err = source.Query(fmt.Sprintf("CREATE TABLE %s.%s(id UUID, task text, PRIMARY KEY(id));", TestKeyspace, table)).Exec()
 	if err != nil {
 		log.WithError(err).Error("Error creating table in source cluster.")
 	}
 
-	err = dest.Query(fmt.Sprintf("CREATE TABLE %s.%s(id UUID, task text, PRIMARY KEY(id));", TestKeyspace, TestTable)).Exec()
+	err = dest.Query(fmt.Sprintf("CREATE TABLE %s.%s(id UUID, task text, PRIMARY KEY(id));", TestKeyspace, table)).Exec()
 	if err != nil {
 		log.WithError(err).Error("Error creating table in dest cluster.")
 	}
 
 	// Seed the rows
-	for i := 0; i < len(DataIds); i++ {
-		id, task := DataIds[i], DataTasks[i]
-		err = source.Query(fmt.Sprintf("INSERT INTO %s.%s(id, task) VALUES (%s, '%s');", TestKeyspace, TestTable, id, task)).Exec()
+	for i := 0; i < len(dataIds); i++ {
+		id, task := dataIds[i], dataEntries[i]
+		err = source.Query(fmt.Sprintf("INSERT INTO %s.%s(id, task) VALUES (%s, '%s');", TestKeyspace, table, id, task)).Exec()
 		if err != nil {
 			log.WithError(err).Error("Error inserting into table for source cluster.")
 		}
@@ -91,10 +91,10 @@ func MapToTask(row map[string]interface{}) Task {
 }
 
 // UnloadData unloads data from the specified source session
-func UnloadData(source *gocql.Session) []Task {
+func UnloadData(source *gocql.Session, table string) []Task {
 	unloadedData := make([]Task, 0)
 
-	query := `SELECT id, task, WRITETIME(task) as w_task, TTL(task) as l_task FROM cloudgate_test.tasks;`
+	query := fmt.Sprintf(`SELECT id, task, WRITETIME(task) as w_task, TTL(task) as l_task FROM cloudgate_test.%s;`, table)
 	itr := source.Query(query).Iter()
 
 	for {
@@ -109,11 +109,11 @@ func UnloadData(source *gocql.Session) []Task {
 }
 
 // LoadData loads the given data into the specified destination session
-func LoadData(dest *gocql.Session, unloadedData []Task) {
+func LoadData(dest *gocql.Session, unloadedData []Task, table string) {
 	query := "BEGIN BATCH "
 	for _, task := range unloadedData {
-		query += fmt.Sprintf("INSERT INTO cloudgate_test.tasks(id, task) VALUES (%s, '%s') USING TIMESTAMP %d AND TTL %d; ",
-			task.ID, task.Task, task.WriteTime, task.TTL)
+		query += fmt.Sprintf("INSERT INTO cloudgate_test.%s(id, task) VALUES (%s, '%s') USING TIMESTAMP %d AND TTL %d; ",
+			table, task.ID, task.Task, task.WriteTime, task.TTL)
 	}
 	query += "APPLY BATCH;"
 	err := dest.Query(query).Exec()

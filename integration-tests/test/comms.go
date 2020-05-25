@@ -110,9 +110,9 @@ func SendStart(conn net.Conn) {
 }
 
 // SendTableUpdate sends a TableUpdate update
-func SendTableUpdate(step migration.Step, conn net.Conn) {
+func SendTableUpdate(step migration.Step, conn net.Conn, table string) {
 	status := CreateStatusObject(step)
-	bytes, err := json.Marshal(status.Tables[TestKeyspace][TestTable])
+	bytes, err := json.Marshal(status.Tables[TestKeyspace][table])
 	if err != nil {
 		log.WithError(err).Fatal("Error marshalling table for update")
 	}

@@ -3,6 +3,7 @@ package main
 import (
 	"cloud-gate/integration-tests/test"
 	"cloud-gate/integration-tests/test1"
+
 	"cloud-gate/utils"
 	"fmt"
 	"os"
@@ -17,16 +18,6 @@ import (
 func main() {
 	gocql.TimeoutLimit = 5
 	log.SetLevel(log.DebugLevel)
-
-	// Initialize test data
-	test.DataIds = []string{
-		"cf0f4cf0-8c20-11ea-9fc6-6d2c86545d91",
-		"d1b05da0-8c20-11ea-9fc6-6d2c86545d91",
-		"eed574b0-8c20-11ea-9fc6-6d2c86545d91"}
-	test.DataTasks = []string{
-		"MSzZMTWA9hw6tkYWPTxT0XfGL9nGQUpy",
-		"IH0FC3aWM4ynriOFvtr5TfiKxziR5aB1",
-		"FgQfJesbNcxAebzFPRRcW2p1bBtoz1P1"}
 
 	// Connect to source and dest sessions
 	var err error
@@ -45,9 +36,6 @@ func main() {
 	// Seed source and dest with keyspace
 	test.SeedKeyspace(sourceSession, destSession)
 
-	// Seed source and dest w/ schema and data
-	test.SeedData(sourceSession, destSession)
-
 	proxyCommand := exec.Command("go", "run", "./proxy/main.go")
 	proxyCommand.Env = os.Environ()
 	proxyCommand.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -60,8 +48,9 @@ func main() {
 	conn := test.EstablishConnection(fmt.Sprintf("127.0.0.1:14000"))
 
 	// Run test package here
-	test1.Test1(conn, sourceSession, destSession)
-
+	// test1.Test1(conn, sourceSession, destSession)
+	// test1.Test2(conn, sourceSession, destSession)
+	test1.Test3(conn, sourceSession, destSession)
 	// Kill the proxy
 	pgid, err := syscall.Getpgid(proxyCommand.Process.Pid)
 	if err == nil {
