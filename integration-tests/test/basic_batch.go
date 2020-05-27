@@ -17,7 +17,6 @@ import (
 // and then runs an insert and update after to make sure it works
 func BasicBatch(c net.Conn, source *gocql.Session, dest *gocql.Session) {
 	status := setup.CreateStatusObject()
-
 	// Initialize test data
 	dataIds1 := []string{
 		"cf0f4cf0-8c20-11ea-9fc6-6d2c86545d91",
@@ -32,6 +31,7 @@ func BasicBatch(c net.Conn, source *gocql.Session, dest *gocql.Session) {
 	setup.SeedData(source, dest, setup.TestTable, dataIds1, dataTasks1)
 
 	// Send start
+	log.Info("Sending start signal to proxy")
 	setup.SendStart(c, status)
 
 	log.Info("Attempting to connect to db as client through proxy...")
@@ -52,9 +52,9 @@ func BasicBatch(c net.Conn, source *gocql.Session, dest *gocql.Session) {
 
 	log.Info("unloaded data", unloadedData)
 
-	// Run query on proxied connection
+	// Run queries on proxied connection
 
-	//Batch statement: update to katelyn, insert terrance
+	// Batch statement: Update to katelyn, Insert terrance
 	b := proxy.NewBatch(gocql.LoggedBatch)
 	b.Query(fmt.Sprintf("UPDATE %s.%s SET task = 'katelyn' WHERE id = d1b05da0-8c20-11ea-9fc6-6d2c86545d91", setup.TestKeyspace, setup.TestTable))
 	b.Query(fmt.Sprintf("INSERT INTO %s.%s (id, task) VALUES (d1b05da0-8c20-11ea-9fc6-6d2c86545d92 ,'terrance')", setup.TestKeyspace, setup.TestTable))
@@ -64,18 +64,19 @@ func BasicBatch(c net.Conn, source *gocql.Session, dest *gocql.Session) {
 		log.WithError(err).Error("Batch failed.")
 	}
 
-	//Update: terrance --> kelvin
+	// Update: terrance --> kelvin
 	err = proxy.Query(fmt.Sprintf("UPDATE %s.%s SET task = 'kelvin' WHERE id = d1b05da0-8c20-11ea-9fc6-6d2c86545d92;", setup.TestKeyspace, setup.TestTable)).Exec()
 	if err != nil {
 		log.WithError(err).Error("Post-batch update failed.")
 	}
 
-	//Insert isabelle, update: isabelle --> ryan
+	// Insert isabelle
 	err = proxy.Query(fmt.Sprintf("INSERT INTO %s.%s (id, task) VALUES (d1b05da0-8c20-11ea-9fc6-6d2c86545d93 ,'isabelle');", setup.TestKeyspace, setup.TestTable)).Exec()
 	if err != nil {
 		log.WithError(err).Error("Post-batch insert failed.")
 	}
 
+	// Update: isabelle --> ryan
 	err = proxy.Query(fmt.Sprintf("UPDATE %s.%s SET task = 'ryan' WHERE id = d1b05da0-8c20-11ea-9fc6-6d2c86545d93;", setup.TestKeyspace, setup.TestTable)).Exec()
 	if err != nil {
 		log.WithError(err).Error("Post-batch update failed.")
@@ -97,9 +98,10 @@ func BasicBatch(c net.Conn, source *gocql.Session, dest *gocql.Session) {
 
 	time.Sleep(2 * time.Second)
 	log.Info("Sleep 2 seconds")
+
 	// Assertions!
 
-	//Check katelyn
+	// Check katelyn
 	itr := proxy.Query(fmt.Sprintf("SELECT * FROM %s.%s WHERE id = d1b05da0-8c20-11ea-9fc6-6d2c86545d91;", setup.TestKeyspace, setup.TestTable)).Iter()
 	row := make(map[string]interface{})
 
@@ -108,7 +110,7 @@ func BasicBatch(c net.Conn, source *gocql.Session, dest *gocql.Session) {
 
 	setup.Assert("katelyn", task.Task)
 
-	//Check kelvin
+	// Check kelvin
 	itr = proxy.Query(fmt.Sprintf("SELECT * FROM %s.%s WHERE id = d1b05da0-8c20-11ea-9fc6-6d2c86545d92;", setup.TestKeyspace, setup.TestTable)).Iter()
 	row = make(map[string]interface{})
 
@@ -117,7 +119,7 @@ func BasicBatch(c net.Conn, source *gocql.Session, dest *gocql.Session) {
 
 	setup.Assert("kelvin", task.Task)
 
-	//Check ryan
+	// Check ryan
 	itr = proxy.Query(fmt.Sprintf("SELECT * FROM %s.%s WHERE id = d1b05da0-8c20-11ea-9fc6-6d2c86545d93;", setup.TestKeyspace, setup.TestTable)).Iter()
 	row = make(map[string]interface{})
 
@@ -125,6 +127,4 @@ func BasicBatch(c net.Conn, source *gocql.Session, dest *gocql.Session) {
 	task = setup.MapToTask(row)
 
 	setup.Assert("ryan", task.Task)
-
-	log.Info("Success!")
 }

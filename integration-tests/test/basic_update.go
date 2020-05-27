@@ -27,6 +27,7 @@ func BasicUpdate(c net.Conn, source *gocql.Session, dest *gocql.Session) {
 		"MSzZMTWA9hw6tkYWPTxT0XfGL9nGQUpy",
 		"IH0FC3aWM4ynriOFvtr5TfiKxziR5aB1",
 		"FgQfJesbNcxAebzFPRRcW2p1bBtoz1P1"}
+
 	// Seed source and dest w/ schema and data
 	log.Info("Running Seed Data")
 	setup.SeedData(source, dest, setup.TestTable, dataIds1, dataTasks1)
@@ -59,7 +60,6 @@ func BasicUpdate(c net.Conn, source *gocql.Session, dest *gocql.Session) {
 	}
 
 	// Send load table
-
 	status.Tables[setup.TestKeyspace][setup.TestTable].Step = migration.LoadingData
 	setup.SendTableUpdate(c, status.Tables[setup.TestKeyspace][setup.TestTable])
 
@@ -84,6 +84,4 @@ func BasicUpdate(c net.Conn, source *gocql.Session, dest *gocql.Session) {
 	task := setup.MapToTask(row)
 
 	setup.Assert("terrance", task.Task)
-
-	log.Info("Success!")
 }

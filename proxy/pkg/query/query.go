@@ -65,7 +65,7 @@ func New(table *migration.Table, queryType Type, f *frame.Frame, source string, 
 	}
 }
 
-// usingTimestamp adds a timestamp to a query, if one is not already present.
+// UsingTimestamp adds a timestamp to a query, if one is not already present.
 // Supports BATCH, UPDATE, and INSERT queries.
 func (q *Query) UsingTimestamp() *Query {
 	flagsByte := q.getFlagsByte()
@@ -136,6 +136,7 @@ func flagsByteFromBatch(frame []byte) int {
 	return offset + 2
 }
 
+// WithWaitGroup assigns a WaitGroup to to a Query
 func (q *Query) WithWaitGroup(waitgroup *sync.WaitGroup) *Query {
 	q.WG = waitgroup
 	return q

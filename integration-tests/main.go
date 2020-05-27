@@ -8,7 +8,6 @@ import (
 
 	"cloud-gate/utils"
 	"fmt"
-	"os"
 
 	"github.com/gocql/gocql"
 
@@ -77,6 +76,4 @@ func main() {
 	// test.BasicUpdate(conn, sourceSession, destSession)
 	// test.BasicBatch(conn, sourceSession, destSession)
 	test.QueueBatch(conn, sourceSession, destSession)
-
-	os.Exit(0)
 }

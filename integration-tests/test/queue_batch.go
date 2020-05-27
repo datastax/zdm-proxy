@@ -13,7 +13,8 @@ import (
 )
 
 // QueueBatch tests if the queuing functionality works correctly with batch statements
-// Batch tests with multiple tables
+// A batch statement is run with table1 and table2, where table2 has completed migration and table1
+// is in the middlel of migration
 func QueueBatch(c net.Conn, source *gocql.Session, dest *gocql.Session) {
 	status := setup.CreateStatusObject()
 
@@ -26,7 +27,7 @@ func QueueBatch(c net.Conn, source *gocql.Session, dest *gocql.Session) {
 		"kelvin",
 		"jodie"}
 
-	// Seed source and dest w/ schema and data
+	// Seed source and dest w/ schema and data for table1
 	setup.SeedData(source, dest, setup.TestTable, dataIds1, dataTasks1)
 
 	dataIds2 := []string{
@@ -36,6 +37,7 @@ func QueueBatch(c net.Conn, source *gocql.Session, dest *gocql.Session) {
 		"sacramento",
 		"austin"}
 
+	// Seed source and dest w/ schema and data for table2
 	setup.SeedData(source, dest, setup.TestTable2, dataIds2, dataTasks2)
 
 	// Send start
@@ -70,8 +72,6 @@ func QueueBatch(c net.Conn, source *gocql.Session, dest *gocql.Session) {
 
 	log.Info("unloaded data", unloadedData1)
 
-	// Run query on proxied connection
-
 	// Send load table2
 	status.Tables[setup.TestKeyspace][setup.TestTable2].Step = migration.LoadingData
 	setup.SendTableUpdate(c, status.Tables[setup.TestKeyspace][setup.TestTable2])
@@ -79,11 +79,11 @@ func QueueBatch(c net.Conn, source *gocql.Session, dest *gocql.Session) {
 	// Load the table2
 	setup.LoadData(dest, unloadedData2, setup.TestTable2)
 
-	// Send table complete
+	// Send table2 completed loading data
 	status.Tables[setup.TestKeyspace][setup.TestTable2].Step = migration.LoadingDataComplete
 	setup.SendTableUpdate(c, status.Tables[setup.TestKeyspace][setup.TestTable2])
 
-	//Batch statement: update to katelyn, insert terrance
+	//Batch statement: update one row task value to katelyn, insert terrance as a new row
 	b := proxy.NewBatch(gocql.LoggedBatch)
 	b.Query(fmt.Sprintf("UPDATE %s.%s SET task = 'katelyn' WHERE id = d1b05da0-8c20-11ea-9fc6-6d2c86545d91", setup.TestKeyspace, setup.TestTable))
 	b.Query(fmt.Sprintf("INSERT INTO %s.%s (id, task) VALUES (d1b05da0-8c20-11ea-9fc6-6d2c86545d93 ,'harrisburg')", setup.TestKeyspace, setup.TestTable2))
@@ -95,6 +95,7 @@ func QueueBatch(c net.Conn, source *gocql.Session, dest *gocql.Session) {
 
 	time.Sleep(2 * time.Second)
 	log.Info("Sleep 2 seconds")
+
 	var count int
 
 	//Check that the batch insert has not run in Astra
@@ -102,7 +103,7 @@ func QueueBatch(c net.Conn, source *gocql.Session, dest *gocql.Session) {
 	iter.Scan(&count)
 	setup.Assert(0, count)
 
-	// Update to table 2 after batch - should be queued
+	// Update to table2 after batch - should be queued
 	err = proxy.Query(fmt.Sprintf("UPDATE %s.%s SET task = 'annapolis' WHERE id = d1b05da0-8c20-11ea-9fc6-6d2c86545d93", setup.TestKeyspace, setup.TestTable2)).Exec()
 	if err != nil {
 		log.WithError(err).Error("Post-batch update failed.")
@@ -113,14 +114,14 @@ func QueueBatch(c net.Conn, source *gocql.Session, dest *gocql.Session) {
 	iter.Scan(&count)
 	setup.Assert(0, count)
 
-	// Send load table
+	// Send load table1
 	status.Tables[setup.TestKeyspace][setup.TestTable].Step = migration.LoadingData
 	setup.SendTableUpdate(c, status.Tables[setup.TestKeyspace][setup.TestTable])
 
-	// Load the table
+	// Load the table1
 	setup.LoadData(dest, unloadedData1, setup.TestTable)
 
-	// Send loading data complete
+	// Send loading data complete for table1
 	status.Tables[setup.TestKeyspace][setup.TestTable].Step = migration.LoadingDataComplete
 	setup.SendTableUpdate(c, status.Tables[setup.TestKeyspace][setup.TestTable])
 
@@ -132,7 +133,7 @@ func QueueBatch(c net.Conn, source *gocql.Session, dest *gocql.Session) {
 
 	// Assertions!
 
-	//Check that the batch update has worked
+	// Check that the batch update has worked
 	itr := proxy.Query(fmt.Sprintf("SELECT * FROM %s.%s WHERE id = d1b05da0-8c20-11ea-9fc6-6d2c86545d91;", setup.TestKeyspace, setup.TestTable)).Iter()
 	row := make(map[string]interface{})
 
@@ -141,7 +142,7 @@ func QueueBatch(c net.Conn, source *gocql.Session, dest *gocql.Session) {
 
 	setup.Assert("katelyn", task.Task)
 
-	//Check that Astra is consistent after the insert and update were queued
+	// Check that Astra is consistent after the insert and update were queued
 	itr = proxy.Query(fmt.Sprintf("SELECT * FROM %s.%s WHERE id = d1b05da0-8c20-11ea-9fc6-6d2c86545d93;", setup.TestKeyspace, setup.TestTable2)).Iter()
 	row = make(map[string]interface{})
 
@@ -149,6 +150,4 @@ func QueueBatch(c net.Conn, source *gocql.Session, dest *gocql.Session) {
 	task = setup.MapToTask(row)
 
 	setup.Assert("annapolis", task.Task)
-
-	log.Info("Success!")
 }

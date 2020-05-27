@@ -375,6 +375,7 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 	}
 }
 
+// handleStartupFrame will check the frame opcodes to determine what startup actions to take
 func (p *CQLProxy) handleStartupFrame(f *frame.Frame, client, db net.Conn) (bool, error) {
 	switch f.Opcode {
 	case 0x05:
@@ -510,6 +511,8 @@ func (p *CQLProxy) writeToAstra(f *frame.Frame, client string) error {
 	return nil
 }
 
+// updatePrepareID converts between source prepareID to astraPrepareID to ensure consistency
+// between source and astra databases
 func (p *CQLProxy) updatePrepareID(f *frame.Frame) error {
 	data := f.RawBytes
 	idLength := binary.BigEndian.Uint16(data[9:11])
@@ -548,6 +551,8 @@ func (p *CQLProxy) updatePrepareID(f *frame.Frame) error {
 	return fmt.Errorf("no mapping for source prepared id %s to astra prepared id found", preparedID)
 }
 
+// astraReplayHandler will read response from astra database and match response
+// to related queries to determine if any queries need to be retried
 func (p *CQLProxy) astraReplyHandler(client net.Conn) {
 	clientIP := client.RemoteAddr().String()
 	session := p.getAstraSession(clientIP)
@@ -681,7 +686,7 @@ func (p *CQLProxy) handleUseQuery(keyspace string, f *frame.Frame, client string
 	return p.execute(q)
 }
 
-// HandleWriteQuery can handle QUERY and EXECUTE opcodes of type INSERT, UPDATE, DELETE, TRUNCATE
+// handleWriteQuery can handle QUERY and EXECUTE opcodes of type INSERT, UPDATE, DELETE, TRUNCATE
 func (p *CQLProxy) handleWriteQuery(fromClause string, queryType query.Type, f *frame.Frame, client string, parsedPaths []string) error {
 	keyspace, tableName := extractTableInfo(fromClause)
 
@@ -938,6 +943,8 @@ func (p *CQLProxy) execute(q *query.Query) error {
 	return err
 }
 
+// switchToQueryKeyspace will check the keyspace of the query and will make a USE statement to
+// switch to the correct keyspace
 func (p *CQLProxy) switchToQueryKeyspace(session net.Conn, q *query.Query, attempts ...int) error {
 	attempt := 1
 	if attempts != nil {
@@ -1165,6 +1172,7 @@ func (p *CQLProxy) Shutdown() {
 	// TODO: Stop all goroutines
 }
 
+// reset will reset all context within the proxy service
 func (p *CQLProxy) reset() {
 	p.queues = make(map[string]map[string]chan *query.Query)
 	p.queueLocks = make(map[string]map[string]*sync.Mutex)
@@ -1235,7 +1243,7 @@ func (p *CQLProxy) checkQueueLens() (bool, bool) {
 	allSmall := true
 	allComplete := true
 	for keyspace, tableMap := range p.migrationStatus.Tables {
-		for tablename, _ := range tableMap {
+		for tablename := range tableMap {
 			p.queueLocks[keyspace][tablename].Lock()
 			queueLen := len(p.queues[keyspace][tablename])
 			p.queueLocks[keyspace][tablename].Unlock()

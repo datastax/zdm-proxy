@@ -24,6 +24,7 @@ type Metrics struct {
 	port int
 }
 
+// New returns a new Metrics struct for the port it is given.
 func New(port int) *Metrics {
 	return &Metrics{
 		lock: &sync.Mutex{},
@@ -31,6 +32,7 @@ func New(port int) *Metrics {
 	}
 }
 
+// Expose exposes the port associated with the Metrics struct.
 func (m *Metrics) Expose() {
 	go func() {
 		http.HandleFunc("/", m.write)
@@ -38,6 +40,7 @@ func (m *Metrics) Expose() {
 	}()
 }
 
+// write Marshals the Metrics struct and writes it to the repsonse.
 func (m *Metrics) write(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	marshaled, err := json.Marshal(m)
