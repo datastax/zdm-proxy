@@ -22,7 +22,7 @@ func newStatus() *Status {
 	return &status
 }
 
-// Populates the Status with initial values in accordance w/ the given TableMetadata
+// Populates the Status with initial values according to given tables metadata
 func (s *Status) initTableData(tables map[string]map[string]*gocql.TableMetadata) {
 	for keyspace, keyspaceTables := range tables {
 		t := make(map[string]*Table)

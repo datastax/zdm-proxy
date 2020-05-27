@@ -116,7 +116,7 @@ func (m *Migration) Migrate() {
 
 	m.readCheckpoint()
 	if m.Conf.HardRestart {
-		log.Info("=== HARD RESTARTING ===")
+		log.Info("== HARD RESTARTING ==")
 		// On hard restart, iterate through all tables in source and drop them from astra
 		for keyspace, keyspaceTables := range m.status.Tables {
 			for tableName, table := range keyspaceTables {
@@ -218,7 +218,7 @@ func (m *Migration) Migrate() {
 	wgTables.Wait()
 
 	// Migration complete; write checkpoint and notify proxy
-	log.Info("COMPLETED MIGRATION")
+	log.Info("== COMPLETED MIGRATION ==")
 	m.writeCheckpoint()
 	m.sendComplete()
 
@@ -247,7 +247,6 @@ func (m *Migration) schemaPool(wg *sync.WaitGroup, jobs <-chan *gocql.TableMetad
 				query := fmt.Sprintf("CREATE INDEX %s ON %s.%s (%s); ", strconv.Quote(indexName), strconv.Quote(table.Keyspace),
 					strconv.Quote(table.Name), strconv.Quote(options["target"]))
 
-				log.Debug("INDEX MIGRATION QUERY: " + query)
 				err = m.destSession.Query(query).Exec()
 
 				if err != nil {
@@ -341,7 +340,7 @@ func (m *Migration) tablePool(wg *sync.WaitGroup, jobs <-chan *gocql.TableMetada
 				truncateQuery := fmt.Sprintf("TRUNCATE %s.%s;", keyspace, name)
 				err := m.destSession.Query(truncateQuery, keyspace, name).Exec()
 				if err != nil {
-					log.WithError(err).Errorf("Failed to drop table %s.%s for remigration.", keyspace, name)
+					log.WithError(err).Fatalf("Failed to drop table %s.%s for remigration", keyspace, name)
 				}
 
 				err = m.migrateData(table)
@@ -356,9 +355,9 @@ func (m *Migration) tablePool(wg *sync.WaitGroup, jobs <-chan *gocql.TableMetada
 
 			m.status.Tables[table.Keyspace][table.Name].Step = LoadingDataComplete
 			log.Infof("COMPLETED LOADING TABLE DATA: %s.%s", table.Keyspace, table.Name)
-			m.writeCheckpoint()
-
 			m.sendTableUpdate(m.status.Tables[table.Keyspace][table.Name])
+
+			m.writeCheckpoint()
 		}
 		wg.Done()
 	}
@@ -371,6 +370,10 @@ func (m *Migration) migrateData(table *gocql.TableMetadata) error {
 	if err != nil {
 		return err
 	}
+
+	m.status.Tables[table.Keyspace][table.Name].Step = UnloadingDataComplete
+	log.Infof("COMPLETED UNLOADING TABLE: %s.%s", table.Keyspace, table.Name)
+	m.sendTableUpdate(m.status.Tables[table.Keyspace][table.Name])
 
 	err = m.loadTable(table)
 	if err != nil {
@@ -414,14 +417,8 @@ func (m *Migration) unloadTable(table *gocql.TableMetadata) error {
 	if err != nil {
 		m.status.Tables[table.Keyspace][table.Name].Step = Errored
 		m.status.Tables[table.Keyspace][table.Name].Error = err
-		log.WithError(err).Errorf("Dsbulk failed to unload table %s.%s", table.Keyspace, table.Name)
 		return err
 	}
-
-	m.status.Tables[table.Keyspace][table.Name].Step = UnloadingDataComplete
-	log.Infof("COMPLETED UNLOADING TABLE: %s.%s", table.Keyspace, table.Name)
-
-	m.sendTableUpdate(m.status.Tables[table.Keyspace][table.Name])
 
 	return nil
 }
@@ -510,7 +507,7 @@ func (m *Migration) getTables(keyspaces []string) (map[string]map[string]*gocql.
 		}
 
 		if err != nil {
-			log.WithError(err).Fatalf("ERROR GETTING KEYSPACE %s...", keyspace)
+			log.WithError(err).Fatalf("Failed to discover tables from keyspace %s", keyspace)
 			return nil, err
 		}
 		tableMetadata[keyspace] = md.Tables
@@ -600,7 +597,7 @@ func (m *Migration) establishConnection() net.Conn {
 		conn, err := net.Dial("tcp", hostname)
 		if err != nil {
 			nextDuration := b.Duration()
-			log.Infof("Couldn't connect to Proxy Service, retrying in %s...", nextDuration.String())
+			log.Debugf("Couldn't connect to Proxy Service, retrying in %s...", nextDuration.String())
 			time.Sleep(nextDuration)
 			continue
 		}
@@ -665,7 +662,7 @@ func (m *Migration) sendRequest(req *updates.Update) {
 
 	err := updates.Send(req, m.conn)
 	if err != nil {
-		log.WithError(err).Errorf("Error sending request %s", req.ID)
+		log.WithError(err).Errorf("Error sending update %s", req.ID)
 	}
 }
 
