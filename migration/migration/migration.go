@@ -116,7 +116,7 @@ func (m *Migration) Migrate() {
 
 	m.readCheckpoint()
 	if m.Conf.HardRestart {
-		log.Info("=== HARD RESTARTING ===")
+		log.Info("== HARD RESTARTING ==")
 		// On hard restart, iterate through all tables in source and drop them from astra
 		for keyspace, keyspaceTables := range m.status.Tables {
 			for tableName, table := range keyspaceTables {
@@ -218,13 +218,14 @@ func (m *Migration) Migrate() {
 	wgTables.Wait()
 
 	// Migration complete; write checkpoint and notify proxy
-	log.Info("COMPLETED MIGRATION")
+	log.Info("== COMPLETED MIGRATION ==")
 	m.writeCheckpoint()
 	m.sendComplete()
 
 	os.Exit(0)
 }
 
+// schemaPool adds a "worker" that ingests and performs schema migration jobs
 func (m *Migration) schemaPool(wg *sync.WaitGroup, jobs <-chan *gocql.TableMetadata) {
 	for table := range jobs {
 		// If we already migrated schema, skip this
@@ -247,7 +248,6 @@ func (m *Migration) schemaPool(wg *sync.WaitGroup, jobs <-chan *gocql.TableMetad
 				query := fmt.Sprintf("CREATE INDEX %s ON %s.%s (%s); ", strconv.Quote(indexName), strconv.Quote(table.Keyspace),
 					strconv.Quote(table.Name), strconv.Quote(options["target"]))
 
-				log.Debug("INDEX MIGRATION QUERY: " + query)
 				err = m.destSession.Query(query).Exec()
 
 				if err != nil {
@@ -264,6 +264,7 @@ func (m *Migration) schemaPool(wg *sync.WaitGroup, jobs <-chan *gocql.TableMetad
 	}
 }
 
+// generateSchemaMigrationQuery generates a CQL query that recreates a table schema
 func generateSchemaMigrationQuery(table *gocql.TableMetadata) string {
 	query := fmt.Sprintf("CREATE TABLE %s.%s (", strconv.Quote(table.Keyspace), strconv.Quote(table.Name))
 	for cname, column := range table.Columns {
@@ -320,6 +321,7 @@ func (m *Migration) migrateSchema(keyspace string, table *gocql.TableMetadata) e
 	return nil
 }
 
+// tablePool adds a "worker" that ingests and performs table data migration jobs
 func (m *Migration) tablePool(wg *sync.WaitGroup, jobs <-chan *gocql.TableMetadata) {
 	for table := range jobs {
 		if m.status.Tables[table.Keyspace][table.Name].Step != LoadingDataComplete {
@@ -341,7 +343,7 @@ func (m *Migration) tablePool(wg *sync.WaitGroup, jobs <-chan *gocql.TableMetada
 				truncateQuery := fmt.Sprintf("TRUNCATE %s.%s;", keyspace, name)
 				err := m.destSession.Query(truncateQuery, keyspace, name).Exec()
 				if err != nil {
-					log.WithError(err).Errorf("Failed to drop table %s.%s for remigration.", keyspace, name)
+					log.WithError(err).Fatalf("Failed to drop table %s.%s for remigration", keyspace, name)
 				}
 
 				err = m.migrateData(table)
@@ -356,9 +358,9 @@ func (m *Migration) tablePool(wg *sync.WaitGroup, jobs <-chan *gocql.TableMetada
 
 			m.status.Tables[table.Keyspace][table.Name].Step = LoadingDataComplete
 			log.Infof("COMPLETED LOADING TABLE DATA: %s.%s", table.Keyspace, table.Name)
-			m.writeCheckpoint()
-
 			m.sendTableUpdate(m.status.Tables[table.Keyspace][table.Name])
+
+			m.writeCheckpoint()
 		}
 		wg.Done()
 	}
@@ -372,6 +374,10 @@ func (m *Migration) migrateData(table *gocql.TableMetadata) error {
 		return err
 	}
 
+	m.status.Tables[table.Keyspace][table.Name].Step = UnloadingDataComplete
+	log.Infof("COMPLETED UNLOADING TABLE: %s.%s", table.Keyspace, table.Name)
+	m.sendTableUpdate(m.status.Tables[table.Keyspace][table.Name])
+
 	err = m.loadTable(table)
 	if err != nil {
 		return err
@@ -380,6 +386,7 @@ func (m *Migration) migrateData(table *gocql.TableMetadata) error {
 	return nil
 }
 
+// buildUnloadQuery builds a CQL query used by dsbulk to unload data into CSVs with timestamps
 func (m *Migration) buildUnloadQuery(table *gocql.TableMetadata) string {
 	query := "SELECT "
 	for colName, column := range table.Columns {
@@ -414,18 +421,13 @@ func (m *Migration) unloadTable(table *gocql.TableMetadata) error {
 	if err != nil {
 		m.status.Tables[table.Keyspace][table.Name].Step = Errored
 		m.status.Tables[table.Keyspace][table.Name].Error = err
-		log.WithError(err).Errorf("Dsbulk failed to unload table %s.%s", table.Keyspace, table.Name)
 		return err
 	}
-
-	m.status.Tables[table.Keyspace][table.Name].Step = UnloadingDataComplete
-	log.Infof("COMPLETED UNLOADING TABLE: %s.%s", table.Keyspace, table.Name)
-
-	m.sendTableUpdate(m.status.Tables[table.Keyspace][table.Name])
 
 	return nil
 }
 
+// buildLoadQuery builds a CQL query used by dsbulk to load data from CSVs with timestamps
 func (m *Migration) buildLoadQuery(table *gocql.TableMetadata) string {
 	query := "BEGIN BATCH "
 	partitionKeys := ""
@@ -481,6 +483,7 @@ func (m *Migration) loadTable(table *gocql.TableMetadata) error {
 	return nil
 }
 
+// getKeyspaces populates m.keyspaces with the non-system keyspaces in the source cluster
 func (m *Migration) getKeyspaces() error {
 	ignoreKeyspaces := []string{"system_auth", "system_schema", "dse_system_local", "dse_system", "dse_leases", "solr_admin",
 		"dse_insights", "dse_insights_local", "system_distributed", "system", "dse_perf", "system_traces", "dse_security"}
@@ -510,7 +513,7 @@ func (m *Migration) getTables(keyspaces []string) (map[string]map[string]*gocql.
 		}
 
 		if err != nil {
-			log.WithError(err).Fatalf("ERROR GETTING KEYSPACE %s...", keyspace)
+			log.WithError(err).Fatalf("Failed to discover tables from keyspace %s", keyspace)
 			return nil, err
 		}
 		tableMetadata[keyspace] = md.Tables
@@ -586,6 +589,7 @@ func (m *Migration) readCheckpoint() {
 	}
 }
 
+// establishConnect returns a net.Conn that enables us to send data to the proxy service
 func (m *Migration) establishConnection() net.Conn {
 	hostname := fmt.Sprintf("%s:%d", m.Conf.ProxyServiceHostname, m.Conf.ProxyCommunicationPort)
 	b := &backoff.Backoff{
@@ -600,7 +604,7 @@ func (m *Migration) establishConnection() net.Conn {
 		conn, err := net.Dial("tcp", hostname)
 		if err != nil {
 			nextDuration := b.Duration()
-			log.Infof("Couldn't connect to Proxy Service, retrying in %s...", nextDuration.String())
+			log.Debugf("Couldn't connect to Proxy Service, retrying in %s...", nextDuration.String())
 			time.Sleep(nextDuration)
 			continue
 		}
@@ -630,6 +634,7 @@ func (m *Migration) listenProxy() error {
 	}
 }
 
+// sendStart sends a start update to the proxy
 func (m *Migration) sendStart() {
 	bytes, err := json.Marshal(m.status)
 	if err != nil {
@@ -639,6 +644,7 @@ func (m *Migration) sendStart() {
 	m.sendRequest(updates.New(updates.Start, bytes))
 }
 
+// sendStart sends a migration complete update to the proxy
 func (m *Migration) sendComplete() {
 	bytes, err := json.Marshal(m.status)
 	if err != nil {
@@ -648,6 +654,7 @@ func (m *Migration) sendComplete() {
 	m.sendRequest(updates.New(updates.Complete, bytes))
 }
 
+// sendTableUpdate updates proxy on the status of a specific table
 func (m *Migration) sendTableUpdate(table *Table) {
 	bytes, err := json.Marshal(table)
 	if err != nil {
@@ -665,7 +672,7 @@ func (m *Migration) sendRequest(req *updates.Update) {
 
 	err := updates.Send(req, m.conn)
 	if err != nil {
-		log.WithError(err).Errorf("Error sending request %s", req.ID)
+		log.WithError(err).Errorf("Error sending update %s", req.ID)
 	}
 }
 

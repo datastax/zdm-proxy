@@ -3,7 +3,7 @@ package migration
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+	log "github.com/sirupsen/logrus"
 	"net/http"
 	"os/exec"
 	"regexp"
@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// Metrics contains characteristics about migration
+// Metrics contains migration metrics and information needed to derive these metrics
 type Metrics struct {
 	TablesMigrated int
 	TablesLeft     int
@@ -25,7 +25,7 @@ type Metrics struct {
 	s3        string
 }
 
-// NewMetrics creates a new Metrics struct
+// NewMetrics creates a new Metrics instance based on the given s3 bucket and migration directory
 func NewMetrics(port int, directory string, totalTables int, s3 string) *Metrics {
 	metrics := Metrics{
 		TablesLeft: totalTables,
@@ -35,16 +35,17 @@ func NewMetrics(port int, directory string, totalTables int, s3 string) *Metrics
 		s3:         s3,
 	}
 
+	// Begin updating speed based on s3 bucket object size
 	metrics.StartSpeedMetrics()
 
 	return &metrics
 }
 
-// StartSpeedMetrics updates the speed and sizes of migration every second
+// StartSpeedMetrics updates the speed and sizes of migration every second based on s3 bucket object size
 func (m *Metrics) StartSpeedMetrics() {
 	go func() {
 		for {
-			// Calculate size and speed in megabytes per second
+			// Calculate size and derive speed of migration
 			out, _ := exec.Command("aws", "s3", "ls", "--summarize", "--recursive", fmt.Sprintf("s3://%s/%s", m.s3, m.directory)).Output()
 			r, _ := regexp.Compile("Total Size: [0-9]+")
 			match := r.FindString(string(out))
@@ -52,7 +53,7 @@ func (m *Metrics) StartSpeedMetrics() {
 			numBytes, _ := strconv.ParseFloat(match[12:], 64)
 
 			// In MB/s and MB, respectively
-			m.Speed = numBytes/1024/1024 - m.SizeMigrated
+			m.Speed = (numBytes / 1024 / 1024) - m.SizeMigrated
 			m.SizeMigrated = numBytes / 1024 / 1024
 
 			time.Sleep(time.Second)
@@ -64,7 +65,8 @@ func (m *Metrics) StartSpeedMetrics() {
 func (m *Metrics) Expose() {
 	go func() {
 		http.HandleFunc("/", m.write)
-		log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", m.port), nil))
+		err := http.ListenAndServe(fmt.Sprintf(":%d", m.port), nil)
+		log.WithError(err).Fatal("Metrics subservice failed.")
 	}()
 }
 

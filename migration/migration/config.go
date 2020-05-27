@@ -40,7 +40,7 @@ func NewConfig() *Config {
 func (c *Config) ParseEnvVars() *Config {
 	err := envconfig.Process("", c)
 	if err != nil {
-		log.Panicf("could not load environment variables. Error: %s", err.Error())
+		log.WithError(err).Fatal("Could not load environment variables.")
 	}
 
 	return c
