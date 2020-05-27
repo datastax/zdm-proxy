@@ -479,7 +479,7 @@ func (p *CQLProxy) writeToAstra(f *frame.Frame, client string) error {
 	if len(fields) > 2 {
 		switch fields[1] {
 		case "prepare":
-			return p.handlePrepareQuery(fields[3], f, client, paths);
+			return p.handlePrepareQuery(fields[3], f, client, paths)
 		case "query", "execute":
 			if fields[1] == "execute" {
 				err = p.updatePrepareID(f)

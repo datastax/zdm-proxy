@@ -22,15 +22,17 @@ type Metrics struct {
 	lock      *sync.Mutex
 	port      int
 	directory string
+	s3        string
 }
 
 // NewMetrics creates a new Metrics struct
-func NewMetrics(port int, directory string, totalTables int) *Metrics {
+func NewMetrics(port int, directory string, totalTables int, s3 string) *Metrics {
 	metrics := Metrics{
 		TablesLeft: totalTables,
 		lock:       &sync.Mutex{},
 		port:       port,
 		directory:  directory,
+		s3:         s3,
 	}
 
 	metrics.StartSpeedMetrics()
@@ -43,7 +45,7 @@ func (m *Metrics) StartSpeedMetrics() {
 	go func() {
 		for {
 			// Calculate size and speed in megabytes per second
-			out, _ := exec.Command("aws", "s3", "ls", "--summarize", "--recursive", "s3://codebase-datastax-test/"+m.directory).Output()
+			out, _ := exec.Command("aws", "s3", "ls", "--summarize", "--recursive", fmt.Sprintf("s3://%s/%s", m.s3, m.directory)).Output()
 			r, _ := regexp.Compile("Total Size: [0-9]+")
 			match := r.FindString(string(out))
 

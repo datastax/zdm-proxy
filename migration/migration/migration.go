@@ -11,7 +11,6 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,29 +26,41 @@ import (
 
 // Migration contains necessary setup information
 type Migration struct {
-	Conf               *Config
-	Metrics            *Metrics
-	keyspaces          []string
-	conn               net.Conn
-	status             *Status
-	directory          string
-	sourceSession      *gocql.Session
-	destSession        *gocql.Session
-	chkLock            *sync.Mutex
-	logLock            *sync.Mutex
-	outstandingUpdates map[string]*updates.Update
-	updateLock         *sync.Mutex
-	pqLock             *sync.Mutex
-	priorityQueue      pq.PriorityQueue
+	Conf    *Config
+	Metrics *Metrics
+
+	// Sessions
+	sourceSession *gocql.Session
+	destSession   *gocql.Session
+
+	// States
 	initialized        bool
+	status             *Status
+	outstandingUpdates map[string]*updates.Update
+	priorityQueue      pq.PriorityQueue
+
+	// Data
+	keyspaces []string
+	conn      net.Conn
+	directory string
+
+	// Locks
+	chkLock    *sync.Mutex
+	logLock    *sync.Mutex
+	updateLock *sync.Mutex
+	pqLock     *sync.Mutex
 }
 
-// Init creates the connections to the databases and locks needed for checkpoint and logging
+// Init creates the connections to the databases, locks needed for checkpoint and logging, and initializes various data and states
 func (m *Migration) Init() error {
 	m.status = newStatus()
-	m.directory = m.Conf.MigrationID + "/" + fmt.Sprintf("migration-%s/", strconv.FormatInt(time.Now().Unix(), 10))
+
+	// m.directory is used to save logs to the local machine and data and checkpoints to s3
+	// It is comprised of migration ID and the current timestamp so each migration instance has a unique directory
+	m.directory = fmt.Sprintf("%s/migration-%s", m.Conf.MigrationID, strconv.FormatInt(time.Now().Unix(), 10))
 	os.Mkdir(m.directory, 0755)
 
+	// Connect to source and destination sessions w/ gocql
 	var err error
 	m.sourceSession, err = utils.ConnectToCluster(m.Conf.SourceHostname, m.Conf.SourceUsername, m.Conf.SourcePassword, m.Conf.SourcePort)
 	if err != nil {
@@ -61,6 +72,7 @@ func (m *Migration) Init() error {
 		return err
 	}
 
+	// Initialize locks, PQs, and misc. data and states
 	m.chkLock = new(sync.Mutex)
 	m.logLock = new(sync.Mutex)
 	m.updateLock = new(sync.Mutex)
@@ -69,6 +81,7 @@ func (m *Migration) Init() error {
 	m.outstandingUpdates = make(map[string]*updates.Update)
 	m.initialized = true
 	m.keyspaces = make([]string, 0)
+
 	return nil
 }
 
@@ -83,23 +96,28 @@ func (m *Migration) Migrate() {
 	defer m.sourceSession.Close()
 	defer m.destSession.Close()
 
-	err := m.getKeyspaces()
+	var err error
+
+	// Discover schemas on source database
+	err = m.getKeyspaces()
 	if err != nil {
 		log.WithError(err).Fatal("Failed to fetch keyspaces from source cluster")
 	}
+
 	tables, err := m.getTables(m.keyspaces)
 	if err != nil {
 		log.WithError(err).Fatal("Failed to discover table schemas from source cluster")
 	}
 
+	// Initialize Status and Metrics with discovered schemas
 	m.status.initTableData(tables)
-	m.Metrics = NewMetrics(m.Conf.MigrationMetricsPort, m.directory, len(m.status.Tables))
+	m.Metrics = NewMetrics(m.Conf.MigrationMetricsPort, m.directory, len(m.status.Tables), m.Conf.MigrationS3)
 	m.Metrics.Expose()
-	m.readCheckpoint()
 
+	m.readCheckpoint()
 	if m.Conf.HardRestart {
 		log.Info("=== HARD RESTARTING ===")
-		// On hard restart, clear Astra cluster of all data
+		// On hard restart, iterate through all tables in source and drop them from astra
 		for keyspace, keyspaceTables := range m.status.Tables {
 			for tableName, table := range keyspaceTables {
 				if table.Step >= MigratingSchemaComplete {
@@ -116,25 +134,29 @@ func (m *Migration) Migrate() {
 			}
 		}
 
-		err := exec.Command("aws", "s3", "rm", "s3://codebase-datastax-test/"+m.Conf.MigrationID+"/migration.chk").Run()
+		// Remove the existing checkpoint file
+		err := exec.Command("aws", "s3", "rm", fmt.Sprintf("s3://%s/%s/migration.chk", m.Conf.MigrationS3, m.Conf.MigrationID)).Run()
 		if err != nil {
-			log.WithError(err).Fatal("Error removing migration checkpoint file")
+			log.WithError(err).Fatal("Error removing migration checkpoint file on hard restart")
 		}
 
+		// Re-read the (nonexistent) checkpoint to start with clean m.status object
 		m.readCheckpoint()
 	}
 
-	begin := time.Now()
+	// Initialize workgroups for migrating schemas and tables
 	schemaJobs := make(chan *gocql.TableMetadata, len(tables))
 	tableJobs := make(chan *gocql.TableMetadata, len(tables))
 	var wgSchema sync.WaitGroup
 	var wgTables sync.WaitGroup
 
+	// Add workers to workgroups
 	for worker := 1; worker <= m.Conf.Threads; worker++ {
 		go m.schemaPool(&wgSchema, schemaJobs)
 		go m.tablePool(&wgTables, tableJobs)
 	}
 
+	// Migrate schemas using workgroups
 	for _, keyspaceTables := range tables {
 		for _, table := range keyspaceTables {
 			wgSchema.Add(1)
@@ -161,7 +183,7 @@ func (m *Migration) Migrate() {
 	// Notify proxy service that schemas are finished migrating, unload/load starting
 	m.sendStart()
 
-	// Ensure the start signal has been received and processed before continuing
+	// Wait for the start signal to be received and processed before continuing
 	for {
 		startReceived := true
 		for _, update := range m.outstandingUpdates {
@@ -179,6 +201,7 @@ func (m *Migration) Migrate() {
 		log.Debug("Waiting for start signal to be received...")
 	}
 
+	// Migrate table data using workgroups
 	for m.priorityQueue.Len() > 0 {
 		m.pqLock.Lock()
 		nextTable, err := m.priorityQueue.Pop()
@@ -193,19 +216,9 @@ func (m *Migration) Migrate() {
 
 	close(tableJobs)
 	wgTables.Wait()
+
+	// Migration complete; write checkpoint and notify proxy
 	log.Info("COMPLETED MIGRATION")
-
-	// Calculate average speed in megabytes per second
-	out, err := exec.Command("aws", "s3", "ls", "--summarize", "--recursive", "s3://codebase-datastax-test/"+m.directory).Output()
-	r, _ := regexp.Compile("Total Size: [0-9]+")
-	match := r.FindString(string(out))
-
-	numBytes, _ := strconv.ParseFloat(match[12:], 64)
-
-	// Converts this to MB/s
-	m.status.Speed = (numBytes / 1024 / 1024) / ((float64(time.Now().UnixNano() - begin.UnixNano())) / 1000000000)
-	log.Debugf("Migration Speed: %s MB/s", strconv.FormatFloat(m.status.Speed, 'f', 2, 64))
-
 	m.writeCheckpoint()
 	m.sendComplete()
 
@@ -224,7 +237,6 @@ func (m *Migration) schemaPool(wg *sync.WaitGroup, jobs <-chan *gocql.TableMetad
 
 			// Migrate indexes
 			itr := m.sourceSession.Query("SELECT index_name, options FROM system_schema.indexes WHERE keyspace_name = ? AND table_name = ?;", table.Keyspace, table.Name).Iter()
-			log.Debug(itr.NumRows())
 			if itr.NumRows() > 1 {
 				log.Fatalf("Astra tables can only have one secondary index; %s.%s has multiple", table.Keyspace, table.Name)
 			} else if itr.NumRows() == 1 {
@@ -389,7 +401,7 @@ func (m *Migration) unloadTable(table *gocql.TableMetadata) error {
 
 	query := m.buildUnloadQuery(table)
 	unloadCmdArgs := []string{"unload", "-k", table.Keyspace, "-port", strconv.Itoa(m.Conf.SourcePort), "-query", query, "-logDir", m.directory}
-	awsStreamArgs := []string{"s3", "cp", "-", "s3://codebase-datastax-test/" + m.directory + table.Keyspace + "." + table.Name}
+	awsStreamArgs := []string{"s3", "cp", "-", fmt.Sprintf("s3://%s/%s/%s.%s", m.Conf.MigrationS3, m.directory, table.Keyspace, table.Name)}
 
 	// Start both dsbulk unload, pipe to aws s3 cp
 	var b bytes.Buffer
@@ -450,7 +462,7 @@ func (m *Migration) loadTable(table *gocql.TableMetadata) error {
 	loadCmdArgs := []string{
 		"load", "-k", table.Keyspace, "-h", m.Conf.AstraHostname, "-port", strconv.Itoa(m.Conf.AstraPort), "-query", query,
 		"-logDir", m.directory, "--batch.mode", "DISABLED"}
-	awsStreamArgs := []string{"s3", "cp", "s3://codebase-datastax-test/" + m.directory + table.Keyspace + "." + table.Name, "-"}
+	awsStreamArgs := []string{"s3", "cp", fmt.Sprintf("s3://%s/%s/%s.%s", m.Conf.MigrationS3, m.directory, table.Keyspace, table.Name), "-"}
 
 	// Start aws s3 cp, pipe to dsbulk load
 	var b bytes.Buffer
@@ -531,7 +543,7 @@ func (m *Migration) writeCheckpoint() {
 
 	// Write checkpoint file to s3
 	printCommandArgs := []string{string(content)}
-	awsStreamArgs := []string{"s3", "cp", "-", "s3://codebase-datastax-test/" + m.Conf.MigrationID + "/migration.chk"}
+	awsStreamArgs := []string{"s3", "cp", "-", fmt.Sprintf("s3://%s/%s/migration.chk", m.Conf.MigrationS3, m.Conf.MigrationID)}
 	var b bytes.Buffer
 	err := pipe.Command(&b,
 		exec.Command("printf", printCommandArgs...),
@@ -550,7 +562,7 @@ func (m *Migration) writeCheckpoint() {
 func (m *Migration) readCheckpoint() {
 	m.chkLock.Lock()
 	defer m.chkLock.Unlock()
-	data, err := exec.Command("aws", "s3", "cp", "s3://codebase-datastax-test/"+m.Conf.MigrationID+"/migration.chk", "-").CombinedOutput()
+	data, err := exec.Command("aws", "s3", "cp", fmt.Sprintf("s3://%s/%s/migration.chk", m.Conf.MigrationS3, m.Conf.MigrationID), "-").CombinedOutput()
 
 	m.status.Timestamp = time.Now()
 
