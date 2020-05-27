@@ -1,4 +1,4 @@
-package test
+package setup
 
 import (
 	"cloud-gate/migration/migration"
@@ -76,32 +76,31 @@ func PrintProxyOutput(proxyOut io.ReadCloser) {
 }
 
 // CreateStatusObject creates Status for testing
-func CreateStatusObject(tableStep migration.Step) migration.Status {
+func CreateStatusObject() migration.Status {
 	status := migration.Status{
-		Timestamp:  time.Now(),
-		Tables:     make(map[string]map[string]*migration.Table),
-		Steps:      1,
-		TotalSteps: 1,
-		Speed:      0,
-		Lock:       new(sync.Mutex),
+		Timestamp: time.Now(),
+		Tables:    make(map[string]map[string]*migration.Table),
+		Lock:      new(sync.Mutex),
 	}
 
 	status.Tables[TestKeyspace] = make(map[string]*migration.Table)
-	status.Tables[TestKeyspace][TestTable] = &migration.Table{
-		Keyspace: TestKeyspace,
-		Name:     TestTable,
-		Step:     tableStep,
-		Error:    nil,
-		Priority: 0,
-		Lock:     new(sync.Mutex),
+	for _, tableName := range TestTables {
+		status.Tables[TestKeyspace][tableName] = &migration.Table{
+			Keyspace: TestKeyspace,
+			Name:     tableName,
+			Step:     migration.MigratingSchemaComplete,
+			Error:    nil,
+			Priority: 0,
+			Lock:     new(sync.Mutex),
+		}
 	}
 
 	return status
 }
 
 // SendStart sends a Start update
-func SendStart(conn net.Conn) {
-	bytes, err := json.Marshal(CreateStatusObject(migration.MigratingSchemaComplete))
+func SendStart(conn net.Conn, status migration.Status) {
+	bytes, err := json.Marshal(status)
 	if err != nil {
 		log.WithError(err).Fatal("Error marshalling status for start signal")
 	}
@@ -110,9 +109,8 @@ func SendStart(conn net.Conn) {
 }
 
 // SendTableUpdate sends a TableUpdate update
-func SendTableUpdate(step migration.Step, conn net.Conn, table string) {
-	status := CreateStatusObject(step)
-	bytes, err := json.Marshal(status.Tables[TestKeyspace][table])
+func SendTableUpdate(conn net.Conn, table *migration.Table) {
+	bytes, err := json.Marshal(table)
 	if err != nil {
 		log.WithError(err).Fatal("Error marshalling table for update")
 	}
@@ -121,8 +119,8 @@ func SendTableUpdate(step migration.Step, conn net.Conn, table string) {
 }
 
 // SendMigrationComplete sends a Complete update
-func SendMigrationComplete(conn net.Conn) {
-	bytes, err := json.Marshal(CreateStatusObject(migration.LoadingDataComplete))
+func SendMigrationComplete(conn net.Conn, status migration.Status) {
+	bytes, err := json.Marshal(status)
 	if err != nil {
 		log.WithError(err).Fatal("Error marshalling status for complete signal")
 	}

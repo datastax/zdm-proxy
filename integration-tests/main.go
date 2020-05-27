@@ -1,14 +1,14 @@
 package main
 
 import (
+	"cloud-gate/integration-tests/setup"
 	"cloud-gate/integration-tests/test"
-	"cloud-gate/integration-tests/test1"
+	"cloud-gate/proxy/pkg/config"
+	"cloud-gate/proxy/pkg/filter"
 
 	"cloud-gate/utils"
 	"fmt"
 	"os"
-	"os/exec"
-	"syscall"
 
 	"github.com/gocql/gocql"
 
@@ -34,29 +34,49 @@ func main() {
 	defer destSession.Close()
 
 	// Seed source and dest with keyspace
-	test.SeedKeyspace(sourceSession, destSession)
+	setup.SeedKeyspace(sourceSession, destSession)
 
-	proxyCommand := exec.Command("go", "run", "./proxy/main.go")
-	proxyCommand.Env = os.Environ()
-	proxyCommand.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	proxyCommand.Start()
+	conf := &config.Config{
+		SourceHostname: "127.0.0.1",
+		SourceUsername: "",
+		SourcePassword: "",
+		SourcePort:     9042,
+
+		AstraHostname: "127.0.0.1",
+		AstraUsername: "",
+		AstraPassword: "",
+		AstraPort:     9043,
+
+		MigrationComplete:          false,
+		MigrationServiceHostname:   "127.0.0.1",
+		MigrationCommunicationPort: 15000,
+		ProxyServiceHostname:       "127.0.0.1",
+		ProxyCommunicationPort:     14000,
+		ProxyMetricsPort:           8080,
+		ProxyQueryPort:             14002,
+
+		Test:         false,
+		Debug:        true,
+		MaxQueueSize: 1000,
+	}
+
+	p := &filter.CQLProxy{
+		Conf: conf,
+	}
+
+	go p.Start()
+
 	log.Info("PROXY STARTED")
 
-	go test.ListenProxy()
+	go setup.ListenProxy()
 
 	// Establish connection w/ proxy
-	conn := test.EstablishConnection(fmt.Sprintf("127.0.0.1:14000"))
+	conn := setup.EstablishConnection(fmt.Sprintf("127.0.0.1:14000"))
 
 	// Run test package here
-	// test1.Test1(conn, sourceSession, destSession)
-	// test1.Test2(conn, sourceSession, destSession)
-	test1.Test3(conn, sourceSession, destSession)
-	// Kill the proxy
-	pgid, err := syscall.Getpgid(proxyCommand.Process.Pid)
-	if err == nil {
-		syscall.Kill(-pgid, 15)
-	}
-	proxyCommand.Wait()
+	// test.BasicUpdate(conn, sourceSession, destSession)
+	// test.BasicBatch(conn, sourceSession, destSession)
+	test.QueueBatch(conn, sourceSession, destSession)
 
 	os.Exit(0)
 }
