@@ -48,13 +48,18 @@ type Query struct {
 
 // New returns a new query struct with the Timestamp set to the struct's creation time.
 func New(table *migration.Table, queryType Type, f *frame.Frame, source string, parsedPaths []string) *Query {
+	var opcode byte
+	if len(f.RawBytes) >= 5 {
+		opcode = f.RawBytes[4]
+	}
+
 	return &Query{
 		Timestamp: uint64(time.Now().UnixNano() / 1000000),
 		Table:     table,
 		Type:      queryType,
 		Query:     f.RawBytes,
 		Stream:    f.Stream,
-		Opcode:    f.RawBytes[4],
+		Opcode:    opcode,
 		Source:    source,
 		Paths:     parsedPaths,
 	}
