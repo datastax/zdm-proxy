@@ -225,6 +225,7 @@ func (m *Migration) Migrate() {
 	os.Exit(0)
 }
 
+// schemaPool adds a "worker" that ingests and performs schema migration jobs
 func (m *Migration) schemaPool(wg *sync.WaitGroup, jobs <-chan *gocql.TableMetadata) {
 	for table := range jobs {
 		// If we already migrated schema, skip this
@@ -263,6 +264,7 @@ func (m *Migration) schemaPool(wg *sync.WaitGroup, jobs <-chan *gocql.TableMetad
 	}
 }
 
+// generateSchemaMigrationQuery generates a CQL query that recreates a table schema
 func generateSchemaMigrationQuery(table *gocql.TableMetadata) string {
 	query := fmt.Sprintf("CREATE TABLE %s.%s (", strconv.Quote(table.Keyspace), strconv.Quote(table.Name))
 	for cname, column := range table.Columns {
@@ -319,6 +321,7 @@ func (m *Migration) migrateSchema(keyspace string, table *gocql.TableMetadata) e
 	return nil
 }
 
+// tablePool adds a "worker" that ingests and performs table data migration jobs
 func (m *Migration) tablePool(wg *sync.WaitGroup, jobs <-chan *gocql.TableMetadata) {
 	for table := range jobs {
 		if m.status.Tables[table.Keyspace][table.Name].Step != LoadingDataComplete {
@@ -383,6 +386,7 @@ func (m *Migration) migrateData(table *gocql.TableMetadata) error {
 	return nil
 }
 
+// buildUnloadQuery builds a CQL query used by dsbulk to unload data into CSVs with timestamps
 func (m *Migration) buildUnloadQuery(table *gocql.TableMetadata) string {
 	query := "SELECT "
 	for colName, column := range table.Columns {
@@ -423,6 +427,7 @@ func (m *Migration) unloadTable(table *gocql.TableMetadata) error {
 	return nil
 }
 
+// buildLoadQuery builds a CQL query used by dsbulk to load data from CSVs with timestamps
 func (m *Migration) buildLoadQuery(table *gocql.TableMetadata) string {
 	query := "BEGIN BATCH "
 	partitionKeys := ""
@@ -478,6 +483,7 @@ func (m *Migration) loadTable(table *gocql.TableMetadata) error {
 	return nil
 }
 
+// getKeyspaces populates m.keyspaces with the non-system keyspaces in the source cluster
 func (m *Migration) getKeyspaces() error {
 	ignoreKeyspaces := []string{"system_auth", "system_schema", "dse_system_local", "dse_system", "dse_leases", "solr_admin",
 		"dse_insights", "dse_insights_local", "system_distributed", "system", "dse_perf", "system_traces", "dse_security"}
@@ -583,6 +589,7 @@ func (m *Migration) readCheckpoint() {
 	}
 }
 
+// establishConnect returns a net.Conn that enables us to send data to the proxy service
 func (m *Migration) establishConnection() net.Conn {
 	hostname := fmt.Sprintf("%s:%d", m.Conf.ProxyServiceHostname, m.Conf.ProxyCommunicationPort)
 	b := &backoff.Backoff{
@@ -627,6 +634,7 @@ func (m *Migration) listenProxy() error {
 	}
 }
 
+// sendStart sends a start update to the proxy
 func (m *Migration) sendStart() {
 	bytes, err := json.Marshal(m.status)
 	if err != nil {
@@ -636,6 +644,7 @@ func (m *Migration) sendStart() {
 	m.sendRequest(updates.New(updates.Start, bytes))
 }
 
+// sendStart sends a migration complete update to the proxy
 func (m *Migration) sendComplete() {
 	bytes, err := json.Marshal(m.status)
 	if err != nil {
@@ -645,6 +654,7 @@ func (m *Migration) sendComplete() {
 	m.sendRequest(updates.New(updates.Complete, bytes))
 }
 
+// sendTableUpdate updates proxy on the status of a specific table
 func (m *Migration) sendTableUpdate(table *Table) {
 	bytes, err := json.Marshal(table)
 	if err != nil {
