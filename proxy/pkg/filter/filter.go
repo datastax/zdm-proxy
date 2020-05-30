@@ -376,47 +376,41 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 }
 
 // handleStartupFrame will check the frame opcodes to determine what startup actions to take
-func (p *CQLProxy) handleStartupFrame(f *frame.Frame, client, db net.Conn) (bool, error) {
+// The process, at a high level, is that the proxy directly tunnels startup communications
+// to Astra (since the client logs on with Astra credentials), and then the proxy manually
+// initiates startup with the client's old database
+func (p *CQLProxy) handleStartupFrame(f *frame.Frame, client, sourceDB net.Conn) (bool, error) {
+	astraSession := p.getAstraSession(client.RemoteAddr().String())
 	switch f.Opcode {
+	// OPTIONS
 	case 0x05:
-		// OPTIONS
-		err := auth.HandleOptions(client, db, f.RawBytes)
+		// forward OPTIONS to Astra
+		err := auth.HandleOptions(client, astraSession, f.RawBytes)
 		if err != nil {
 			return false, fmt.Errorf("client %s unable to negotiate options with %s",
-				client.RemoteAddr(), db.RemoteAddr())
+				client.RemoteAddr(), astraSession.RemoteAddr())
 		}
+
+	// STARTUP
 	case 0x01:
-		// STARTUP
 
-		// Ensure that the user provided valid Astra credentials
-		err := auth.CheckAuthentication(client, p.Conf.AstraUsername, p.Conf.AstraPassword, f.RawBytes)
+		err := auth.HandleAstraStartup(client, astraSession, f.RawBytes)
 		if err != nil {
 			return false, err
 		}
 
-		// Start CQL session to source database
-		err = auth.HandleStartup(client, db, p.Conf.SourceUsername, p.Conf.SourcePassword, f.RawBytes, false)
+		err = auth.HandleSourceStartup(client, sourceDB, f.RawBytes, p.Conf.SourceUsername, p.Conf.SourcePassword)
 		if err != nil {
 			return false, err
 		}
 
-		// Start CQL session to Astra database
-		astraSession := p.getAstraSession(client.RemoteAddr().String())
-		err = auth.HandleStartup(client, astraSession, p.Conf.AstraUsername, p.Conf.AstraPassword, f.RawBytes, false)
-		if err != nil {
-			return false, err
-		}
-
-		// Start sending responses from source database back to client
-		go p.forward(db, client)
+		go p.forward(sourceDB, client)
 		go p.astraReplyHandler(client)
 
 		return true, nil
 	}
-
 	return false, fmt.Errorf("received non STARTUP or OPTIONS query from unauthenticated client %s",
 		client.RemoteAddr())
-
 }
 
 func (p *CQLProxy) clientDisconnect(client string) {
