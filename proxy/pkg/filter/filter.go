@@ -647,9 +647,8 @@ func (p *CQLProxy) handlePrepareQuery(fromClause string, f *frame.Frame, client 
 		}
 	}
 
-	data := f.RawBytes
-	idLength := binary.BigEndian.Uint16(data[9:11])
-	preparedID := data[11 : 11+idLength]
+	preparedID := p.preparedIDs[f.Stream]
+	log.Debugf("-------------- Mapping prepareID %s to keyspace %s", string(preparedID), keyspace)
 	p.prepareIDToKeyspace[string(preparedID)] = keyspace
 
 	table, ok := p.migrationStatus.Tables[keyspace][tableName]

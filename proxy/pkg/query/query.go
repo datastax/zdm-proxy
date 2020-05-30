@@ -85,13 +85,13 @@ func (q *Query) UsingTimestamp() *Query {
 	q.Query[flagsByte] = flags | 0x20
 
 	// Add timestamp to end of query
-	timestamp := make([]byte, 4)
+	timestamp := make([]byte, 8)
 	binary.BigEndian.PutUint64(timestamp, q.Timestamp)
 	q.Query = append(q.Query, timestamp...)
 
 	// Update length of body if not BATCH statement
 	if q.Opcode != 0x0d {
-		bodyLen := binary.BigEndian.Uint32(q.Query[5:9]) + 4
+		bodyLen := binary.BigEndian.Uint32(q.Query[5:9]) + 8
 		binary.BigEndian.PutUint32(q.Query[5:9], bodyLen)
 	}
 
