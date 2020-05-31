@@ -42,6 +42,7 @@ type Migration struct {
 	// Data
 	keyspaces []string
 	conn      net.Conn
+	comms     Comms
 	directory string
 
 	// Locks
@@ -81,6 +82,7 @@ func (m *Migration) Init() error {
 	m.outstandingUpdates = make(map[string]*updates.Update)
 	m.initialized = true
 	m.keyspaces = make([]string, 0)
+	m.comms = Comms{m: m}
 
 	return nil
 }
@@ -181,7 +183,7 @@ func (m *Migration) Migrate() {
 	defer m.conn.Close()
 
 	// Notify proxy service that schemas are finished migrating, unload/load starting
-	m.sendStart()
+	m.comms.sendStart()
 
 	// Wait for the start signal to be received and processed before continuing
 	for {
@@ -220,8 +222,7 @@ func (m *Migration) Migrate() {
 	// Migration complete; write checkpoint and notify proxy
 	log.Info("== COMPLETED MIGRATION ==")
 	m.writeCheckpoint()
-	m.sendComplete()
-
+	m.comms.sendComplete()
 	os.Exit(0)
 }
 
@@ -358,9 +359,8 @@ func (m *Migration) tablePool(wg *sync.WaitGroup, jobs <-chan *gocql.TableMetada
 
 			m.status.Tables[table.Keyspace][table.Name].Step = LoadingDataComplete
 			log.Infof("COMPLETED LOADING TABLE DATA: %s.%s", table.Keyspace, table.Name)
-			m.sendTableUpdate(m.status.Tables[table.Keyspace][table.Name])
-
 			m.writeCheckpoint()
+			m.comms.sendTableUpdate(m.status.Tables[table.Keyspace][table.Name])
 		}
 		wg.Done()
 	}
@@ -404,7 +404,7 @@ func (m *Migration) buildUnloadQuery(table *gocql.TableMetadata) string {
 func (m *Migration) unloadTable(table *gocql.TableMetadata) error {
 	m.status.Tables[table.Keyspace][table.Name].Step = UnloadingData
 	log.Infof("UNLOADING TABLE: %s.%s...", table.Keyspace, table.Name)
-	m.sendTableUpdate(m.status.Tables[table.Keyspace][table.Name])
+	m.comms.sendTableUpdate(m.status.Tables[table.Keyspace][table.Name])
 
 	query := m.buildUnloadQuery(table)
 	unloadCmdArgs := []string{"unload", "-k", table.Keyspace, "-port", strconv.Itoa(m.Conf.SourcePort), "-query", query, "-logDir", m.directory}
@@ -423,6 +423,11 @@ func (m *Migration) unloadTable(table *gocql.TableMetadata) error {
 		m.status.Tables[table.Keyspace][table.Name].Error = err
 		return err
 	}
+
+	m.status.Tables[table.Keyspace][table.Name].Step = UnloadingDataComplete
+	log.Infof("COMPLETED UNLOADING TABLE: %s.%s", table.Keyspace, table.Name)
+
+	m.comms.sendTableUpdate(m.status.Tables[table.Keyspace][table.Name])
 
 	return nil
 }
@@ -458,7 +463,7 @@ func (m *Migration) buildLoadQuery(table *gocql.TableMetadata) string {
 func (m *Migration) loadTable(table *gocql.TableMetadata) error {
 	m.status.Tables[table.Keyspace][table.Name].Step = LoadingData
 	log.Infof("LOADING TABLE: %s.%s...", table.Keyspace, table.Name)
-	m.sendTableUpdate(m.status.Tables[table.Keyspace][table.Name])
+	m.comms.sendTableUpdate(m.status.Tables[table.Keyspace][table.Name])
 
 	query := m.buildLoadQuery(table)
 	loadCmdArgs := []string{
@@ -634,48 +639,6 @@ func (m *Migration) listenProxy() error {
 	}
 }
 
-// sendStart sends a start update to the proxy
-func (m *Migration) sendStart() {
-	bytes, err := json.Marshal(m.status)
-	if err != nil {
-		log.WithError(err).Fatal("Error marshalling status for start signal")
-	}
-
-	m.sendRequest(updates.New(updates.Start, bytes))
-}
-
-// sendStart sends a migration complete update to the proxy
-func (m *Migration) sendComplete() {
-	bytes, err := json.Marshal(m.status)
-	if err != nil {
-		log.WithError(err).Fatal("Error marshalling status for complete signal")
-	}
-
-	m.sendRequest(updates.New(updates.Complete, bytes))
-}
-
-// sendTableUpdate updates proxy on the status of a specific table
-func (m *Migration) sendTableUpdate(table *Table) {
-	bytes, err := json.Marshal(table)
-	if err != nil {
-		log.WithError(err).Fatal("Error marshalling table for update")
-	}
-
-	m.sendRequest(updates.New(updates.TableUpdate, bytes))
-}
-
-// sendRequest will notify the proxy service about the migration progress
-func (m *Migration) sendRequest(req *updates.Update) {
-	m.updateLock.Lock()
-	m.outstandingUpdates[req.ID] = req
-	m.updateLock.Unlock()
-
-	err := updates.Send(req, m.conn)
-	if err != nil {
-		log.WithError(err).Errorf("Error sending update %s", req.ID)
-	}
-}
-
 // handleRequest handles the notifications from proxy service
 func (m *Migration) handleRequest(req *updates.Update) error {
 	switch req.Type {
@@ -710,7 +673,7 @@ func (m *Migration) handleRequest(req *updates.Update) error {
 		m.updateLock.Lock()
 		toSend = m.outstandingUpdates[req.ID]
 		m.updateLock.Unlock()
-		m.sendRequest(toSend)
+		m.comms.sendRequest(toSend)
 	case updates.TableRestart:
 		// Restart single table migration
 		var toMigrate Table
