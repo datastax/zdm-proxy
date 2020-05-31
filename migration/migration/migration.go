@@ -376,7 +376,7 @@ func (m *Migration) migrateData(table *gocql.TableMetadata) error {
 
 	m.status.Tables[table.Keyspace][table.Name].Step = UnloadingDataComplete
 	log.Infof("COMPLETED UNLOADING TABLE: %s.%s", table.Keyspace, table.Name)
-	m.sendTableUpdate(m.status.Tables[table.Keyspace][table.Name])
+	m.comms.sendTableUpdate(m.status.Tables[table.Keyspace][table.Name])
 
 	err = m.loadTable(table)
 	if err != nil {
