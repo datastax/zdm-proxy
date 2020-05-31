@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/rand"
 	"net"
 	"strings"
 	"sync"
@@ -54,7 +53,6 @@ type CQLProxy struct {
 
 	outstandingQueries map[string]map[uint16]*frame.Frame
 	outstandingUpdates map[string]chan bool
-	outstandingUses    map[string]map[uint16]chan bool
 	migrationStatus    *migration.Status
 	migrationComplete  bool
 
@@ -196,7 +194,6 @@ func (p *CQLProxy) handleClientConnection(client net.Conn) {
 
 		p.lock.Lock()
 		p.outstandingQueries[clientIP] = make(map[uint16]*frame.Frame)
-		p.outstandingUses[clientIP] = make(map[uint16]chan bool)
 		p.queryResponses[clientIP] = make(map[uint16]chan bool)
 		p.astraSessions[clientIP] = astraSession
 		p.sessionLocks[clientIP] = &sync.Mutex{}
@@ -239,17 +236,21 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 		}
 
 		bodyLen := binary.BigEndian.Uint32(frameHeader[5:9])
-		frameBody := make([]byte, bodyLen)
+		data := frameHeader
+		bytesSoFar := 0
 
 		if bodyLen != 0 {
-			_, err := src.Read(frameBody)
-			if err != nil {
-				log.Error(err)
-				continue
+			for bytesSoFar < int(bodyLen) {
+				rest := make([]byte, int(bodyLen) - bytesSoFar)
+				bytesRead, err := src.Read(rest)
+				if err != nil {
+					log.Error(err)
+					continue
+				}
+				data = append(data, rest[:bytesRead]...)
+				bytesSoFar += bytesRead
 			}
 		}
-
-		data := append(frameHeader, frameBody...)
 
 		if len(data) > cassMaxLen {
 			log.Error("query larger than max allowed by Cassandra, ignoring.")
@@ -309,10 +310,11 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 						}
 					}
 				}
-
-				go p.mirrorToAstra(destAddress, f.Stream)
+				p.lock.Unlock()
+				p.mirrorToAstra(destAddress, f.Stream)
+				p.lock.Lock()
 				log.Debugf("Received success response from source database for stream (%s, %d). Mirroring to "+
-					"Astra database", sourceAddress, f.Stream)
+					"Astra database", destAddress, f.Stream)
 			}
 			p.lock.Unlock()
 		}
@@ -567,8 +569,6 @@ func (p *CQLProxy) astraReplyHandler(client net.Conn) {
 				log.Debugf("Received error response from Astra from query (%s, %d)", clientIP, resp.Stream)
 				p.checkError(resp.RawBytes)
 			}
-		} else if useRespChan, ok := p.outstandingUses[clientIP][resp.Stream]; ok {
-			useRespChan <- success
 		}
 		p.lock.Unlock()
 
@@ -811,14 +811,6 @@ func (p *CQLProxy) execute(q *query.Query) error {
 	p.sessionLocks[q.Source].Lock()
 	defer p.sessionLocks[q.Source].Unlock()
 
-	// switch to the keyspace that the query should be ran in
-	if q.Type != query.MISC && q.Type != query.USE {
-		if q.Table != nil && p.astraKeyspace[q.Source] != q.Table.Keyspace {
-			if err := p.switchToQueryKeyspace(session, q); err != nil {
-				return err
-			}
-		}
-	}
 
 	log.Debugf("Executing %v on Astra.", *q)
 
@@ -835,64 +827,6 @@ func (p *CQLProxy) execute(q *query.Query) error {
 	return err
 }
 
-// switchToQueryKeyspace will check the keyspace of the query and will make a USE statement to
-// switch to the correct keyspace
-func (p *CQLProxy) switchToQueryKeyspace(session net.Conn, q *query.Query, attempts ...int) error {
-	attempt := 1
-	if attempts != nil {
-		attempt = attempts[0]
-	}
-
-	if attempt > maxQueryRetries {
-		return fmt.Errorf("failed to switch to keyspace %s for query %d on session %s", q.Table.Keyspace, q.Stream, q.Source)
-	}
-
-	queryString := fmt.Sprintf("USE %s;", q.Table.Keyspace)
-
-	// generate a random, unused StreamID for this USE query
-	streamID := uint16(rand.Int())
-	for _, ok := p.outstandingQueries[q.Source][streamID]; ok; _, ok = p.outstandingQueries[q.Source][streamID] {
-		streamID = uint16(rand.Int())
-	}
-
-	// length of frame is header length + [long string] + 2 bytes for consistency + 1 byte for flags
-	totalLen := cassHdrLen + 4
-	useFrame := make([]byte, totalLen)
-
-	useFrame[0] = q.Query[0]
-	useFrame[1] = 0x00 // no flags
-	binary.BigEndian.PutUint16(useFrame[2:4], streamID)
-	useFrame[4] = 0x07
-	binary.BigEndian.PutUint32(useFrame[5:9], 4+uint32(len(queryString)+2+1))
-	binary.BigEndian.PutUint32(useFrame[9:13], uint32(len(queryString)))
-
-	body := append([]byte(queryString), 0x00, 0x01, 0x00)
-	useFrame = append(useFrame, body...)
-
-	useRespChan := make(chan bool, 1)
-	p.lock.Lock()
-	p.outstandingUses[q.Source][streamID] = useRespChan
-	p.lock.Unlock()
-
-	_, err := session.Write(useFrame)
-	if err != nil {
-		return p.switchToQueryKeyspace(session, q, attempt+1)
-	}
-
-	if success := <-useRespChan; success {
-		p.lock.Lock()
-		defer p.lock.Unlock()
-
-		close(useRespChan)
-		delete(p.outstandingUses[q.Source], streamID)
-		p.astraKeyspace[q.Source] = q.Table.Keyspace
-		log.Debugf("Successfully switched to keyspace %s for query (%s, %d)", q.Table.Keyspace, q.Source, streamID)
-		return nil
-	} else {
-		log.Debugf("Unable to switch to keyspace %s for query (%s, %d). Retrying...", q.Table.Keyspace, q.Source, streamID)
-		return p.switchToQueryKeyspace(session, q, attempt+1)
-	}
-}
 
 func (p *CQLProxy) handleMigrationConnection(conn net.Conn) {
 	updates.CommunicationHandler(conn, p.migrationSession, p.handleUpdate)
@@ -1002,7 +936,6 @@ func (p *CQLProxy) reset() {
 	p.shutdown = false
 	p.outstandingQueries = make(map[string]map[uint16]*frame.Frame)
 	p.outstandingUpdates = make(map[string]chan bool)
-	p.outstandingUses = make(map[string]map[uint16]chan bool)
 	p.migrationComplete = p.Conf.MigrationComplete
 	p.listeners = []net.Listener{}
 	p.ReadyForRedirect = make(chan struct{})
