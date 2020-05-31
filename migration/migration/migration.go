@@ -17,7 +17,6 @@ import (
 	"time"
 
 	pipe "github.com/b4b4r07/go-pipe"
-	pq "github.com/jupp0r/go-priority-queue"
 
 	"github.com/gocql/gocql"
 	"github.com/jpillora/backoff"
@@ -37,7 +36,6 @@ type Migration struct {
 	initialized        bool
 	status             *Status
 	outstandingUpdates map[string]*updates.Update
-	priorityQueue      pq.PriorityQueue
 
 	// Data
 	keyspaces []string
@@ -47,9 +45,7 @@ type Migration struct {
 
 	// Locks
 	chkLock    *sync.Mutex
-	logLock    *sync.Mutex
 	updateLock *sync.Mutex
-	pqLock     *sync.Mutex
 }
 
 // Init creates the connections to the databases, locks needed for checkpoint and logging, and initializes various data and states
@@ -75,10 +71,7 @@ func (m *Migration) Init() error {
 
 	// Initialize locks, PQs, and misc. data and states
 	m.chkLock = new(sync.Mutex)
-	m.logLock = new(sync.Mutex)
 	m.updateLock = new(sync.Mutex)
-	m.pqLock = new(sync.Mutex)
-	m.priorityQueue = pq.New()
 	m.outstandingUpdates = make(map[string]*updates.Update)
 	m.initialized = true
 	m.keyspaces = make([]string, 0)
@@ -168,13 +161,6 @@ func (m *Migration) Migrate() {
 	close(schemaJobs)
 	wgSchema.Wait()
 
-	// Add all tables to priority queue
-	for _, keyspaceTables := range tables {
-		for _, table := range keyspaceTables {
-			m.priorityQueue.Insert(table, 1)
-		}
-	}
-
 	// Start listening to proxy communications
 	go m.listenProxy()
 
@@ -203,19 +189,13 @@ func (m *Migration) Migrate() {
 		log.Debug("Waiting for start signal to be received...")
 	}
 
-	// Migrate table data using workgroups
-	for m.priorityQueue.Len() > 0 {
-		m.pqLock.Lock()
-		nextTable, err := m.priorityQueue.Pop()
-		m.pqLock.Unlock()
-		if err != nil {
-			log.WithError(err).Error("Error popping priority queue")
-			break
+	// Migrate tables using workgroups
+	for _, keyspaceTables := range tables {
+		for _, table := range keyspaceTables {
+			wgTables.Add(1)
+			tableJobs <- table
 		}
-		wgTables.Add(1)
-		tableJobs <- nextTable.(*gocql.TableMetadata)
 	}
-
 	close(tableJobs)
 	wgTables.Wait()
 
@@ -265,8 +245,8 @@ func (m *Migration) schemaPool(wg *sync.WaitGroup, jobs <-chan *gocql.TableMetad
 	}
 }
 
-// generateSchemaMigrationQuery generates a CQL query that recreates a table schema
-func generateSchemaMigrationQuery(table *gocql.TableMetadata) string {
+// buildSchemaMigrationQuery generates a CQL query that recreates a table schema
+func buildSchemaMigrationQuery(table *gocql.TableMetadata) string {
 	query := fmt.Sprintf("CREATE TABLE %s.%s (", strconv.Quote(table.Keyspace), strconv.Quote(table.Name))
 	for cname, column := range table.Columns {
 		query += fmt.Sprintf("%s %s, ", strconv.Quote(cname), column.Type.Type().String())
@@ -310,7 +290,7 @@ func (m *Migration) migrateSchema(keyspace string, table *gocql.TableMetadata) e
 		log.Fatalf("Astra tables can have 50 columns max; table %s.%s has %d columns", keyspace, table.Name, len(table.Columns))
 	}
 
-	query := generateSchemaMigrationQuery(table)
+	query := buildSchemaMigrationQuery(table)
 	err := m.destSession.Query(query).Exec()
 
 	if err != nil {
@@ -360,7 +340,6 @@ func (m *Migration) tablePool(wg *sync.WaitGroup, jobs <-chan *gocql.TableMetada
 			m.status.Tables[table.Keyspace][table.Name].Step = LoadingDataComplete
 			log.Infof("COMPLETED LOADING TABLE DATA: %s.%s", table.Keyspace, table.Name)
 			m.writeCheckpoint()
-			m.comms.sendTableUpdate(m.status.Tables[table.Keyspace][table.Name])
 		}
 		wg.Done()
 	}
@@ -376,7 +355,6 @@ func (m *Migration) migrateData(table *gocql.TableMetadata) error {
 
 	m.status.Tables[table.Keyspace][table.Name].Step = UnloadingDataComplete
 	log.Infof("COMPLETED UNLOADING TABLE: %s.%s", table.Keyspace, table.Name)
-	m.comms.sendTableUpdate(m.status.Tables[table.Keyspace][table.Name])
 
 	err = m.loadTable(table)
 	if err != nil {
@@ -404,7 +382,6 @@ func (m *Migration) buildUnloadQuery(table *gocql.TableMetadata) string {
 func (m *Migration) unloadTable(table *gocql.TableMetadata) error {
 	m.status.Tables[table.Keyspace][table.Name].Step = UnloadingData
 	log.Infof("UNLOADING TABLE: %s.%s...", table.Keyspace, table.Name)
-	m.comms.sendTableUpdate(m.status.Tables[table.Keyspace][table.Name])
 
 	query := m.buildUnloadQuery(table)
 	unloadCmdArgs := []string{"unload", "-k", table.Keyspace, "-port", strconv.Itoa(m.Conf.SourcePort), "-query", query, "-logDir", m.directory}
@@ -426,8 +403,6 @@ func (m *Migration) unloadTable(table *gocql.TableMetadata) error {
 
 	m.status.Tables[table.Keyspace][table.Name].Step = UnloadingDataComplete
 	log.Infof("COMPLETED UNLOADING TABLE: %s.%s", table.Keyspace, table.Name)
-
-	m.comms.sendTableUpdate(m.status.Tables[table.Keyspace][table.Name])
 
 	return nil
 }
@@ -463,7 +438,6 @@ func (m *Migration) buildLoadQuery(table *gocql.TableMetadata) string {
 func (m *Migration) loadTable(table *gocql.TableMetadata) error {
 	m.status.Tables[table.Keyspace][table.Name].Step = LoadingData
 	log.Infof("LOADING TABLE: %s.%s...", table.Keyspace, table.Name)
-	m.comms.sendTableUpdate(m.status.Tables[table.Keyspace][table.Name])
 
 	query := m.buildLoadQuery(table)
 	loadCmdArgs := []string{
@@ -642,26 +616,6 @@ func (m *Migration) listenProxy() error {
 // handleRequest handles the notifications from proxy service
 func (m *Migration) handleRequest(req *updates.Update) error {
 	switch req.Type {
-	case updates.TableUpdate:
-		// On TableUpdate, update priority queue with the next table that needs to be migrated
-		var newTable Table
-		err := json.Unmarshal(req.Data, &newTable)
-		if err != nil {
-			log.WithError(err).Error("Error unmarshalling received update")
-			return err
-		}
-
-		table := m.status.Tables[newTable.Keyspace][newTable.Name]
-		currPriority := table.Priority + 1
-		m.pqLock.Lock()
-		if m.status.Tables[table.Keyspace][table.Name].Step < UnloadingData {
-			m.priorityQueue.UpdatePriority(table, float64(currPriority))
-		}
-		m.pqLock.Unlock()
-
-		table.Lock.Lock()
-		table.Priority = currPriority
-		table.Lock.Unlock()
 	case updates.Success:
 		// On success, delete the stored request
 		m.updateLock.Lock()

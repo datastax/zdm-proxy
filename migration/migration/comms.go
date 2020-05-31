@@ -39,12 +39,3 @@ func (c *Comms) sendComplete() {
 
 	c.sendRequest(updates.New(updates.Complete, bytes))
 }
-
-func (c *Comms) sendTableUpdate(table *Table) {
-	bytes, err := json.Marshal(table)
-	if err != nil {
-		log.WithError(err).Fatal("Error marshalling table for update")
-	}
-
-	c.sendRequest(updates.New(updates.TableUpdate, bytes))
-}
