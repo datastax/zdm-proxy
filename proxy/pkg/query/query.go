@@ -1,14 +1,12 @@
 package query
 
 import (
-	"encoding/binary"
-	"sync"
-	"time"
-	"unicode"
-
 	"cloud-gate/migration/migration"
 	"cloud-gate/proxy/pkg/cqlparser"
 	"cloud-gate/proxy/pkg/frame"
+	"encoding/binary"
+	"sync"
+	"time"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -134,19 +132,4 @@ func flagsByteFromBatch(frame []byte) int {
 		}
 	}
 	return offset + 2
-}
-
-// WithWaitGroup assigns a WaitGroup to to a Query
-func (q *Query) WithWaitGroup(waitgroup *sync.WaitGroup) *Query {
-	q.WG = waitgroup
-	return q
-}
-
-func isLower(s string) bool {
-	for _, r := range s {
-		if !unicode.IsLower(r) && unicode.IsLetter(r) {
-			return false
-		}
-	}
-	return true
 }

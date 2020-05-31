@@ -46,9 +46,6 @@ type CQLProxy struct {
 
 	listeners []net.Listener
 
-	queues         map[string]map[string]chan *query.Query
-	queueLocks     map[string]map[string]*sync.Mutex
-	tablePaused    map[string]map[string]bool
 	queryResponses map[uint16]chan bool
 	lock           *sync.Mutex // TODO: maybe change this to a RWMutex for better performance
 
@@ -60,11 +57,6 @@ type CQLProxy struct {
 	outstandingUses    map[string]map[uint16]chan bool
 	migrationStatus    *migration.Status
 	migrationComplete  bool
-
-	// Used to broadcast to all suspended forward threads once all queues are empty
-	queuesCompleteCond  *sync.Cond
-	queuesComplete      bool
-	redirectActiveConns bool
 
 	// Channels for dealing with updates from migration service
 	MigrationStart chan *migration.Status
@@ -146,12 +138,11 @@ func (p *CQLProxy) statusLoop() {
 		for {
 			select {
 			case status := <-p.MigrationStart:
-				p.loadMigrationInfo(status)
-
+				p.migrationStatus = status
+				p.ReadyChan <- struct{}{}
 			case <-p.MigrationDone:
 				log.Info("Migration Complete. Directing all new connections to Astra Database.")
 				p.migrationComplete = true
-				go p.redirectActiveConnectionsToAstra()
 				p.checkRedirect()
 
 			case <-p.ShutdownChan:
@@ -160,26 +151,6 @@ func (p *CQLProxy) statusLoop() {
 			}
 		}
 	}
-}
-
-// loadMigrationInfo initializes all the maps needed for the proxy, using
-// a migration.Status object to get all the keyspaces and tables
-func (p *CQLProxy) loadMigrationInfo(status *migration.Status) {
-	p.migrationStatus = status
-
-	for keyspace, tables := range status.Tables {
-		p.queues[keyspace] = make(map[string]chan *query.Query)
-		p.queueLocks[keyspace] = make(map[string]*sync.Mutex)
-		p.tablePaused[keyspace] = make(map[string]bool)
-		for tableName := range tables {
-			p.queues[keyspace][tableName] = make(chan *query.Query, p.Conf.MaxQueueSize)
-			p.queueLocks[keyspace][tableName] = &sync.Mutex{}
-
-			go p.consumeQueue(keyspace, tableName)
-		}
-	}
-
-	p.ReadyChan <- struct{}{}
 }
 
 // listen creates a listener on the passed in port argument, and every connection
@@ -217,7 +188,7 @@ func (p *CQLProxy) listen(port int, handler func(net.Conn)) error {
 // packets to/from the client's old DB, and mirroring writes to the Astra DB.
 func (p *CQLProxy) handleClientConnection(client net.Conn) {
 	// If our service has not completed yet
-	if !p.queuesComplete {
+	if !p.migrationComplete {
 		sourceSession := establishConnection(p.sourceIP)
 		astraSession := establishConnection(p.astraIP)
 
@@ -305,7 +276,7 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 				continue
 			}
 
-			if !p.redirectActiveConns || pointsToSource {
+			if !p.migrationComplete || pointsToSource {
 				p.lock.Lock()
 				p.outstandingQueries[sourceAddress][f.Stream] = f
 				if f.Opcode == 0x09 {
@@ -352,15 +323,7 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 		}
 
 		// handle redirect, if necessary
-		if p.redirectActiveConns && pointsToSource {
-			// Suspends forwarding until all queues have finished consuming their contents
-			p.queuesCompleteCond.L.Lock()
-			if !p.queuesComplete {
-				log.Debugf("Sleeping connection %s -> %s", src.RemoteAddr(), dst.RemoteAddr())
-				p.queuesCompleteCond.Wait()
-			}
-			p.queuesCompleteCond.L.Unlock()
-
+		if p.migrationComplete && pointsToSource {
 			log.Debugf("Redirecting connection %s -> %s", src.RemoteAddr(), dst.RemoteAddr())
 			if destAddress == p.sourceIP {
 				clientIP := sourceAddress
@@ -393,7 +356,6 @@ func (p *CQLProxy) handleStartupFrame(f *frame.Frame, client, sourceDB net.Conn)
 
 	// STARTUP
 	case 0x01:
-
 		err := auth.HandleAstraStartup(client, astraSession, f.RawBytes)
 		if err != nil {
 			return false, err
@@ -570,7 +532,6 @@ func (p *CQLProxy) astraReplyHandler(client net.Conn) {
 		}
 
 		data := append(frameHeader, frameBody...)
-
 		resp := frame.New(data)
 
 		p.lock.Lock()
@@ -610,7 +571,7 @@ func (p *CQLProxy) astraReplyHandler(client net.Conn) {
 		}
 		p.lock.Unlock()
 
-		if p.queuesComplete {
+		if p.migrationComplete {
 			_, err = client.Write(data)
 			if err != nil {
 				log.Error(err)
@@ -648,7 +609,6 @@ func (p *CQLProxy) handlePrepareQuery(fromClause string, f *frame.Frame, client 
 	}
 
 	preparedID := p.preparedIDs[f.Stream]
-	log.Debugf("-------------- Mapping prepareID %s to keyspace %s", string(preparedID), keyspace)
 	p.prepareIDToKeyspace[string(preparedID)] = keyspace
 
 	table, ok := p.migrationStatus.Tables[keyspace][tableName]
@@ -657,7 +617,9 @@ func (p *CQLProxy) handlePrepareQuery(fromClause string, f *frame.Frame, client 
 	}
 
 	q := query.New(table, query.PREPARE, f, client, parsedPaths)
-	return p.execute(q)
+	p.executeQuery(q, []*migration.Table{table})
+
+	return nil
 }
 
 func (p *CQLProxy) handleUseQuery(keyspace string, f *frame.Frame, client string, parsedPaths []string) error {
@@ -675,8 +637,9 @@ func (p *CQLProxy) handleUseQuery(keyspace string, f *frame.Frame, client string
 	p.setKeyspace(client, keyspace)
 
 	q := query.New(nil, query.USE, f, client, parsedPaths)
+	p.executeQuery(q, []*migration.Table{})
 
-	return p.execute(q)
+	return nil
 }
 
 // handleWriteQuery can handle QUERY and EXECUTE opcodes of type INSERT, UPDATE, DELETE, TRUNCATE
@@ -693,6 +656,7 @@ func (p *CQLProxy) handleWriteQuery(fromClause string, queryType query.Type, f *
 		} else {
 			keyspace = p.Keyspaces[client]
 		}
+
 		if keyspace == "" {
 			return errors.New("invalid keyspace")
 		}
@@ -704,27 +668,16 @@ func (p *CQLProxy) handleWriteQuery(fromClause string, queryType query.Type, f *
 	}
 
 	q := query.New(table, queryType, f, client, parsedPaths).UsingTimestamp()
-
-	// If we have a write query that depends on all values already being present in the database,
-	// if migration of this table is currently in progress (or about to begin), then pause consumption
-	// of queries for this table.
-	if queryType == query.UPDATE || queryType == query.TRUNCATE {
-		p.checkStop(keyspace, tableName)
-	}
-
-	p.queueQuery(q)
+	p.executeQuery(q, []*migration.Table{table})
 
 	return nil
 }
 
 func (p *CQLProxy) handleBatchQuery(f *frame.Frame, paths []string, client string) error {
-	batchWG := sync.WaitGroup{}
-	queries := []*query.Query{}
-
 	// Set to hold which tables we've already included queries for
-	includedTables := make(map[string]bool)
+	includedTables := make(map[string]*migration.Table)
 
-	for i, path := range paths {
+	for _, path := range paths {
 		fields := strings.Split(path, "/")
 		keyspace, tableName := extractTableInfo(fields[3])
 		if keyspace == "" {
@@ -746,99 +699,44 @@ func (p *CQLProxy) handleBatchQuery(f *frame.Frame, paths []string, client strin
 			continue
 		}
 
-		// Only put data in the first batch statement. The other batch statements act like dummy
-		// statements so that each tables query are consumed only up until the point that the batch
-		// statement was ran. This ensures that the state of the Astra database is consistent with the
-		// state of the client database when the batch statement was queried.
-		var q *query.Query
-		if i == 0 {
-			q = query.New(table, query.BATCH, f, client, paths).WithWaitGroup(&batchWG).UsingTimestamp()
-		} else {
-			q = query.New(table, query.BATCH, &frame.Frame{}, client, paths).WithWaitGroup(&batchWG)
-		}
-		batchWG.Add(1)
-
-		// BATCH statements only contain INSERT, DELETE, and UPDATE. This stops any tables corresponding
-		// to DELETE or UPDATE queries, as we need to ensure that they are fully migrated before we can
-		// run those types of queries on them
-		if query.Type(fields[2]) == query.UPDATE {
-			p.checkStop(keyspace, tableName)
-		}
-
-		queries = append(queries, q)
-		includedTables[explicitTable] = true
+		includedTables[explicitTable] = table
 	}
 
-	for _, q := range queries {
-		p.queueQuery(q)
+	clientKeyspace := p.Keyspaces[client]
+	var randomTable *migration.Table
+	for _, table := range p.migrationStatus.Tables[clientKeyspace] {
+		randomTable = table
+		break
 	}
 
+	tableList := []*migration.Table{}
+	for _, table := range includedTables {
+		tableList = append(tableList, table)
+	}
+
+	q := query.New(randomTable, query.BATCH, f, client, paths).UsingTimestamp()
+	p.executeQuery(q, tableList)
 	return nil
 }
 
-func (p *CQLProxy) queueQuery(query *query.Query) {
-	queue := p.queues[query.Table.Keyspace][query.Table.Name]
-	queue <- query
+func (p *CQLProxy) executeQuery(q *query.Query, tables []*migration.Table) {
+	err := p.executeWrite(q)
+	if err != nil {
+		// If for some reason, on the off chance that Astra cannot handle this query (but the client
+		// database was able to), we must maintain consistency, so we need the migration service to
+		// restart the migration of this table from the start, since the query is already reflected
+		// in the client's database.
+		log.Error(err)
 
-	queriesRemaining := len(queue)
-	if queriesRemaining > 0 && queriesRemaining%priorityUpdateSize == 0 {
-		err := p.updatePriority(query.Table, queriesRemaining)
-		if err != nil {
-			log.Errorf("Unable to send priority update (%s.%s : %d)",
-				query.Table.Keyspace, query.Table.Name, queriesRemaining)
-		}
-	}
-}
-
-// consumeQueue executes all queries for a particular table, in the order that they are received.
-func (p *CQLProxy) consumeQueue(keyspace string, table string) {
-	log.Debugf("Beginning consumption of queries for %s.%s", keyspace, table)
-	queue := p.queues[keyspace][table]
-
-	for {
-		select {
-		case q := <-queue:
-			p.queueLocks[keyspace][table].Lock()
-
-			// Pauses all tables in a BATCH statement until it executes
-			if q.Type == query.BATCH {
-				q.WG.Done()
-				q.WG.Wait()
-			}
-
-			err := p.executeWrite(q)
+		for _, table := range tables {
+			err = p.sendTableRestart(table)
 			if err != nil {
-				// If for some reason, on the off chance that Astra cannot handle this query (but the client
-				// database was able to), we must maintain consistency, so we need the migration service to
-				// restart the migration of this table from the start, since the query is already reflected
-				// in the client's database.
+				// If this happens, there is a much bigger issue with the current state of the entire
+				// proxy service.
+				// TODO: maybe just send hard restart to Migration Service & restart proxy
 				log.Error(err)
-
-				// Save queue length before we send the update, as once we send the update we have no
-				// guarantees if the queries in the queue came before or after they restarted the migration,
-				// and we don't want to delete any of them that occurred after the restart.
-				queueLen := len(queue)
-
-				err = p.sendTableRestart(q.Table)
-				if err != nil {
-					// If this happens, there is a much bigger issue with the current state of the entire
-					// proxy service.
-					// TODO: maybe just send hard restart to Migration Service & restart proxy
-					log.Error(err)
-				}
-
-				// We can clear the queue (up to the point when we told the migration service to restart)
-				// as we know that any queries that are currently in the queue were already executed on
-				// the client's database and thus will already be reflected in the new migration of the table.
-				for i := 0; i < queueLen; i++ {
-					_ = <-queue
-				}
-
 			}
-
-			p.queueLocks[keyspace][table].Unlock()
 		}
-
 	}
 }
 
@@ -1012,20 +910,6 @@ func (p *CQLProxy) handleUpdate(update *updates.Update) error {
 		// TODO: Should probably restart the entire service if it's already running
 		//p.restartIfRunning()
 		p.MigrationStart <- &status
-	case updates.TableUpdate:
-		var tableUpdate migration.Table
-		err := json.Unmarshal(update.Data, &tableUpdate)
-		if err != nil {
-			return errors.New("unable to unmarshal json")
-		}
-
-		if table, ok := p.migrationStatus.Tables[tableUpdate.Keyspace][tableUpdate.Name]; ok {
-			table.Update(&tableUpdate)
-			p.CheckStart(tableUpdate.Keyspace, tableUpdate.Name)
-		} else {
-			return fmt.Errorf("table %s.%s does not exist", tableUpdate.Keyspace, tableUpdate.Name)
-		}
-
 	case updates.Complete:
 		p.MigrationDone <- struct{}{}
 	case updates.Shutdown:
@@ -1051,22 +935,6 @@ func (p *CQLProxy) sendTableRestart(table *migration.Table) error {
 	return updates.Send(update, p.migrationSession)
 }
 
-// updatePriority will send a tableUpdate to the migration service with an
-// updated priority value for the table. We do this as if there is a table
-// with a very large queue, we want that to be migrated ASAP, so we communicate
-// the priority of a table's migration
-func (p *CQLProxy) updatePriority(table *migration.Table, newPriority int) error {
-	table.SetPriority(newPriority)
-
-	marshaledTable, err := json.Marshal(table)
-	if err != nil {
-		return err
-	}
-
-	update := updates.New(updates.TableUpdate, marshaledTable)
-	return updates.Send(update, p.migrationSession)
-}
-
 func (p *CQLProxy) setKeyspace(clientIP string, keyspace string) {
 	p.lock.Lock()
 	defer p.lock.Unlock()
@@ -1089,25 +957,6 @@ func (p *CQLProxy) getAstraSession(client string) net.Conn {
 	return p.astraSessions[client]
 }
 
-func (p *CQLProxy) CheckStart(keyspace string, tableName string) {
-	p.lock.Lock()
-	defer p.lock.Unlock()
-
-	status := p.tableStatus(keyspace, tableName)
-	if p.tablePaused[keyspace][tableName] && status == migration.LoadingDataComplete {
-		p.startTable(keyspace, tableName)
-	}
-}
-
-func (p *CQLProxy) checkStop(keyspace string, tableName string) {
-	p.lock.Lock()
-	defer p.lock.Unlock()
-
-	status := p.tableStatus(keyspace, tableName)
-	if !p.tablePaused[keyspace][tableName] && status >= migration.WaitingToUnload && status < migration.LoadingDataComplete {
-		p.stopTable(keyspace, tableName)
-	}
-}
 
 func (p *CQLProxy) getTable(keyspace string, tableName string) *migration.Table {
 	p.migrationStatus.Lock.Lock()
@@ -1122,26 +971,6 @@ func (p *CQLProxy) tableStatus(keyspace string, tableName string) migration.Step
 	defer table.Lock.Unlock()
 
 	return table.Step
-}
-
-// stopTable grabs the queueLock for a table so that the corresponding consumeQueue
-// function for the table cannot continue processing queries.
-// Assumes caller has p.lock acquired.
-func (p *CQLProxy) stopTable(keyspace string, tableName string) {
-	log.Debugf("Stopping query consumption on %s.%s", keyspace, tableName)
-
-	p.tablePaused[keyspace][tableName] = true
-	p.queueLocks[keyspace][tableName].Lock()
-}
-
-// startTable releases the queueLock for a table so that the consumeQueue function
-// can resume processing queries for the table.
-// Assumes caller has p.lock acquired.
-func (p *CQLProxy) startTable(keyspace string, tableName string) {
-	log.Debugf("Starting query consumption on %s.%s", keyspace, tableName)
-
-	p.tablePaused[keyspace][tableName] = false
-	p.queueLocks[keyspace][tableName].Unlock()
 }
 
 // checkRedirect communicates over the ReadyForRedirect channel when migration is complete
@@ -1167,9 +996,6 @@ func (p *CQLProxy) Shutdown() {
 
 // reset will reset all context within the proxy service
 func (p *CQLProxy) reset() {
-	p.queues = make(map[string]map[string]chan *query.Query)
-	p.queueLocks = make(map[string]map[string]*sync.Mutex)
-	p.tablePaused = make(map[string]map[string]bool)
 	p.queryResponses = make(map[uint16]chan bool)
 	p.ReadyChan = make(chan struct{})
 	p.ShutdownChan = make(chan struct{})
@@ -1197,62 +1023,11 @@ func (p *CQLProxy) reset() {
 	p.astraKeyspace = make(map[string]string)
 	p.astraSessions = make(map[string]net.Conn)
 	p.sessionLocks = make(map[string]*sync.Mutex)
-	p.queuesCompleteCond = sync.NewCond(&sync.Mutex{})
 	p.preparedIDs = make(map[uint16]string)
 	p.mappedPreparedIDs = make(map[string]string)
 	p.outstandingPrepares = make(map[uint16][]byte)
 	p.preparedQueryBytes = make(map[string][]byte)
 	p.prepareIDToKeyspace = make(map[string]string)
-}
-
-func (p *CQLProxy) redirectActiveConnectionsToAstra() {
-	redirected := false
-	var queuesAllSmall, queuesAllComplete bool
-
-	for !redirected {
-		queuesAllSmall, queuesAllComplete = p.checkQueueLens()
-
-		if queuesAllSmall {
-			p.redirectActiveConns = true
-		}
-		if queuesAllComplete {
-			p.queuesCompleteCond.L.Lock()
-			p.queuesComplete = true
-			p.queuesCompleteCond.Broadcast()
-			p.queuesCompleteCond.L.Unlock()
-			redirected = true
-		}
-
-		if p.redirectActiveConns {
-			time.Sleep(100)
-		} else {
-			time.Sleep(5000)
-		}
-	}
-}
-
-// Returns (all queues < thresholdToRedirect, all queues empty) as (bool, bool)
-func (p *CQLProxy) checkQueueLens() (bool, bool) {
-	allSmall := true
-	allComplete := true
-	for keyspace, tableMap := range p.migrationStatus.Tables {
-		for tablename := range tableMap {
-			p.queueLocks[keyspace][tablename].Lock()
-			queueLen := len(p.queues[keyspace][tablename])
-			p.queueLocks[keyspace][tablename].Unlock()
-
-			if queueLen > 0 {
-				allComplete = false
-			}
-			if queueLen > thresholdToRedirect {
-				allSmall = false
-			}
-			if !allSmall && !allComplete {
-				return false, false
-			}
-		}
-	}
-	return allSmall, allComplete
 }
 
 // Establishes a TCP connection with the passed in IP. Retries using exponential backoff.

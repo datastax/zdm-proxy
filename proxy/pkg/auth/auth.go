@@ -12,7 +12,6 @@ import (
 
 const (
 	maxAuthRetries = 5
-	authenticator  = "com.datastax.bdp.cassandra.auth.DseAuthenticator"
 )
 
 func HandleAstraStartup(client net.Conn, astraSession net.Conn, startupFrame []byte) error {
