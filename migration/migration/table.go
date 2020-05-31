@@ -8,7 +8,6 @@ type Table struct {
 	Name     string
 	Step     Step
 	Error    error
-	Priority int
 	Redo     bool
 
 	Lock *sync.Mutex
@@ -21,7 +20,6 @@ func (t *Table) Update(newData *Table) {
 
 	t.Step = newData.Step
 	t.Error = newData.Error
-	t.Priority = newData.Priority
 }
 
 // SetStep sets the table step
@@ -36,8 +34,6 @@ func (t *Table) SetStep(step Step) {
 func (t *Table) SetPriority(priority int) {
 	t.Lock.Lock()
 	defer t.Lock.Unlock()
-
-	t.Priority = priority
 }
 
 // SetErr sets the table error
