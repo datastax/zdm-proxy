@@ -90,7 +90,6 @@ func CreateStatusObject() migration.Status {
 			Name:     tableName,
 			Step:     migration.MigratingSchemaComplete,
 			Error:    nil,
-			Priority: 0,
 			Lock:     new(sync.Mutex),
 		}
 	}

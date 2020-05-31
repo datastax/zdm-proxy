@@ -74,6 +74,6 @@ func main() {
 
 	// Run test package here
 	// test.BasicUpdate(conn, sourceSession, destSession)
-	// test.BasicBatch(conn, sourceSession, destSession)
-	test.QueueBatch(conn, sourceSession, destSession)
+	test.BasicBatch(conn, sourceSession, destSession)
+	// test.QueueBatch(conn, sourceSession, destSession)
 }

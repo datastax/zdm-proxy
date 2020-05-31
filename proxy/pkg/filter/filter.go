@@ -46,7 +46,7 @@ type CQLProxy struct {
 
 	listeners []net.Listener
 
-	queryResponses map[uint16]chan bool
+	queryResponses map[string]map[uint16]chan bool
 	lock           *sync.Mutex // TODO: maybe change this to a RWMutex for better performance
 
 	astraSessions map[string]net.Conn
@@ -197,6 +197,7 @@ func (p *CQLProxy) handleClientConnection(client net.Conn) {
 		p.lock.Lock()
 		p.outstandingQueries[clientIP] = make(map[uint16]*frame.Frame)
 		p.outstandingUses[clientIP] = make(map[uint16]chan bool)
+		p.queryResponses[clientIP] = make(map[uint16]chan bool)
 		p.astraSessions[clientIP] = astraSession
 		p.sessionLocks[clientIP] = &sync.Mutex{}
 		p.lock.Unlock()
@@ -537,7 +538,7 @@ func (p *CQLProxy) astraReplyHandler(client net.Conn) {
 		p.lock.Lock()
 		success := resp.Opcode != 0x00
 		if _, ok := p.outstandingQueries[clientIP][resp.Stream]; ok {
-			if resp, ok := p.queryResponses[resp.Stream]; ok {
+			if resp, ok := p.queryResponses[clientIP][resp.Stream]; ok {
 				resp <- success
 			}
 
@@ -793,16 +794,16 @@ func (p *CQLProxy) createResponseChan(q *query.Query) chan bool {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
-	p.queryResponses[q.Stream] = make(chan bool, 1)
-	return p.queryResponses[q.Stream]
+	p.queryResponses[q.Source][q.Stream] = make(chan bool, 1)
+	return p.queryResponses[q.Source][q.Stream]
 }
 
 func (p *CQLProxy) deleteResponseChan(q *query.Query) {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
-	close(p.queryResponses[q.Stream])
-	delete(p.queryResponses, q.Stream)
+	close(p.queryResponses[q.Source][q.Stream])
+	delete(p.queryResponses[q.Source], q.Stream)
 }
 
 func (p *CQLProxy) execute(q *query.Query) error {
@@ -812,7 +813,7 @@ func (p *CQLProxy) execute(q *query.Query) error {
 
 	// switch to the keyspace that the query should be ran in
 	if q.Type != query.MISC && q.Type != query.USE {
-		if p.astraKeyspace[q.Source] != q.Table.Keyspace {
+		if q.Table != nil && p.astraKeyspace[q.Source] != q.Table.Keyspace {
 			if err := p.switchToQueryKeyspace(session, q); err != nil {
 				return err
 			}
@@ -957,7 +958,6 @@ func (p *CQLProxy) getAstraSession(client string) net.Conn {
 	return p.astraSessions[client]
 }
 
-
 func (p *CQLProxy) getTable(keyspace string, tableName string) *migration.Table {
 	p.migrationStatus.Lock.Lock()
 	defer p.migrationStatus.Lock.Unlock()
@@ -996,7 +996,7 @@ func (p *CQLProxy) Shutdown() {
 
 // reset will reset all context within the proxy service
 func (p *CQLProxy) reset() {
-	p.queryResponses = make(map[uint16]chan bool)
+	p.queryResponses = make(map[string]map[uint16]chan bool)
 	p.ReadyChan = make(chan struct{})
 	p.ShutdownChan = make(chan struct{})
 	p.shutdown = false
