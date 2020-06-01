@@ -19,6 +19,7 @@ The Migration Service creates two sessions, to a source cluster and destination 
     export MIGRATION_COMPLETE         // Flag of migration status          (bool)
     export MIGRATION_SERVICE_HOSTNAME // Hostname of migration service     (string)
     export MIGRATION_PORT             // Port of migration service         (int)
+    export MIGRATION_METRICS_PORT     // Port of migration metrics         (int)
     export PROXY_SERVICE_HOSTNAME     // Hostname of proxy service         (string)
     export PROXY_PORT                 // Port of proxy service             (int)
     export DSBULK_PATH                // Dsbulk path                       (string)
@@ -46,14 +47,13 @@ If the proxy service fails, the migration service will return exit code 100. The
 
 ## Migrating Schema
 
-Our script uses GoCQL to pull schema information from the source cluster. We then build and run queries to create identical tables on the Astra cluster. The pseudocode is shown below:
+Our script uses GoCQL to pull schema information from the source cluster. We then build and run queries to create identical tables on the Astra cluster. If the table does not meet Astra database limits, the migration service will exit. The pseudocode is shown below:
 
     func createTable(table *gocql.TableMetadata) error {
       ...
       query := fmt.Sprintf("CREATE TABLE %s.%s (", keyspace, table.Name)
       // for each column, add column name and type to the query
       // for each partition key, add column name to the query
-      // add the compaction factor of the table to the query
       query += ");"
       err := destSession.Query(query).Exec()
       if err != nil {
@@ -61,6 +61,11 @@ Our script uses GoCQL to pull schema information from the source cluster. We the
       }
       return nil
     }
+    
+## Migrating Indexes 
+
+After migrating the schema, any index of the table will be migrated. As per Astra database limits, if a table has more than one secondary index, the migration service will exit.
+
 ## Migrating Data
 
 Our Go script will connect to the source cluster first to pull data and schema information. After creating a predetermined number of threads, we will use the thread pool to first migrate all of the table schema. After all schema has been migrated, the thread pool will be used for table migration, using dsbulk to migrate the tables to the destination cluster concurrently. We are using sync.Mutex locks to ensure that the threads do not overwrite one another in the Checkpoint file. Migration pseudocode is shown below:
@@ -119,27 +124,7 @@ Building the Load query:
         return query
     }
 
-In each of the queries above, we are also accounting for case-sensitive keyspace/table/column names by putting names with uppercase letters in quotes.
-Formatting the uppercase names for gocql:
-
-    func HasUpper(name string) string {
-      if checkUpper(name) {
-        return strconv.Quote(name)
-      }
-      return name
-    }
-
-Formatting the uppercase names for dsbulk:
-
-    func DsbulkUpper(name string) string {
-      if checkUpper(name) {
-        return "\\\"" + name + "\\\""
-      }
-      return name
-    }
-## Priority Queue
-
-To handle edge cases such as updating table data as it is being migrated, we implement a priority queue which will order the tables based on table.Priority. The proxy service will hold update queries until the migration service notifies it that the table to be queried has been successfully migrated. When the proxy service sends us a TableUpdate update, we will increment the table's priority in the priority queue if it hasn't already been migrated.
+In each of the queries above, we are also accounting for case-sensitive keyspace/table/column names by putting names in quotes.
 
 ## Checkpoints
 
@@ -187,11 +172,8 @@ We use Golang’s `net` package to communicate w/ the proxy service using our ow
     type UpdateType int
     // TableUpdate, Start, Complete, ... are the enums of the update types
     const (
-        TableUpdate = iota
-        TableRestart
-        Start
+        Start = iota
         Complete
-        Shutdown
         Success
         Failure
     )
@@ -206,16 +188,27 @@ We use Golang’s `net` package to communicate w/ the proxy service using our ow
 The migration service sends an update to the proxy service when:
 
 1. We begin migrating data (schemas are migrated)
-2. When we begin unloading data for a table
-3. When we finish migrating data for a table
-4. When we complete the entire migration
+2. When we complete the entire migration
+3. We have successfully received and handled a proxy service update
+4. We have failed handling a proxy service update
 
 The Migration Service expects requests from the Proxy Service when:
 
-1. There is an update to the migration priority for a table
-2. A single table's migration needs to be restarted
-3. Proxy has successfully received and handled a migration update
-4. Proxy has failed handling a migration update
+1. A single table's migration needs to be restarted
+2. Proxy has successfully received and handled a migration update
+3. Proxy has failed handling a migration update
+
+## Metrics
+
+On port MIGRATION_METRICS_PORT (8081), the client can see characteristics of the migration service, including number of tables left to be migrated, speed of migration, etc. 
+```
+type Metrics struct {
+    TablesMigrated int
+    TablesLeft     int
+    Speed          float64
+    SizeMigrated   float64
+}
+```
 
 ## Limitations and Assumptions
 
@@ -224,3 +217,4 @@ The Migration Service expects requests from the Proxy Service when:
 - Keyspace(s) will already exist in both databases
 - Dsbulk will not fail, if dsbulk returns an error, the migration process will halt.
 - Client will not be able to alter the schema of their keyspace or tables. Since our service only notifies proxy that the migration service is starting after migrating all of the schema, a dsbulk load into a table whose keyspace has been changed will fail.
+- When a table is migrated to Astra, the TTL remains unchanged from when it was unloaded from the client DB.
