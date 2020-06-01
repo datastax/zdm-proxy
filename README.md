@@ -40,6 +40,7 @@ Run our services:
 1. Specify env variables documented in the proxy README. The following are the default values we have used
     // default set of env vars
     
+    ```
     export SOURCE_HOSTNAME="127.0.0.1"
     export SOURCE_USERNAME=""
     export SOURCE_PASSWORD=""
@@ -59,6 +60,7 @@ Run our services:
     export PROXY_METRICS_PORT=14001
     export PROXY_QUERY_PORT=14002
     export DSBULK_PATH=/path to dsbulk/
+    ```
 1. Download any necessary packages to run our services
 2. Run `go run proxy/main.go` and `go run migration/main.go` at relatively similar times
 3. Once they establish a connection, the migration will begin.
