@@ -48,8 +48,9 @@ type CQLProxy struct {
 	queryResponses map[string]map[uint16]chan bool
 	lock           *sync.Mutex // TODO: maybe change this to a RWMutex for better performance
 
-	astraSessions map[string]net.Conn
-	sessionLocks  map[string]*sync.Mutex
+	astraSessions   map[string]net.Conn
+	sessionLocks    map[string]*sync.Mutex
+	directlyToAstra map[string]bool
 
 	outstandingQueries map[string]map[uint16]*frame.Frame
 	outstandingUpdates map[string]chan bool
@@ -197,6 +198,7 @@ func (p *CQLProxy) handleClientConnection(client net.Conn) {
 		p.queryResponses[clientIP] = make(map[uint16]chan bool)
 		p.astraSessions[clientIP] = astraSession
 		p.sessionLocks[clientIP] = &sync.Mutex{}
+		p.directlyToAstra[clientIP] = false
 		p.lock.Unlock()
 
 		go p.forward(client, sourceSession)
@@ -334,6 +336,9 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 				pointsToSource = false
 			} else if sourceAddress == p.sourceIP {
 				src.Close()
+				p.lock.Lock()
+				p.directlyToAstra[dst.RemoteAddr().String()] = true
+				p.lock.Unlock()
 				// uses astraReplyHandler to write replies to client
 				return
 			}
@@ -381,6 +386,7 @@ func (p *CQLProxy) handleStartupFrame(f *frame.Frame, client, sourceDB net.Conn)
 func (p *CQLProxy) clientDisconnect(client string) {
 	p.lock.Lock()
 	delete(p.Keyspaces, client)
+	delete(p.directlyToAstra, client)
 	p.lock.Unlock()
 
 	p.Metrics.DecrementConnections()
@@ -572,7 +578,10 @@ func (p *CQLProxy) astraReplyHandler(client net.Conn) {
 		}
 		p.lock.Unlock()
 
-		if p.migrationComplete {
+		p.lock.Lock()
+		directToAstra := p.directlyToAstra[clientIP]
+		p.lock.Unlock()
+		if directToAstra {
 			_, err = client.Write(data)
 			if err != nil {
 				log.Error(err)
@@ -961,6 +970,7 @@ func (p *CQLProxy) reset() {
 	p.outstandingPrepares = make(map[uint16][]byte)
 	p.preparedQueryBytes = make(map[string][]byte)
 	p.prepareIDToKeyspace = make(map[string]string)
+	p.directlyToAstra = make(map[string]bool)
 }
 
 // Establishes a TCP connection with the passed in IP. Retries using exponential backoff.
