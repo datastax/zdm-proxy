@@ -197,3 +197,4 @@ After migration is complete, users will need to specify their own username and p
 - Keyspace support: The following edge case is not currently handled (due to logic in `Query.addKeyspace()`)
     - A DELETE statement involves a column with the same name as the table, i.e. `DELETE name FROM name`
 - BATCH query support: currently does not support BATCH commands sent as plaintext with a QUERY opcode (this is how CQLSH sends BATCHs, which doesn't appear to follow the wire protocol)
+- All tests were run on cqlsh such that we assume no error in the service if there is no error on cqlsh. One example of where cqlsh behavior contradicted our assumptions was in the redirection of the proxy service. After migration completes, proxy must redirect the connection to the Astra database to bypass the proxy service. Because of this redirect, two successes are sent back to the client's cqlsh which does not error.
