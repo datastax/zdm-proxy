@@ -252,25 +252,27 @@ func buildSchemaMigrationQuery(table *gocql.TableMetadata) string {
 		query += fmt.Sprintf("%s %s, ", strconv.Quote(cname), column.Type.Type().String())
 	}
 
-	query += fmt.Sprintf("PRIMARY KEY (")
+	query += fmt.Sprintf("PRIMARY KEY ((")
 
 	for _, column := range table.PartitionKey {
+		log.Debug(column.Name)
 		query += fmt.Sprintf("%s, ", strconv.Quote(column.Name))
 	}
 
 	clustering := false
 	clusterDesc := ""
+	groupingDesc := ""
 	if len(table.ClusteringColumns) > 0 {
 		clustering = true
 		for _, column := range table.ClusteringColumns {
 			clusterKey := strconv.Quote(column.Name)
-			query += fmt.Sprintf("%s, ", clusterKey)
+			groupingDesc += fmt.Sprintf(", %s", clusterKey)
 			clusterDesc += fmt.Sprintf("%s %s, ", clusterKey, column.ClusteringOrder)
 		}
 	}
 
 	query = query[0:(len(query) - 2)]
-	query += ")) "
+	query += ")" + groupingDesc + ")) "
 
 	if clustering {
 		clusterDesc = clusterDesc[0:(len(clusterDesc) - 2)]
@@ -291,6 +293,7 @@ func (m *Migration) migrateSchema(keyspace string, table *gocql.TableMetadata) e
 	}
 
 	query := buildSchemaMigrationQuery(table)
+	log.Debug("schema migration query: " + query)
 	err := m.destSession.Query(query).Exec()
 
 	if err != nil {
