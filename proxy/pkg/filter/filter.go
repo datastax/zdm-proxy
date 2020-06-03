@@ -97,7 +97,7 @@ func (p *CQLProxy) Start() error {
 	p.reset()
 	p.checkDatabaseConnections()
 
-	p.migrationSession = establishConnection(p.migrationServiceIP)
+	//p.migrationSession = establishConnection(p.migrationServiceIP)
 
 	go p.statusLoop()
 
