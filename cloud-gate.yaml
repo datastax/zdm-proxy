@@ -40,6 +40,6 @@ spec:
             protocol: TCP
           readinessProbe:
             tcpSocket:
-              port: admin
+              port: 14002
 #      imagePullSecrets:
 #        - name: {{.DockerRegistryName}}

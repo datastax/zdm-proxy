@@ -1,12 +1,12 @@
 #!/bin/bash
 
-export SOURCE_HOSTNAME="54.184.225.49"
+export SOURCE_HOSTNAME="54.148.170.236"
 export SOURCE_USERNAME="cassandra"
 export SOURCE_PASSWORD="cassandra"
 export SOURCE_PORT=9042
 export ASTRA_HOSTNAME="caas-cluster-caas-dc-service"
-export ASTRA_USERNAME="cassandra"
-export ASTRA_PASSWORD="cassandra"
+export ASTRA_USERNAME="datastax"
+export ASTRA_PASSWORD="datastax"
 export ASTRA_PORT=9042
 export MIGRATION_SERVICE_HOSTNAME="127.0.0.1"
 export MIGRATION_COMMUNICATION_PORT=15000
@@ -15,7 +15,7 @@ export PROXY_COMMUNICATION_PORT=14000
 export MIGRATION_ID="test"
 export MIGRATION_S3="cloud-gate-test"
 export MIGRATION_COMPLETE=false
-#export DEBUG=true
+export DEBUG=true
 export TEST=true
 #export TEST=false
 export PROXY_METRICS_PORT=14001

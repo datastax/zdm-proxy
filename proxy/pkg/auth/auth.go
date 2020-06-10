@@ -67,7 +67,7 @@ func HandleAstraStartup(client net.Conn, astraSession net.Conn, startupFrame []b
 }
 
 func HandleSourceStartup(client net.Conn, sourceDB net.Conn, startupFrame []byte, username string, password string) error {
-	log.Debugf("Setting up connection from %s to %s", client.RemoteAddr(), sourceDB.RemoteAddr())
+	log.Debugf("Initiating startup between %s and %s", client.RemoteAddr(), sourceDB.RemoteAddr())
 
 	// Send client's initial startup frame to the database
 	_, err := sourceDB.Write(startupFrame)
