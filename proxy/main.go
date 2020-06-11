@@ -50,6 +50,7 @@ func main() {
 	err2 := p.Start()
 	if err2 != nil {
 		// TODO: handle error
+		log.Error(err2)
 		panic(err)
 	}
 
