@@ -36,7 +36,7 @@ Upon running `CQLProxy.Start()`, we begin a status loop that listens for three s
 
 Our proxy reads in CQL commands sent by the client and parses the commands using CQL’s Binary Protocol v4. Every connection to the proxy runs `handleDatabaseConnection()`, which spawns 2 `forward()` goroutines (one for requests from client → database and one for replies from database → client).
 
-![](https://paper-attachments.dropbox.com/s_CA905FCE0BA89F54A6DFCBC5C3500639DE36B24B7F07D2C6E2AD8E3FD782EFA1_1588621225552_image.png)
+![](img/proxy_cql_request.png)
 
 
 All requests from the client are sent to the client’s database, and the proxy waits for a reply. The proxy then reads these replies and passes on queries that got a successful reply. This eliminates, among other things, bad inputs that would yield syntax errors.
@@ -56,7 +56,7 @@ Commands are executed through a queue on a per-table basis:
 
 New commands are added to their table’s queue through `writeToAstra()`, and commands are executed from the queue by their respective `consumeQueue(keyspace, table)` goroutine. Whenever an UPDATE, DELETE, or TRUNCATE command is run while its corresponding table is being migrated, `stopTable(keyspace, table)` is run, and `consumeQueue` blocks until `startTable(keyspace, table)` is run.
 
-![](https://paper-attachments.dropbox.com/s_CA905FCE0BA89F54A6DFCBC5C3500639DE36B24B7F07D2C6E2AD8E3FD782EFA1_1588620874524_image.png)
+![](img/execute_and_queue_cql.png)
 
 
 The process to stop the consumption of queues is as follows:
@@ -184,7 +184,7 @@ Proxy service handles authentication of user to both Astra and the client's data
 
 This process is handled by `auth.HandleStartup()`, which is called in `forward()`. When proxying STARTUP frames, our service handles the initial authentication handshake with both the client’s old database and Astra before allowing the client to enter further commands.
 
-![](https://paper-attachments.dropbox.com/s_CA905FCE0BA89F54A6DFCBC5C3500639DE36B24B7F07D2C6E2AD8E3FD782EFA1_1588621622310_image.png)
+![](img/authentication_flow.png)
 
 
 After migration is complete, users will need to specify their own username and password to connect to Astra.
