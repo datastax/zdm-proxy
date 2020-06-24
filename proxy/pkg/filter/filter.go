@@ -1,6 +1,7 @@
 package filter
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -257,6 +258,7 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 
 		log.Debugf("frame header: %s", data)
 
+
 		if bodyLen != 0 {
 			for bytesSoFar < int(bodyLen) {
 				rest := make([]byte, int(bodyLen)-bytesSoFar)
@@ -277,6 +279,13 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 
 		log.Debugf("(%s -> %s): %v", src.RemoteAddr(), dst.RemoteAddr(), string(data))
 
+		log.Debugf("CONTAINS: %v", bytes.Contains(data, []byte("free.iot")))
+		/*
+		if (bytes.Contains(data, []byte("free.iot"))){
+			log.Debugf("frame header: %s", data)
+		}
+		 */
+
 		f := frame.New(data)
 		p.Metrics.IncrementFrames()
 
@@ -288,6 +297,7 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 		log.Debugf("f direction %v", f.Direction)
 		// Frame from client
 		if f.Direction == 0 {
+			log.Debugf("OUT TO DB")
 			log.Debugf("f direction was 0, bytes: %v", string(f.RawBytes))
 			if !authenticated {
 				log.Debugf("not authenticated")
@@ -308,6 +318,7 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 				p.lock.Unlock()
 			}
 		} else {
+			log.Debugf("BACK FROM DB")
 			p.lock.Lock()
 			// Response frame from database
 			if f.Opcode == 0x00 {
@@ -347,6 +358,7 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 			p.lock.Unlock()
 		}
 
+		//TODO: only dst.Write after the redirect succeeds.
 		log.Debugf("writing to dst: %s, the following data %s", destAddress, string(data))
 		_, err = dst.Write(data)
 		if err != nil {
@@ -373,6 +385,7 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 				return
 			}
 		}
+
 	}
 }
 
@@ -408,7 +421,7 @@ func (p *CQLProxy) handleStartupFrame(f *frame.Frame, client, sourceDB net.Conn)
 		log.Debugf("GO FORWARD SUBROUTINE")
 		go p.forward(sourceDB, client)
 		//NOTE- we map the prepare ID inside the astraReplyHandler
-		log.Debugf("GO ASTRAREPLY HANDLER SUBROUTINE")
+		log.Debugf("GO ASTRA REPLY HANDLER SUBROUTINE")
 		go p.astraReplyHandler(client)
 
 		return true, nil
@@ -472,7 +485,7 @@ func (p *CQLProxy) writeToAstra(f *frame.Frame, client string) error {
 	if paths[0] == cqlparser.UnknownPreparedQueryPath {
 		return fmt.Errorf("encountered unknown prepared query for stream %d, ignoring", f.Stream)
 	}
-	log.Debugf("found prepared query")
+	log.Debugf("found prepared query path")
 
 	if len(paths) > 1 {
 		log.Debugf("batch query")
@@ -484,7 +497,8 @@ func (p *CQLProxy) writeToAstra(f *frame.Frame, client string) error {
 	log.Debugf("fields: %s", fields)
 	if len(fields) > 2 {
 		switch fields[1] {
-		case "statement prepare":
+		//case "statement prepare":
+		case "prepare":
 			log.Debugf("prepare statement query")
 			return p.handlePrepareQuery(fields[3], f, client, paths)
 		case "query", "execute":
