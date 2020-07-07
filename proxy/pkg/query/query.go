@@ -1,12 +1,13 @@
 package query
 
 import (
-	"cloud-gate/migration/migration"
-	"cloud-gate/proxy/pkg/cqlparser"
-	"cloud-gate/proxy/pkg/frame"
 	"encoding/binary"
 	"sync"
 	"time"
+
+	"github.com/riptano/cloud-gate/migration/migration"
+	"github.com/riptano/cloud-gate/proxy/pkg/cqlparser"
+	"github.com/riptano/cloud-gate/proxy/pkg/frame"
 
 	log "github.com/sirupsen/logrus"
 )
