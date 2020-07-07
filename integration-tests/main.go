@@ -1,13 +1,14 @@
 package main
 
 import (
-	"cloud-gate/integration-tests/setup"
-	"cloud-gate/integration-tests/test"
-	"cloud-gate/proxy/pkg/config"
-	"cloud-gate/proxy/pkg/filter"
+	"github.com/riptano/cloud-gate/integration-tests/setup"
+	"github.com/riptano/cloud-gate/integration-tests/test"
+	"github.com/riptano/cloud-gate/proxy/pkg/config"
+	"github.com/riptano/cloud-gate/proxy/pkg/filter"
 
-	"cloud-gate/utils"
 	"fmt"
+
+	"github.com/riptano/cloud-gate/utils"
 
 	"github.com/gocql/gocql"
 

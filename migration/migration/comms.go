@@ -1,8 +1,9 @@
 package migration
 
 import (
-	"cloud-gate/updates"
 	"encoding/json"
+
+	"github.com/riptano/cloud-gate/updates"
 
 	log "github.com/sirupsen/logrus"
 )
