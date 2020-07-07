@@ -7,10 +7,11 @@ import (
 	"strings"
 	"sync"
 
-	"cloud-gate/migration/migration"
-	"cloud-gate/proxy/pkg/config"
-	"cloud-gate/proxy/pkg/filter"
-	"cloud-gate/utils"
+	"github.com/riptano/cloud-gate/migration/migration"
+	"github.com/riptano/cloud-gate/proxy/pkg/config"
+	"github.com/riptano/cloud-gate/proxy/pkg/filter"
+	"github.com/riptano/cloud-gate/utils"
+
 
 	"github.com/gocql/gocql"
 	log "github.com/sirupsen/logrus"

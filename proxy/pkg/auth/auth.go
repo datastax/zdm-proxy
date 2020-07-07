@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net"
 
-	"cloud-gate/proxy/pkg/frame"
+	"github.com/riptano/cloud-gate/proxy/pkg/frame"
 
 	log "github.com/sirupsen/logrus"
 )

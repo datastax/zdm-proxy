@@ -4,7 +4,7 @@
 
 The Migration Service creates two sessions, to a source cluster and destination cluster. We first create the tables in the destination cluster, and then use `dsbulk` to unload and load each table. We track the status of each table and communicate w/ the proxy service with our own protocol on top of TCP. The status of the migration is also stored on S3 in a .chk file that shows where migration stopped, in case any of the services fail during the process.
 
-![](https://paper-attachments.dropbox.com/s_7247316FB853F6B8340A26E55C47BAE338C143790A25CB623AF3483C70F28191_1588622084419_Migration+Architecture+Detailed.png)
+![](img/migration_architecture_detailed.png)
 
 ## Environment Variables
     export SOURCE_HOSTNAME            // Hostname of client's DB           (string)
