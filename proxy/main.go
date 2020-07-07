@@ -99,6 +99,8 @@ func (m Metadata) prepProxy(p *filter.CQLProxy) {
 		log.WithError(err).Fatal("Failed to discover table schemas from source cluster")
 	}
 
+	//TODO: create tables if not exist in destination
+
 	p.MigrationStart <- &migration.Status{Tables: tables,
 		Lock: &sync.Mutex{}}
 

@@ -1,3 +1,6 @@
+Silently fails on bad CL (guardrail)
+
+
 Prepared statements are borked
 
 There may be an ./nb bug around non prepared update statements.

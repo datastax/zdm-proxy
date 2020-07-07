@@ -1,12 +1,12 @@
 #!/bin/bash
 
-export SOURCE_HOSTNAME="54.148.170.236"
+export SOURCE_HOSTNAME="34.208.223.197"
 export SOURCE_USERNAME="cassandra"
 export SOURCE_PASSWORD="cassandra"
 export SOURCE_PORT=9042
 export ASTRA_HOSTNAME="caas-cluster-caas-dc-service"
-export ASTRA_USERNAME="datastax"
-export ASTRA_PASSWORD="datastax"
+export ASTRA_USERNAME="seb_hacking"
+export ASTRA_PASSWORD="seb_hacking"
 export ASTRA_PORT=9042
 export MIGRATION_SERVICE_HOSTNAME="127.0.0.1"
 export MIGRATION_COMMUNICATION_PORT=15000

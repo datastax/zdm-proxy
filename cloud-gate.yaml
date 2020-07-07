@@ -14,19 +14,9 @@ spec:
       labels:
         app: cloud-gate
     spec:
-      affinity:
-        podAntiAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-          - labelSelector:
-              matchExpressions:
-              - key: app
-                operator: In
-                values:
-                - cloud-gate
-            topologyKey: "failure-domain.beta.kubernetes.io/zone"
       containers:
         - name: cloud-gate
-          image: gcr.io/astraqvoiippbnugrc3no46vmon4f/cloud-gate
+          image: gcr.io/astrae2dv4yertwzx3d4hdbr6llxm/cloud-gate
           resources:
             requests:
                 cpu: 25m

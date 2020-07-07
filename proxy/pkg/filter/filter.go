@@ -829,7 +829,7 @@ func (p *CQLProxy) executeWriteAstra(q *query.Query, retries ...int) error {
 
 	err := p.executeAndCheckAstraReply(q)
 	if err != nil {
-		log.Errorf("%s. Retrying query %d", err.Error(), q.Stream)
+		log.Errorf("%s. Retrying query %d. Retry %d", err.Error(), q.Stream, retry)
 		return p.executeWriteAstra(q, retry+1)
 	}
 
@@ -960,6 +960,13 @@ func (p *CQLProxy) getOutstandingQuery(clientIP string, streamID uint16) *frame.
 func (p *CQLProxy) getAstraSession(client string) net.Conn {
 	p.lock.Lock()
 	defer p.lock.Unlock()
+
+	/*
+	for _, session := range p.astraSessions {
+		log.Debugf("session local: %v",session.LocalAddr().String());
+		log.Debugf("session remote: %v", session.RemoteAddr().String());
+	}
+	 */
 
 	return p.astraSessions[client]
 }
