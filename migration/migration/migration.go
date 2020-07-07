@@ -2,8 +2,6 @@ package migration
 
 import (
 	"bytes"
-	"cloud-gate/updates"
-	"cloud-gate/utils"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +13,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/riptano/cloud-gate/updates"
+	"github.com/riptano/cloud-gate/utils"
 
 	pipe "github.com/b4b4r07/go-pipe"
 

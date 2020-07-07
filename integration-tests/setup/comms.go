@@ -1,14 +1,15 @@
 package setup
 
 import (
-	"cloud-gate/migration/migration"
-	"cloud-gate/updates"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"sync"
 	"time"
+
+	"github.com/riptano/cloud-gate/migration/migration"
+	"github.com/riptano/cloud-gate/updates"
 
 	"github.com/jpillora/backoff"
 	log "github.com/sirupsen/logrus"

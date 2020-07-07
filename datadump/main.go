@@ -1,10 +1,11 @@
 package main
 
 import (
-	"cloud-gate/utils"
 	"fmt"
 	"math/rand"
 	"time"
+
+	"github.com/riptano/cloud-gate/utils"
 
 	log "github.com/sirupsen/logrus"
 

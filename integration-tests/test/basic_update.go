@@ -1,12 +1,13 @@
 package test
 
 import (
-	"cloud-gate/integration-tests/setup"
-	"cloud-gate/migration/migration"
-	"cloud-gate/utils"
 	"fmt"
 	"net"
 	"time"
+
+	"github.com/riptano/cloud-gate/integration-tests/setup"
+	"github.com/riptano/cloud-gate/migration/migration"
+	"github.com/riptano/cloud-gate/utils"
 
 	"github.com/gocql/gocql"
 	log "github.com/sirupsen/logrus"
