@@ -1,0 +1,45 @@
+apiVersion: apps/v1beta2
+kind: Deployment
+metadata:
+  name: cloud-gate
+  labels:
+    app: cloud-gate
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cloud-gate
+  template:
+    metadata:
+      labels:
+        app: cloud-gate
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - cloud-gate
+            topologyKey: "failure-domain.beta.kubernetes.io/zone"
+      containers:
+        - name: cloud-gate
+          image: gcr.io/astraqvoiippbnugrc3no46vmon4f/cloud-gate
+          resources:
+            requests:
+                cpu: 25m
+                memory: 50Mi
+          ports:
+          - name: proxy-cql
+            containerPort: 14002
+            protocol: TCP
+          - name: proxy-metrics
+            containerPort: 14001
+            protocol: TCP
+          readinessProbe:
+            tcpSocket:
+              port: 14002
+#      imagePullSecrets:
+#        - name: {{.DockerRegistryName}}

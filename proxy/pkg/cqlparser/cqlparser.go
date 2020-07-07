@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"strings"
+	"regexp"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -155,6 +156,10 @@ func parseCassandra(query string) (string, string) {
 	var table string
 
 	query = strings.TrimRight(query, ";")            // remove potential trailing ;
+
+    re := regexp.MustCompile("(?s)//.*?\n|/\\*.*?\\*/")
+    query = re.ReplaceAllString(query, "")          // remove comments
+
 	fields := strings.Fields(strings.ToLower(query)) // handles all whitespace
 	originalFields := strings.Fields(query)          // maintains case-sensitiviy for table
 
