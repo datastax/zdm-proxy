@@ -830,7 +830,7 @@ func (p *CQLProxy) executeQueryAstra(q *query.Query, tables []*migration.Table) 
 // if it's unsuccessful
 func (p *CQLProxy) executeWriteAstra(q *query.Query) error {
 	for attempt := 0; attempt < maxQueryRetries; attempt++ {
-		err := p.executeAndCheckReply(q)
+		err := p.executeAndCheckAstraReply(q)
 		if err != nil {
 			log.Errorf("retrying query %d - error: %s", q.Stream, err.Error())
 		} else {
