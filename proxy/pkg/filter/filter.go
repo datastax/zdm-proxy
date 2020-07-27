@@ -39,7 +39,7 @@ const (
 type CQLProxy struct {
 	Conf *config.Config
 
-	sourceIP           string
+	originCassandraIP  string
 	astraIP            string
 	migrationServiceIP string
 	migrationSession   net.Conn
@@ -123,7 +123,7 @@ func (p *CQLProxy) Start() error {
 // TODO: Is there a better way to check that we can connect to both databases?
 func (p *CQLProxy) checkDatabaseConnections() {
 	// Wait until the source database is up and ready to accept TCP connections.
-	source := establishConnection(p.sourceIP)
+	source := establishConnection(p.originCassandraIP)
 	source.Close()
 
 	// Wait until the Astra database is up and ready to accept TCP connections.
@@ -197,7 +197,7 @@ func (p *CQLProxy) handleClientConnection(client net.Conn) {
 	// If our service has not completed yet
 	if !p.migrationComplete {
 		log.Debugf("migrationComplete %t", p.migrationComplete)
-		sourceSession := establishConnection(p.sourceIP)
+		sourceSession := establishConnection(p.originCassandraIP)
 		astraSession := establishConnection(p.astraIP)
 
 		clientIP := client.RemoteAddr().String()
@@ -224,11 +224,12 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 	authenticated := false
 	sourceAddress := src.RemoteAddr().String()
 	destAddress := dst.RemoteAddr().String()
-	pointsToSource := sourceAddress == p.sourceIP || destAddress == p.sourceIP
+	pointsToSource := sourceAddress == p.originCassandraIP || destAddress == p.originCassandraIP
 
 	log.Debugf("forward source %s, dest %s, pointsToSource %s", sourceAddress, destAddress, pointsToSource)
 
-	if destAddress == p.sourceIP {
+	// Why do we close the connection if the destination is the origin database?
+	if destAddress == p.originCassandraIP {
 		defer func() {
 			src.Close()
 			dst.Close()
@@ -241,7 +242,7 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 	frameHeader := make([]byte, cassHdrLen)
 	for {
 		log.Debugf("read frame header from src %s", sourceAddress)
-		_, err := src.Read(frameHeader)
+		_, err := io.ReadFull(src, frameHeader)
 		if err != nil {
 			if err != io.EOF {
 				log.Debugf("%s disconnected", sourceAddress)
@@ -262,7 +263,7 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 		if bodyLen != 0 {
 			for bytesSoFar < int(bodyLen) {
 				rest := make([]byte, int(bodyLen)-bytesSoFar)
-				bytesRead, err := src.Read(rest)
+				bytesRead, err := io.ReadFull(src, rest)
 				if err != nil {
 					log.Error(err)
 					continue
@@ -372,11 +373,11 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 		log.Debugf("Migration Complete %v points to source %v", p.migrationComplete, pointsToSource)
 		if p.migrationComplete && pointsToSource {
 			log.Debugf("Redirecting connection %s -> %s", src.RemoteAddr(), dst.RemoteAddr())
-			if destAddress == p.sourceIP {
+			if destAddress == p.originCassandraIP {
 				clientIP := sourceAddress
 				dst = p.astraSessions[clientIP]
 				pointsToSource = false
-			} else if sourceAddress == p.sourceIP {
+			} else if sourceAddress == p.originCassandraIP {
 				src.Close()
 				p.lock.Lock()
 				p.directlyToAstra[dst.RemoteAddr().String()] = true
@@ -1022,7 +1023,7 @@ func (p *CQLProxy) reset() {
 	p.Metrics = metrics.New(p.Conf.ProxyMetricsPort)
 	p.Metrics.Expose()
 
-	p.sourceIP = fmt.Sprintf("%s:%d", p.Conf.SourceHostname, p.Conf.SourcePort)
+	p.originCassandraIP = fmt.Sprintf("%s:%d", p.Conf.SourceHostname, p.Conf.SourcePort)
 	p.astraIP = fmt.Sprintf("%s:%d", p.Conf.AstraHostname, p.Conf.AstraPort)
 	p.migrationServiceIP = fmt.Sprintf("%s:%d", p.Conf.MigrationServiceHostname, p.Conf.MigrationCommunicationPort)
 	p.preparedQueries = &cqlparser.PreparedQueries{
