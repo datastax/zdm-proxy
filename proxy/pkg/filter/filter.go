@@ -27,19 +27,17 @@ import (
 
 const (
 	// TODO: Make these configurable
-	thresholdToRedirect = 5
-	maxQueryRetries     = 5
-	queryTimeout        = 2 * time.Second
-	priorityUpdateSize  = 50
+	maxQueryRetries = 5
+	queryTimeout    = 2 * time.Second
 
 	cassHdrLen = 9
-	cassMaxLen = 268435456 // 256 MB, per spec
+	cassMaxLen = 256 * 1024 * 1024 // 268435456 // 256 MB, per spec
 )
 
 type CQLProxy struct {
 	Conf *config.Config
 
-	sourceIP           string
+	originCassandraIP  string
 	astraIP            string
 	migrationServiceIP string
 	migrationSession   net.Conn
@@ -74,6 +72,7 @@ type CQLProxy struct {
 	ReadyForRedirect chan struct{}
 
 	// Holds prepared queries by StreamID and by PreparedID
+	// TODO why isn't the client IP here like it is for outstandingQueries or outstandingUpdates
 	preparedQueries *cqlparser.PreparedQueries
 
 	// Keeps track of the current keyspace that each CLIENT is in
@@ -123,7 +122,7 @@ func (p *CQLProxy) Start() error {
 // TODO: Is there a better way to check that we can connect to both databases?
 func (p *CQLProxy) checkDatabaseConnections() {
 	// Wait until the source database is up and ready to accept TCP connections.
-	source := establishConnection(p.sourceIP)
+	source := establishConnection(p.originCassandraIP)
 	source.Close()
 
 	// Wait until the Astra database is up and ready to accept TCP connections.
@@ -197,7 +196,7 @@ func (p *CQLProxy) handleClientConnection(client net.Conn) {
 	// If our service has not completed yet
 	if !p.migrationComplete {
 		log.Debugf("migrationComplete %t", p.migrationComplete)
-		sourceSession := establishConnection(p.sourceIP)
+		sourceSession := establishConnection(p.originCassandraIP)
 		astraSession := establishConnection(p.astraIP)
 
 		clientIP := client.RemoteAddr().String()
@@ -224,11 +223,12 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 	authenticated := false
 	sourceAddress := src.RemoteAddr().String()
 	destAddress := dst.RemoteAddr().String()
-	pointsToSource := sourceAddress == p.sourceIP || destAddress == p.sourceIP
+	pointsToSource := sourceAddress == p.originCassandraIP || destAddress == p.originCassandraIP
 
 	log.Debugf("forward source %s, dest %s, pointsToSource %s", sourceAddress, destAddress, pointsToSource)
 
-	if destAddress == p.sourceIP {
+	// Why do we close the connection if the destination is the origin database?
+	if destAddress == p.originCassandraIP {
 		defer func() {
 			src.Close()
 			dst.Close()
@@ -241,7 +241,7 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 	frameHeader := make([]byte, cassHdrLen)
 	for {
 		log.Debugf("read frame header from src %s", sourceAddress)
-		_, err := src.Read(frameHeader)
+		_, err := io.ReadFull(src, frameHeader)
 		if err != nil {
 			if err != io.EOF {
 				log.Debugf("%s disconnected", sourceAddress)
@@ -262,7 +262,7 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 		if bodyLen != 0 {
 			for bytesSoFar < int(bodyLen) {
 				rest := make([]byte, int(bodyLen)-bytesSoFar)
-				bytesRead, err := src.Read(rest)
+				bytesRead, err := io.ReadFull(src, rest)
 				if err != nil {
 					log.Error(err)
 					continue
@@ -372,11 +372,11 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 		log.Debugf("Migration Complete %v points to source %v", p.migrationComplete, pointsToSource)
 		if p.migrationComplete && pointsToSource {
 			log.Debugf("Redirecting connection %s -> %s", src.RemoteAddr(), dst.RemoteAddr())
-			if destAddress == p.sourceIP {
+			if destAddress == p.originCassandraIP {
 				clientIP := sourceAddress
 				dst = p.astraSessions[clientIP]
 				pointsToSource = false
-			} else if sourceAddress == p.sourceIP {
+			} else if sourceAddress == p.originCassandraIP {
 				src.Close()
 				p.lock.Lock()
 				p.directlyToAstra[dst.RemoteAddr().String()] = true
@@ -587,21 +587,29 @@ func (p *CQLProxy) astraReplyHandler(client net.Conn) {
 	clientIP := client.RemoteAddr().String()
 	session := p.getAstraSession(clientIP)
 
-	frameHeader := make([]byte, cassHdrLen)
 	for {
-		_, err := session.Read(frameHeader)
+		frameHeader := make([]byte, cassHdrLen)
+		numBytes, err := io.ReadFull(session, frameHeader)
 		if err != nil {
 			log.Error(err)
+			return
+		}
+		if numBytes != cassHdrLen {
+			log.Error("read less than full frame header")
 			return
 		}
 
 		bodyLen := binary.BigEndian.Uint32(frameHeader[5:9])
 		frameBody := make([]byte, bodyLen)
 		if bodyLen != 0 {
-			_, err = session.Read(frameBody)
+			numBytes, err := io.ReadFull(session, frameBody)
 			if err != nil {
 				log.Error(err)
 				continue
+			}
+			if numBytes != int(bodyLen) {
+				log.Error("read less than full frame frame body")
+				return
 			}
 		}
 
@@ -609,28 +617,30 @@ func (p *CQLProxy) astraReplyHandler(client net.Conn) {
 		resp := frame.New(data)
 
 		p.lock.Lock()
-		success := resp.Opcode != 0x00
-		if _, ok := p.outstandingQueries[clientIP][resp.Stream]; ok {
-			if resp, ok := p.queryResponses[clientIP][resp.Stream]; ok {
-				resp <- success
-			}
+		successful := resp.Opcode != 0x00
+		if _, ok := p.outstandingQueries[clientIP][resp.Stream]; !ok {
+			log.Errorf("could not find stream %d in outstandingQueriesf for client %s", resp.Stream, clientIP)
+		} else if respChan, ok := p.queryResponses[clientIP][resp.Stream]; !ok {
+			log.Errorf("could not find stream %d in queryResponses for client %s", resp.Stream, clientIP)
+		} else {
+			respChan <- successful
+		}
 
-			if success {
-				// if this is an opcode == RESULT message of type 'prepared', associate the prepared
-				// statement id with the full query string that was included in the
-				// associated PREPARE request.  The stream-id in this reply allows us to
-				// find the associated prepare query string.
-				if resp.Opcode == 0x08 {
-					resultKind := binary.BigEndian.Uint32(data[9:13])
-					if resultKind == 0x0004 {
-						if sourcePreparedID, ok := p.preparedIDs[resp.Stream]; ok {
-							idLen := binary.BigEndian.Uint16(data[13:15])
-							astraPreparedID := string(data[15 : 15+idLen])
+		if successful {
+			// if this is an opcode == RESULT message of type 'prepared', associate the prepared
+			// statement id with the full query string that was included in the
+			// associated PREPARE request.  The stream-id in this reply allows us to
+			// find the associated prepare query string.
+			if resp.Opcode == 0x08 {
+				resultKind := binary.BigEndian.Uint32(data[9:13])
+				if resultKind == 0x0004 {
+					if sourcePreparedID, ok := p.preparedIDs[resp.Stream]; ok {
+						idLen := binary.BigEndian.Uint16(data[13:15])
+						astraPreparedID := string(data[15 : 15+idLen])
 
-							p.mappedPreparedIDs[sourcePreparedID] = astraPreparedID
-							log.Debugf("Mapped source PreparedID %s to Astra PreparedID %s", sourcePreparedID,
-								astraPreparedID)
-						}
+						p.mappedPreparedIDs[sourcePreparedID] = astraPreparedID
+						log.Debugf("Mapped source PreparedID %s to Astra PreparedID %s", sourcePreparedID,
+							astraPreparedID)
 					}
 				}
 
@@ -640,6 +650,7 @@ func (p *CQLProxy) astraReplyHandler(client net.Conn) {
 				log.Debugf("Received error response from Astra from query (%s, %d, %s)", clientIP, resp.Stream, resp.Body)
 				p.checkError(resp.RawBytes)
 			}
+
 		}
 		p.lock.Unlock()
 
@@ -817,24 +828,18 @@ func (p *CQLProxy) executeQueryAstra(q *query.Query, tables []*migration.Table) 
 
 // executeWriteAstra will keep retrying a query up to maxQueryRetries number of times
 // if it's unsuccessful
-func (p *CQLProxy) executeWriteAstra(q *query.Query, retries ...int) error {
-	retry := 0
-	if retries != nil {
-		retry = retries[0]
+func (p *CQLProxy) executeWriteAstra(q *query.Query) error {
+	for attempt := 0; attempt < maxQueryRetries; attempt++ {
+		err := p.executeAndCheckReply(q)
+		if err != nil {
+			log.Errorf("retrying query %d - error: %s", q.Stream, err.Error())
+		} else {
+			p.Metrics.IncrementWrites()
+			return nil
+		}
 	}
 
-	if retry > maxQueryRetries {
-		return fmt.Errorf("query on stream %d unsuccessful", q.Stream)
-	}
-
-	err := p.executeAndCheckAstraReply(q)
-	if err != nil {
-		log.Errorf("%s. Retrying query %d. Retry %d", err.Error(), q.Stream, retry)
-		return p.executeWriteAstra(q, retry+1)
-	}
-
-	p.Metrics.IncrementWrites()
-	return nil
+	return fmt.Errorf("query on stream %d unsuccessful", q.Stream)
 }
 
 // executeAndCheckAstraReply will send a query to the Astra DB, and listen for a response.
@@ -850,6 +855,7 @@ func (p *CQLProxy) executeAndCheckAstraReply(q *query.Query) error {
 	}
 
 	ticker := time.NewTicker(queryTimeout)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ticker.C:
@@ -887,15 +893,9 @@ func (p *CQLProxy) executeOnAstra(q *query.Query) error {
 
 	log.Debugf("Executing %v on Astra %v", string(*&q.Query), q.Source)
 
-	var err error
-	for i := 1; i <= 5; i++ {
-		_, err := session.Write(q.Query)
-		if err == nil {
-			break
-		}
-
-		time.Sleep(100 * time.Millisecond)
-	}
+	buf := bytes.NewBuffer(q.Query)
+	n := len(q.Query)
+	_, err := io.CopyN(session, buf, int64(n))
 
 	return err
 }
@@ -1022,7 +1022,7 @@ func (p *CQLProxy) reset() {
 	p.Metrics = metrics.New(p.Conf.ProxyMetricsPort)
 	p.Metrics.Expose()
 
-	p.sourceIP = fmt.Sprintf("%s:%d", p.Conf.SourceHostname, p.Conf.SourcePort)
+	p.originCassandraIP = fmt.Sprintf("%s:%d", p.Conf.SourceHostname, p.Conf.SourcePort)
 	p.astraIP = fmt.Sprintf("%s:%d", p.Conf.AstraHostname, p.Conf.AstraPort)
 	p.migrationServiceIP = fmt.Sprintf("%s:%d", p.Conf.MigrationServiceHostname, p.Conf.MigrationCommunicationPort)
 	p.preparedQueries = &cqlparser.PreparedQueries{
