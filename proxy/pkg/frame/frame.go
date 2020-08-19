@@ -5,7 +5,7 @@ import (
 )
 
 type Frame struct {
-	Direction int
+	Direction int		// [Alice] 0 if from client application to db
 	Version   uint8
 	Flags     uint8
 	Stream    uint16

@@ -5,6 +5,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// TODO remove unnecessary fields and rename where appropriate
 // Config holds the values of environment variables necessary for proper Proxy function.
 type Config struct {
 	SourceHostname string `required:"true" split_words:"true"`
@@ -17,9 +18,9 @@ type Config struct {
 	AstraPassword string `required:"true" split_words:"true"`
 	AstraPort     int    `required:"true" split_words:"true"`
 
-	MigrationComplete          bool   `required:"true" split_words:"true"`
-	MigrationServiceHostname   string `required:"true" split_words:"true"`
-	MigrationCommunicationPort int    `required:"true" split_words:"true"`
+	//MigrationComplete          bool   `required:"true" split_words:"true"`
+	//MigrationServiceHostname   string `required:"true" split_words:"true"`
+	//MigrationCommunicationPort int    `required:"true" split_words:"true"`
 	ProxyServiceHostname       string `required:"true" split_words:"true"`
 	ProxyCommunicationPort     int    `required:"true" split_words:"true"`
 	ProxyMetricsPort           int    `required:"true" split_words:"true"`

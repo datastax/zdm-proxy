@@ -1,3 +1,4 @@
+
 package filter
 
 import (
@@ -83,11 +84,13 @@ type CQLProxy struct {
 	// Metrics
 	Metrics *metrics.Metrics
 
-	preparedIDs         map[uint16]string
-	mappedPreparedIDs   map[string]string
-	outstandingPrepares map[uint16][]byte
-	preparedQueryBytes  map[string][]byte
-	prepareIDToKeyspace map[string]string
+	preparedIDs         map[uint16]string		// key: stream, value: originCassandraPreparedID
+	mappedPreparedIDs   map[string]string		// key: originCassandraPreparedID, value: astraPreparedID
+	// outstandingPrepares: when a query must be prepared, its raw bytes are parked in this map while the query is being prepared by the cluster.
+	// when the cluster responds, these raw bytes are used to populate the preparedQueryBytes map
+	outstandingPrepares map[uint16][]byte		// key: stream, value: query to be prepared (raw bytes).
+	preparedQueryBytes  map[string][]byte		// key: preparedId (parsed out of the request - is this an originCassandraPreparedId?) , value: raw bytes of the prepared query
+	prepareIDToKeyspace map[string]string		// key: preparedId, value: keyspace. why do we need this?
 }
 
 // Start starts up the proxy. The proxy creates a connection with the Astra Database,
@@ -281,10 +284,10 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 
 		log.Debugf("CONTAINS: %v", bytes.Contains(data, []byte("free.iot")))
 		/*
-		if (bytes.Contains(data, []byte("free.iot"))){
-			log.Debugf("frame header: %s", data)
-		}
-		 */
+			if (bytes.Contains(data, []byte("free.iot"))){
+				log.Debugf("frame header: %s", data)
+			}
+		*/
 
 		f := frame.New(data)
 		p.Metrics.IncrementFrames()
@@ -297,6 +300,11 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 		log.Debugf("f direction %v", f.Direction)
 		// Frame from client
 		if f.Direction == 0 {
+			/* 	This frame is coming from the client. It will always have to be sent to the OriginCassandra cluster before anything
+				This is done outside this if/else statement.
+				For now, just check whether this is a startup frame of some kind: if so, handle it, otherwise store the request
+				in the outstanding queries map (and potentially outstanding prepares map). Do nothing else for now.
+			*/
 			log.Debugf("OUT TO DB")
 			log.Debugf("f direction was 0, bytes: %v", string(f.RawBytes))
 			if !authenticated {
@@ -318,6 +326,10 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 				p.lock.Unlock()
 			}
 		} else {
+			/* 	This frame is coming back from the originCassandra cluster. It is a response to a request previously sent to the OC.
+			Pair it with its outstanding query and do any prepared statement management - specifically, handle the result of PREPARE requests.
+				Then, send this request to Astra (the mirrorToAstra method will only forward the requests that have to be forwarded, e.g. it will ignore selects)
+			*/
 			log.Debugf("BACK FROM DB")
 			p.lock.Lock()
 			// Response frame from database
@@ -358,6 +370,10 @@ func (p *CQLProxy) forward(src, dst net.Conn) {
 			p.lock.Unlock()
 		}
 
+		/*
+			Now we are out of the if/else block. All frames are sent to the OC (which is dst) .
+			TODO as we are not distinguishing between requests and responses, won't this send responses as well as requests to OC??
+		 */
 		//TODO: only dst.Write after the redirect succeeds.
 		log.Debugf("writing to dst: %s, the following data %s", destAddress, string(data))
 		_, err = dst.Write(data)
@@ -412,7 +428,7 @@ func (p *CQLProxy) handleStartupFrame(f *frame.Frame, client, sourceDB net.Conn)
 			return false, err
 		}
 
-		err = auth.HandleSourceStartup(client, sourceDB, f.RawBytes, p.Conf.SourceUsername, p.Conf.SourcePassword)
+		err = auth.HandleOriginCassandraStartup(client, sourceDB, f.RawBytes, p.Conf.SourceUsername, p.Conf.SourcePassword)
 		//err = auth.HandleAstraStartup(client, sourceDB, f.RawBytes)
 		if err != nil {
 			return false, err
@@ -476,65 +492,67 @@ func (p *CQLProxy) writeToAstra(f *frame.Frame, client string) error {
 	// opcode is "startup", "query", "batch", etc.
 	// action is "select", "insert", "update", etc,
 	// table is the table as written in the command
-	paths, err := cqlparser.CassandraParseRequest(p.preparedQueryBytes, f.RawBytes)
-	if err != nil {
-		return err
-	}
-	log.Debugf("parsed request")
 
-	if paths[0] == cqlparser.UnknownPreparedQueryPath {
-		return fmt.Errorf("encountered unknown prepared query for stream %d, ignoring", f.Stream)
-	}
-	log.Debugf("found prepared query path")
-
-	if len(paths) > 1 {
-		log.Debugf("batch query")
-		return p.handleBatchQuery(f, paths, client)
-	}
-
-	// currently handles query and prepare statements that involve 'use, insert, update, delete, and truncate'
-	fields := strings.Split(paths[0], "/")
-	log.Debugf("fields: %s", fields)
-	if len(fields) > 2 {
-		switch fields[1] {
-		//case "statement prepare":
-		case "prepare":
-			log.Debugf("prepare statement query")
-			return p.handlePrepareQuery(fields[3], f, client, paths)
-		case "query", "execute":
-			log.Debugf("statement query or execute")
-			if fields[1] == "execute" {
-				log.Debugf("execute")
-				err = p.updatePrepareID(f)
-				if err != nil {
-					log.Error(err)
-					return err
-				}
-			}
-
-			queryType := query.Type(fields[2])
-			log.Debugf("fields: %s", queryType)
-			switch queryType {
-			case query.USE:
-				log.Debugf("query type use")
-				return p.handleUseQuery(fields[3], f, client, paths)
-			case query.INSERT, query.UPDATE, query.DELETE, query.TRUNCATE:
-				log.Debugf("query type insert update delete or truncate")
-				return p.handleWriteQuery(fields[3], queryType, f, client, paths)
-			case query.SELECT:
-				log.Debugf("query type select")
-				p.Metrics.IncrementReads()
-			}
-		case "batch":
-			return p.handleBatchQuery(f, paths, client)
-		}
-	} else {
-		// path is '/opcode' case
-		// FIXME: decide if there are any cases we need to handle here
-		log.Debugf("len(fields) < 2: %s, %s", fields, len(fields))
-		q := query.New(nil, query.MISC, f, client, paths)
-		return p.executeOnAstra(q)
-	}
+	// [Alice] commented out to compile
+	//paths, err := cqlparser.CassandraParseRequest(p.preparedQueryBytes, f.RawBytes)
+	//if err != nil {
+	//	return err
+	//}
+	//log.Debugf("parsed request")
+	//
+	//if paths[0] == cqlparser.UnknownPreparedQueryPath {
+	//	return fmt.Errorf("encountered unknown prepared query for stream %d, ignoring", f.Stream)
+	//}
+	//log.Debugf("found prepared query path")
+	//
+	//if len(paths) > 1 {
+	//	log.Debugf("batch query")
+	//	return p.handleBatchQuery(f, paths, client)
+	//}
+	//
+	//// currently handles query and prepare statements that involve 'use, insert, update, delete, and truncate'
+	//fields := strings.Split(paths[0], "/")
+	//log.Debugf("fields: %s", fields)
+	//if len(fields) > 2 {
+	//	switch fields[1] {
+	//	//case "statement prepare":
+	//	case "prepare":
+	//		log.Debugf("prepare statement query")
+	//		return p.handlePrepareQuery(fields[3], f, client, paths)
+	//	case "query", "execute":
+	//		log.Debugf("statement query or execute")
+	//		if fields[1] == "execute" {
+	//			log.Debugf("execute")
+	//			err = p.updatePrepareID(f)
+	//			if err != nil {
+	//				log.Error(err)
+	//				return err
+	//			}
+	//		}
+	//
+	//		queryType := query.Type(fields[2])
+	//		log.Debugf("fields: %s", queryType)
+	//		switch queryType {
+	//		case query.USE:
+	//			log.Debugf("query type use")
+	//			return p.handleUseQuery(fields[3], f, client, paths)
+	//		case query.INSERT, query.UPDATE, query.DELETE, query.TRUNCATE:
+	//			log.Debugf("query type insert update delete or truncate")
+	//			return p.handleWriteQuery(fields[3], queryType, f, client, paths)
+	//		case query.SELECT:
+	//			log.Debugf("query type select")
+	//			p.Metrics.IncrementReads()
+	//		}
+	//	case "batch":
+	//		return p.handleBatchQuery(f, paths, client)
+	//	}
+	//} else {
+	//	// path is '/opcode' case
+	//	// FIXME: decide if there are any cases we need to handle here
+	//	log.Debugf("len(fields) < 2: %s, %s", fields, len(fields))
+	//	q := query.New(nil, query.MISC, f, client, paths)
+	//		return p.executeOnAstra(q)
+	//}
 
 	return nil
 }
@@ -581,7 +599,7 @@ func (p *CQLProxy) updatePrepareID(f *frame.Frame) error {
 	return fmt.Errorf("no mapping for source prepared id %s to astra prepared id found", preparedID)
 }
 
-// astraReplayHandler will read response from astra database and match response
+// astraReplyHandler will read response from astra database and match response
 // to related queries to determine if any queries need to be retried
 func (p *CQLProxy) astraReplyHandler(client net.Conn) {
 	clientIP := client.RemoteAddr().String()
@@ -684,124 +702,130 @@ func (p *CQLProxy) checkError(body []byte) {
 }
 
 func (p *CQLProxy) handlePrepareQuery(fromClause string, f *frame.Frame, client string, parsedPaths []string) error {
-	keyspace, tableName := extractTableInfo(fromClause)
-
-	// Is the keyspace already in the table clause of the query, or do we need to add it
-	if keyspace == "" {
-		keyspace = p.Keyspaces[client]
-		if keyspace == "" {
-			return errors.New("invalid keyspace")
-		}
-	}
-
-	preparedID := p.preparedIDs[f.Stream]
-	p.prepareIDToKeyspace[string(preparedID)] = keyspace
-
-	table, ok := p.migrationStatus.Tables[keyspace][tableName]
-	if !ok {
-		return fmt.Errorf("table %s.%s does not exist", keyspace, tableName)
-	}
-
-	q := query.New(table, query.PREPARE, f, client, parsedPaths)
-	p.executeQueryAstra(q, []*migration.Table{table})
+	// [Alice] commented out to compile
+	//keyspace, tableName := extractTableInfo(fromClause)
+	//
+	//// Is the keyspace already in the table clause of the query, or do we need to add it
+	//if keyspace == "" {
+	//	keyspace = p.Keyspaces[client]
+	//	if keyspace == "" {
+	//		return errors.New("invalid keyspace")
+	//	}
+	//}
+	//
+	//preparedID := p.preparedIDs[f.Stream]
+	//p.prepareIDToKeyspace[string(preparedID)] = keyspace
+	//table, ok := p.migrationStatus.Tables[keyspace][tableName]
+	//if !ok {
+	//	return fmt.Errorf("table %s.%s does not exist", keyspace, tableName)
+	//}
+	//
+	//q := query.New(table, query.PREPARE, f, client, parsedPaths)
+	//p.executeQueryAstra(q, []*migration.Table{table})
 
 	return nil
 }
 
 func (p *CQLProxy) handleUseQuery(keyspace string, f *frame.Frame, client string, parsedPaths []string) error {
-	// Cassandra assumes case-insensitive unless keyspace is encased in quotation marks
-	if strings.HasPrefix(keyspace, "\"") && strings.HasSuffix(keyspace, "\"") {
-		keyspace = keyspace[1 : len(keyspace)-1]
-	} else {
-		keyspace = strings.ToLower(keyspace)
-	}
+	// [Alice] commented out to compile
 
-	if _, ok := p.migrationStatus.Tables[keyspace]; !ok {
-		return fmt.Errorf("keyspace %s does not exist", keyspace)
-	}
-
-	p.setKeyspace(client, keyspace)
-
-	q := query.New(nil, query.USE, f, client, parsedPaths)
-	p.executeQueryAstra(q, []*migration.Table{})
+	//// Cassandra assumes case-insensitive unless keyspace is encased in quotation marks
+	//if strings.HasPrefix(keyspace, "\"") && strings.HasSuffix(keyspace, "\"") {
+	//	keyspace = keyspace[1 : len(keyspace)-1]
+	//} else {
+	//	keyspace = strings.ToLower(keyspace)
+	//}
+	//
+	//if _, ok := p.migrationStatus.Tables[keyspace]; !ok {
+	//	return fmt.Errorf("keyspace %s does not exist", keyspace)
+	//}
+	//
+	//p.setKeyspace(client, keyspace)
+	//
+	//q := query.New(nil, query.USE, f, client, parsedPaths)
+	//p.executeQueryAstra(q, []*migration.Table{})
 
 	return nil
 }
 
 // handleWriteQuery can handle QUERY and EXECUTE opcodes of type INSERT, UPDATE, DELETE, TRUNCATE
 func (p *CQLProxy) handleWriteQuery(fromClause string, queryType query.Type, f *frame.Frame, client string, parsedPaths []string) error {
-	keyspace, tableName := extractTableInfo(fromClause)
+	// [Alice] commented out to compile
 
-	// Is the keyspace already in the table clause of the query, or do we need to add it
-	if keyspace == "" {
-		if f.Opcode == 0x0a { //if execute
-			data := f.RawBytes
-			idLen := binary.BigEndian.Uint16(data[9:11])
-			preparedID := string(data[11:(11 + idLen)])
-			keyspace = p.prepareIDToKeyspace[preparedID]
-		} else {
-			keyspace = p.Keyspaces[client]
-		}
-
-		if keyspace == "" {
-			return errors.New("invalid keyspace")
-		}
-	}
-
-	table, ok := p.migrationStatus.Tables[keyspace][tableName]
-	if !ok {
-		return fmt.Errorf("table %s.%s does not exist", keyspace, tableName)
-	}
-
-	q := query.New(table, queryType, f, client, parsedPaths).UsingTimestamp()
-	p.executeQueryAstra(q, []*migration.Table{table})
+	//keyspace, tableName := extractTableInfo(fromClause)
+	//
+	//// Is the keyspace already in the table clause of the query, or do we need to add it
+	//if keyspace == "" {
+	//	if f.Opcode == 0x0a { //if execute
+	//		data := f.RawBytes
+	//		idLen := binary.BigEndian.Uint16(data[9:11])
+	//		preparedID := string(data[11:(11 + idLen)])
+	//		keyspace = p.prepareIDToKeyspace[preparedID]
+	//	} else {
+	//		keyspace = p.Keyspaces[client]
+	//	}
+	//
+	//	if keyspace == "" {
+	//		return errors.New("invalid keyspace")
+	//	}
+	//}
+	//
+	//table, ok := p.migrationStatus.Tables[keyspace][tableName]
+	//if !ok {
+	//	return fmt.Errorf("table %s.%s does not exist", keyspace, tableName)
+	//}
+	//
+	//q := query.New(table, queryType, f, client, parsedPaths).UsingTimestamp()
+	//p.executeQueryAstra(q, []*migration.Table{table})
 
 	return nil
 }
 
 func (p *CQLProxy) handleBatchQuery(f *frame.Frame, paths []string, client string) error {
-	// Set to hold which tables we've already included queries for
-	includedTables := make(map[string]*migration.Table)
+	// [Alice] commented out to compile
 
-	for _, path := range paths {
-		fields := strings.Split(path, "/")
-		keyspace, tableName := extractTableInfo(fields[3])
-		if keyspace == "" {
-			keyspace = p.Keyspaces[client]
-			if keyspace == "" {
-				return fmt.Errorf("invalid keyspace for batch query (%s, %d)", client, f.Stream)
-			}
-		}
-
-		table, ok := p.migrationStatus.Tables[keyspace][tableName]
-		if !ok {
-			return fmt.Errorf("table %s.%s does not exist", keyspace, tableName)
-		}
-
-		explicitTable := fmt.Sprintf("%s.%s", keyspace, tableName)
-
-		// Only create max one dummy query per table
-		if _, ok := includedTables[explicitTable]; ok {
-			continue
-		}
-
-		includedTables[explicitTable] = table
-	}
-
-	clientKeyspace := p.Keyspaces[client]
-	var randomTable *migration.Table
-	for _, table := range p.migrationStatus.Tables[clientKeyspace] {
-		randomTable = table
-		break
-	}
-
-	tableList := []*migration.Table{}
-	for _, table := range includedTables {
-		tableList = append(tableList, table)
-	}
-
-	q := query.New(randomTable, query.BATCH, f, client, paths).UsingTimestamp()
-	p.executeQueryAstra(q, tableList)
+	//// Set to hold which tables we've already included queries for
+	//includedTables := make(map[string]*migration.Table)
+	//
+	//for _, path := range paths {
+	//	fields := strings.Split(path, "/")
+	//	keyspace, tableName := extractTableInfo(fields[3])
+	//	if keyspace == "" {
+	//		keyspace = p.Keyspaces[client]
+	//		if keyspace == "" {
+	//			return fmt.Errorf("invalid keyspace for batch query (%s, %d)", client, f.Stream)
+	//		}
+	//	}
+	//
+	//	table, ok := p.migrationStatus.Tables[keyspace][tableName]
+	//	if !ok {
+	//		return fmt.Errorf("table %s.%s does not exist", keyspace, tableName)
+	//	}
+	//
+	//	explicitTable := fmt.Sprintf("%s.%s", keyspace, tableName)
+	//
+	//	// Only create max one dummy query per table
+	//	if _, ok := includedTables[explicitTable]; ok {
+	//		continue
+	//	}
+	//
+	//	includedTables[explicitTable] = table
+	//}
+	//
+	//clientKeyspace := p.Keyspaces[client]
+	//var randomTable *migration.Table
+	//for _, table := range p.migrationStatus.Tables[clientKeyspace] {
+	//	randomTable = table
+	//	break
+	//}
+	//
+	//tableList := []*migration.Table{}
+	//for _, table := range includedTables {
+	//	tableList = append(tableList, table)
+	//}
+	//
+	//q := query.New(randomTable, query.BATCH, f, client, paths).UsingTimestamp()
+	//p.executeQueryAstra(q, tableList)
 	return nil
 }
 
@@ -962,11 +986,11 @@ func (p *CQLProxy) getAstraSession(client string) net.Conn {
 	defer p.lock.Unlock()
 
 	/*
-	for _, session := range p.astraSessions {
-		log.Debugf("session local: %v",session.LocalAddr().String());
-		log.Debugf("session remote: %v", session.RemoteAddr().String());
-	}
-	 */
+		for _, session := range p.astraSessions {
+			log.Debugf("session local: %v",session.LocalAddr().String());
+			log.Debugf("session remote: %v", session.RemoteAddr().String());
+		}
+	*/
 
 	return p.astraSessions[client]
 }
@@ -1009,38 +1033,40 @@ func (p *CQLProxy) Shutdown() {
 
 // reset will reset all context within the proxy service
 func (p *CQLProxy) reset() {
-	p.queryResponses = make(map[string]map[uint16]chan bool)
-	p.ReadyChan = make(chan struct{})
-	p.ShutdownChan = make(chan struct{})
-	p.shutdown = false
-	p.outstandingQueries = make(map[string]map[uint16]*frame.Frame)
-	p.outstandingUpdates = make(map[string]chan bool)
-	p.migrationComplete = p.Conf.MigrationComplete
-	p.listeners = []net.Listener{}
-	p.ReadyForRedirect = make(chan struct{})
-	p.lock = &sync.Mutex{}
-	p.Metrics = metrics.New(p.Conf.ProxyMetricsPort)
-	p.Metrics.Expose()
+	// [Alice] commented out to compile
 
-	p.originCassandraIP = fmt.Sprintf("%s:%d", p.Conf.SourceHostname, p.Conf.SourcePort)
-	p.astraIP = fmt.Sprintf("%s:%d", p.Conf.AstraHostname, p.Conf.AstraPort)
-	p.migrationServiceIP = fmt.Sprintf("%s:%d", p.Conf.MigrationServiceHostname, p.Conf.MigrationCommunicationPort)
-	p.preparedQueries = &cqlparser.PreparedQueries{
-		PreparedQueryPathByStreamID:   make(map[uint16]string),
-		PreparedQueryPathByPreparedID: make(map[string]string),
-	}
-	p.MigrationStart = make(chan *migration.Status, 1)
-	p.MigrationDone = make(chan struct{})
-	p.Keyspaces = make(map[string]string)
-	p.astraKeyspace = make(map[string]string)
-	p.astraSessions = make(map[string]net.Conn)
-	p.sessionLocks = make(map[string]*sync.Mutex)
-	p.preparedIDs = make(map[uint16]string)
-	p.mappedPreparedIDs = make(map[string]string)
-	p.outstandingPrepares = make(map[uint16][]byte)
-	p.preparedQueryBytes = make(map[string][]byte)
-	p.prepareIDToKeyspace = make(map[string]string)
-	p.directlyToAstra = make(map[string]bool)
+	//p.queryResponses = make(map[string]map[uint16]chan bool)
+	//p.ReadyChan = make(chan struct{})
+	//p.ShutdownChan = make(chan struct{})
+	//p.shutdown = false
+	//p.outstandingQueries = make(map[string]map[uint16]*frame.Frame)
+	//p.outstandingUpdates = make(map[string]chan bool)
+	//p.migrationComplete = p.Conf.MigrationComplete
+	//p.listeners = []net.Listener{}
+	//p.ReadyForRedirect = make(chan struct{})
+	//p.lock = &sync.Mutex{}
+	//p.Metrics = metrics.New(p.Conf.ProxyMetricsPort)
+	//p.Metrics.Expose()
+	//
+	//p.originCassandraIP = fmt.Sprintf("%s:%d", p.Conf.SourceHostname, p.Conf.SourcePort)
+	//p.astraIP = fmt.Sprintf("%s:%d", p.Conf.AstraHostname, p.Conf.AstraPort)
+	//p.migrationServiceIP = fmt.Sprintf("%s:%d", p.Conf.MigrationServiceHostname, p.Conf.MigrationCommunicationPort)
+	//p.preparedQueries = &cqlparser.PreparedQueries{
+	//	PreparedQueryPathByStreamID:   make(map[uint16]string),
+	//	PreparedQueryPathByPreparedID: make(map[string]string),
+	//}
+	//p.MigrationStart = make(chan *migration.Status, 1)
+	//p.MigrationDone = make(chan struct{})
+	//p.Keyspaces = make(map[string]string)
+	//p.astraKeyspace = make(map[string]string)
+	//p.astraSessions = make(map[string]net.Conn)
+	//p.sessionLocks = make(map[string]*sync.Mutex)
+	//p.preparedIDs = make(map[uint16]string)
+	//p.mappedPreparedIDs = make(map[string]string)
+	//p.outstandingPrepares = make(map[uint16][]byte)
+	//p.preparedQueryBytes = make(map[string][]byte)
+	//p.prepareIDToKeyspace = make(map[string]string)
+	//p.directlyToAstra = make(map[string]bool)
 }
 
 // Establishes a TCP connection with the passed in IP. Retries using exponential backoff.

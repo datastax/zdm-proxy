@@ -66,20 +66,20 @@ func HandleAstraStartup(client net.Conn, astraSession net.Conn, startupFrame []b
 	return nil
 }
 
-func HandleSourceStartup(client net.Conn, sourceDB net.Conn, startupFrame []byte, username string, password string) error {
-	log.Debugf("Initiating startup between %s and %s", client.RemoteAddr(), sourceDB.RemoteAddr())
+func HandleOriginCassandraStartup(client net.Conn, originCassandra net.Conn, startupFrame []byte, username string, password string) error {
+	log.Debugf("Initiating startup between %s and %s", client.RemoteAddr(), originCassandra.RemoteAddr())
 
 	// Send client's initial startup frame to the database
-	_, err := sourceDB.Write(startupFrame)
+	_, err := originCassandra.Write(startupFrame)
 	if err != nil {
 		return fmt.Errorf("unable to send startup frame from client %s to %s",
-			client.RemoteAddr(), sourceDB.RemoteAddr())
+			client.RemoteAddr(), originCassandra.RemoteAddr())
 	}
 
 	authAttempts := 0
 	buf := make([]byte, 0xffffff)
 	for {
-		bytesRead, err := sourceDB.Read(buf)
+		bytesRead, err := originCassandra.Read(buf)
 		if err != nil {
 			return fmt.Errorf("error occurred while reading from db connection %v", err)
 		}
@@ -90,21 +90,21 @@ func HandleSourceStartup(client net.Conn, sourceDB net.Conn, startupFrame []byte
 		case 0x02:
 			// READY (server didn't ask for authentication)
 			log.Debugf("%s did not request authorization for connection %s",
-				sourceDB.RemoteAddr(), client.RemoteAddr())
+				originCassandra.RemoteAddr(), client.RemoteAddr())
 
 			return nil
 		case 0x03, 0x0E:
 			// AUTHENTICATE/AUTH_CHALLENGE (server requests authentication)
 			if authAttempts >= maxAuthRetries {
 				return fmt.Errorf("failed to authenticate connection to %s for %s",
-					sourceDB.RemoteAddr(), client.RemoteAddr())
+					originCassandra.RemoteAddr(), client.RemoteAddr())
 			}
 
 			log.Debugf("%s requested authentication for connection %s",
-				sourceDB.RemoteAddr(), client.RemoteAddr())
+				originCassandra.RemoteAddr(), client.RemoteAddr())
 
 			authResp := authFrame(username, password, startupFrame)
-			_, err := sourceDB.Write(authResp)
+			_, err := originCassandra.Write(authResp)
 			if err != nil {
 				return err
 			}
@@ -113,7 +113,7 @@ func HandleSourceStartup(client net.Conn, sourceDB net.Conn, startupFrame []byte
 		case 0x10:
 			// AUTH_SUCCESS (authentication successful)
 			log.Debugf("%s successfully authenticated with %s",
-				client.RemoteAddr(), sourceDB.RemoteAddr())
+				client.RemoteAddr(), originCassandra.RemoteAddr())
 			return nil
 		}
 	}
@@ -154,32 +154,39 @@ func HandleOptions(client net.Conn, db net.Conn, f []byte) error {
 			client.RemoteAddr(), db.RemoteAddr())
 	}
 
+	log.Debugf("HO 1") // [Alice]
 	_, err := db.Write(f)
 	if err != nil {
 		return err
 	}
 
+	log.Debugf("HO 2") // [Alice]
 	buf := make([]byte, 0xffffff)
 	bytesRead, err := db.Read(buf)
 	if err != nil {
 		return err
 	}
 
+	log.Debugf("HO 3") // [Alice]
 	if bytesRead < 9 {
 		return fmt.Errorf("received invalid CQL response from database while setting up OPTIONS for "+
 			"connection %s -> %s", client.RemoteAddr(), db.RemoteAddr())
 	}
 
+	log.Debugf("HO 4") // [Alice]
 	resp := buf[:bytesRead]
+	log.Debugf("resp %v", resp) // [Alice]
 	if resp[4] != 0x06 {
 		return fmt.Errorf("non SUPPORTED frame received from database for connection %s -> %s",
 			client.RemoteAddr(), db.RemoteAddr())
 	}
 
+	log.Debugf("HO 5") // [Alice]
 	_, err = client.Write(resp)
 	if err != nil {
 		return err
 	}
 
+	log.Debugf("HO 6") // [Alice]
 	return nil
 }

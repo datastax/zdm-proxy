@@ -5,7 +5,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/riptano/cloud-gate/migration/migration"
 	"github.com/riptano/cloud-gate/proxy/pkg/cqlparser"
 	"github.com/riptano/cloud-gate/proxy/pkg/frame"
 
@@ -21,6 +20,7 @@ const (
 	TRUNCATE = Type("truncate")
 	PREPARE  = Type("prepare")
 	BATCH    = Type("batch")
+	REGISTER = Type("register")
 	MISC     = Type("misc")
 
 	// Bit within the flags byte of a query denoting whether the query includes a timestamp
@@ -34,19 +34,20 @@ type Type string
 type Query struct {
 	Timestamp uint64
 	Stream    uint16
-	Table     *migration.Table
+	//Table     *migration.Table		// it looks like this was only necessary to coordinate the handling of the table as part of the migration service
 
 	Type   Type
 	Query  []byte
 	Opcode byte
 	Source string
-	WG     *sync.WaitGroup
+	WG     *sync.WaitGroup	// TODO check what this is used for - might be related to the coordination of the migration service?
 
 	Paths []string
 }
 
 // New returns a new query struct with the Timestamp set to the struct's creation time.
-func New(table *migration.Table, queryType Type, f *frame.Frame, source string, parsedPaths []string) *Query {
+//func New(table *migration.Table, queryType Type, f *frame.Frame, source string, parsedPaths []string) *Query {
+func New(queryType Type, f *frame.Frame, source string, parsedPaths []string) *Query {
 	var opcode byte
 	if len(f.RawBytes) >= 5 {
 		opcode = f.RawBytes[4]
@@ -54,7 +55,7 @@ func New(table *migration.Table, queryType Type, f *frame.Frame, source string, 
 
 	return &Query{
 		Timestamp: uint64(time.Now().UnixNano() / 1000000),
-		Table:     table,
+		//Table:     table,
 		Type:      queryType,
 		Query:     f.RawBytes,
 		Stream:    f.Stream,
