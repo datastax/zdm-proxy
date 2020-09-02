@@ -1,6 +1,7 @@
 package cloudgateproxy
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -13,7 +14,6 @@ import (
 	"github.com/riptano/cloud-gate/proxy/pkg/query"
 	"io"
 	"net"
-	"strings"
 	"sync"
 	"time"
 
@@ -38,6 +38,8 @@ type CloudgateProxy struct {
 	originCassandraIP string
 	astraIP string
 
+	// Connection maps for OriginCassandra and Astra. One connection for each client connected to the proxy.
+	// These maps are keyed on the client IP address.
 	originCassandraConnections map[string]net.Conn
 	astraConnections map[string]net.Conn
 	connectionLocks map[string]*sync.RWMutex
@@ -51,8 +53,9 @@ type CloudgateProxy struct {
 	//TODO this will probably go in the end but it is here to make the main method work for the moment
 	ReadyForRedirect chan struct{}
 
-	listeners []net.Listener
+	clientListeners []net.Listener
 
+	// TODO all to be reviewed
 	// Maps containing the prepared queries (raw bytes) keyed on prepareId
 	// One per cluster as the statements are independently prepared on each cluster
 	preparedQueryInfoOriginCassandra  map[string]cqlparser.PreparedQueryInfo
@@ -65,6 +68,22 @@ type CloudgateProxy struct {
 	//  - if not, fetch the raw bytes and issue a prepare request to Astra for it.
 	astraPreparedIdsByOriginPreparedIds map[string]string
 
+	// map of maps holding the response channels from Astra keyed on stream for each client
+	// the outer map is keyed on client IP, the inner maps are keyed on stream
+	astraResponseChannels map[string]map[uint16]chan *frame.Frame
+	// map of channels for service-related communication from Astra (keyed on clientIPAddress)
+	astraServiceResponseChannels map[string]chan *frame.Frame
+
+	// map of maps holding the response channels from OriginCassandra keyed on stream for each client
+	// the outer map is keyed on client IP, the inner maps are keyed on stream
+	originCassandraResponseChannels map[string]map[uint16]chan *frame.Frame
+	// map of channels for service-related communication from Astra (keyed on clientIPAddress)
+	originCassandraServiceResponseChannels map[string]chan *frame.Frame
+
+	// map of overall response channels - there is one for each client connection (keyed on client IP).
+	//TODO give it a better name
+	responseForClientChannels map[string]chan []byte
+
 	// TODO not sure the current keyspace thing is necessary but leaving it in for now
 	currentOriginCassandraKeyspacePerClient map[string]string			// Keeps track of the current keyspace that each CLIENT is in
 	currentAstraKeyspacePerClient map[string]string		// Keeps track of the current keyspace that the PROXY is in while connected to Astra
@@ -72,6 +91,36 @@ type CloudgateProxy struct {
 	shutdown bool
 
 	Metrics *metrics.Metrics
+}
+
+//	Method that initializes everything when a new client connects to the proxy.
+//TODO it is doing more than initialising: find a better name
+func (p *CloudgateProxy) initializeStructuresForClientConnection(clientAppConn net.Conn) {
+	originCassandraConn := establishConnection(p.originCassandraIP)
+	astraConn := establishConnection(p.astraIP)
+
+	clientApplicationIP := clientAppConn.RemoteAddr().String()
+	log.Debugf("clientApplicationIP %s", clientApplicationIP) // [Alice]
+
+	p.lock.Lock()
+	//TODO ensure all maps for the connection are created!
+	p.originCassandraConnections[clientApplicationIP] = originCassandraConn
+	p.astraConnections[clientApplicationIP] = astraConn
+	p.connectionLocks[clientApplicationIP] = &sync.RWMutex{}
+
+	p.originCassandraResponseChannels[clientApplicationIP] = make(map[uint16] chan *frame.Frame)
+	p.astraResponseChannels[clientApplicationIP] = make(map[uint16] chan *frame.Frame)
+
+	p.originCassandraServiceResponseChannels[clientApplicationIP] = make(chan *frame.Frame)
+	p.astraServiceResponseChannels[clientApplicationIP] = make(chan *frame.Frame)
+	p.responseForClientChannels[clientApplicationIP] = make(chan []byte)
+	p.lock.Unlock()
+
+	// start listening for replies on each cluster connection - TODO perhaps just pass the connection here?
+	go p.listenOnClusterConnectionForReplies(clientApplicationIP, false)
+	go p.listenOnClusterConnectionForReplies(clientApplicationIP, true)
+
+	go p.dispatchResponsesToClient(clientAppConn)
 }
 
 // Start starts up the proxy. The proxy creates a connection with the Astra Database,
@@ -86,7 +135,7 @@ func (p *CloudgateProxy) Start() error {
 	//log.Debugf("received ReadyChan")
 
 
-	err := p.listen(p.Conf.ProxyQueryPort, p.listenOnClientConnection)
+	err := p.listenFromClient(p.Conf.ProxyQueryPort, p.listenOnClientConnection)
 	if err != nil {
 		return err
 	}
@@ -106,9 +155,9 @@ func (p *CloudgateProxy) checkDatabaseConnections() {
 	astra.Close()
 }
 
-// listen creates a listener on the passed in port argument, and every connection
+// listenFromClient creates a listener on the passed in port argument, and every connection
 // that is received over that port is handled by the passed in handler function.
-func (p *CloudgateProxy) listen(port int, handler func(net.Conn) error) error {
+func (p *CloudgateProxy) listenFromClient(port int, handler func(net.Conn) error) error {
 	log.Debugf("Proxy connected and ready to accept queries on port %d", port)
 	l, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
@@ -116,7 +165,7 @@ func (p *CloudgateProxy) listen(port int, handler func(net.Conn) error) error {
 	}
 
 	p.lock.Lock()
-	p.listeners = append(p.listeners, l)
+	p.clientListeners = append(p.clientListeners, l)
 	p.lock.Unlock()
 
 	go func() {
@@ -125,7 +174,7 @@ func (p *CloudgateProxy) listen(port int, handler func(net.Conn) error) error {
 			conn, err := l.Accept()
 			if err != nil {
 				if p.shutdown {
-					log.Debugf("Shutting down listener on port %d", port)
+					log.Debugf("Shutting down client listener on port %d", port)
 					return
 				}
 				log.Error(err)
@@ -147,7 +196,7 @@ func (p *CloudgateProxy) listenOnClientConnection(clientAppConn net.Conn) error 
 
 	log.Debugf("listenOnClientConnection")
 
-	p.initialize(clientAppConn)
+	p.initializeStructuresForClientConnection(clientAppConn)
 	clientApplicationIP := clientAppConn.RemoteAddr().String()
 	authenticated := false
 
@@ -197,429 +246,232 @@ func (p *CloudgateProxy) listenOnClientConnection(clientAppConn net.Conn) error 
 			continue
 		}
 
-		// CassandraParseRequest returns an array of paths (just strings) with the format "/opcode/action/table"
-		// one path if a simple request, multiple paths if a batch
-		// parsing requests is cluster-specific because it handles prepared statements from the target cluster's cache
-		// first of all parse the request for the OriginCassandra cluster, as all requests have to be forwarded to it anyway
-		// TODO review the whole flow for handling of prepared statements!
-
-		originCassandraPaths, isWriteRequest, err := cqlparser.CassandraParseRequest(p.preparedQueryInfoOriginCassandra, f.RawBytes)
-		if err != nil {
-			return err
-		}
-
-		log.Debugf("parsed request for OriginCassandra, writeRequest? %t, resulting path(s) %v", isWriteRequest, originCassandraPaths)
-		originCassandraQuery, err := p.createQuery(f, clientApplicationIP, originCassandraPaths, false)
-		if err != nil {
-			return err
-		}
-
-		// TODO handle prepared statement flow here
-
-		go p.forwardToCluster(p.originCassandraConnections[clientApplicationIP], originCassandraQuery)
-		log.Debugf("Back from forwardToCluster")
-		// if it is a write request (also a batch involving at least one write) then also parse it for the Astra cluster
-		if isWriteRequest {
-			log.Debugf("Write request, now parsing it for Astra")
-			astraPaths, _, err := cqlparser.CassandraParseRequest(p.preparedQueryInfoAstra, f.RawBytes)
-			if err != nil {
-				return err
-			}
-			log.Debugf("parsed write request for Astra, resulting path(s) %v", isWriteRequest, astraPaths)
-			astraQuery, err := p.createQuery(f, clientApplicationIP, astraPaths, true)
-			if err != nil {
-				return err
-			}
-			go p.forwardToCluster(p.astraConnections[clientApplicationIP], astraQuery)
-		}
-
-
+		// One goroutine for each request, so each request is executed concurrently
+		go p.handleRequest(f, clientApplicationIP)
 	}
 }
-//	Function that initializes everything when a new client connects to the proxy.
-func (p *CloudgateProxy) initialize(clientAppConn net.Conn) {
-	originCassandraConn := establishConnection(p.originCassandraIP)
-	astraConn := establishConnection(p.astraIP)
+
+
+func (p *CloudgateProxy) dispatchResponsesToClient(clientAppConn net.Conn) error {
+	// listen on overallResponseChan for that client
+	// dequeue any responses from the channel and send them to the client
+
+	log.Debugf("dispatchResponsesToClient")
 
 	clientApplicationIP := clientAppConn.RemoteAddr().String()
-	log.Debugf("clientApplicationIP %s", clientApplicationIP) // [Alice]
 
-	p.lock.Lock()
-	p.originCassandraConnections[clientApplicationIP] = originCassandraConn
-	p.astraConnections[clientApplicationIP] = astraConn
-	p.connectionLocks[clientApplicationIP] = &sync.RWMutex{}
-	p.lock.Unlock()
-}
-
-
-// Simple function that reads data from a connection and builds a frame
-func parseFrame(src net.Conn, frameHeader []byte, metrics *metrics.Metrics) (*frame.Frame, error) {
-	sourceAddress := src.RemoteAddr().String()
-
-	// [Alice] read the frameHeader, whose length is constant (9 bytes), and put it into this slice
-	log.Debugf("read frame header from src %s", sourceAddress)
-	bytesRead, err := io.ReadFull(src, frameHeader)
-	if err != nil {
-		if err != io.EOF {
-			log.Debugf("%s disconnected", sourceAddress)
-		} else {
-			log.Debugf("error reading frame header")
-			log.Error(err)
-		}
-		return nil, err
-	}
-	log.Debugf("frameheader number of bytes read by ReadFull %d", bytesRead) // [Alice]
-	log.Debugf("frameheader content read by ReadFull %v", frameHeader) // [Alice]
-	bodyLen := binary.BigEndian.Uint32(frameHeader[5:9])
-	log.Debugf("bodyLen %d", bodyLen) // [Alice]
-	data := frameHeader
-	bytesSoFar := 0
-
-	log.Debugf("data: %v", data)
-
-	if bodyLen != 0 {
-		for bytesSoFar < int(bodyLen) {
-			rest := make([]byte, int(bodyLen)-bytesSoFar)
-			bytesRead, err := io.ReadFull(src, rest)
-			if err != nil {
-				log.Error(err)
-				continue	// [Alice] next iteration of this small for loop, not the outer infinite one
-			}
-			data = append(data, rest[:bytesRead]...)
-			bytesSoFar += bytesRead
-		}
-	}
-	log.Debugf("(from %s): %v", src.RemoteAddr(), string(data))
-	f := frame.New(data)
-	metrics.IncrementFrames()
-
-	if f.Flags&0x01 == 1 {
-		log.Errorf("compression flag for stream %d set, unable to parse query beyond header", f.Stream)
-	}
-
-	return f, err
-}
-
-func (p *CloudgateProxy) createQuery(f *frame.Frame, clientIPAddress string, paths []string, toAstra bool) (*query.Query, error){
-	var q *query.Query
-	if paths[0] == cqlparser.UnknownPreparedQueryPath {
-		return q, fmt.Errorf("encountered unknown prepared query for stream %d, ignoring", f.Stream)
-	}
-
-	if len(paths) > 1 {
-		log.Debugf("batch query")
-		return p.createBatchQuery(f, clientIPAddress, paths, toAstra)
-	}
-
-	// currently handles query and prepare statements that involve 'use, insert, update, delete, and truncate'
-	fields := strings.Split(paths[0], "/")
-	for i := range fields {
-		fields[i] = strings.TrimSpace(fields[i])
-	}
-	log.Debugf("fields: %s", fields)
-	if len(fields) > 2 {
-		switch fields[1] {
-		//case "statement prepare":
-		case "prepare":
-			log.Debugf("prepare statement query")
-			return p.createPrepareQuery(fields[3], f, clientIPAddress, paths, toAstra)
-		case "query", "execute":
-			log.Debugf("statement query or execute")
-			if fields[1] == "execute" {
-				log.Debugf("execute")
-				// TODO ***** THIS STILL NEEDS TO BE REVIEWED ****
-				// TODO the EXECUTE case still has to be handled - see what an EXECUTE query looks like
-				//err = p.updatePrepareID(f)
-				//if err != nil {
-				//	log.Error(err)
-				//	return err
-				//}
-			}
-
-			queryType := query.Type(fields[2])
-			log.Debugf("fields: %s", queryType)
-			switch queryType {
-			case query.USE:
-				log.Debugf("query type use")
-				return p.createUseQuery(fields[3], f, clientIPAddress, paths, toAstra)
-			case query.INSERT, query.UPDATE, query.DELETE, query.TRUNCATE:
-				log.Debugf("query type insert update delete or truncate")
-				return p.createWriteQuery(fields[3], queryType, f, clientIPAddress, paths, toAstra)
-			case query.SELECT:
-				log.Debugf("query type select")
-				// TODO select must go to Origin only
-				p.Metrics.IncrementReads()
-				return p.createReadQuery(fields[3], f, clientIPAddress, paths)
-			}
-		case "batch":
-			return p.createBatchQuery(f, clientIPAddress, paths, toAstra)
-		}
-	} else {
-		// path is '/opcode' case
-		// FIXME: decide if there are any cases we need to handle here
-		log.Debugf("len(fields) < 2: %s, %v", fields, len(fields))
-		if fields[1] == "register" {
-			log.Debugf("Register!!")
-			q = query.New(query.REGISTER, f, clientIPAddress, paths)
-		} else {
-			log.Debugf("Query to be ignored??")
-			q = query.New(query.MISC, f, clientIPAddress, paths)
-		}
-		//return p.executeOnAstra(q)
-	}
-	return q, nil
-}
-
-// updatePrepareID converts between source prepareID to astraPrepareID to ensure consistency
-// between source and astra databases
-// TODO sort this out
-// this should be called when the responses to a PREPARE request have been received from originCassandra and Astra, so both preparedIDs are available
-func (p *CloudgateProxy) updatePrepareID(f *frame.Frame) error {
-	log.Debugf("updatePrepareID")
-	data := f.RawBytes
-	idLength := binary.BigEndian.Uint16(data[9:11])
-	originCassandraPreparedID := data[11 : 11+idLength]
-
-	// Ensures that the mapping of source preparedID to astraPreparedID has finished executing
-	// TODO: do this in a better way
+	// Main listening loop
 	for {
-		_, ok := p.astraPreparedIdsByOriginPreparedIds[string(originCassandraPreparedID)]
-		if ok {
-			break
-		}
-		log.Debugf("sleeping, map %v, prepareID %v", p.astraPreparedIdsByOriginPreparedIds, string(originCassandraPreparedID))
-		time.Sleep(100 * time.Millisecond)
-	}
+		// dequeue responses from channel
+		response := <- p.responseForClientChannels[clientApplicationIP]
 
-	if newPreparedID, ok := p.astraPreparedIdsByOriginPreparedIds[string(originCassandraPreparedID)]; ok {
-		before := make([]byte, cassHdrLen)
-		copy(before, data[:cassHdrLen])
-		after := data[11+idLength:]
-
-		newLen := make([]byte, 2)
-		binary.BigEndian.PutUint16(newLen, uint16(len(newPreparedID)))
-
-		newBytes := before
-		newBytes = append(before, newLen...)
-		newBytes = append(newBytes, []byte(newPreparedID)...)
-		newBytes = append(newBytes, after...)
-
-		f.RawBytes = newBytes
-		binary.BigEndian.PutUint32(f.RawBytes[5:9], uint32(len(newBytes)-cassHdrLen))
-		f.Length = uint32(len(newBytes) - cassHdrLen)
-
-		return nil
-	}
-
-	return fmt.Errorf("no mapping for source prepared id %s to astra prepared id found", originCassandraPreparedID)
-}
-
-// TODO is the fromClause really necessary here? can it be replaced or extracted otherwise?
-func (p *CloudgateProxy) createPrepareQuery(fromClause string, f *frame.Frame, clientIPAddress string, paths []string, toAstra bool) (*query.Query, error) {
-	var q *query.Query
-	keyspace := extractKeyspace(fromClause)
-
-	// Is the keyspace already in the table clause of the query, or do we need to add it
-	if keyspace == "" {
-		if toAstra {
-			keyspace = p.currentAstraKeyspacePerClient[clientIPAddress]
-		} else {
-			keyspace = p.currentOriginCassandraKeyspacePerClient[clientIPAddress]
-		}
-
-		if keyspace == "" {
-			return q, errors.New("invalid keyspace")
+		// send responses on the client connection on which the corresponding request was received
+		_, err := clientAppConn.Write(response)
+		if err != nil {
+			return err
 		}
 	}
 
-	q = query.New(query.PREPARE, f, clientIPAddress, paths)
-	return q, nil
-	//p.executeQueryAstra(q, []*migration.Table{table})
 }
 
-// TODO is the keyspace parameter really necessary here? can it be replaced or extracted otherwise?
-func (p *CloudgateProxy) createUseQuery(keyspace string, f *frame.Frame, clientIPAddress string,
-	paths []string, toAstra bool) (*query.Query, error) {
-	var q *query.Query
 
-	if keyspace == "" {
-		return q, errors.New("invalid keyspace")
-	}
 
-	// TODO perhaps replace this logic with call to function that parses keyspace name (sthg like extractKeyspace)
-	// Cassandra assumes case-insensitive unless keyspace is encased in quotation marks
-	if strings.HasPrefix(keyspace, "\"") && strings.HasSuffix(keyspace, "\"") {
-		keyspace = keyspace[1 : len(keyspace)-1]
-	} else {
-		keyspace = strings.ToLower(keyspace)
-	}
 
-	p.lock.Lock()
-	if toAstra {
-		p.currentAstraKeyspacePerClient[clientIPAddress] = keyspace
-	} else {
-		p.currentOriginCassandraKeyspacePerClient[clientIPAddress] = keyspace
-	}
-	p.lock.Unlock()
-
-	q = query.New(query.USE, f, clientIPAddress, paths)
-	//p.executeQueryAstra(q, []*migration.Table{})
-
-	return q, nil
-}
-
-// handleWriteQuery can handle QUERY and EXECUTE opcodes of type INSERT, UPDATE, DELETE, TRUNCATE
-// TODO tidy up signature. it should be possible to pass fewer parameters with some refactoring
-func (p *CloudgateProxy) createWriteQuery(fromClause string, queryType query.Type, f *frame.Frame,
-	clientIPAddress string, paths []string, toAstra bool) (*query.Query, error) {
-	var q *query.Query
-
-	keyspace := extractKeyspace(fromClause)
-
-	// Is the keyspace already in the table clause of the query, or do we need to add it
-	if keyspace == "" {
-		if f.Opcode == 0x0a { //if execute
-			data := f.RawBytes
-			idLen := binary.BigEndian.Uint16(data[9:11])
-			preparedID := string(data[11:(11 + idLen)])
-			if toAstra {
-				keyspace = p.preparedQueryInfoAstra[preparedID].Keyspace
-			} else {
-				keyspace = p.preparedQueryInfoOriginCassandra[preparedID].Keyspace
-			}
-		} else {
-			if toAstra {
-				keyspace = p.currentAstraKeyspacePerClient[clientIPAddress]
-			} else {
-				keyspace = p.currentOriginCassandraKeyspacePerClient[clientIPAddress]
-			}
-		}
-
-		if keyspace == "" {
-			return q, errors.New("invalid keyspace")
-		}
-	}
-
-	q = query.New(queryType, f, clientIPAddress, paths).UsingTimestamp()
-	//p.executeQueryAstra(q, []*migration.Table{table})
-
-	return q, nil
-}
-
-// Create select query. Selects only go to the origin cassandra cluster, so no toAstra flag is needed here.
-func (p *CloudgateProxy) createReadQuery(fromClause string, f *frame.Frame, clientIPAddress string,
-	paths []string) (*query.Query, error) {
-	var q *query.Query
-
-	keyspace := extractKeyspace(fromClause)
-
-	// Is the keyspace already in the table clause of the query, or do we need to add it
-	if keyspace == "" {
-		if f.Opcode == 0x0a { //if execute
-			data := f.RawBytes
-			idLen := binary.BigEndian.Uint16(data[9:11])
-			preparedID := string(data[11:(11 + idLen)])
-			keyspace = p.preparedQueryInfoOriginCassandra[preparedID].Keyspace
-		} else {
-			keyspace = p.currentOriginCassandraKeyspacePerClient[clientIPAddress]
-		}
-
-		if keyspace == "" {
-			return q, errors.New("invalid keyspace")
-		}
-	}
-
-	q = query.New(query.SELECT, f, clientIPAddress, paths).UsingTimestamp()
-	//p.executeQueryAstra(q, []*migration.Table{table})
-
-	return q, nil
-}
-
-func (p *CloudgateProxy) createBatchQuery(f *frame.Frame, clientIPAddress string, paths []string, toAstra bool) (*query.Query, error) {
-	var q *query.Query
-
-	for _, path := range paths {
-		fields := strings.Split(path, "/")
-		keyspace := extractKeyspace(fields[3])
-		if keyspace == "" {
-			if toAstra {
-				keyspace = p.currentAstraKeyspacePerClient[clientIPAddress]
-			} else {
-				keyspace = p.currentOriginCassandraKeyspacePerClient[clientIPAddress]
-			}
-			if keyspace == "" {
-				return q, fmt.Errorf("invalid keyspace for batch query (%s, %d)", clientIPAddress, f.Stream)
-			}
-		}
-	}
-
-	q = query.New(query.BATCH, f, clientIPAddress, paths).UsingTimestamp()
-	//p.executeQueryAstra(q, tableList)
-	return q, nil
-}
-
-func (p *CloudgateProxy) createExecuteQuery(f *frame.Frame, clientIPAddress string, paths []string, toAstra bool) (*query.Query, error) {
-	//TODO implement
-	var q *query.Query
-
-	return q, nil
-}
-
-// Given a FROM argument, extract the table name
-// ex: table, keyspace.table, keyspace.table;, keyspace.table(, etc..
-// TODO currently parsing keyspace and table, but table is probably not necessary so it should be taken out
-// TODO note that table name is NOT returned
-func extractKeyspace(fromClause string) string {
-	fromClause = strings.TrimSuffix(fromClause, ";")
-
-	keyspace := ""
-	tableName := fromClause
-
-	// Separate keyspace & tableName if together
-	if i := strings.IndexRune(fromClause, '.'); i != -1 {
-		keyspace = fromClause[:i]
-		tableName = fromClause[i+1:]
-	}
-
-	// Remove column names if part of an INSERT query: ex: TABLE(col, col)
-	if i := strings.IndexRune(tableName, '('); i != -1 {
-		tableName = tableName[:i]
-	}
-
-	// Make keyspace and tablename lowercase if necessary.
-	// Otherwise, leave case as-is but trim quotations marks
-	if strings.HasPrefix(keyspace, "\"") && strings.HasSuffix(keyspace, "\"") {
-		keyspace = strings.TrimPrefix(keyspace, "\"")
-		keyspace = strings.TrimSuffix(keyspace, "\"")
-	} else {
-		keyspace = strings.ToLower(keyspace)
-	}
-
-	if strings.HasPrefix(tableName, "\"") && strings.HasSuffix(tableName, "\"") {
-		tableName = strings.TrimPrefix(tableName, "\"")
-		tableName = strings.TrimSuffix(tableName, "\"")
-	} else {
-		tableName = strings.ToLower(tableName)
-	}
-
-	return keyspace
-}
-
-func (p *CloudgateProxy) forwardToCluster(clusterConn net.Conn, query *query.Query) {
+func (p *CloudgateProxy) forwardToCluster(queryToForward *query.Query, isServiceRequest bool, responseToCallerChan chan *frame.Frame) error {
 	// TODO submits the request on cluster connection (initially single connection to keep it simple, but it will probably have to be a pool)
 	// creates a channel on which it will send the outcome (outcomeChan). this will be returned to the caller (handleWriteRequest or  handleReadRequest)
 	// adds an entry to a pendingRequestMap keyed on streamID and whose value is a channel. this channel is used by the dequeuer to communicate the response back to this goroutine
 	// it is this goroutine that has to receive the response, so it can enforce the timeout in case of connection disruption
-	log.Debugf("Forwarding query of type %v with opcode %v and path %v for stream %v", query.Type, query.Opcode, query.Paths[0], query.Stream)
-	log.Debugf("Forwarding this query to cluster %v", clusterConn.RemoteAddr().String())
+	log.Debugf("Forwarding query of type %v with opcode %v and path %v for stream %v", queryToForward.Type, queryToForward.Opcode, queryToForward.Paths[0], queryToForward.Stream)
+
+	toAstra := queryToForward.Destination == query.ASTRA
+
+	var responseFromClusterChan chan *frame.Frame
+	if !isServiceRequest {
+		log.Debugf("Not a service request, creating a response channel for stream %d and setting it in the map. toAstra? %t", queryToForward.Stream, toAstra)
+		responseFromClusterChan = p.createResponseFromClusterChan(queryToForward, toAstra)
+		defer p.deleteResponseFromClusterChan(queryToForward, toAstra)
+	} else {
+		log.Debugf("Service request, retrieving the service response channel. toAstra? %t", toAstra)
+		responseFromClusterChan = p.getServiceResponseChannel(toAstra, queryToForward.SourceIPAddress)
+	}
+
+	var connectionToCluster net.Conn
+	if toAstra {
+		connectionToCluster = p.getAstraConnection(queryToForward.SourceIPAddress)
+	} else {
+		connectionToCluster = p.getOriginCassandraConnection(queryToForward.SourceIPAddress)
+	}
+
+	err := p.sendRequestOnConnection(queryToForward, connectionToCluster)
+	if err != nil {
+		return err
+	}
+
+	ticker := time.NewTicker(queryTimeout)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			return fmt.Errorf("timeout for query %d", queryToForward.Stream)
+		case response := <-responseFromClusterChan:
+			log.Debugf("Received response from cluster for query (%d, %s)", response.Stream, string(response.RawBytes))
+			responseToCallerChan <- response
+			// everything else that happens here is not holding up the forwardToCluster goroutine that submitted this request
+			// TODO this part should not be here - it needs to be handled upstream
+
+			//	if resp.Opcode == 0x08 {
+			//
+			//		// TODO handle prepared statement flow!
+			//		//resultKind := binary.BigEndian.Uint32(resp.RawBytes[9:13])
+			//		/* if this is an opcode == RESULT message of type 'prepared', associate the prepared
+			//		 statement id with the full query string that was included in the
+			//		 associated PREPARE request.  The stream-id in this reply allows us to
+			//		 find the associated prepare query string.
+			//		*/
+			//
+			//		//if resultKind == 0x0004 {
+			//		//	if sourcePreparedID, ok := p.preparedIDs[resp.Stream]; ok {
+			//		//		idLen := binary.BigEndian.Uint16(data[13:15])
+			//		//		astraPreparedID := string(data[15 : 15+idLen])
+			//		//
+			//		//		p.mappedPreparedIDs[sourcePreparedID] = astraPreparedID
+			//		//		log.Debugf("Mapped source PreparedID %s to Astra PreparedID %s", sourcePreparedID,
+			//		//			astraPreparedID)
+			//		//	}
+			//		//}
+			//
+			//		log.Debugf("Received success response from Astra from query (%s, %d, %s)", clientIPAddress, resp.Stream, string(resp.RawBytes))
+			//
+			//	} else {
+			//		log.Debugf("Received error response from Astra from query (%s, %d, %s)", clientIPAddress, resp.Stream, resp.Body)
+			//		p.checkError(resp.RawBytes)
+			//	}
+
+
+		}
+	}
+
+
+	// create response channel and pass it to connectionListener
+	return err
 }
 
-func (p *CloudgateProxy) dequeueResponsesFromClusterConnection() {
-	// TODO infinite loop that reads responses out of the cluster connection. make sure it blocks on something to avoid using up CPU for no reason
-	// it looks for the channel for that streamID in the request map and puts the response on it
+func (p *CloudgateProxy) sendRequestOnConnection(queryToForward *query.Query, connectionToCluster net.Conn) error {
+	p.connectionLocks[queryToForward.SourceIPAddress].Lock()
+	defer p.connectionLocks[queryToForward.SourceIPAddress].Unlock()
+	log.Debugf("Executing %v on cluster with address %v", string(*&queryToForward.Query), queryToForward.SourceIPAddress)
+	buf := bytes.NewBuffer(queryToForward.Query)
+	n := len(queryToForward.Query)
+	_, err := io.CopyN(connectionToCluster, buf, int64(n))
+	return err
 }
 
+func (p *CloudgateProxy) createResponseFromClusterChan(q *query.Query, toAstra bool) chan *frame.Frame {
+	p.lock.Lock()
+	defer p.lock.Unlock()
 
+	if toAstra {
+		p.astraResponseChannels[q.SourceIPAddress][q.Stream] = make(chan *frame.Frame, 1)
+		return p.astraResponseChannels[q.SourceIPAddress][q.Stream]
+	} else {
+		p.originCassandraResponseChannels[q.SourceIPAddress][q.Stream] = make(chan *frame.Frame, 1)
+		return p.originCassandraResponseChannels[q.SourceIPAddress][q.Stream]
+	}
+}
+
+func (p *CloudgateProxy) deleteResponseFromClusterChan(q *query.Query, toAstra bool) {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+
+	if toAstra {
+		close(p.astraResponseChannels[q.SourceIPAddress][q.Stream])
+		delete(p.astraResponseChannels[q.SourceIPAddress], q.Stream)
+	} else {
+		close(p.originCassandraResponseChannels[q.SourceIPAddress][q.Stream])
+		delete(p.originCassandraResponseChannels[q.SourceIPAddress], q.Stream)
+	}
+}
+
+// clusterReplyHandler will read the response from a cluster and
+// send it back on the channel for the corresponding request
+/*
+ 	0x00    ERROR
+    0x01    STARTUP
+    0x02    READY
+    0x03    AUTHENTICATE
+    0x05    OPTIONS
+    0x06    SUPPORTED
+    0x07    QUERY
+    0x08    RESULT
+    0x09    PREPARE
+    0x0A    EXECUTE
+    0x0B    REGISTER
+    0x0C    EVENT
+    0x0D    BATCH
+    0x0E    AUTH_CHALLENGE
+    0x0F    AUTH_RESPONSE
+    0x10    AUTH_SUCCESS
+ */
+func (p *CloudgateProxy) listenOnClusterConnectionForReplies(clientIPAddress string, fromAstra bool) {
+
+	// initialization of this long-running routine
+	var connection net.Conn
+	var responseChannels map[string]map[uint16]chan *frame.Frame
+	var serviceResponseChannel chan *frame.Frame
+
+	if fromAstra {
+		connection = p.getAstraConnection(clientIPAddress)
+		responseChannels = p.astraResponseChannels
+		serviceResponseChannel = p.astraServiceResponseChannels[clientIPAddress]
+	} else {
+		connection = p.getOriginCassandraConnection(clientIPAddress)
+		responseChannels = p.originCassandraResponseChannels
+		serviceResponseChannel = p.originCassandraServiceResponseChannels[clientIPAddress]
+	}
+
+	log.Debugf("Listening to replies sent by cluster: astra? %v", fromAstra)
+	// long-running loop that listens for replies being sent by the cluster on this connection
+	frameHeader := make([]byte, cassHdrLen)
+	for {
+		response, _ := parseFrame(connection, frameHeader, p.Metrics)
+
+		log.Debugf("Opcode? %v -- stream? %v", response.Opcode, response.Stream)
+
+		// TODO error responses need to be handled as results or service depending on the specific error code. Add this logic!!
+		if response.Opcode == 0x00 || response.Opcode == 0x08 {
+			p.lock.Lock()
+
+			if responseChannel, ok := responseChannels[clientIPAddress][response.Stream]; !ok {
+				log.Errorf("could not find stream %d in responseChannels for client %s. fromAstra? %v", response.Stream, clientIPAddress, fromAstra)
+			} else {
+				// Note: the boolean response is sent on the channel here - this will unblock the forwardToCluster goroutine waiting on this
+				responseChannel <- response
+			}
+
+			p.lock.Unlock()
+		} else {
+			serviceResponseChannel <- response
+		}
+
+	}
+}
+
+func (p *CloudgateProxy) checkError(body []byte) {
+	errCode := binary.BigEndian.Uint16(body[0:2])
+	switch errCode {
+	case 0x0000:
+		// Server Error
+		p.Metrics.IncrementServerErrors()
+	case 0x1100:
+		// Write Timeout
+		p.Metrics.IncrementWriteFails()
+	case 0x1200:
+		// Read Timeout
+		p.Metrics.IncrementReadFails()
+	}
+
+}
 
 // Establishes a TCP connection with the passed in IP. Retries using exponential backoff.
 func establishConnection(ip string) net.Conn {
@@ -650,34 +502,35 @@ func establishConnection(ip string) net.Conn {
 // initiates startup with the client's old database
 func (p *CloudgateProxy) handleStartupFrame(f *frame.Frame, clientAppConn net.Conn) (bool, error) {
 	clientAppIP := clientAppConn.RemoteAddr().String()
-	astraSession := p.getAstraConnection(clientAppIP)
+	originCassandraConnection := p.getOriginCassandraConnection(clientAppIP)
+	astraConnection := p.getAstraConnection(clientAppIP)
 
 	switch f.Opcode {
-		// OPTIONS
+		// OPTIONS - The OPTIONS message is only sent to Astra - TODO why?
 		case 0x05:
 			// forward OPTIONS to Astra
 			// [Alice] this call sends the options message and deals with the response (supported / not supported)
 			// this exchange does not authenticate yet
 			// is this also where the native protocol version is negotiated?
 			log.Debugf("Handling OPTIONS message")
-			err := auth.HandleOptions(clientAppConn, astraSession, f.RawBytes)
+			err := auth.HandleOptions(clientAppConn, astraConnection, f.RawBytes, p.astraServiceResponseChannels[clientAppIP])
 			if err != nil {
 				return false, fmt.Errorf("client %s unable to negotiate options with %s",
-					clientAppIP, astraSession.RemoteAddr().String())
+					clientAppIP, astraConnection.RemoteAddr().String())
 			}
 			log.Debugf("OPTIONS message successfully handled")
 			// TODO what does this method return here? it should return false
 
-		// STARTUP
+		// STARTUP - the STARTUP message is sent to both Astra and OriginCassandra
 		case 0x01:
 			log.Debugf("Handling STARTUP message")
-			err := auth.HandleAstraStartup(clientAppConn, astraSession, f.RawBytes)
+			err := auth.HandleAstraStartup(clientAppConn, astraConnection, f.RawBytes, p.astraServiceResponseChannels[clientAppIP])
 			if err != nil {
 				return false, err
 			}
 			log.Debugf("STARTUP message successfully handled on Astra, now proceeding with OriginCassandra")
-			err = auth.HandleOriginCassandraStartup(clientAppConn, p.getOriginCassandraConnection(clientAppIP), f.RawBytes,
-													p.Conf.SourceUsername, p.Conf.SourcePassword)
+			err = auth.HandleOriginCassandraStartup(clientAppConn, originCassandraConnection, f.RawBytes,
+													p.Conf.SourceUsername, p.Conf.SourcePassword, p.originCassandraServiceResponseChannels[clientAppIP])
 			//err = auth.HandleAstraStartup(client, sourceDB, f.RawBytes)
 			if err != nil {
 				return false, err
@@ -687,8 +540,18 @@ func (p *CloudgateProxy) handleStartupFrame(f *frame.Frame, clientAppConn net.Co
 	}
 	return false, fmt.Errorf("received non STARTUP or OPTIONS query from unauthenticated client %s", clientAppIP)
 }
+func (p *CloudgateProxy) getServiceResponseChannel(toAstra bool, clientIPAddress string) chan *frame.Frame{
+	p.lock.Lock()
+	defer p.lock.Unlock()
 
-func (p *CloudgateProxy) getAstraConnection(client string) net.Conn {
+	if toAstra {
+		return p.astraServiceResponseChannels[clientIPAddress]
+	} else {
+		return p.originCassandraServiceResponseChannels[clientIPAddress]
+	}
+}
+
+func (p *CloudgateProxy) getAstraConnection(clientIPAddress string) net.Conn {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
@@ -697,10 +560,10 @@ func (p *CloudgateProxy) getAstraConnection(client string) net.Conn {
 	//	log.Debugf("connection remote: %v", connection.RemoteAddr().String());
 	//}
 
-	return p.astraConnections[client]
+	return p.astraConnections[clientIPAddress]
 }
 
-func (p *CloudgateProxy) getOriginCassandraConnection(client string) net.Conn {
+func (p *CloudgateProxy) getOriginCassandraConnection(clientIPAddress string) net.Conn {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
@@ -709,30 +572,42 @@ func (p *CloudgateProxy) getOriginCassandraConnection(client string) net.Conn {
 	//	log.Debugf("session remote: %v", session.RemoteAddr().String());
 	//}
 
-	return p.originCassandraConnections[client]
+	return p.originCassandraConnections[clientIPAddress]
 }
 
-// reset will reset all context within the proxy service
+// reset will reset all context within the proxy service and instantiate everything from scratch
 //p.queryResponses = make(map[string]map[uint16]chan bool)
 func (p *CloudgateProxy) reset() {
-	p.ReadyChan = make(chan struct{})
-	//p.ShutdownChan = make(chan struct{})
-	p.shutdown = false
-	p.listeners = []net.Listener{}
-	p.ReadyForRedirect = make(chan struct{})
-	p.lock = &sync.RWMutex{}
-	p.Metrics = metrics.New(p.Conf.ProxyMetricsPort)
-	p.Metrics.Expose()
 	p.originCassandraIP = fmt.Sprintf("%s:%d", p.Conf.SourceHostname, p.Conf.SourcePort)
 	p.astraIP = fmt.Sprintf("%s:%d", p.Conf.AstraHostname, p.Conf.AstraPort)
+
 	p.originCassandraConnections = make(map[string]net.Conn)
 	p.astraConnections = make(map[string]net.Conn)
 	p.connectionLocks = make(map[string]*sync.RWMutex)
+	p.lock = &sync.RWMutex{}
+
+	p.ReadyChan = make(chan struct{})
+	p.ReadyForRedirect = make(chan struct{})
+	p.clientListeners = []net.Listener{}
+
 	p.preparedQueryInfoOriginCassandra = make(map[string]cqlparser.PreparedQueryInfo)
 	p.preparedQueryInfoAstra = make(map[string]cqlparser.PreparedQueryInfo)
 	p.astraPreparedIdsByOriginPreparedIds =  make(map[string]string)
+
+	p.originCassandraResponseChannels = make(map[string]map[uint16]chan *frame.Frame)
+	p.astraResponseChannels = make(map[string]map[uint16]chan *frame.Frame)
+	p.originCassandraServiceResponseChannels = make(map[string]chan *frame.Frame)
+	p.astraServiceResponseChannels = make(map[string]chan *frame.Frame)
+
+	p.responseForClientChannels = make(map[string]chan []byte)
+
 	p.currentOriginCassandraKeyspacePerClient =  make(map[string]string)
 	p.currentAstraKeyspacePerClient =  make(map[string]string)
+
+	p.shutdown = false
+	p.Metrics = metrics.New(p.Conf.ProxyMetricsPort)
+	p.Metrics.Expose()
+
 	//p.outstandingQueries = make(map[string]map[uint16]*frame.Frame)
 	//p.outstandingUpdates = make(map[string]chan bool)
 	//p.migrationComplete = p.Conf.MigrationComplete

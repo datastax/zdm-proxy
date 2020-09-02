@@ -69,7 +69,7 @@ type PreparedQueries struct {
 	with the following modifications: parsing of EXECUTE statements was modified to determine EXECUTE's action
 	from the bytes of the original PREPARE message associated with it
  */
-func CassandraParseRequest(preparedQueryInfoMap map[string]PreparedQueryInfo, data []byte) ([]string, bool, error) {
+func CassandraParseRequest(preparedQueryInfoMap map[string]PreparedQueryInfo, data []byte) ([]string, bool, bool, error) {
 //func CassandraParseRequest(preparedQueryBytes map[string][]byte, data []byte) ([]string, bool, error) {
 	opcode := data[4]
 	path := opcodeMap[opcode]
@@ -78,6 +78,7 @@ func CassandraParseRequest(preparedQueryInfoMap map[string]PreparedQueryInfo, da
 	// if it is a single statement, it will be false if the statement is a read
 	// if it is a batch, it will be false if the batch only contains reads, and true otherwise (i.e. there is at least a write)
 	isWriteRequest := false
+	isServiceRequest := false
 
 	// parse query string from query/prepare/batch requests
 
@@ -95,13 +96,13 @@ func CassandraParseRequest(preparedQueryInfoMap map[string]PreparedQueryInfo, da
 		action, table := parseCassandra(query)
 
 		if action == "" {
-			return nil, false, errors.New("invalid frame type")
+			return nil, false, false, errors.New("invalid frame type")
 		}
 
 		isWriteRequest = isWriteAction(action)
 
 		path = "/" + path + "/" + action + "/" + table
-		return []string{path}, isWriteRequest, nil
+		return []string{path}, isWriteRequest, isServiceRequest, nil
 	} else if opcode == 0x0d {
 		// batch
 
@@ -119,7 +120,7 @@ func CassandraParseRequest(preparedQueryInfoMap map[string]PreparedQueryInfo, da
 				action, table := parseCassandra(query)
 
 				if action == "" {
-					return nil, false, errors.New("invalid frame type for a query while processing batch")
+					return nil, false, false, errors.New("invalid frame type for a query while processing batch")
 				}
 
 				isWriteRequest = isWriteRequest || isWriteAction(action)
@@ -139,24 +140,24 @@ func CassandraParseRequest(preparedQueryInfoMap map[string]PreparedQueryInfo, da
 				if queryInfo, ok := preparedQueryInfoMap[preparedID]; ok {
 					path, action, err := getPathFromPrepareBytes(queryInfo.Query)
 					if err != nil {
-						return nil, false, err
+						return nil, false, false, err
 					}
 					paths[i] = path
 					isWriteRequest = isWriteRequest || isWriteAction(action)
 				} else {
 					log.Warnf("No cached entry for prepared-id = '%s'", preparedID)
 
-					return []string{UnknownPreparedQueryPath}, isWriteRequest, nil
+					return []string{UnknownPreparedQueryPath}, isWriteRequest, isServiceRequest, nil
 				}
 
 				offset = offset + 3 + idLen
 				offset = ReadPastBatchValues(data, offset)
 			} else {
 				log.Errorf("unexpected value of 'kind' in batch query: %d", kind)
-				return nil, false, errors.New("processing batch command failed")
+				return nil, false, false, errors.New("processing batch command failed")
 			}
 		}
-		return paths, isWriteRequest, nil
+		return paths, isWriteRequest, isServiceRequest, nil
 	} else if opcode == 0x0a {
 		// execute
 		// [Alice] This is only to execute already-prepared statements
@@ -170,19 +171,20 @@ func CassandraParseRequest(preparedQueryInfoMap map[string]PreparedQueryInfo, da
 		if queryInfo, ok := preparedQueryInfoMap[preparedID]; ok {
 			path, action, err := getPathFromPrepareBytes(queryInfo.Query)
 			if err != nil {
-				return nil, false, err
+				return nil, false, false, err
 			}
 			isWriteRequest = isWriteAction(action)
-			return []string{path}, isWriteRequest, nil
+			return []string{path}, isWriteRequest, isServiceRequest, nil
 		} else {
 			log.Warnf("No cached entry for prepared-id = '%s'", preparedID)
 
-			return []string{UnknownPreparedQueryPath}, false, nil
+			return []string{UnknownPreparedQueryPath}, false, false, nil
 		}
 
 	} else {
 		// other opcode, just return type of opcode
-		return []string{"/" + path}, isWriteRequest, nil
+		isServiceRequest = true
+		return []string{"/" + path}, isWriteRequest, isServiceRequest, nil
 	}
 }
 

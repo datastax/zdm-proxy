@@ -14,26 +14,29 @@ const (
 	maxAuthRetries = 5
 )
 
-func HandleAstraStartup(client net.Conn, astraSession net.Conn, startupFrame []byte) error {
-	log.Debugf("Initiating startup between %s and %s", client.RemoteAddr(), astraSession.RemoteAddr())
+func HandleAstraStartup(clientConnection net.Conn, astraConnection net.Conn, startupFrame []byte, serviceResponseChannel chan *frame.Frame) error {
+
+	log.Debugf("Initiating startup between %s and %s", clientConnection.RemoteAddr(), astraConnection.RemoteAddr())
 	clientFrame := startupFrame
 	buf := make([]byte, 0xfffff)
 	authenticated := false
 	for !authenticated {
-		_, err := astraSession.Write(clientFrame)
+		_, err := astraConnection.Write(clientFrame)
 		if err != nil {
-			return fmt.Errorf("unable to send startup frame from client %s to %s",
-				client.RemoteAddr(), astraSession.RemoteAddr())
+			return fmt.Errorf("unable to send startup frame from clientConnection %s to %s",
+				clientConnection.RemoteAddr(), astraConnection.RemoteAddr())
 		}
 
-		bytesRead, err := astraSession.Read(buf)
-		if err != nil {
-			return fmt.Errorf("error occurred while reading from db connection %v", err)
-		}
+		//bytesRead, err := astraConnection.Read(buf)
+		//if err != nil {
+		//	return fmt.Errorf("error occurred while reading from db connection %v", err)
+		//}
+		//
+		//f := frame.New(buf[:bytesRead])
+		f := <- serviceResponseChannel
+		log.Debug("HandleAstraStartup: Received frame from Astra on serviceResponseChannel")
 
-		f := frame.New(buf[:bytesRead])
-
-		_, err = client.Write(f.RawBytes)
+		_, err = clientConnection.Write(f.RawBytes)
 		if err != nil {
 			return err
 		}
@@ -46,65 +49,74 @@ func HandleAstraStartup(client net.Conn, astraSession net.Conn, startupFrame []b
 		case 0x02:
 			// READY
 			log.Debugf("%s did not request authorization for connection %s",
-				astraSession.RemoteAddr(), client.RemoteAddr())
+				astraConnection.RemoteAddr(), clientConnection.RemoteAddr())
 			authenticated = true
 		case 0x10:
 			// AUTH_SUCCESS
 			log.Debugf("%s successfully authenticated with %s",
-				client.RemoteAddr(), astraSession.RemoteAddr())
+				clientConnection.RemoteAddr(), astraConnection.RemoteAddr())
 			authenticated = true
 		default:
 			return fmt.Errorf("encountered error that was not READY, AUTHENTICATE, AUTH_CHALLENGE, or AUTH_SUCCESS")
 		}
 
+		// if it gets to this point and it is still not authenticated, then read again from the client connection
+		// and load the next frame into clientFrame to be sent to the db on the next iteration of the loop
 		if !authenticated {
-			bytesRead, err = client.Read(buf)
+			bytesRead, err := clientConnection.Read(buf)
 			clientFrame = buf[:bytesRead]
+			if err != nil {
+				return fmt.Errorf("error occurred while reading from db connection %v", err)
+			}
 		}
 	}
 
 	return nil
 }
 
-func HandleOriginCassandraStartup(client net.Conn, originCassandra net.Conn, startupFrame []byte, username string, password string) error {
-	log.Debugf("Initiating startup between %s and %s", client.RemoteAddr(), originCassandra.RemoteAddr())
+func HandleOriginCassandraStartup(client net.Conn, originCassandraConnection net.Conn, startupFrame []byte, username string, password string, serviceResponseChannel chan *frame.Frame) error {
+
+	log.Debugf("Initiating startup between %s and %s", client.RemoteAddr(), originCassandraConnection.RemoteAddr())
 
 	// Send client's initial startup frame to the database
-	_, err := originCassandra.Write(startupFrame)
+	_, err := originCassandraConnection.Write(startupFrame)
 	if err != nil {
 		return fmt.Errorf("unable to send startup frame from client %s to %s",
-			client.RemoteAddr(), originCassandra.RemoteAddr())
+			client.RemoteAddr(), originCassandraConnection.RemoteAddr())
 	}
 
 	authAttempts := 0
-	buf := make([]byte, 0xffffff)
+	//buf := make([]byte, 0xffffff)
 	for {
-		bytesRead, err := originCassandra.Read(buf)
-		if err != nil {
-			return fmt.Errorf("error occurred while reading from db connection %v", err)
-		}
+		//bytesRead, err := originCassandraConnection.Read(buf)
+		//if err != nil {
+		//	return fmt.Errorf("error occurred while reading from db connection %v", err)
+		//}
+		//
+		//f := frame.New(buf[:bytesRead])
 
-		f := frame.New(buf[:bytesRead])
+		f := <- serviceResponseChannel
+		log.Debug("HandleOriginCassandraStartup: Received frame from OriginCassandra on serviceResponseChannel")
 
 		switch f.Opcode {
 		case 0x02:
 			// READY (server didn't ask for authentication)
 			log.Debugf("%s did not request authorization for connection %s",
-				originCassandra.RemoteAddr(), client.RemoteAddr())
+				originCassandraConnection.RemoteAddr(), client.RemoteAddr())
 
 			return nil
 		case 0x03, 0x0E:
 			// AUTHENTICATE/AUTH_CHALLENGE (server requests authentication)
 			if authAttempts >= maxAuthRetries {
 				return fmt.Errorf("failed to authenticate connection to %s for %s",
-					originCassandra.RemoteAddr(), client.RemoteAddr())
+					originCassandraConnection.RemoteAddr(), client.RemoteAddr())
 			}
 
 			log.Debugf("%s requested authentication for connection %s",
-				originCassandra.RemoteAddr(), client.RemoteAddr())
+				originCassandraConnection.RemoteAddr(), client.RemoteAddr())
 
 			authResp := authFrame(username, password, startupFrame)
-			_, err := originCassandra.Write(authResp)
+			_, err := originCassandraConnection.Write(authResp)
 			if err != nil {
 				return err
 			}
@@ -113,7 +125,7 @@ func HandleOriginCassandraStartup(client net.Conn, originCassandra net.Conn, sta
 		case 0x10:
 			// AUTH_SUCCESS (authentication successful)
 			log.Debugf("%s successfully authenticated with %s",
-				client.RemoteAddr(), originCassandra.RemoteAddr())
+				client.RemoteAddr(), originCassandraConnection.RemoteAddr())
 			return nil
 		}
 	}
@@ -148,41 +160,44 @@ func authFrame(username string, password string, startupFrame []byte) []byte {
 
 // HandleOptions tunnels the OPTIONS request from the client to the database, and then
 // tunnels the corresponding SUPPORTED response back from the database to the client.
-func HandleOptions(client net.Conn, db net.Conn, f []byte) error {
+func HandleOptions(clientConnection net.Conn, clusterConnection net.Conn, f []byte, serviceResponseChannel chan *frame.Frame) error {
 	if f[4] != 0x05 {
 		return fmt.Errorf("non OPTIONS frame sent into HandleOption for connection %s -> %s",
-			client.RemoteAddr(), db.RemoteAddr())
+			clientConnection.RemoteAddr(), clusterConnection.RemoteAddr())
 	}
 
 	log.Debugf("HO 1") // [Alice]
-	_, err := db.Write(f)
+	_, err := clusterConnection.Write(f)
 	if err != nil {
 		return err
 	}
 
+	//buf := make([]byte, 0xffffff)
+	//bytesRead, err := clusterConnection.Read(buf)
+	//if err != nil {
+	//	return err
+	//}
 	log.Debugf("HO 2") // [Alice]
-	buf := make([]byte, 0xffffff)
-	bytesRead, err := db.Read(buf)
-	if err != nil {
-		return err
-	}
+	responseFrame := <- serviceResponseChannel
+	log.Debug("HandleOptions: Received frame from Astra on serviceResponseChannel")
 
 	log.Debugf("HO 3") // [Alice]
-	if bytesRead < 9 {
+	//if bytesRead < 9 {
+	if responseFrame.Length < 9 {
 		return fmt.Errorf("received invalid CQL response from database while setting up OPTIONS for "+
-			"connection %s -> %s", client.RemoteAddr(), db.RemoteAddr())
+			"connection %s -> %s", clientConnection.RemoteAddr(), clusterConnection.RemoteAddr())
 	}
 
 	log.Debugf("HO 4") // [Alice]
-	resp := buf[:bytesRead]
-	log.Debugf("resp %v", resp) // [Alice]
-	if resp[4] != 0x06 {
+	//resp := buf[:bytesRead]
+	//log.Debugf("resp %v", resp) // [Alice]
+	if responseFrame.Opcode != 0x06 {
 		return fmt.Errorf("non SUPPORTED frame received from database for connection %s -> %s",
-			client.RemoteAddr(), db.RemoteAddr())
+			clientConnection.RemoteAddr(), clusterConnection.RemoteAddr())
 	}
 
 	log.Debugf("HO 5") // [Alice]
-	_, err = client.Write(resp)
+	_, err = clientConnection.Write(responseFrame.RawBytes)
 	if err != nil {
 		return err
 	}

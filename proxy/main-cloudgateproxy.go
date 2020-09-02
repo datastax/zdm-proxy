@@ -38,7 +38,7 @@ func main() {
 
 	err := m.Init(cp)
 	if err != nil {
-		log.WithError(err).Fatal("Migration initialization failed")
+		log.WithError(err).Fatal("Proxy initialization failed when attempting to connect to the clusters")
 	}
 
 	// for testing purposes. to delete

@@ -898,24 +898,24 @@ func (p *CQLProxy) createResponseChan(q *query.Query) chan bool {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
-	p.queryResponses[q.Source][q.Stream] = make(chan bool, 1)
-	return p.queryResponses[q.Source][q.Stream]
+	p.queryResponses[q.SourceIPAddress][q.Stream] = make(chan bool, 1)
+	return p.queryResponses[q.SourceIPAddress][q.Stream]
 }
 
 func (p *CQLProxy) deleteResponseChan(q *query.Query) {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
-	close(p.queryResponses[q.Source][q.Stream])
-	delete(p.queryResponses[q.Source], q.Stream)
+	close(p.queryResponses[q.SourceIPAddress][q.Stream])
+	delete(p.queryResponses[q.SourceIPAddress], q.Stream)
 }
 
 func (p *CQLProxy) executeOnAstra(q *query.Query) error {
-	session := p.getAstraSession(q.Source)
-	p.sessionLocks[q.Source].Lock()
-	defer p.sessionLocks[q.Source].Unlock()
+	session := p.getAstraSession(q.SourceIPAddress)
+	p.sessionLocks[q.SourceIPAddress].Lock()
+	defer p.sessionLocks[q.SourceIPAddress].Unlock()
 
-	log.Debugf("Executing %v on Astra %v", string(*&q.Query), q.Source)
+	log.Debugf("Executing %v on Astra %v", string(*&q.Query), q.SourceIPAddress)
 
 	buf := bytes.NewBuffer(q.Query)
 	n := len(q.Query)
