@@ -277,9 +277,6 @@ func (p *CloudgateProxy) dispatchResponsesToClient(clientAppConn net.Conn) error
 
 }
 
-
-
-
 func (p *CloudgateProxy) forwardToCluster(queryToForward *query.Query, isServiceRequest bool, responseToCallerChan chan *frame.Frame) error {
 	// TODO submits the request on cluster connection (initially single connection to keep it simple, but it will probably have to be a pool)
 	// creates a channel on which it will send the outcome (outcomeChan). this will be returned to the caller (handleWriteRequest or  handleReadRequest)
@@ -311,15 +308,15 @@ func (p *CloudgateProxy) forwardToCluster(queryToForward *query.Query, isService
 		return err
 	}
 
-	ticker := time.NewTicker(queryTimeout)
-	defer ticker.Stop()
+	//ticker := time.NewTicker(queryTimeout)
+	//defer ticker.Stop()
+	timeout := time.NewTimer(queryTimeout)
 	for {
 		select {
-		case <-ticker.C:
-			return fmt.Errorf("timeout for query %d", queryToForward.Stream)
 		case response := <-responseFromClusterChan:
-			log.Debugf("Received response from cluster for query (%d, %s)", response.Stream, string(response.RawBytes))
+			log.Debugf("Received response from %s for query with stream id %d", queryToForward.Destination, response.Stream)
 			responseToCallerChan <- response
+			timeout.Stop()
 			// everything else that happens here is not holding up the forwardToCluster goroutine that submitted this request
 			// TODO this part should not be here - it needs to be handled upstream
 
@@ -350,11 +347,14 @@ func (p *CloudgateProxy) forwardToCluster(queryToForward *query.Query, isService
 			//		log.Debugf("Received error response from Astra from query (%s, %d, %s)", clientIPAddress, resp.Stream, resp.Body)
 			//		p.checkError(resp.RawBytes)
 			//	}
-
+		case <- timeout.C:
+			log.Debugf("Timeout for query %d from %s", queryToForward.Stream, queryToForward.Destination)
+			// TODO clean up channel for that stream
+			// TODO return something upstream otherwise caller is left hanging
+			return fmt.Errorf("timeout for query %d from %s", queryToForward.Stream, queryToForward.Destination)
 
 		}
 	}
-
 
 	// create response channel and pass it to connectionListener
 	return err
