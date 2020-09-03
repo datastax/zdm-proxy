@@ -74,15 +74,15 @@ func HandleAstraStartup(clientConnection net.Conn, astraConnection net.Conn, sta
 	return nil
 }
 
-func HandleOriginCassandraStartup(client net.Conn, originCassandraConnection net.Conn, startupFrame []byte, username string, password string, serviceResponseChannel chan *frame.Frame) error {
+func HandleOriginCassandraStartup(clientIPAddress string, originCassandraConnection net.Conn, startupFrame []byte, username string, password string, serviceResponseChannel chan *frame.Frame) error {
 
-	log.Debugf("Initiating startup between %s and %s", client.RemoteAddr(), originCassandraConnection.RemoteAddr())
+	log.Debugf("Initiating startup between %s and %s", clientIPAddress, originCassandraConnection.RemoteAddr())
 
 	// Send client's initial startup frame to the database
 	_, err := originCassandraConnection.Write(startupFrame)
 	if err != nil {
 		return fmt.Errorf("unable to send startup frame from client %s to %s",
-			client.RemoteAddr(), originCassandraConnection.RemoteAddr())
+			clientIPAddress, originCassandraConnection.RemoteAddr())
 	}
 
 	authAttempts := 0
@@ -102,18 +102,18 @@ func HandleOriginCassandraStartup(client net.Conn, originCassandraConnection net
 		case 0x02:
 			// READY (server didn't ask for authentication)
 			log.Debugf("%s did not request authorization for connection %s",
-				originCassandraConnection.RemoteAddr(), client.RemoteAddr())
+				originCassandraConnection.RemoteAddr(), clientIPAddress)
 
 			return nil
 		case 0x03, 0x0E:
 			// AUTHENTICATE/AUTH_CHALLENGE (server requests authentication)
 			if authAttempts >= maxAuthRetries {
 				return fmt.Errorf("failed to authenticate connection to %s for %s",
-					originCassandraConnection.RemoteAddr(), client.RemoteAddr())
+					originCassandraConnection.RemoteAddr(), clientIPAddress)
 			}
 
 			log.Debugf("%s requested authentication for connection %s",
-				originCassandraConnection.RemoteAddr(), client.RemoteAddr())
+				originCassandraConnection.RemoteAddr(), clientIPAddress)
 
 			authResp := authFrame(username, password, startupFrame)
 			_, err := originCassandraConnection.Write(authResp)
@@ -125,7 +125,7 @@ func HandleOriginCassandraStartup(client net.Conn, originCassandraConnection net
 		case 0x10:
 			// AUTH_SUCCESS (authentication successful)
 			log.Debugf("%s successfully authenticated with %s",
-				client.RemoteAddr(), originCassandraConnection.RemoteAddr())
+				clientIPAddress, originCassandraConnection.RemoteAddr())
 			return nil
 		}
 	}
@@ -160,10 +160,10 @@ func authFrame(username string, password string, startupFrame []byte) []byte {
 
 // HandleOptions tunnels the OPTIONS request from the client to the database, and then
 // tunnels the corresponding SUPPORTED response back from the database to the client.
-func HandleOptions(clientConnection net.Conn, clusterConnection net.Conn, f []byte, serviceResponseChannel chan *frame.Frame) error {
+func HandleOptions(clientIPAddress string, clusterConnection net.Conn, f []byte, serviceResponseChannel chan *frame.Frame, responseForClientChannel chan []byte) error {
 	if f[4] != 0x05 {
 		return fmt.Errorf("non OPTIONS frame sent into HandleOption for connection %s -> %s",
-			clientConnection.RemoteAddr(), clusterConnection.RemoteAddr())
+			clientIPAddress, clusterConnection.RemoteAddr())
 	}
 
 	log.Debugf("HO 1") // [Alice]
@@ -185,7 +185,7 @@ func HandleOptions(clientConnection net.Conn, clusterConnection net.Conn, f []by
 	//if bytesRead < 9 {
 	if responseFrame.Length < 9 {
 		return fmt.Errorf("received invalid CQL response from database while setting up OPTIONS for "+
-			"connection %s -> %s", clientConnection.RemoteAddr(), clusterConnection.RemoteAddr())
+			"connection %s -> %s", clientIPAddress, clusterConnection.RemoteAddr())
 	}
 
 	log.Debugf("HO 4") // [Alice]
@@ -193,14 +193,15 @@ func HandleOptions(clientConnection net.Conn, clusterConnection net.Conn, f []by
 	//log.Debugf("resp %v", resp) // [Alice]
 	if responseFrame.Opcode != 0x06 {
 		return fmt.Errorf("non SUPPORTED frame received from database for connection %s -> %s",
-			clientConnection.RemoteAddr(), clusterConnection.RemoteAddr())
+			clientIPAddress, clusterConnection.RemoteAddr())
 	}
 
 	log.Debugf("HO 5") // [Alice]
-	_, err = clientConnection.Write(responseFrame.RawBytes)
-	if err != nil {
-		return err
-	}
+	//_, err = clientConnection.Write(responseFrame.RawBytes)
+	//if err != nil {
+	//	return err
+	//}
+	responseForClientChannel <- responseFrame.RawBytes
 
 	log.Debugf("HO 6") // [Alice]
 	return nil

@@ -69,10 +69,16 @@ func (p* CloudgateProxy) handleRequest(f *frame.Frame, clientApplicationIP strin
 	responseFromOriginalCassandra = <- responseFromOriginalCassandraChan
 
 	if isWriteRequest {
-		log.Debugf("Write request: aggregating the responses received - OC: %v && Astra: %v", responseFromOriginalCassandra, responseFromAstra)
+		// TODO this is just to anchor a breakpoint, remove
+		log.Debugf("Both responses to query %s received", originCassandraQuery.Type)
+	}
+
+
+	if isWriteRequest {
+		log.Debugf("Write request: aggregating the responses received - OC: %d && Astra: %d", responseFromOriginalCassandra.Opcode, responseFromAstra.Opcode)
 		p.responseForClientChannels[clientApplicationIP] <- aggregateResponses(responseFromOriginalCassandra, responseFromOriginalCassandra)
 	} else {
-		log.Debugf("Non-write request: just returning the response received from OC: %v", responseFromOriginalCassandra)
+		log.Debugf("Non-write request: just returning the response received from OC: %d", responseFromOriginalCassandra.Opcode)
 		p.responseForClientChannels[clientApplicationIP] <- responseFromOriginalCassandra.RawBytes
 	}
 
@@ -82,16 +88,21 @@ func (p* CloudgateProxy) handleRequest(f *frame.Frame, clientApplicationIP strin
 func aggregateResponses(responseFromOriginalCassandra *frame.Frame, responseFromAstra *frame.Frame) []byte{
 	var aggregatedResponse []byte
 
+	log.Debugf("Aggregating responses. OC opcode %d, Astra opcode %d", responseFromOriginalCassandra.Opcode, responseFromAstra.Opcode)
+
 	//	if both responses are a success OR both responses are a failure --> return responseFromOC
 	if (isResponseSuccessful(responseFromOriginalCassandra) && isResponseSuccessful(responseFromAstra)) ||
 		(!isResponseSuccessful(responseFromOriginalCassandra) && !isResponseSuccessful(responseFromAstra)) {
+		log.Debugf("Aggregated response: both successes or both failures, sending back OC's response with opcode %d", responseFromOriginalCassandra.Opcode)
 		return responseFromOriginalCassandra.RawBytes
 	}
 
 	// if either response is a failure, the failure "wins" --> return the failed response
 	if !isResponseSuccessful(responseFromOriginalCassandra) {
+		log.Debugf("Aggregated response: failure only on OC, sending back OC's response with opcode %d", responseFromOriginalCassandra.Opcode)
 		return responseFromOriginalCassandra.RawBytes
 	} else {
+		log.Debugf("Aggregated response: failure only on Astra, sending back Astra's response with opcode %d", responseFromOriginalCassandra.Opcode)
 		return responseFromAstra.RawBytes
 	}
 

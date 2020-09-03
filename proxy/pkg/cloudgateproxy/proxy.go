@@ -262,14 +262,17 @@ func (p *CloudgateProxy) dispatchResponsesToClient(clientAppConn net.Conn) error
 
 	// Main listening loop
 	for {
+		log.Debugf("Waiting for next response to dispatch to client %s", clientApplicationIP)
 		// dequeue responses from channel
 		response := <- p.responseForClientChannels[clientApplicationIP]
+		log.Debugf("response received, dispatching to client %s. Opcode %d", clientApplicationIP, response[3])
 
 		// send responses on the client connection on which the corresponding request was received
 		_, err := clientAppConn.Write(response)
 		if err != nil {
 			return err
 		}
+		log.Debugf("response dispatched to client %s", clientApplicationIP)
 	}
 
 }
@@ -282,7 +285,7 @@ func (p *CloudgateProxy) forwardToCluster(queryToForward *query.Query, isService
 	// creates a channel on which it will send the outcome (outcomeChan). this will be returned to the caller (handleWriteRequest or  handleReadRequest)
 	// adds an entry to a pendingRequestMap keyed on streamID and whose value is a channel. this channel is used by the dequeuer to communicate the response back to this goroutine
 	// it is this goroutine that has to receive the response, so it can enforce the timeout in case of connection disruption
-	log.Debugf("Forwarding query of type %v with opcode %v and path %v for stream %v", queryToForward.Type, queryToForward.Opcode, queryToForward.Paths[0], queryToForward.Stream)
+	log.Debugf("Forwarding query of type %v with opcode %v and path %v for stream %v to %s", queryToForward.Type, queryToForward.Opcode, queryToForward.Paths[0], queryToForward.Stream, queryToForward.Destination)
 
 	toAstra := queryToForward.Destination == query.ASTRA
 
@@ -513,7 +516,7 @@ func (p *CloudgateProxy) handleStartupFrame(f *frame.Frame, clientAppConn net.Co
 			// this exchange does not authenticate yet
 			// is this also where the native protocol version is negotiated?
 			log.Debugf("Handling OPTIONS message")
-			err := auth.HandleOptions(clientAppConn, astraConnection, f.RawBytes, p.astraServiceResponseChannels[clientAppIP])
+			err := auth.HandleOptions(clientAppIP, astraConnection, f.RawBytes, p.astraServiceResponseChannels[clientAppIP], p.responseForClientChannels[clientAppIP])
 			if err != nil {
 				return false, fmt.Errorf("client %s unable to negotiate options with %s",
 					clientAppIP, astraConnection.RemoteAddr().String())
@@ -529,9 +532,8 @@ func (p *CloudgateProxy) handleStartupFrame(f *frame.Frame, clientAppConn net.Co
 				return false, err
 			}
 			log.Debugf("STARTUP message successfully handled on Astra, now proceeding with OriginCassandra")
-			err = auth.HandleOriginCassandraStartup(clientAppConn, originCassandraConnection, f.RawBytes,
+			err = auth.HandleOriginCassandraStartup(clientAppIP, originCassandraConnection, f.RawBytes,
 													p.Conf.SourceUsername, p.Conf.SourcePassword, p.originCassandraServiceResponseChannels[clientAppIP])
-			//err = auth.HandleAstraStartup(client, sourceDB, f.RawBytes)
 			if err != nil {
 				return false, err
 			}
@@ -555,22 +557,12 @@ func (p *CloudgateProxy) getAstraConnection(clientIPAddress string) net.Conn {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
-	//for _, connection := range p.astraConnections {
-	//	log.Debugf("connection local: %v",connection.LocalAddr().String());
-	//	log.Debugf("connection remote: %v", connection.RemoteAddr().String());
-	//}
-
 	return p.astraConnections[clientIPAddress]
 }
 
 func (p *CloudgateProxy) getOriginCassandraConnection(clientIPAddress string) net.Conn {
 	p.lock.Lock()
 	defer p.lock.Unlock()
-
-	//for _, session := range p.astraSessions {
-	//	log.Debugf("session local: %v",session.LocalAddr().String());
-	//	log.Debugf("session remote: %v", session.RemoteAddr().String());
-	//}
 
 	return p.originCassandraConnections[clientIPAddress]
 }
