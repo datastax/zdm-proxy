@@ -158,6 +158,7 @@ func authFrame(username string, password string, startupFrame []byte) []byte {
 	return authResp
 }
 
+// TODO remove this function - this has moved to request
 // HandleOptions tunnels the OPTIONS request from the client to the database, and then
 // tunnels the corresponding SUPPORTED response back from the database to the client.
 func HandleOptions(clientIPAddress string, clusterConnection net.Conn, f []byte, serviceResponseChannel chan *frame.Frame, responseForClientChannel chan []byte) error {

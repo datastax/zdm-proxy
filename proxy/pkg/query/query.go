@@ -19,12 +19,14 @@ const (
 	DELETE   = Type("delete")
 	TRUNCATE = Type("truncate")
 	PREPARE  = Type("prepare")
+	EXECUTE	 = Type("execute")
 	BATCH    = Type("batch")
 	REGISTER = Type("register")
+	OPTIONS  = Type("options")
 	MISC     = Type("misc")
 
 	ORIGIN_CASSANDRA = DestinationCluster("originCassandra")
-	ASTRA = DestinationCluster("astra")
+	ASTRA            = DestinationCluster("astra")
 
 	// Bit within the flags byte of a query denoting whether the query includes a timestamp
 	timestampBit = 0x20
@@ -44,6 +46,7 @@ type Query struct {
 
 	Type            Type
 	Query           []byte
+	Keyspace		string
 	Opcode          byte
 	SourceIPAddress string
 	Destination 	DestinationCluster
@@ -54,7 +57,7 @@ type Query struct {
 
 // New returns a new query struct with the Timestamp set to the struct's creation time.
 //func New(table *migration.Table, queryType Type, f *frame.Frame, source string, parsedPaths []string) *Query {
-func New(queryType Type, f *frame.Frame, source string, destination DestinationCluster, parsedPaths []string) *Query {
+func New(queryType Type, f *frame.Frame, source string, destination DestinationCluster, parsedPaths []string, keyspace string) *Query {
 	var opcode byte
 	if len(f.RawBytes) >= 5 {
 		opcode = f.RawBytes[4]
@@ -65,6 +68,7 @@ func New(queryType Type, f *frame.Frame, source string, destination DestinationC
 		//Table:     table,
 		Type:            queryType,
 		Query:           f.RawBytes,
+		Keyspace: 		 keyspace,
 		Stream:          f.Stream,
 		Opcode:          opcode,
 		SourceIPAddress: source,
@@ -84,7 +88,7 @@ func (q *Query) UsingTimestamp() *Query {
 
 	flags := q.Query[flagsByte]
 
-	// Query already includes timestamp
+	// Statement already includes timestamp
 	if flags&timestampBit == timestampBit {
 		return q
 	}

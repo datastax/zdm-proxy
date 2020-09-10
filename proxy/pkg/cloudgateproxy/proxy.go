@@ -56,17 +56,13 @@ type CloudgateProxy struct {
 	clientListeners []net.Listener
 
 	// TODO all to be reviewed
-	// Maps containing the prepared queries (raw bytes) keyed on prepareId
-	// One per cluster as the statements are independently prepared on each cluster
-	preparedQueryInfoOriginCassandra  map[string]cqlparser.PreparedQueryInfo
-	preparedQueryInfoAstra  map[string]cqlparser.PreparedQueryInfo
-	// mapping between originCassandraPreparedIds and astraPreparedIds.
-	// This is necessary because the client driver will only know the originCassandraPreparedId and will use this id
-	// to refer to already-prepared statements: the proxy will need to figure out whether that statement was
-	// already prepared on Astra too and:
-	//  - if so, use the corresponding id
-	//  - if not, fetch the raw bytes and issue a prepare request to Astra for it.
-	astraPreparedIdsByOriginPreparedIds map[string]string
+	// Map containing the statement to be prepared and whether it is a read or a write by streamID
+	// This is kind of transient: it only contains statements that are being prepared at the moment.
+	// Once the response to the prepare request is processed, the statement is removed from this map
+	statementsBeingPrepared map[uint16]cqlparser.PreparedStatementInfo
+
+	// Map containing the prepared queries (raw bytes) keyed on prepareId
+	preparedStatementCache map[string]cqlparser.PreparedStatementInfo
 
 	// map of maps holding the response channels from Astra keyed on stream for each client
 	// the outer map is keyed on client IP, the inner maps are keyed on stream
@@ -74,8 +70,8 @@ type CloudgateProxy struct {
 	// map of channels for service-related communication from Astra (keyed on clientIPAddress)
 	astraServiceResponseChannels map[string]chan *frame.Frame
 
-	// map of maps holding the response channels from OriginCassandra keyed on stream for each client
-	// the outer map is keyed on client IP, the inner maps are keyed on stream
+	// map of maps holding the response channels from OriginCassandra keyed on streamID for each client
+	// the outer map is keyed on client IP, the inner maps are keyed on streamID
 	originCassandraResponseChannels map[string]map[uint16]chan *frame.Frame
 	// map of channels for service-related communication from Astra (keyed on clientIPAddress)
 	originCassandraServiceResponseChannels map[string]chan *frame.Frame
@@ -114,6 +110,10 @@ func (p *CloudgateProxy) initializeStructuresForClientConnection(clientAppConn n
 	p.originCassandraServiceResponseChannels[clientApplicationIP] = make(chan *frame.Frame)
 	p.astraServiceResponseChannels[clientApplicationIP] = make(chan *frame.Frame)
 	p.responseForClientChannels[clientApplicationIP] = make(chan []byte)
+
+	p.statementsBeingPrepared = make(map[uint16]cqlparser.PreparedStatementInfo)
+	p.preparedStatementCache = make(map[string]cqlparser.PreparedStatementInfo)
+
 	p.lock.Unlock()
 
 	// start listening for replies on each cluster connection - TODO perhaps just pass the connection here?
@@ -317,36 +317,6 @@ func (p *CloudgateProxy) forwardToCluster(queryToForward *query.Query, isService
 			log.Debugf("Received response from %s for query with stream id %d", queryToForward.Destination, response.Stream)
 			responseToCallerChan <- response
 			timeout.Stop()
-			// everything else that happens here is not holding up the forwardToCluster goroutine that submitted this request
-			// TODO this part should not be here - it needs to be handled upstream
-
-			//	if resp.Opcode == 0x08 {
-			//
-			//		// TODO handle prepared statement flow!
-			//		//resultKind := binary.BigEndian.Uint32(resp.RawBytes[9:13])
-			//		/* if this is an opcode == RESULT message of type 'prepared', associate the prepared
-			//		 statement id with the full query string that was included in the
-			//		 associated PREPARE request.  The stream-id in this reply allows us to
-			//		 find the associated prepare query string.
-			//		*/
-			//
-			//		//if resultKind == 0x0004 {
-			//		//	if sourcePreparedID, ok := p.preparedIDs[resp.Stream]; ok {
-			//		//		idLen := binary.BigEndian.Uint16(data[13:15])
-			//		//		astraPreparedID := string(data[15 : 15+idLen])
-			//		//
-			//		//		p.mappedPreparedIDs[sourcePreparedID] = astraPreparedID
-			//		//		log.Debugf("Mapped source PreparedID %s to Astra PreparedID %s", sourcePreparedID,
-			//		//			astraPreparedID)
-			//		//	}
-			//		//}
-			//
-			//		log.Debugf("Received success response from Astra from query (%s, %d, %s)", clientIPAddress, resp.Stream, string(resp.RawBytes))
-			//
-			//	} else {
-			//		log.Debugf("Received error response from Astra from query (%s, %d, %s)", clientIPAddress, resp.Stream, resp.Body)
-			//		p.checkError(resp.RawBytes)
-			//	}
 		case <- timeout.C:
 			log.Debugf("Timeout for query %d from %s", queryToForward.Stream, queryToForward.Destination)
 			// TODO clean up channel for that stream
@@ -509,7 +479,8 @@ func (p *CloudgateProxy) handleStartupFrame(f *frame.Frame, clientAppConn net.Co
 	astraConnection := p.getAstraConnection(clientAppIP)
 
 	switch f.Opcode {
-		// OPTIONS - The OPTIONS message is only sent to Astra - TODO why?
+		// OPTIONS - this might be sent prior to the startup message to find out which options are supported
+		// The OPTIONS message is only sent to Astra - TODO why?
 		case 0x05:
 			// forward OPTIONS to Astra
 			// [Alice] this call sends the options message and deals with the response (supported / not supported)
@@ -582,9 +553,8 @@ func (p *CloudgateProxy) reset() {
 	p.ReadyForRedirect = make(chan struct{})
 	p.clientListeners = []net.Listener{}
 
-	p.preparedQueryInfoOriginCassandra = make(map[string]cqlparser.PreparedQueryInfo)
-	p.preparedQueryInfoAstra = make(map[string]cqlparser.PreparedQueryInfo)
-	p.astraPreparedIdsByOriginPreparedIds =  make(map[string]string)
+	p.statementsBeingPrepared = make(map[uint16]cqlparser.PreparedStatementInfo)
+	p.preparedStatementCache = make(map[string]cqlparser.PreparedStatementInfo)
 
 	p.originCassandraResponseChannels = make(map[string]map[uint16]chan *frame.Frame)
 	p.astraResponseChannels = make(map[string]map[uint16]chan *frame.Frame)
