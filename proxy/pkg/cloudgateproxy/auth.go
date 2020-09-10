@@ -1,11 +1,9 @@
-package auth
+package cloudgateproxy
 
 import (
 	"encoding/binary"
 	"fmt"
 	"net"
-
-	"github.com/riptano/cloud-gate/proxy/pkg/frame"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -14,7 +12,7 @@ const (
 	maxAuthRetries = 5
 )
 
-func HandleAstraStartup(clientConnection net.Conn, astraConnection net.Conn, startupFrame []byte, serviceResponseChannel chan *frame.Frame) error {
+func HandleAstraStartup(clientConnection net.Conn, astraConnection net.Conn, startupFrame []byte, serviceResponseChannel chan *Frame) error {
 
 	log.Debugf("Initiating startup between %s and %s", clientConnection.RemoteAddr(), astraConnection.RemoteAddr())
 	clientFrame := startupFrame
@@ -74,7 +72,7 @@ func HandleAstraStartup(clientConnection net.Conn, astraConnection net.Conn, sta
 	return nil
 }
 
-func HandleOriginCassandraStartup(clientIPAddress string, originCassandraConnection net.Conn, startupFrame []byte, username string, password string, serviceResponseChannel chan *frame.Frame) error {
+func HandleOriginCassandraStartup(clientIPAddress string, originCassandraConnection net.Conn, startupFrame []byte, username string, password string, serviceResponseChannel chan *Frame) error {
 
 	log.Debugf("Initiating startup between %s and %s", clientIPAddress, originCassandraConnection.RemoteAddr())
 
@@ -161,7 +159,7 @@ func authFrame(username string, password string, startupFrame []byte) []byte {
 // TODO remove this function - this has moved to request
 // HandleOptions tunnels the OPTIONS request from the client to the database, and then
 // tunnels the corresponding SUPPORTED response back from the database to the client.
-func HandleOptions(clientIPAddress string, clusterConnection net.Conn, f []byte, serviceResponseChannel chan *frame.Frame, responseForClientChannel chan []byte) error {
+func HandleOptions(clientIPAddress string, clusterConnection net.Conn, f []byte, serviceResponseChannel chan *Frame, responseForClientChannel chan []byte) error {
 	if f[4] != 0x05 {
 		return fmt.Errorf("non OPTIONS frame sent into HandleOption for connection %s -> %s",
 			clientIPAddress, clusterConnection.RemoteAddr())

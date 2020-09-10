@@ -1,4 +1,4 @@
-package cqlparser
+package cloudgateproxy
 
 import (
 	"encoding/binary"
@@ -39,17 +39,6 @@ type PreparedStatementInfo struct {
 	IsWriteStatement	bool
 }
 
-// TODO review - probably irrelevant and to be removed but just leaving this here for now
-//type PreparedQueries struct {
-//	// Stores prepared query string while waiting for 'prepared' reply from server with prepared id
-//	// Replies are associated via stream-id
-//	PreparedQueryPathByStreamID map[uint16]string
-//
-//	// Stores query string based on prepared-id
-//	// Allows us to view query at time of execute command
-//	PreparedQueryPathByPreparedID map[string]string
-//}
-
 /*  This function takes a request (represented as raw bytes) and parses it.
 	The only requests that are considered and parsed are:
 	 - "Queries" (reads or writes)
@@ -72,7 +61,6 @@ type PreparedStatementInfo struct {
 	from the bytes of the original PREPARE message associated with it
  */
 func CassandraParseRequest(preparedStatementInfoMap map[string]PreparedStatementInfo, data []byte) ([]string, bool, bool, error) {
-//func CassandraParseRequest(preparedQueryBytes map[string][]byte, data []byte) ([]string, bool, error) {
 	opcode := data[4]
 	path := opcodeMap[opcode]
 
@@ -80,16 +68,9 @@ func CassandraParseRequest(preparedStatementInfoMap map[string]PreparedStatement
 	// if it is a single statement, it will be false if the statement is a read
 	// if it is a batch, it will be false if the batch only contains reads, and true otherwise (i.e. there is at least a write)
 	isWriteRequest := false
+	// flag that will be true if the request is not a "data access" request
 	isServiceRequest := false
 
-	// parse query string from query/prepare/batch requests
-
-	// NOTE: parsing only prepare statements and passing all execute
-	// statements requires that we 'invalidate' all execute statements
-	// anytime policy changes, to ensure that no execute statements are
-	// allowed that correspond to prepared queries that would no longer
-	// be valid.   A better option might be to cache all prepared queries,
-	// mapping the execution ID to allow/deny each time policy is changed.
 	if opcode == 0x07 || opcode == 0x09 {
 		// query || prepare
 		queryLen := binary.BigEndian.Uint32(data[9:13])
@@ -134,22 +115,15 @@ func CassandraParseRequest(preparedStatementInfoMap map[string]PreparedStatement
 				offset = ReadPastBatchValues(data, offset)
 			} else if kind == 1 {
 				//  execute an already-prepared statement as part of the batch
-				// TODO review PS lookup logic here
 				preparedID, idLen := extractPreparedIDFromRawRequest(data, offset+1)
 
 				if stmtInfo, ok := preparedStatementInfoMap[preparedID]; ok {
-					// TODO remove this old code.
-					//path, action, err := getPathFromPrepareBytes(stmtInfo.Statement)
-					//if err != nil {
-					//	return nil, false, false, err
-					//}
-
 					paths[i] = "/execute"
 					// The R/W flag was set in the cache when handling the corresponding PREPARE request
 					isWriteRequest = isWriteRequest || stmtInfo.IsWriteStatement
 				} else {
 					log.Warnf("No cached entry for prepared-id = '%s'", preparedID)
-
+					// TODO handle cache miss here! Generate an UNPREPARED response and send straight back to the client?
 					return []string{UnknownPreparedQueryPath}, isWriteRequest, isServiceRequest, nil
 				}
 
@@ -166,13 +140,6 @@ func CassandraParseRequest(preparedStatementInfoMap map[string]PreparedStatement
 		preparedID, _ := extractPreparedIDFromRawRequest(data, 9)
 
 		if stmtInfo, ok := preparedStatementInfoMap[preparedID]; ok {
-			// TODO remove this old code.
-			//path, action, err := getPathFromPrepareBytes(stmtInfo.Statement)
-			//if err != nil {
-			//	return nil, false, false, err
-			//}
-			// isWriteRequest = isWriteAction(action)
-
 			// The R/W flag was set in the cache when handling the corresponding PREPARE request
 			return []string{"/execute"}, stmtInfo.IsWriteStatement, isServiceRequest, nil
 		} else {
@@ -185,6 +152,15 @@ func CassandraParseRequest(preparedStatementInfoMap map[string]PreparedStatement
 		// other opcode, just return type of opcode
 		isServiceRequest = true
 		return []string{"/" + path}, isWriteRequest, isServiceRequest, nil
+	}
+}
+
+func isWriteAction(action string) bool {
+	switch action {
+	case "select", "use":
+		return false
+	default:
+		return true
 	}
 }
 
@@ -322,28 +298,4 @@ func ReadPastBatchValues(data []byte, initialOffset int) int {
 		}
 	}
 	return offset
-}
-
-//// WILL NOT WORK BECAUSE EXECUTE COMMAND DOES NOT CONTAIN THE STATEMENT!
-//func getPathFromPrepareBytes(rawBytes []byte) (string, string, error) {
-////	queryLen := binary.BigEndian.Uint32(rawBytes[9:13])
-////	endIndex := 13 + queryLen
-////	query := string(rawBytes[13:endIndex])
-////	action, table := parseCassandra(query)
-////
-////	if action == "" {
-////		return "", "", errors.New("encountered execute of prepare with invalid frame type")
-////	}
-////
-////	path := "/" + "execute" + "/" + action + "/" + table
-//	return "pio", "pio-pio", nil
-//}
-
-func isWriteAction(action string) bool {
-	switch(action) {
-	case "select", "use":
-		return false
-	default:
-		return true
-	}
 }

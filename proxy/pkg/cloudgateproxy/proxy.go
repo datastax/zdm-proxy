@@ -6,12 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"github.com/jpillora/backoff"
-	"github.com/riptano/cloud-gate/proxy/pkg/auth"
 	"github.com/riptano/cloud-gate/proxy/pkg/config"
-	"github.com/riptano/cloud-gate/proxy/pkg/cqlparser"
-	"github.com/riptano/cloud-gate/proxy/pkg/frame"
 	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
-	"github.com/riptano/cloud-gate/proxy/pkg/query"
 	"io"
 	"net"
 	"sync"
@@ -26,7 +22,7 @@ const (
 	queryTimeout    = 2 * time.Second
 
 	cassHdrLen = 9
-	cassMaxLen = 256 * 1024 * 1024 // 268435456 // 256 MB, per spec
+	cassMaxLen = 256 * 1024 * 1024 // 268435456 // 256 MB, per spec		// TODO is this an actual limit?
 )
 
 // [Alice] for opcode values and meaning see cqlparser.go
@@ -59,22 +55,22 @@ type CloudgateProxy struct {
 	// Map containing the statement to be prepared and whether it is a read or a write by streamID
 	// This is kind of transient: it only contains statements that are being prepared at the moment.
 	// Once the response to the prepare request is processed, the statement is removed from this map
-	statementsBeingPrepared map[uint16]cqlparser.PreparedStatementInfo
+	statementsBeingPrepared map[uint16]PreparedStatementInfo
 
 	// Map containing the prepared queries (raw bytes) keyed on prepareId
-	preparedStatementCache map[string]cqlparser.PreparedStatementInfo
+	preparedStatementCache map[string]PreparedStatementInfo
 
 	// map of maps holding the response channels from Astra keyed on stream for each client
 	// the outer map is keyed on client IP, the inner maps are keyed on stream
-	astraResponseChannels map[string]map[uint16]chan *frame.Frame
+	astraResponseChannels map[string]map[uint16]chan *Frame
 	// map of channels for service-related communication from Astra (keyed on clientIPAddress)
-	astraServiceResponseChannels map[string]chan *frame.Frame
+	astraServiceResponseChannels map[string]chan *Frame
 
 	// map of maps holding the response channels from OriginCassandra keyed on streamID for each client
 	// the outer map is keyed on client IP, the inner maps are keyed on streamID
-	originCassandraResponseChannels map[string]map[uint16]chan *frame.Frame
+	originCassandraResponseChannels map[string]map[uint16]chan *Frame
 	// map of channels for service-related communication from Astra (keyed on clientIPAddress)
-	originCassandraServiceResponseChannels map[string]chan *frame.Frame
+	originCassandraServiceResponseChannels map[string]chan *Frame
 
 	// map of overall response channels - there is one for each client connection (keyed on client IP).
 	//TODO give it a better name
@@ -104,15 +100,15 @@ func (p *CloudgateProxy) initializeStructuresForClientConnection(clientAppConn n
 	p.astraConnections[clientApplicationIP] = astraConn
 	p.connectionLocks[clientApplicationIP] = &sync.RWMutex{}
 
-	p.originCassandraResponseChannels[clientApplicationIP] = make(map[uint16] chan *frame.Frame)
-	p.astraResponseChannels[clientApplicationIP] = make(map[uint16] chan *frame.Frame)
+	p.originCassandraResponseChannels[clientApplicationIP] = make(map[uint16] chan *Frame)
+	p.astraResponseChannels[clientApplicationIP] = make(map[uint16] chan *Frame)
 
-	p.originCassandraServiceResponseChannels[clientApplicationIP] = make(chan *frame.Frame)
-	p.astraServiceResponseChannels[clientApplicationIP] = make(chan *frame.Frame)
+	p.originCassandraServiceResponseChannels[clientApplicationIP] = make(chan *Frame)
+	p.astraServiceResponseChannels[clientApplicationIP] = make(chan *Frame)
 	p.responseForClientChannels[clientApplicationIP] = make(chan []byte)
 
-	p.statementsBeingPrepared = make(map[uint16]cqlparser.PreparedStatementInfo)
-	p.preparedStatementCache = make(map[string]cqlparser.PreparedStatementInfo)
+	p.statementsBeingPrepared = make(map[uint16]PreparedStatementInfo)
+	p.preparedStatementCache = make(map[string]PreparedStatementInfo)
 
 	p.lock.Unlock()
 
@@ -123,17 +119,10 @@ func (p *CloudgateProxy) initializeStructuresForClientConnection(clientAppConn n
 	go p.dispatchResponsesToClient(clientAppConn)
 }
 
-// Start starts up the proxy. The proxy creates a connection with the Astra Database,
-// creates a communication channel with the migration service and then begins listening
-// on $PROXY_QUERY_PORT for queries to the database.
+// Start starts up the proxy and start listening for client connections.
 func (p *CloudgateProxy) Start() error {
 	p.reset()
 	p.checkDatabaseConnections()
-
-	//log.Debugf("wait for ReadyChan")
-	//<-p.ReadyChan 								// [Alice] this signals that the proxy is ready to receive
-	//log.Debugf("received ReadyChan")
-
 
 	err := p.listenFromClient(p.Conf.ProxyQueryPort, p.listenOnClientConnection)
 	if err != nil {
@@ -180,7 +169,7 @@ func (p *CloudgateProxy) listenFromClient(port int, handler func(net.Conn) error
 				log.Error(err)
 				continue
 			}
-			// [Alice] long-lived goroutine that handles any request coming over this connection
+			// long-lived goroutine that handles any request coming over this connection
 			// there is a goroutine call for each connection made by a client
 			go handler(conn)
 		}
@@ -189,9 +178,7 @@ func (p *CloudgateProxy) listenFromClient(port int, handler func(net.Conn) error
 	return nil
 }
 
-// [Alice] long-lived method that will run indefinitely and spawn a new goroutine for each
-// TODO infinite for loop. receive requests, determine type and if read call handleReadRequest, otherwise call handleWriteRequest
-// TODO both these calls are launched as goroutines
+// long-lived method that will run indefinitely and spawn a new goroutine for each client request
 func (p *CloudgateProxy) listenOnClientConnection(clientAppConn net.Conn) error {
 
 	log.Debugf("listenOnClientConnection")
@@ -201,7 +188,7 @@ func (p *CloudgateProxy) listenOnClientConnection(clientAppConn net.Conn) error 
 	authenticated := false
 
 	// Main listening loop
-	// [Alice] creating this outside the loop to avoid creating a slice every time
+	// creating this outside the loop to avoid creating a slice every time
 	// which would be heavy on the GC (see https://medium.com/go-walkthrough/go-walkthrough-io-package-8ac5e95a9fbd)
 	frameHeader := make([]byte, cassHdrLen)
 	for {
@@ -212,12 +199,7 @@ func (p *CloudgateProxy) listenOnClientConnection(clientAppConn net.Conn) error 
 		    - get type
 		    - determine if read or write and also if prepared statement is involved
 		*/
-	// TODO the content of this for loop should become a goroutine, so we handle all incoming requests concurrently
 		f, err := parseFrame(clientAppConn, frameHeader, p.Metrics)
-		//if err != nil {
-		//	// the error has been logged by the parseFrame function, we just want to skip this frame and continue
-		//	continue
-		//}
 
 		if err != nil {
 			if err != io.EOF {
@@ -230,7 +212,7 @@ func (p *CloudgateProxy) listenOnClientConnection(clientAppConn net.Conn) error 
 		}
 
 		if f.Direction != 0 {
-			log.Debugf("Unexpected frame direction %d", f.Direction) // [Alice]
+			log.Debugf("Unexpected frame direction %d", f.Direction)
 			log.Error(errors.New("unexpected direction: frame not from client to db - skipping frame"))
 			continue
 		}
@@ -251,16 +233,13 @@ func (p *CloudgateProxy) listenOnClientConnection(clientAppConn net.Conn) error 
 	}
 }
 
-
+// listens on overallResponseChan for that client
+// dequeues any responses from the channel and sends them to the client
 func (p *CloudgateProxy) dispatchResponsesToClient(clientAppConn net.Conn) error {
-	// listen on overallResponseChan for that client
-	// dequeue any responses from the channel and send them to the client
-
 	log.Debugf("dispatchResponsesToClient")
 
 	clientApplicationIP := clientAppConn.RemoteAddr().String()
 
-	// Main listening loop
 	for {
 		log.Debugf("Waiting for next response to dispatch to client %s", clientApplicationIP)
 		// dequeue responses from channel
@@ -274,26 +253,28 @@ func (p *CloudgateProxy) dispatchResponsesToClient(clientAppConn net.Conn) error
 		}
 		log.Debugf("response dispatched to client %s", clientApplicationIP)
 	}
-
 }
 
-func (p *CloudgateProxy) forwardToCluster(queryToForward *query.Query, isServiceRequest bool, responseToCallerChan chan *frame.Frame) error {
-	// TODO submits the request on cluster connection (initially single connection to keep it simple, but it will probably have to be a pool)
-	// creates a channel on which it will send the outcome (outcomeChan). this will be returned to the caller (handleWriteRequest or  handleReadRequest)
+func (p *CloudgateProxy) forwardToCluster(queryToForward *Query, isServiceRequest bool, responseToCallerChan chan *Frame) error {
+	// submits the request on cluster connection (initially single connection to keep it simple, but it will probably have to be a pool)
+	// creates a channel (responseFromClusterChan) on which it will send the response to the request being handled to the caller (handleRequest)
 	// adds an entry to a pendingRequestMap keyed on streamID and whose value is a channel. this channel is used by the dequeuer to communicate the response back to this goroutine
 	// it is this goroutine that has to receive the response, so it can enforce the timeout in case of connection disruption
 	log.Debugf("Forwarding query of type %v with opcode %v and path %v for stream %v to %s", queryToForward.Type, queryToForward.Opcode, queryToForward.Paths[0], queryToForward.Stream, queryToForward.Destination)
 
-	toAstra := queryToForward.Destination == query.ASTRA
+	toAstra := queryToForward.Destination == ASTRA
 
-	var responseFromClusterChan chan *frame.Frame
+	var responseFromClusterChan chan *Frame
 	if !isServiceRequest {
 		log.Debugf("Not a service request, creating a response channel for stream %d and setting it in the map. toAstra? %t", queryToForward.Stream, toAstra)
 		responseFromClusterChan = p.createResponseFromClusterChan(queryToForward, toAstra)
+		// once the response has been sent to the caller, remove the channel from the map as it has served its purpose
+		// TODO ensure that this cannot happen before the caller has consumed the response! maybe move this cleanup to the caller instead?
 		defer p.deleteResponseFromClusterChan(queryToForward, toAstra)
 	} else {
 		log.Debugf("Service request, retrieving the service response channel. toAstra? %t", toAstra)
 		responseFromClusterChan = p.getServiceResponseChannel(toAstra, queryToForward.SourceIPAddress)
+		// the service response channel is long-lived and not request-specific, no cleanup required
 	}
 
 	var connectionToCluster net.Conn
@@ -308,8 +289,6 @@ func (p *CloudgateProxy) forwardToCluster(queryToForward *query.Query, isService
 		return err
 	}
 
-	//ticker := time.NewTicker(queryTimeout)
-	//defer ticker.Stop()
 	timeout := time.NewTimer(queryTimeout)
 	for {
 		select {
@@ -326,11 +305,24 @@ func (p *CloudgateProxy) forwardToCluster(queryToForward *query.Query, isService
 		}
 	}
 
-	// create response channel and pass it to connectionListener
 	return err
 }
 
-func (p *CloudgateProxy) sendRequestOnConnection(queryToForward *query.Query, connectionToCluster net.Conn) error {
+
+func (p *CloudgateProxy) createResponseFromClusterChan(q *Query, toAstra bool) chan *Frame {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+
+	if toAstra {
+		p.astraResponseChannels[q.SourceIPAddress][q.Stream] = make(chan *Frame, 1)
+		return p.astraResponseChannels[q.SourceIPAddress][q.Stream]
+	} else {
+		p.originCassandraResponseChannels[q.SourceIPAddress][q.Stream] = make(chan *Frame, 1)
+		return p.originCassandraResponseChannels[q.SourceIPAddress][q.Stream]
+	}
+}
+
+func (p *CloudgateProxy) sendRequestOnConnection(queryToForward *Query, connectionToCluster net.Conn) error {
 	p.connectionLocks[queryToForward.SourceIPAddress].Lock()
 	defer p.connectionLocks[queryToForward.SourceIPAddress].Unlock()
 	log.Debugf("Executing %v on cluster with address %v", string(*&queryToForward.Query), queryToForward.SourceIPAddress)
@@ -340,20 +332,7 @@ func (p *CloudgateProxy) sendRequestOnConnection(queryToForward *query.Query, co
 	return err
 }
 
-func (p *CloudgateProxy) createResponseFromClusterChan(q *query.Query, toAstra bool) chan *frame.Frame {
-	p.lock.Lock()
-	defer p.lock.Unlock()
-
-	if toAstra {
-		p.astraResponseChannels[q.SourceIPAddress][q.Stream] = make(chan *frame.Frame, 1)
-		return p.astraResponseChannels[q.SourceIPAddress][q.Stream]
-	} else {
-		p.originCassandraResponseChannels[q.SourceIPAddress][q.Stream] = make(chan *frame.Frame, 1)
-		return p.originCassandraResponseChannels[q.SourceIPAddress][q.Stream]
-	}
-}
-
-func (p *CloudgateProxy) deleteResponseFromClusterChan(q *query.Query, toAstra bool) {
+func (p *CloudgateProxy) deleteResponseFromClusterChan(q *Query, toAstra bool) {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
@@ -366,7 +345,7 @@ func (p *CloudgateProxy) deleteResponseFromClusterChan(q *query.Query, toAstra b
 	}
 }
 
-// clusterReplyHandler will read the response from a cluster and
+// listenOnClusterConnectionForReplies will read the response from a cluster and
 // send it back on the channel for the corresponding request
 /*
  	0x00    ERROR
@@ -390,8 +369,8 @@ func (p *CloudgateProxy) listenOnClusterConnectionForReplies(clientIPAddress str
 
 	// initialization of this long-running routine
 	var connection net.Conn
-	var responseChannels map[string]map[uint16]chan *frame.Frame
-	var serviceResponseChannel chan *frame.Frame
+	var responseChannels map[string]map[uint16]chan *Frame
+	var serviceResponseChannel chan *Frame
 
 	if fromAstra {
 		connection = p.getAstraConnection(clientIPAddress)
@@ -473,7 +452,7 @@ func establishConnection(ip string) net.Conn {
 // The process, at a high level, is that the proxy directly tunnels startup communications
 // to Astra (since the client logs on with Astra credentials), and then the proxy manually
 // initiates startup with the client's old database
-func (p *CloudgateProxy) handleStartupFrame(f *frame.Frame, clientAppConn net.Conn) (bool, error) {
+func (p *CloudgateProxy) handleStartupFrame(f *Frame, clientAppConn net.Conn) (bool, error) {
 	clientAppIP := clientAppConn.RemoteAddr().String()
 	originCassandraConnection := p.getOriginCassandraConnection(clientAppIP)
 	astraConnection := p.getAstraConnection(clientAppIP)
@@ -487,7 +466,7 @@ func (p *CloudgateProxy) handleStartupFrame(f *frame.Frame, clientAppConn net.Co
 			// this exchange does not authenticate yet
 			// is this also where the native protocol version is negotiated?
 			log.Debugf("Handling OPTIONS message")
-			err := auth.HandleOptions(clientAppIP, astraConnection, f.RawBytes, p.astraServiceResponseChannels[clientAppIP], p.responseForClientChannels[clientAppIP])
+			err := HandleOptions(clientAppIP, astraConnection, f.RawBytes, p.astraServiceResponseChannels[clientAppIP], p.responseForClientChannels[clientAppIP])
 			if err != nil {
 				return false, fmt.Errorf("client %s unable to negotiate options with %s",
 					clientAppIP, astraConnection.RemoteAddr().String())
@@ -498,12 +477,12 @@ func (p *CloudgateProxy) handleStartupFrame(f *frame.Frame, clientAppConn net.Co
 		// STARTUP - the STARTUP message is sent to both Astra and OriginCassandra
 		case 0x01:
 			log.Debugf("Handling STARTUP message")
-			err := auth.HandleAstraStartup(clientAppConn, astraConnection, f.RawBytes, p.astraServiceResponseChannels[clientAppIP])
+			err := HandleAstraStartup(clientAppConn, astraConnection, f.RawBytes, p.astraServiceResponseChannels[clientAppIP])
 			if err != nil {
 				return false, err
 			}
 			log.Debugf("STARTUP message successfully handled on Astra, now proceeding with OriginCassandra")
-			err = auth.HandleOriginCassandraStartup(clientAppIP, originCassandraConnection, f.RawBytes,
+			err = HandleOriginCassandraStartup(clientAppIP, originCassandraConnection, f.RawBytes,
 													p.Conf.SourceUsername, p.Conf.SourcePassword, p.originCassandraServiceResponseChannels[clientAppIP])
 			if err != nil {
 				return false, err
@@ -513,7 +492,7 @@ func (p *CloudgateProxy) handleStartupFrame(f *frame.Frame, clientAppConn net.Co
 	}
 	return false, fmt.Errorf("received non STARTUP or OPTIONS query from unauthenticated client %s", clientAppIP)
 }
-func (p *CloudgateProxy) getServiceResponseChannel(toAstra bool, clientIPAddress string) chan *frame.Frame{
+func (p *CloudgateProxy) getServiceResponseChannel(toAstra bool, clientIPAddress string) chan *Frame {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
@@ -553,13 +532,13 @@ func (p *CloudgateProxy) reset() {
 	p.ReadyForRedirect = make(chan struct{})
 	p.clientListeners = []net.Listener{}
 
-	p.statementsBeingPrepared = make(map[uint16]cqlparser.PreparedStatementInfo)
-	p.preparedStatementCache = make(map[string]cqlparser.PreparedStatementInfo)
+	p.statementsBeingPrepared = make(map[uint16]PreparedStatementInfo)
+	p.preparedStatementCache = make(map[string]PreparedStatementInfo)
 
-	p.originCassandraResponseChannels = make(map[string]map[uint16]chan *frame.Frame)
-	p.astraResponseChannels = make(map[string]map[uint16]chan *frame.Frame)
-	p.originCassandraServiceResponseChannels = make(map[string]chan *frame.Frame)
-	p.astraServiceResponseChannels = make(map[string]chan *frame.Frame)
+	p.originCassandraResponseChannels = make(map[string]map[uint16]chan *Frame)
+	p.astraResponseChannels = make(map[string]map[uint16]chan *Frame)
+	p.originCassandraServiceResponseChannels = make(map[string]chan *Frame)
+	p.astraServiceResponseChannels = make(map[string]chan *Frame)
 
 	p.responseForClientChannels = make(map[string]chan []byte)
 
