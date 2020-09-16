@@ -76,3 +76,7 @@ Once connected, experiment sending some requests through the proxy. For example:
 `delete from test.keyvalue where key = 2`
 
 And verify that the data is in both clusters by querying them directly through their own cqlsh.
+
+To test prepared statements, there is a simple noSQLBench activity under nb-tests that can be launched like this:
+
+`java -jar nb.jar run driver=cql workload=~/go/src/github.com/riptano/cloud-gate/nb-tests/cql-nb-activity.yaml tags=phase:'rampup' cycles=20..30 host=localhost port=14002 cbopts=".withProtocolVersion(ProtocolVersion.V3)"`
