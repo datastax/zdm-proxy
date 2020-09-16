@@ -53,7 +53,7 @@ Clone this project into the following directory, using the exact same path speci
 
 If using IntelliJ Goland or the go plugin for IntelliJ Idea Ultimate, create a run configuration as shown here:
 
-![](img/cloudgate_proxy_run_config.png)
+![Run configuration](img/cloudgate_proxy_run_config.png)
   
 In the configuration, use this environment variable list: `ORIGIN_CASSANDRA_HOSTNAME=localhost;ORIGIN_CASSANDRA_USERNAME=cassandra;ORIGIN_CASSANDRA_PASSWORD=cassandra;ORIGIN_CASSANDRA_PORT=9042;TARGET_CASSANDRA_HOSTNAME=localhost;TARGET_CASSANDRA_USERNAME=cassandra;TARGET_CASSANDRA_PASSWORD=cassandra;TARGET_CASSANDRA_PORT=9043;PROXY_SERVICE_HOSTNAME=localhost;PROXY_COMMUNICATION_PORT=14000;DEBUG=true;TEST=true;PROXY_METRICS_PORT=14001;PROXY_QUERY_PORT=14002`
 
