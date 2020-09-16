@@ -8,19 +8,16 @@ import (
 // TODO remove unnecessary fields and rename where appropriate
 // Config holds the values of environment variables necessary for proper Proxy function.
 type Config struct {
-	SourceHostname string `required:"true" split_words:"true"`
-	SourceUsername string `required:"true" split_words:"true"`
-	SourcePassword string `required:"true" split_words:"true"`
-	SourcePort     int    `required:"true" split_words:"true"`
+	OriginCassandraHostname string `required:"true" split_words:"true"`
+	OriginCassandraUsername string `required:"true" split_words:"true"`
+	OriginCassandraPassword string `required:"true" split_words:"true"`
+	OriginCassandraPort     int    `required:"true" split_words:"true"`
 
-	AstraHostname string `required:"true" split_words:"true"`
-	AstraUsername string `required:"true" split_words:"true"`
-	AstraPassword string `required:"true" split_words:"true"`
-	AstraPort     int    `required:"true" split_words:"true"`
+	TargetCassandraHostname string `required:"true" split_words:"true"`
+	TargetCassandraUsername string `required:"true" split_words:"true"`
+	TargetCassandraPassword string `required:"true" split_words:"true"`
+	TargetCassandraPort     int    `required:"true" split_words:"true"`
 
-	//MigrationComplete          bool   `required:"true" split_words:"true"`
-	//MigrationServiceHostname   string `required:"true" split_words:"true"`
-	//MigrationCommunicationPort int    `required:"true" split_words:"true"`
 	ProxyServiceHostname       string `required:"true" split_words:"true"`
 	ProxyCommunicationPort     int    `required:"true" split_words:"true"`
 	ProxyMetricsPort           int    `required:"true" split_words:"true"`

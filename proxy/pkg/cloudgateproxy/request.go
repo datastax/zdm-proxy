@@ -36,25 +36,25 @@ func (p* CloudgateProxy) handleRequest(f *Frame, clientApplicationIP string) err
 	}
 
 	var responseFromOriginalCassandra *Frame
-	var responseFromAstra *Frame
+	var responseFromTargetCassandra *Frame
 
 	// request is forwarded to each cluster in a separate goroutine so this happens concurrently
 	responseFromOriginalCassandraChan := make(chan *Frame)
 	go p.forwardToCluster(originCassandraQuery, isServiceRequest, responseFromOriginalCassandraChan)
 
 	log.Debugf("Launched forwardToCluster (OriginCassandra) goroutine")
-	// if it is a write request (also a batch involving at least one write) then also parse it for the Astra cluster
+	// if it is a write request (also a batch involving at least one write) then also parse it for the TargetCassandra cluster
 	if isWriteRequest {
-		log.Debugf("Write request, now creating statement for Astra")
-		astraQuery, err := p.createQuery(f, clientApplicationIP, paths, true)
+		log.Debugf("Write request, now creating statement for TargetCassandra")
+		targetCassandraQuery, err := p.createQuery(f, clientApplicationIP, paths, true)
 		if err != nil {
 			return err
 		}
-		responseFromAstraChan := make(chan *Frame)
-		go p.forwardToCluster(astraQuery, isServiceRequest, responseFromAstraChan)
-		log.Debugf("Launched forwardToCluster (Astra) goroutine")
-		// we only wait for the astra response if the request was sent to astra. this is why the receive from this channel is in the if block
-		responseFromAstra = <- responseFromAstraChan
+		responseFromTargetCassandraChan := make(chan *Frame)
+		go p.forwardToCluster(targetCassandraQuery, isServiceRequest, responseFromTargetCassandraChan)
+		log.Debugf("Launched forwardToCluster (TargetCassandra) goroutine")
+		// we only wait for the TargetCassandra response if the request was sent to TargetCassandra. this is why the receive from this channel is in the if block
+		responseFromTargetCassandra = <-responseFromTargetCassandraChan
 	}
 
 	// wait for OC response in any case
@@ -62,8 +62,8 @@ func (p* CloudgateProxy) handleRequest(f *Frame, clientApplicationIP string) err
 
 	var response *Frame
 	if isWriteRequest {
-		log.Debugf("Write request: aggregating the responses received - OC: %d && Astra: %d", responseFromOriginalCassandra.Opcode, responseFromAstra.Opcode)
-		response = aggregateResponses(responseFromOriginalCassandra, responseFromAstra)
+		log.Debugf("Write request: aggregating the responses received - OC: %d && TC: %d", responseFromOriginalCassandra.Opcode, responseFromTargetCassandra.Opcode)
+		response = aggregateResponses(responseFromOriginalCassandra, responseFromTargetCassandra)
 	} else {
 		log.Debugf("Non-write request: just returning the response received from OC: %d", responseFromOriginalCassandra.Opcode)
 		response = responseFromOriginalCassandra
@@ -79,13 +79,13 @@ func (p* CloudgateProxy) handleRequest(f *Frame, clientApplicationIP string) err
 	return nil
 }
 
-func aggregateResponses(responseFromOriginalCassandra *Frame, responseFromAstra *Frame) *Frame {
+func aggregateResponses(responseFromOriginalCassandra *Frame, responseFromTargetCassandra *Frame) *Frame {
 
-	log.Debugf("Aggregating responses. OC opcode %d, Astra opcode %d", responseFromOriginalCassandra.Opcode, responseFromAstra.Opcode)
+	log.Debugf("Aggregating responses. OC opcode %d, TargetCassandra opcode %d", responseFromOriginalCassandra.Opcode, responseFromTargetCassandra.Opcode)
 
 	//	if both responses are a success OR both responses are a failure --> return responseFromOC
-	if (isResponseSuccessful(responseFromOriginalCassandra) && isResponseSuccessful(responseFromAstra)) ||
-		(!isResponseSuccessful(responseFromOriginalCassandra) && !isResponseSuccessful(responseFromAstra)) {
+	if (isResponseSuccessful(responseFromOriginalCassandra) && isResponseSuccessful(responseFromTargetCassandra)) ||
+		(!isResponseSuccessful(responseFromOriginalCassandra) && !isResponseSuccessful(responseFromTargetCassandra)) {
 		log.Debugf("Aggregated response: both successes or both failures, sending back OC's response with opcode %d", responseFromOriginalCassandra.Opcode)
 		return responseFromOriginalCassandra
 	}
@@ -95,8 +95,8 @@ func aggregateResponses(responseFromOriginalCassandra *Frame, responseFromAstra 
 		log.Debugf("Aggregated response: failure only on OC, sending back OC's response with opcode %d", responseFromOriginalCassandra.Opcode)
 		return responseFromOriginalCassandra
 	} else {
-		log.Debugf("Aggregated response: failure only on Astra, sending back Astra's response with opcode %d", responseFromOriginalCassandra.Opcode)
-		return responseFromAstra
+		log.Debugf("Aggregated response: failure only on TargetCassandra, sending back TargetCassandra's response with opcode %d", responseFromOriginalCassandra.Opcode)
+		return responseFromTargetCassandra
 	}
 
 }

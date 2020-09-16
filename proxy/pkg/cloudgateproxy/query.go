@@ -26,7 +26,7 @@ const (
 	MISC     = Type("misc")
 
 	ORIGIN_CASSANDRA = DestinationCluster("originCassandra")
-	ASTRA            = DestinationCluster("astra")
+	TARGET_CASSANDRA = DestinationCluster("targetCassandra")
 
 	// Bit within the flags byte of a query denoting whether the query includes a timestamp
 	timestampBit = 0x20
@@ -38,7 +38,7 @@ type Type string
 // This indicates the cluster this query will be executed on
 type DestinationCluster string
 
-// Query represents a query sent to the proxy, destined to be executed on the Astra database.
+// Query represents a query sent to the proxy, destined to be executed on the TargetCassandra database.
 type Query struct {
 	Timestamp uint64
 	Stream    uint16
@@ -110,9 +110,9 @@ func (q *Query) UsingTimestamp() *Query {
 	return q
 }
 
-func GetDestinationCluster(toAstra bool) DestinationCluster {
-	if toAstra {
-		return ASTRA
+func GetDestinationCluster(toTargetCassandra bool) DestinationCluster {
+	if toTargetCassandra {
+		return TARGET_CASSANDRA
 	} else {
 		return ORIGIN_CASSANDRA
 	}
@@ -136,7 +136,7 @@ func (q *Query) getFlagsByte() int {
 	return -1
 }
 
-func (p *CloudgateProxy) createQuery(f *Frame, clientIPAddress string, paths []string, toAstra bool) (*Query, error){
+func (p *CloudgateProxy) createQuery(f *Frame, clientIPAddress string, paths []string, toTargetCassandra bool) (*Query, error){
 	var q *Query
 
 	if paths[0] == UnknownPreparedQueryPath {
@@ -146,7 +146,7 @@ func (p *CloudgateProxy) createQuery(f *Frame, clientIPAddress string, paths []s
 
 	if len(paths) > 1 {
 		log.Debugf("batch query")
-		return p.createBatchQuery(f, clientIPAddress, paths, toAstra)
+		return p.createBatchQuery(f, clientIPAddress, paths, toTargetCassandra)
 	}
 
 	// currently handles query and prepare statements that involve 'use, insert, update, delete, and truncate'
@@ -164,7 +164,7 @@ func (p *CloudgateProxy) createQuery(f *Frame, clientIPAddress string, paths []s
 		switch fields[1] {
 		case "prepare":
 			log.Debugf("prepare statement query")
-			return p.createPrepareQuery(fields[3], f, clientIPAddress, paths, toAstra)
+			return p.createPrepareQuery(fields[3], f, clientIPAddress, paths, toTargetCassandra)
 		case "query":
 			log.Debugf("statement query")
 			queryType := Type(fields[2])
@@ -172,26 +172,26 @@ func (p *CloudgateProxy) createQuery(f *Frame, clientIPAddress string, paths []s
 			switch queryType {
 			case USE:
 				log.Debugf("query type use")
-				return p.createUseQuery(fields[3], f, clientIPAddress, paths, toAstra)
+				return p.createUseQuery(fields[3], f, clientIPAddress, paths, toTargetCassandra)
 			case INSERT, UPDATE, DELETE, TRUNCATE:
 				log.Debugf("query type insert update delete or truncate")
-				return p.createWriteQuery(fields[3], queryType, f, clientIPAddress, paths, toAstra)
+				return p.createWriteQuery(fields[3], queryType, f, clientIPAddress, paths, toTargetCassandra)
 			case SELECT:
 				log.Debugf("query type select")
 				p.Metrics.IncrementReads()
 				return p.createReadQuery(fields[3], f, clientIPAddress, paths)
 			}
 		case "batch":
-			return p.createBatchQuery(f, clientIPAddress, paths, toAstra)
+			return p.createBatchQuery(f, clientIPAddress, paths, toTargetCassandra)
 		}
 	} else {
 		// path is '/opcode' case
 		// FIXME: decide if there are any cases we need to handle here
 		var destination DestinationCluster
-		if toAstra {
+		if toTargetCassandra {
 			destination = ORIGIN_CASSANDRA
 		} else {
-			destination = ASTRA
+			destination = TARGET_CASSANDRA
 		}
 
 		log.Debugf("len(fields) < 2: %s, %v", fields, len(fields))
@@ -216,14 +216,14 @@ func (p *CloudgateProxy) createQuery(f *Frame, clientIPAddress string, paths []s
 }
 
 // TODO is the fromClause really necessary here? can it be replaced or extracted otherwise?
-func (p *CloudgateProxy) createPrepareQuery(fromClause string, f *Frame, clientIPAddress string, paths []string, toAstra bool) (*Query, error) {
+func (p *CloudgateProxy) createPrepareQuery(fromClause string, f *Frame, clientIPAddress string, paths []string, toTargetCassandra bool) (*Query, error) {
 	var q *Query
 	keyspace := extractKeyspace(fromClause)
 
 	// Is the keyspace already in the table clause of the query, or do we need to add it
 	if keyspace == "" {
-		if toAstra {
-			keyspace = p.currentAstraKeyspacePerClient[clientIPAddress]
+		if toTargetCassandra {
+			keyspace = p.currentTargetCassandraKeyspacePerClient[clientIPAddress]
 		} else {
 			keyspace = p.currentOriginCassandraKeyspacePerClient[clientIPAddress]
 		}
@@ -233,13 +233,13 @@ func (p *CloudgateProxy) createPrepareQuery(fromClause string, f *Frame, clientI
 		}
 	}
 
-	q = NewQuery(PREPARE, f, clientIPAddress, GetDestinationCluster(toAstra), paths, keyspace)
+	q = NewQuery(PREPARE, f, clientIPAddress, GetDestinationCluster(toTargetCassandra), paths, keyspace)
 	return q, nil
 }
 
 // TODO is the keyspace parameter really necessary here? can it be replaced or extracted otherwise?
 func (p *CloudgateProxy) createUseQuery(keyspace string, f *Frame, clientIPAddress string,
-	paths []string, toAstra bool) (*Query, error) {
+	paths []string, toTargetCassandra bool) (*Query, error) {
 	var q *Query
 
 	if keyspace == "" {
@@ -256,14 +256,14 @@ func (p *CloudgateProxy) createUseQuery(keyspace string, f *Frame, clientIPAddre
 	}
 
 	p.lock.Lock()
-	if toAstra {
-		p.currentAstraKeyspacePerClient[clientIPAddress] = keyspace
+	if toTargetCassandra {
+		p.currentTargetCassandraKeyspacePerClient[clientIPAddress] = keyspace
 	} else {
 		p.currentOriginCassandraKeyspacePerClient[clientIPAddress] = keyspace
 	}
 	p.lock.Unlock()
 
-	q = NewQuery(USE, f, clientIPAddress, GetDestinationCluster(toAstra), paths, keyspace)
+	q = NewQuery(USE, f, clientIPAddress, GetDestinationCluster(toTargetCassandra), paths, keyspace)
 
 	return q, nil
 }
@@ -271,7 +271,7 @@ func (p *CloudgateProxy) createUseQuery(keyspace string, f *Frame, clientIPAddre
 // handleWriteQuery can handle QUERY and EXECUTE opcodes of type INSERT, UPDATE, DELETE, TRUNCATE
 // TODO tidy up signature. it should be possible to pass fewer parameters with some refactoring
 func (p *CloudgateProxy) createWriteQuery(fromClause string, queryType Type, f *Frame,
-	clientIPAddress string, paths []string, toAstra bool) (*Query, error) {
+	clientIPAddress string, paths []string, toTargetCassandra bool) (*Query, error) {
 	var q *Query
 
 	keyspace := extractKeyspace(fromClause)
@@ -282,14 +282,14 @@ func (p *CloudgateProxy) createWriteQuery(fromClause string, queryType Type, f *
 			data := f.RawBytes
 			idLen := binary.BigEndian.Uint16(data[9:11])
 			preparedID := string(data[11:(11 + idLen)])
-			if toAstra {
+			if toTargetCassandra {
 				keyspace = p.preparedStatementCache[preparedID].Keyspace
 			} else {
 				keyspace = p.preparedStatementCache[preparedID].Keyspace
 			}
 		} else {
-			if toAstra {
-				keyspace = p.currentAstraKeyspacePerClient[clientIPAddress]
+			if toTargetCassandra {
+				keyspace = p.currentTargetCassandraKeyspacePerClient[clientIPAddress]
 			} else {
 				keyspace = p.currentOriginCassandraKeyspacePerClient[clientIPAddress]
 			}
@@ -300,12 +300,12 @@ func (p *CloudgateProxy) createWriteQuery(fromClause string, queryType Type, f *
 		}
 	}
 
-	q = NewQuery(queryType, f, clientIPAddress, GetDestinationCluster(toAstra), paths, keyspace).UsingTimestamp()
+	q = NewQuery(queryType, f, clientIPAddress, GetDestinationCluster(toTargetCassandra), paths, keyspace).UsingTimestamp()
 
 	return q, nil
 }
 
-// Create select query. Selects only go to the origin cassandra cluster, so no toAstra flag is needed here.
+// Create select query. Selects only go to the origin cassandra cluster, so no toTargetCassandra flag is needed here.
 func (p *CloudgateProxy) createReadQuery(fromClause string, f *Frame, clientIPAddress string,
 	paths []string) (*Query, error) {
 	var q *Query
@@ -333,7 +333,7 @@ func (p *CloudgateProxy) createReadQuery(fromClause string, f *Frame, clientIPAd
 	return q, nil
 }
 
-func (p *CloudgateProxy) createBatchQuery(f *Frame, clientIPAddress string, paths []string, toAstra bool) (*Query, error) {
+func (p *CloudgateProxy) createBatchQuery(f *Frame, clientIPAddress string, paths []string, toTargetCassandra bool) (*Query, error) {
 	var q *Query
 	var keyspace string
 
@@ -341,8 +341,8 @@ func (p *CloudgateProxy) createBatchQuery(f *Frame, clientIPAddress string, path
 		fields := strings.Split(path, "/")
 		keyspace = extractKeyspace(fields[3])
 		if keyspace == "" {
-			if toAstra {
-				keyspace = p.currentAstraKeyspacePerClient[clientIPAddress]
+			if toTargetCassandra {
+				keyspace = p.currentTargetCassandraKeyspacePerClient[clientIPAddress]
 			} else {
 				keyspace = p.currentOriginCassandraKeyspacePerClient[clientIPAddress]
 			}
@@ -352,7 +352,7 @@ func (p *CloudgateProxy) createBatchQuery(f *Frame, clientIPAddress string, path
 		}
 	}
 
-	q = NewQuery(BATCH, f, clientIPAddress, GetDestinationCluster(toAstra), paths, keyspace).UsingTimestamp()
+	q = NewQuery(BATCH, f, clientIPAddress, GetDestinationCluster(toTargetCassandra), paths, keyspace).UsingTimestamp()
 	return q, nil
 }
 

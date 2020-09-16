@@ -12,27 +12,27 @@ const (
 	maxAuthRetries = 5
 )
 
-func HandleAstraStartup(clientConnection net.Conn, astraConnection net.Conn, startupFrame []byte, serviceResponseChannel chan *Frame) error {
+func HandleTargetCassandraStartup(clientConnection net.Conn, targetCassandraConnection net.Conn, startupFrame []byte, serviceResponseChannel chan *Frame) error {
 
-	log.Debugf("Initiating startup between %s and %s", clientConnection.RemoteAddr(), astraConnection.RemoteAddr())
+	log.Debugf("Initiating startup between %s and %s", clientConnection.RemoteAddr(), targetCassandraConnection.RemoteAddr())
 	clientFrame := startupFrame
 	buf := make([]byte, 0xfffff)
 	authenticated := false
 	for !authenticated {
-		_, err := astraConnection.Write(clientFrame)
+		_, err := targetCassandraConnection.Write(clientFrame)
 		if err != nil {
 			return fmt.Errorf("unable to send startup frame from clientConnection %s to %s",
-				clientConnection.RemoteAddr(), astraConnection.RemoteAddr())
+				clientConnection.RemoteAddr(), targetCassandraConnection.RemoteAddr())
 		}
 
-		//bytesRead, err := astraConnection.Read(buf)
+		//bytesRead, err := targetCassandraConnection.Read(buf)
 		//if err != nil {
 		//	return fmt.Errorf("error occurred while reading from db connection %v", err)
 		//}
 		//
 		//f := frame.New(buf[:bytesRead])
 		f := <- serviceResponseChannel
-		log.Debug("HandleAstraStartup: Received frame from Astra on serviceResponseChannel")
+		log.Debug("HandleTargetCassandraStartup: Received frame from TargetCassandra on serviceResponseChannel")
 
 		_, err = clientConnection.Write(f.RawBytes)
 		if err != nil {
@@ -47,12 +47,12 @@ func HandleAstraStartup(clientConnection net.Conn, astraConnection net.Conn, sta
 		case 0x02:
 			// READY
 			log.Debugf("%s did not request authorization for connection %s",
-				astraConnection.RemoteAddr(), clientConnection.RemoteAddr())
+				targetCassandraConnection.RemoteAddr(), clientConnection.RemoteAddr())
 			authenticated = true
 		case 0x10:
 			// AUTH_SUCCESS
 			log.Debugf("%s successfully authenticated with %s",
-				clientConnection.RemoteAddr(), astraConnection.RemoteAddr())
+				clientConnection.RemoteAddr(), targetCassandraConnection.RemoteAddr())
 			authenticated = true
 		default:
 			return fmt.Errorf("encountered error that was not READY, AUTHENTICATE, AUTH_CHALLENGE, or AUTH_SUCCESS")
@@ -156,7 +156,6 @@ func authFrame(username string, password string, startupFrame []byte) []byte {
 	return authResp
 }
 
-// TODO remove this function - this has moved to request
 // HandleOptions tunnels the OPTIONS request from the client to the database, and then
 // tunnels the corresponding SUPPORTED response back from the database to the client.
 func HandleOptions(clientIPAddress string, clusterConnection net.Conn, f []byte, serviceResponseChannel chan *Frame, responseForClientChannel chan []byte) error {
@@ -178,7 +177,7 @@ func HandleOptions(clientIPAddress string, clusterConnection net.Conn, f []byte,
 	//}
 	log.Debugf("HO 2") // [Alice]
 	responseFrame := <- serviceResponseChannel
-	log.Debug("HandleOptions: Received frame from Astra on serviceResponseChannel")
+	log.Debug("HandleOptions: Received frame from TargetCassandra on serviceResponseChannel")
 
 	log.Debugf("HO 3") // [Alice]
 	//if bytesRead < 9 {

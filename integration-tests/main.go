@@ -37,15 +37,15 @@ func main() {
 	setup.SeedKeyspace(sourceSession, destSession)
 
 	conf := &config.Config{
-		SourceHostname: "127.0.0.1",
-		SourceUsername: "",
-		SourcePassword: "",
-		SourcePort:     9042,
+		OriginCassandraHostname: "127.0.0.1",
+		OriginCassandraUsername: "",
+		OriginCassandraPassword: "",
+		OriginCassandraPort:     9042,
 
-		AstraHostname: "127.0.0.1",
-		AstraUsername: "",
-		AstraPassword: "",
-		AstraPort:     9043,
+		TargetCassandraHostname: "127.0.0.1",
+		TargetCassandraUsername: "",
+		TargetCassandraPassword: "",
+		TargetCassandraPort:     9043,
 
 		MigrationComplete:          false,
 		MigrationServiceHostname:   "127.0.0.1",

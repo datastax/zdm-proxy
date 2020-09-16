@@ -68,12 +68,12 @@ func (m *CPMetadata) Init(cp *cloudgateproxy.CloudgateProxy) error {
 
 	// Connect to source and destination sessions w/ gocql
 	var err error
-	m.sourceSession, err = utils.ConnectToCluster(cp.Conf.SourceHostname, cp.Conf.SourceUsername, cp.Conf.SourcePassword, cp.Conf.SourcePort)
+	m.sourceSession, err = utils.ConnectToCluster(cp.Conf.OriginCassandraHostname, cp.Conf.OriginCassandraUsername, cp.Conf.OriginCassandraPassword, cp.Conf.OriginCassandraPort)
 	if err != nil {
 		return err
 	}
 
-	m.destSession, err = utils.ConnectToCluster(cp.Conf.AstraHostname, cp.Conf.AstraUsername, cp.Conf.AstraPassword, cp.Conf.AstraPort)
+	m.destSession, err = utils.ConnectToCluster(cp.Conf.TargetCassandraHostname, cp.Conf.TargetCassandraUsername, cp.Conf.TargetCassandraPassword, cp.Conf.TargetCassandraPort)
 	if err != nil {
 		return err
 	}
@@ -92,18 +92,6 @@ func (m CPMetadata) prepCloudgateProxy(cp *cloudgateproxy.CloudgateProxy) {
 		log.Debug(strings.Join(m.keyspaces, ","))
 		log.WithError(err).Fatal("No non system keyspaces in source cluster")
 	}
-
-	// TODO this should go
-	//tables := make(map[string]map[string]*migration.Table)
-	//
-	//tables, err = m.getTables(m.keyspaces)
-	//if err != nil {
-	//	log.WithError(err).Fatal("Failed to discover table schemas from source cluster")
-	//}
-	//
-	//p.MigrationStart <- &migration.Status{Tables: tables,
-	//	Lock: &sync.Mutex{}}
-
 }
 
 //function for testing purposes. Will be deleted later. toggles status for table 'codebase' upon user input
@@ -193,7 +181,7 @@ func (m *CPMetadata) getTables(keyspaces []string) (map[string]map[string]*migra
 		md, err := m.sourceSession.KeyspaceMetadata(keyspace)
 
 		if len(md.Tables) > 200 {
-			log.Fatalf("Astra keyspaces can have 200 tables max; keyspace %s has %d tables", keyspace, len(md.Tables))
+			log.Fatalf("TargetCassandra keyspaces can have 200 tables max; keyspace %s has %d tables", keyspace, len(md.Tables))
 		}
 
 		if err != nil {
