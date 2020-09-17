@@ -485,7 +485,7 @@ func (p *CloudgateProxy) handleStartupFrame(f *Frame, clientAppConn net.Conn) (b
 		defer p.lock.Unlock()
 		responseChannel := p.responseForClientChannels[clientAppIP]
 		responseChannel <- response.RawBytes
-		return true, nil
+		return false, nil
 	}
 	return false, fmt.Errorf("received non STARTUP or OPTIONS query from unauthenticated client %s", clientAppIP)
 }
