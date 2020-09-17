@@ -2,6 +2,7 @@ package cloudgateproxy
 
 import (
 	"encoding/binary"
+	"fmt"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -35,30 +36,38 @@ func (p* CloudgateProxy) handleRequest(f *Frame, clientApplicationIP string) err
 		log.Debugf("statement to be prepared tracked in transient map")
 	}
 
-	var responseFromOriginalCassandra *Frame
 	var responseFromTargetCassandra *Frame
+	var responseFromOriginalCassandra *Frame
+	var ok bool
+
+	log.Debugf("Forwarding query of type %v with opcode %v and path %v for stream %v to %s", originCassandraQuery.Type, originCassandraQuery.Opcode, originCassandraQuery.Paths[0], originCassandraQuery.Stream, originCassandraQuery.Destination)
 
 	// request is forwarded to each cluster in a separate goroutine so this happens concurrently
-	responseFromOriginalCassandraChan := make(chan *Frame)
-	go p.forwardToCluster(originCassandraQuery, isServiceRequest, responseFromOriginalCassandraChan)
+	responseFromOriginalCassandraChan := p.forwardToCluster(originCassandraQuery.Query, originCassandraQuery.Stream, false, clientApplicationIP)
 
-	log.Debugf("Launched forwardToCluster (OriginCassandra) goroutine")
+	//log.Debugf("Launched forwardToCluster (OriginCassandra) goroutine")
 	// if it is a write request (also a batch involving at least one write) then also parse it for the TargetCassandra cluster
 	if isWriteRequest {
-		log.Debugf("Write request, now creating statement for TargetCassandra")
+		//log.Debugf("Write request, now creating statement for TargetCassandra")
 		targetCassandraQuery, err := p.createQuery(f, clientApplicationIP, paths, true)
 		if err != nil {
 			return err
 		}
-		responseFromTargetCassandraChan := make(chan *Frame)
-		go p.forwardToCluster(targetCassandraQuery, isServiceRequest, responseFromTargetCassandraChan)
-		log.Debugf("Launched forwardToCluster (TargetCassandra) goroutine")
-		// we only wait for the TargetCassandra response if the request was sent to TargetCassandra. this is why the receive from this channel is in the if block
-		responseFromTargetCassandra = <-responseFromTargetCassandraChan
+		log.Debugf("Forwarding query of type %v with opcode %v and path %v for stream %v to %s", targetCassandraQuery.Type, targetCassandraQuery.Opcode, targetCassandraQuery.Paths[0], targetCassandraQuery.Stream, targetCassandraQuery.Destination)
+		responseFromTargetCassandraChan := p.forwardToCluster(targetCassandraQuery.Query, targetCassandraQuery.Stream, true, clientApplicationIP)
+		//log.Debugf("Launched forwardToCluster (TargetCassandra) goroutine")
+		// we only wait for the TargetCassandra response if the request was sent to target cassandra. this is why the receive from this channel is in the if block
+		responseFromTargetCassandra, ok = <- responseFromTargetCassandraChan
+		if !ok {
+			return fmt.Errorf("did not receive response from TargetCassandra channel, stream: %d", f.Stream)
+		}
 	}
 
 	// wait for OC response in any case
-	responseFromOriginalCassandra = <- responseFromOriginalCassandraChan
+	responseFromOriginalCassandra, ok = <- responseFromOriginalCassandraChan
+	if !ok {
+		return fmt.Errorf("did not receive response from original cassandra channel, stream: %d", f.Stream)
+	}
 
 	var response *Frame
 	if isWriteRequest {
