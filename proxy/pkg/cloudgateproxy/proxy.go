@@ -1,7 +1,6 @@
 package cloudgateproxy
 
 import (
-	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -19,7 +18,7 @@ import (
 const (
 	// TODO: Make these configurable
 	maxQueryRetries = 5
-	queryTimeout    = 2 * time.Second
+	queryTimeout    = 10 * time.Second
 
 	cassHdrLen = 9
 	cassMaxLen = 256 * 1024 * 1024 // 268435456 // 256 MB, per spec		// TODO is this an actual limit?
@@ -63,14 +62,10 @@ type CloudgateProxy struct {
 	// map of maps holding the response channels from TargetCassandra keyed on stream for each client
 	// the outer map is keyed on client IP, the inner maps are keyed on stream
 	targetCassandraResponseChannels map[string]map[uint16]chan *Frame
-	// map of channels for service-related communication from TargetCassandra (keyed on clientIPAddress)
-	targetCassandraServiceResponseChannels map[string]chan *Frame
 
 	// map of maps holding the response channels from OriginCassandra keyed on streamID for each client
 	// the outer map is keyed on client IP, the inner maps are keyed on streamID
 	originCassandraResponseChannels map[string]map[uint16]chan *Frame
-	// map of channels for service-related communication from TargetCassandra (keyed on clientIPAddress)
-	originCassandraServiceResponseChannels map[string]chan *Frame
 
 	// map of overall response channels - there is one for each client connection (keyed on client IP).
 	responseForClientChannels map[string]chan []byte
@@ -100,8 +95,6 @@ func (p *CloudgateProxy) initializeStructuresForClientConnection(clientAppConn n
 	p.originCassandraResponseChannels[clientApplicationIP] = make(map[uint16] chan *Frame)
 	p.targetCassandraResponseChannels[clientApplicationIP] = make(map[uint16] chan *Frame)
 
-	p.originCassandraServiceResponseChannels[clientApplicationIP] = make(chan *Frame)
-	p.targetCassandraServiceResponseChannels[clientApplicationIP] = make(chan *Frame)
 	p.responseForClientChannels[clientApplicationIP] = make(chan []byte)
 
 	p.statementsBeingPrepared = make(map[uint16]PreparedStatementInfo)
@@ -187,7 +180,6 @@ func (p *CloudgateProxy) listenOnClientConnection(clientAppConn net.Conn) error 
 	// Main listening loop
 	// creating this outside the loop to avoid creating a slice every time
 	// which would be heavy on the GC (see https://medium.com/go-walkthrough/go-walkthrough-io-package-8ac5e95a9fbd)
-	frameHeader := make([]byte, cassHdrLen)
 	for {
 
 		/*  - parse frame
@@ -196,6 +188,7 @@ func (p *CloudgateProxy) listenOnClientConnection(clientAppConn net.Conn) error 
 		    - get type
 		    - determine if read or write and also if prepared statement is involved
 		*/
+		frameHeader := make([]byte, cassHdrLen)
 		f, err := parseFrame(clientAppConn, frameHeader, p.Metrics)
 
 		if err != nil {
@@ -238,108 +231,104 @@ func (p *CloudgateProxy) dispatchResponsesToClient(clientAppConn net.Conn) error
 	clientApplicationIP := clientAppConn.RemoteAddr().String()
 
 	for {
-		log.Debugf("Waiting for next response to dispatch to client %s", clientApplicationIP)
+		//log.Debugf("Waiting for next response to dispatch to client %s", clientApplicationIP)
 		// dequeue responses from channel
 		response := <- p.responseForClientChannels[clientApplicationIP]
-		log.Debugf("response received, dispatching to client %s. Opcode %d", clientApplicationIP, response[3])
+		log.Debugf("Dispatching response to client %s. opcode=%d", clientApplicationIP, response[3])
 
 		// send responses on the client connection on which the corresponding request was received
 		_, err := clientAppConn.Write(response)
 		if err != nil {
 			return err
 		}
-		log.Debugf("response dispatched to client %s", clientApplicationIP)
+		//log.Debugf("response dispatched to client %s", clientApplicationIP)
 	}
 }
 
-func (p *CloudgateProxy) forwardToCluster(queryToForward *Query, isServiceRequest bool, responseToCallerChan chan *Frame) error {
-	// submits the request on cluster connection (initially single connection to keep it simple, but it will probably have to be a pool)
-	// creates a channel (responseFromClusterChan) on which it will send the response to the request being handled to the caller (handleRequest)
-	// adds an entry to a pendingRequestMap keyed on streamID and whose value is a channel. this channel is used by the dequeuer to communicate the response back to this goroutine
-	// it is this goroutine that has to receive the response, so it can enforce the timeout in case of connection disruption
-	log.Debugf("Forwarding query of type %v with opcode %v and path %v for stream %v to %s", queryToForward.Type, queryToForward.Opcode, queryToForward.Paths[0], queryToForward.Stream, queryToForward.Destination)
+func (p *CloudgateProxy) forwardToCluster(rawBytes []byte, streamId uint16, toTarget bool, sourceIpAddr string) chan *Frame {
+	responseToCallerChan := make(chan *Frame)
 
-	targetCassandra := queryToForward.Destination == TARGET_CASSANDRA
+	go func() {
+		// submits the request on cluster connection (initially single connection to keep it simple, but it will probably have to be a pool)
+		// creates a channel (responseFromClusterChan) on which it will send the response to the request being handled to the caller (handleRequest)
+		// adds an entry to a pendingRequestMap keyed on streamID and whose value is a channel. this channel is used by the dequeuer to communicate the response back to this goroutine
+		// it is this goroutine that has to receive the response, so it can enforce the timeout in case of connection disruption
 
-	var responseFromClusterChan chan *Frame
-	if !isServiceRequest {
-		// create a channel on which the loop that listens to the database connection will put the response for this stream and register it in the map
-		// this is necessary because the response comes back on a shared connection and it will be returned asynchronously
-		log.Debugf("Not a service request, creating a response channel for stream %d and setting it in the map. targetCassandra? %t", queryToForward.Stream, targetCassandra)
-		responseFromClusterChan = p.createResponseFromClusterChan(queryToForward, targetCassandra)
-		// this channel will be cleaned up when this goroutine terminates as it is no longer needed
-		defer p.deleteResponseFromClusterChan(queryToForward, targetCassandra)
-	} else {
-		log.Debugf("Service request, retrieving the service response channel. targetCassandra? %t", targetCassandra)
-		responseFromClusterChan = p.getServiceResponseChannel(targetCassandra, queryToForward.SourceIPAddress)
-		// the service response channel is long-lived and not request-specific, no cleanup required
-	}
+	defer close(responseToCallerChan)
 
-	var connectionToCluster net.Conn
-	if targetCassandra {
-		connectionToCluster = p.getTargetCassandraConnection(queryToForward.SourceIPAddress)
-	} else {
-		connectionToCluster = p.getOriginCassandraConnection(queryToForward.SourceIPAddress)
-	}
-
-	err := p.sendRequestOnConnection(queryToForward, connectionToCluster)
-	if err != nil {
-		return err
-	}
-
-	timeout := time.NewTimer(queryTimeout)
-	for {
-		select {
-		case response := <-responseFromClusterChan:
-			log.Debugf("Received response from %s for query with stream id %d", queryToForward.Destination, response.Stream)
-			responseToCallerChan <- response
-			timeout.Stop()
-		case <- timeout.C:
-			log.Debugf("Timeout for query %d from %s", queryToForward.Stream, queryToForward.Destination)
-			// TODO clean up channel for that stream
-			// TODO return something upstream otherwise caller is left hanging
-			return fmt.Errorf("timeout for query %d from %s", queryToForward.Stream, queryToForward.Destination)
-
+		var destination DestinationCluster
+		if toTarget {
+			destination = TARGET_CASSANDRA
+		} else {
+			destination = ORIGIN_CASSANDRA
 		}
-	}
 
-	return err
+		responseFromClusterChan := p.createResponseFromClusterChan(streamId, toTarget, sourceIpAddr)
+		// once the response has been sent to the caller, remove the channel from the map as it has served its purpose
+		// TODO ensure that this cannot happen before the caller has consumed the response! maybe move this cleanup to the caller instead?
+		defer p.deleteResponseFromClusterChan(streamId, toTarget, sourceIpAddr)
+
+		var connectionToCluster net.Conn
+		if toTarget {
+			connectionToCluster = p.getTargetCassandraConnection(sourceIpAddr)
+		} else {
+			connectionToCluster = p.getOriginCassandraConnection(sourceIpAddr)
+		}
+
+		err := p.sendRequestOnConnection(rawBytes, sourceIpAddr, connectionToCluster)
+		if err != nil {
+			log.Errorf("Error while sending request to %s: %s", destination, err)
+		}
+
+		timeout := time.NewTimer(queryTimeout)
+		for {
+			select {
+			case response := <-responseFromClusterChan:
+				//log.Debugf("Received response from %s for query with stream id %d", destination, response.Stream)
+				responseToCallerChan <- response
+				timeout.Stop()
+			case <- timeout.C:
+				log.Debugf("Timeout for query %d from %s", streamId, destination)
+				// TODO clean up channel for that stream (already being done via defer deleteResponseFromClusterChan ?)
+			}
+		}
+	}()
+
+	return responseToCallerChan
 }
 
 
-func (p *CloudgateProxy) createResponseFromClusterChan(q *Query, toTargetCassandra bool) chan *Frame {
+func (p *CloudgateProxy) createResponseFromClusterChan(streamId uint16, toTargetCassandra bool, sourceIpAddr string) chan *Frame {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
 	if toTargetCassandra {
-		p.targetCassandraResponseChannels[q.SourceIPAddress][q.Stream] = make(chan *Frame, 1)
-		return p.targetCassandraResponseChannels[q.SourceIPAddress][q.Stream]
+		p.targetCassandraResponseChannels[sourceIpAddr][streamId] = make(chan *Frame, 1)
+		return p.targetCassandraResponseChannels[sourceIpAddr][streamId]
 	} else {
-		p.originCassandraResponseChannels[q.SourceIPAddress][q.Stream] = make(chan *Frame, 1)
-		return p.originCassandraResponseChannels[q.SourceIPAddress][q.Stream]
+		p.originCassandraResponseChannels[sourceIpAddr][streamId] = make(chan *Frame, 1)
+		return p.originCassandraResponseChannels[sourceIpAddr][streamId]
 	}
 }
 
-func (p *CloudgateProxy) sendRequestOnConnection(queryToForward *Query, connectionToCluster net.Conn) error {
-	p.connectionLocks[queryToForward.SourceIPAddress].Lock()
-	defer p.connectionLocks[queryToForward.SourceIPAddress].Unlock()
-	log.Debugf("Executing %v on cluster with address %v", string(*&queryToForward.Query), queryToForward.SourceIPAddress)
-	buf := bytes.NewBuffer(queryToForward.Query)
-	n := len(queryToForward.Query)
-	_, err := io.CopyN(connectionToCluster, buf, int64(n))
+func (p *CloudgateProxy) sendRequestOnConnection(rawBytes []byte, sourceIpAddr string, connectionToCluster net.Conn) error {
+	p.connectionLocks[sourceIpAddr].Lock()
+	defer p.connectionLocks[sourceIpAddr].Unlock()
+	log.Debugf("Executing %x on cluster with address %v, len=%d", rawBytes[:9], sourceIpAddr, len(rawBytes))
+	_, err := connectionToCluster.Write(rawBytes)
 	return err
 }
 
-func (p *CloudgateProxy) deleteResponseFromClusterChan(q *Query, toTargetCassandra bool) {
+func (p *CloudgateProxy) deleteResponseFromClusterChan(streamId uint16, toTargetCassandra bool, sourceIpAddr string) {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
 	if toTargetCassandra {
-		close(p.targetCassandraResponseChannels[q.SourceIPAddress][q.Stream])
-		delete(p.targetCassandraResponseChannels[q.SourceIPAddress], q.Stream)
+		close(p.targetCassandraResponseChannels[sourceIpAddr][streamId])
+		delete(p.targetCassandraResponseChannels[sourceIpAddr], streamId)
 	} else {
-		close(p.originCassandraResponseChannels[q.SourceIPAddress][q.Stream])
-		delete(p.originCassandraResponseChannels[q.SourceIPAddress], q.Stream)
+		close(p.originCassandraResponseChannels[sourceIpAddr][streamId])
+		delete(p.originCassandraResponseChannels[sourceIpAddr], streamId)
 	}
 }
 
@@ -368,42 +357,41 @@ func (p *CloudgateProxy) listenOnClusterConnectionForReplies(clientIPAddress str
 	// initialization of this long-running routine
 	var connection net.Conn
 	var responseChannels map[string]map[uint16]chan *Frame
-	var serviceResponseChannel chan *Frame
+	var clusterDesc string
+	if fromTargetCassandra {
+		clusterDesc = "TARGET"
+	} else {
+		clusterDesc = "ORIGIN"
+	}
 
 	if fromTargetCassandra {
 		connection = p.getTargetCassandraConnection(clientIPAddress)
 		responseChannels = p.targetCassandraResponseChannels
-		serviceResponseChannel = p.targetCassandraServiceResponseChannels[clientIPAddress]
 	} else {
 		connection = p.getOriginCassandraConnection(clientIPAddress)
 		responseChannels = p.originCassandraResponseChannels
-		serviceResponseChannel = p.originCassandraServiceResponseChannels[clientIPAddress]
 	}
 
 	log.Debugf("Listening to replies sent by cluster: targetCassandra? %v", fromTargetCassandra)
 	// long-running loop that listens for replies being sent by the cluster on this connection
-	frameHeader := make([]byte, cassHdrLen)
+
 	for {
+		frameHeader := make([]byte, cassHdrLen)
 		response, _ := parseFrame(connection, frameHeader, p.Metrics)
 
-		log.Debugf("Opcode? %v -- stream? %v", response.Opcode, response.Stream)
+		log.Debugf(
+			"Received response from %s, opcode=%d, streamid=%d: %v", clusterDesc, response.Opcode, response.Stream, string(*&response.RawBytes))
 
-		// TODO error responses need to be handled as results or service depending on the specific error code. Add this logic!!
-		if response.Opcode == 0x00 || response.Opcode == 0x08 {
-			p.lock.Lock()
+		p.lock.Lock()
 
-			if responseChannel, ok := responseChannels[clientIPAddress][response.Stream]; !ok {
-				log.Errorf("could not find stream %d in responseChannels for client %s. fromTargetCassandra? %v", response.Stream, clientIPAddress, fromTargetCassandra)
-			} else {
-				// Note: the boolean response is sent on the channel here - this will unblock the forwardToCluster goroutine waiting on this
-				responseChannel <- response
-			}
-
-			p.lock.Unlock()
+		if responseChannel, ok := responseChannels[clientIPAddress][response.Stream]; !ok {
+			log.Errorf("could not find stream %d in responseChannels for client %s. fromTargetCassandra? %v", response.Stream, clientIPAddress, fromTargetCassandra)
 		} else {
-			serviceResponseChannel <- response
+			// Note: the boolean response is sent on the channel here - this will unblock the forwardToCluster goroutine waiting on this
+			responseChannel <- response
 		}
 
+		p.lock.Unlock()
 	}
 }
 
@@ -456,49 +444,50 @@ func (p *CloudgateProxy) handleStartupFrame(f *Frame, clientAppConn net.Conn) (b
 	targetCassandraConnection := p.getTargetCassandraConnection(clientAppIP)
 
 	switch f.Opcode {
-		// OPTIONS - this might be sent prior to the startup message to find out which options are supported
-		// The OPTIONS message is only sent to TargetCassandra - TODO why?
-		case 0x05:
-			// forward OPTIONS to TargetCassandra
-			// [Alice] this call sends the options message and deals with the response (supported / not supported)
-			// this exchange does not authenticate yet
-			// is this also where the native protocol version is negotiated?
-			log.Debugf("Handling OPTIONS message")
-			err := HandleOptions(clientAppIP, targetCassandraConnection, f.RawBytes, p.targetCassandraServiceResponseChannels[clientAppIP], p.responseForClientChannels[clientAppIP])
-			if err != nil {
-				return false, fmt.Errorf("client %s unable to negotiate options with %s",
-					clientAppIP, targetCassandraConnection.RemoteAddr().String())
-			}
-			log.Debugf("OPTIONS message successfully handled")
-			// TODO what does this method return here? it should return false
-
-		// STARTUP - the STARTUP message is sent to both TargetCassandra and OriginCassandra
-		case 0x01:
-			log.Debugf("Handling STARTUP message")
-			err := HandleTargetCassandraStartup(clientAppConn, targetCassandraConnection, f.RawBytes, p.targetCassandraServiceResponseChannels[clientAppIP])
-			if err != nil {
-				return false, err
-			}
-			log.Debugf("STARTUP message successfully handled on TargetCassandra, now proceeding with OriginCassandra")
-			err = HandleOriginCassandraStartup(clientAppIP, originCassandraConnection, f.RawBytes,
-													p.Conf.OriginCassandraUsername, p.Conf.OriginCassandraPassword, p.originCassandraServiceResponseChannels[clientAppIP])
-			if err != nil {
-				return false, err
-			}
-			log.Debugf("STARTUP message successfully handled on OriginCassandra")
-			return true, nil
+	// OPTIONS - this might be sent prior to the startup message to find out which options are supported
+	// The OPTIONS message is only sent to TargetCassandra - TODO why?
+	/*case 0x05:
+		// forward OPTIONS to TargetCassandra
+		// [Alice] this call sends the options message and deals with the response (supported / not supported)
+		// this exchange does not authenticate yet
+		// is this also where the native protocol version is negotiated?
+		log.Debugf("Handling OPTIONS message")
+		err := HandleOptions(clientAppIP, targetCassandraConnection, f, p.responseForClientChannels[clientAppIP])
+		if err != nil {
+			return false, fmt.Errorf("client %s unable to negotiate options with %s",
+				clientAppIP, targetCassandraConnection.RemoteAddr().String())
+		}
+		log.Debugf("OPTIONS message successfully handled")
+		// TODO what does this method return here? it should return false
+*/
+	// STARTUP - the STARTUP message is sent to both TargetCassandra and OriginCassandra
+	case 0x01:
+		log.Debugf("Handling STARTUP message")
+		err := p.HandleTargetCassandraStartup(clientAppConn, targetCassandraConnection, f)
+		if err != nil {
+			return false, err
+		}
+		log.Debugf("STARTUP message successfully handled on TargetCassandra, now proceeding with OriginCassandra")
+		err = p.HandleOriginCassandraStartup(clientAppIP, originCassandraConnection, f,
+			p.Conf.OriginCassandraUsername, p.Conf.OriginCassandraPassword)
+		if err != nil {
+			return false, err
+		}
+		log.Debugf("STARTUP message successfully handled on OriginCassandra")
+		return true, nil
+	default:
+		channel := p.forwardToCluster(f.RawBytes, f.Stream, true, clientAppIP)
+		response, ok := <- channel
+		if !ok {
+			return false, fmt.Errorf("failed to forward %d request from %s to target cluster", f.Opcode, clientAppIP)
+		}
+		p.lock.Lock()
+		defer p.lock.Unlock()
+		responseChannel := p.responseForClientChannels[clientAppIP]
+		responseChannel <- response.RawBytes
+		return false, nil
 	}
 	return false, fmt.Errorf("received non STARTUP or OPTIONS query from unauthenticated client %s", clientAppIP)
-}
-func (p *CloudgateProxy) getServiceResponseChannel(toTargetCassandra bool, clientIPAddress string) chan *Frame {
-	p.lock.Lock()
-	defer p.lock.Unlock()
-
-	if toTargetCassandra {
-		return p.targetCassandraServiceResponseChannels[clientIPAddress]
-	} else {
-		return p.originCassandraServiceResponseChannels[clientIPAddress]
-	}
 }
 
 func (p *CloudgateProxy) getTargetCassandraConnection(clientIPAddress string) net.Conn {
@@ -535,8 +524,6 @@ func (p *CloudgateProxy) reset() {
 
 	p.originCassandraResponseChannels = make(map[string]map[uint16]chan *Frame)
 	p.targetCassandraResponseChannels = make(map[string]map[uint16]chan *Frame)
-	p.originCassandraServiceResponseChannels = make(map[string]chan *Frame)
-	p.targetCassandraServiceResponseChannels = make(map[string]chan *Frame)
 
 	p.responseForClientChannels = make(map[string]chan []byte)
 

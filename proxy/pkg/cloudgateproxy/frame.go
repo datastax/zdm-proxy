@@ -37,25 +37,24 @@ func parseFrame(src net.Conn, frameHeader []byte, metrics *metrics.Metrics) (*Fr
 	sourceAddress := src.RemoteAddr().String()
 
 	// [Alice] read the frameHeader, whose length is constant (9 bytes), and put it into this slice
-	log.Debugf("reading frame header from src %s", sourceAddress)
+	//log.Debugf("reading frame header from src %s", sourceAddress)
 	bytesRead, err := io.ReadFull(src, frameHeader)
 	if err != nil {
-		if err != io.EOF {
+		if err == io.EOF {
 			log.Debugf("%s disconnected", sourceAddress)
 		} else {
-			log.Debugf("error reading frame header. bytesRead %d", bytesRead)
-			log.Error(err)
+			log.Errorf("error reading frame header. bytesRead %d, err %s", bytesRead, err)
 		}
 		return nil, err
 	}
-	log.Debugf("frameheader number of bytes read by ReadFull %d", bytesRead) // [Alice]
-	log.Debugf("frameheader content read by ReadFull %v", frameHeader) // [Alice]
+	//log.Debugf("frameheader number of bytes read by ReadFull %d", bytesRead) // [Alice]
+	//log.Debugf("frameheader content read by ReadFull %v", frameHeader) // [Alice]
 	bodyLen := binary.BigEndian.Uint32(frameHeader[5:9])
-	log.Debugf("bodyLen %d", bodyLen) // [Alice]
+	//log.Debugf("bodyLen %d", bodyLen) // [Alice]
 	data := frameHeader
 	bytesSoFar := 0
 
-	log.Debugf("data: %v", data)
+	//log.Debugf("data: %v", data)
 
 	if bodyLen != 0 {
 		for bytesSoFar < int(bodyLen) {
