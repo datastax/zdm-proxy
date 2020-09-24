@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/riptano/cloud-gate/integration-tests/setup"
-	"github.com/riptano/cloud-gate/migration/migration"
 	"github.com/riptano/cloud-gate/utils"
 
 	"github.com/gocql/gocql"
@@ -43,10 +42,10 @@ func BasicBatch(c net.Conn, source *gocql.Session, dest *gocql.Session) {
 	if err != nil {
 		log.WithError(err).Error("Unable to connect to proxy session.")
 	}
-
-	// Send unload table
-	status.Tables[setup.TestKeyspace][setup.TestTable].Step = migration.UnloadingData
-	setup.SendTableUpdate(c, status.Tables[setup.TestKeyspace][setup.TestTable])
+	//
+	//// Send unload table
+	//status.Tables[setup.TestKeyspace][setup.TestTable].Step = migration.UnloadingData
+	//setup.SendTableUpdate(c, status.Tables[setup.TestKeyspace][setup.TestTable])
 
 	// Unload the table
 	unloadedData := setup.UnloadData(source, setup.TestTable)
@@ -83,16 +82,16 @@ func BasicBatch(c net.Conn, source *gocql.Session, dest *gocql.Session) {
 		log.WithError(err).Error("Post-batch update failed.")
 	}
 
-	// Send load table
-	status.Tables[setup.TestKeyspace][setup.TestTable].Step = migration.LoadingData
-	setup.SendTableUpdate(c, status.Tables[setup.TestKeyspace][setup.TestTable])
-
-	// Load the table
-	setup.LoadData(dest, unloadedData, setup.TestTable)
-
-	// Send table complete
-	status.Tables[setup.TestKeyspace][setup.TestTable].Step = migration.LoadingDataComplete
-	setup.SendTableUpdate(c, status.Tables[setup.TestKeyspace][setup.TestTable])
+	//// Send load table
+	//status.Tables[setup.TestKeyspace][setup.TestTable].Step = migration.LoadingData
+	//setup.SendTableUpdate(c, status.Tables[setup.TestKeyspace][setup.TestTable])
+	//
+	//// Load the table
+	//setup.LoadData(dest, unloadedData, setup.TestTable)
+	//
+	//// Send table complete
+	//status.Tables[setup.TestKeyspace][setup.TestTable].Step = migration.LoadingDataComplete
+	//setup.SendTableUpdate(c, status.Tables[setup.TestKeyspace][setup.TestTable])
 
 	// Send migration complete
 	setup.SendMigrationComplete(c, status)

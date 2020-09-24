@@ -32,35 +32,24 @@ var opcodeMap = map[byte]string{
 	0x10: "auth_success",
 }
 
-// TODO move this in its own file
-type PreparedStatementInfo struct {
-	Statement			[]byte
-	Keyspace 			string
-	IsWriteStatement	bool
-}
-
 /*  This function takes a request (represented as raw bytes) and parses it.
-	The only requests that are considered and parsed are:
-	 - "Queries" (reads or writes)
-	 - Prepare (requests to prepare a statement)
-	 - Batches
-	 - Execute (an already prepared statement)
-	Any other requests are ignored
 
 	The raw byte representation of the request is parsed according to its type.
 	If the request is to prepare or execute a prepared statement, the map of prepared statements is used (this is keyed on prepareId)
 
-	Returns list of []string paths in form /opcode/action/table
+	Returns list of []string paths in form /opcode/action/table (one path if a simple request, multiple paths if a batch)
 	 - opcode is "startup", "query", "batch", etc.
 	 - action is "select", "insert", "update", etc,
 	 - table is the table as written in the command
+
+	Parsing requests is not cluster-specific, even considering prepared statements (as preparedIDs are computed based on the statement only)
 
 	This function was taken from
 	https://github.com/cilium/cilium/blob/2bc1fdeb97331761241f2e4b3fb88ad524a0681b/proxylib/cassandra/cassandraparser.go
 	with the following modifications: parsing of EXECUTE statements was modified to determine EXECUTE's action
 	from the bytes of the original PREPARE message associated with it
  */
-func CassandraParseRequest(preparedStatementInfoMap map[string]PreparedStatementInfo, data []byte) ([]string, bool, bool, error) {
+func CassandraParseRequest(psCache *PreparedStatementCache, data []byte) ([]string, bool, error) {
 	opcode := data[4]
 	path := opcodeMap[opcode]
 
@@ -68,8 +57,6 @@ func CassandraParseRequest(preparedStatementInfoMap map[string]PreparedStatement
 	// if it is a single statement, it will be false if the statement is a read
 	// if it is a batch, it will be false if the batch only contains reads, and true otherwise (i.e. there is at least a write)
 	isWriteRequest := false
-	// flag that will be true if the request is not a "data access" request
-	isServiceRequest := false
 
 	if opcode == 0x07 || opcode == 0x09 {
 		// query || prepare
@@ -79,13 +66,13 @@ func CassandraParseRequest(preparedStatementInfoMap map[string]PreparedStatement
 		action, table := parseCassandra(query)
 
 		if action == "" {
-			return nil, false, false, errors.New("invalid frame type")
+			return nil, false, errors.New("invalid frame type")
 		}
 
 		isWriteRequest = isWriteAction(action)
 
 		path = "/" + path + "/" + action + "/" + table
-		return []string{path}, isWriteRequest, isServiceRequest, nil
+		return []string{path}, isWriteRequest, nil
 	} else if opcode == 0x0d {
 		// batch
 
@@ -103,7 +90,7 @@ func CassandraParseRequest(preparedStatementInfoMap map[string]PreparedStatement
 				action, table := parseCassandra(query)
 
 				if action == "" {
-					return nil, false, false, errors.New("invalid frame type for a query while processing batch")
+					return nil, false, errors.New("invalid frame type for a query while processing batch")
 				}
 
 				isWriteRequest = isWriteRequest || isWriteAction(action)
@@ -117,47 +104,47 @@ func CassandraParseRequest(preparedStatementInfoMap map[string]PreparedStatement
 				//  execute an already-prepared statement as part of the batch
 				preparedID, idLen := extractPreparedIDFromRawRequest(data, offset+1)
 
-				if stmtInfo, ok := preparedStatementInfoMap[preparedID]; ok {
+				if stmtInfo, ok := psCache.retrieveStmtInfoFromCache(preparedID); ok {
 					paths[i] = "/execute"
 					// The R/W flag was set in the cache when handling the corresponding PREPARE request
 					isWriteRequest = isWriteRequest || stmtInfo.IsWriteStatement
 				} else {
 					log.Warnf("No cached entry for prepared-id = '%s'", preparedID)
 					// TODO handle cache miss here! Generate an UNPREPARED response and send straight back to the client?
-					return []string{UnknownPreparedQueryPath}, isWriteRequest, isServiceRequest, nil
+					return []string{UnknownPreparedQueryPath}, isWriteRequest, nil
 				}
 
 				offset = offset + 3 + idLen
 				offset = ReadPastBatchValues(data, offset)
 			} else {
 				log.Errorf("unexpected value of 'kind' in batch query: %d", kind)
-				return nil, false, false, errors.New("processing batch command failed")
+				return nil, false, errors.New("processing batch command failed")
 			}
 		}
-		return paths, isWriteRequest, isServiceRequest, nil
+		return paths, isWriteRequest, nil
 	} else if opcode == 0x0a {
 		// execute an already-prepared statement
 		preparedID, _ := extractPreparedIDFromRawRequest(data, 9)
 
-		if stmtInfo, ok := preparedStatementInfoMap[preparedID]; ok {
+		if stmtInfo, ok := psCache.retrieveStmtInfoFromCache(preparedID); ok {
 			// The R/W flag was set in the cache when handling the corresponding PREPARE request
-			return []string{"/execute"}, stmtInfo.IsWriteStatement, isServiceRequest, nil
+			return []string{"/execute"}, stmtInfo.IsWriteStatement, nil
 		} else {
 			log.Warnf("No cached entry for prepared-id = '%s'", preparedID)
 			// TODO handle cache miss here! Generate an UNPREPARED response and send straight back to the client?
-			return []string{UnknownPreparedQueryPath}, isWriteRequest, isServiceRequest, nil
+			return []string{UnknownPreparedQueryPath}, isWriteRequest, nil
 		}
 
 	} else {
 		// other opcode, just return type of opcode
-		isServiceRequest = true
-		return []string{"/" + path}, isWriteRequest, isServiceRequest, nil
+		return []string{"/" + path}, isWriteRequest, nil
 	}
 }
 
+//TODO what about other types of actions such as USE?
 func isWriteAction(action string) bool {
 	switch action {
-	case "select", "use":
+	case "select":
 		return false
 	default:
 		return true

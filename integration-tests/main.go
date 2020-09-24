@@ -4,7 +4,7 @@ import (
 	"github.com/riptano/cloud-gate/integration-tests/setup"
 	"github.com/riptano/cloud-gate/integration-tests/test"
 	"github.com/riptano/cloud-gate/proxy/pkg/config"
-	"github.com/riptano/cloud-gate/proxy/pkg/filter"
+	"github.com/riptano/cloud-gate/proxy/pkg/cloudgateproxy"
 
 	"fmt"
 
@@ -47,9 +47,6 @@ func main() {
 		TargetCassandraPassword: "",
 		TargetCassandraPort:     9043,
 
-		MigrationComplete:          false,
-		MigrationServiceHostname:   "127.0.0.1",
-		MigrationCommunicationPort: 15000,
 		ProxyServiceHostname:       "127.0.0.1",
 		ProxyCommunicationPort:     14000,
 		ProxyMetricsPort:           8080,
@@ -60,7 +57,7 @@ func main() {
 		MaxQueueSize: 1000,
 	}
 
-	p := &filter.CQLProxy{
+	p := &cloudgateproxy.CloudgateProxy{
 		Conf: conf,
 	}
 

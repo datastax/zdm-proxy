@@ -33,17 +33,17 @@ func NewFrame(frame []byte) *Frame {
 }
 
 // Simple function that reads data from a connection and builds a frame
-func parseFrame(src net.Conn, frameHeader []byte, metrics *metrics.Metrics) (*Frame, error) {
-	sourceAddress := src.RemoteAddr().String()
+func parseFrame(connection net.Conn, frameHeader []byte, metrics *metrics.Metrics) (*Frame, error) {
+	sourceAddress := connection.RemoteAddr().String()
 
 	// [Alice] read the frameHeader, whose length is constant (9 bytes), and put it into this slice
-	//log.Debugf("reading frame header from src %s", sourceAddress)
-	bytesRead, err := io.ReadFull(src, frameHeader)
+	//log.Debugf("reading frame header from connection %s", sourceAddress)
+	bytesRead, err := io.ReadFull(connection, frameHeader)
 	if err != nil {
 		if err == io.EOF {
-			log.Debugf("%s disconnected", sourceAddress)
+			log.Debugf("in parseFrame: %s disconnected", sourceAddress)
 		} else {
-			log.Errorf("error reading frame header. bytesRead %d, err %s", bytesRead, err)
+			log.Errorf("in parseFrame: error reading frame header. bytesRead %d, err %s", bytesRead, err)
 		}
 		return nil, err
 	}
@@ -59,7 +59,7 @@ func parseFrame(src net.Conn, frameHeader []byte, metrics *metrics.Metrics) (*Fr
 	if bodyLen != 0 {
 		for bytesSoFar < int(bodyLen) {
 			rest := make([]byte, int(bodyLen)-bytesSoFar)
-			bytesRead, err := io.ReadFull(src, rest)
+			bytesRead, err := io.ReadFull(connection, rest)
 			if err != nil {
 				log.Error(err)
 				continue	// [Alice] next iteration of this small for loop, not the outer infinite one
@@ -68,7 +68,7 @@ func parseFrame(src net.Conn, frameHeader []byte, metrics *metrics.Metrics) (*Fr
 			bytesSoFar += bytesRead
 		}
 	}
-	//log.Debugf("(from %s): %v", src.RemoteAddr(), string(data))
+	//log.Debugf("(from %s): %v", connection.RemoteAddr(), string(data))
 	f := NewFrame(data)
 	metrics.IncrementFrames()
 

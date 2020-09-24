@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/riptano/cloud-gate/integration-tests/setup"
-	"github.com/riptano/cloud-gate/migration/migration"
 	"github.com/riptano/cloud-gate/utils"
 
 	"github.com/gocql/gocql"
@@ -47,12 +46,12 @@ func BasicUpdate(c net.Conn, source *gocql.Session, dest *gocql.Session) {
 		log.WithError(err).Error("Unable to connect to proxy session.")
 	}
 
-	// Send unload table
-	status.Tables[setup.TestKeyspace][setup.TestTable].Step = migration.UnloadingData
-	setup.SendTableUpdate(c, status.Tables[setup.TestKeyspace][setup.TestTable])
+	//// Send unload table
+	//status.Tables[setup.TestKeyspace][setup.TestTable].Step = migration.UnloadingData
+	//setup.SendTableUpdate(c, status.Tables[setup.TestKeyspace][setup.TestTable])
 
-	// Unload the table
-	unloadedData := setup.UnloadData(source, setup.TestTable)
+	//// Unload the table
+	//unloadedData := setup.UnloadData(source, setup.TestTable)
 
 	// Run query on proxied connection
 	err = proxy.Query(fmt.Sprintf("UPDATE %s.%s SET task = 'terrance' WHERE id = d1b05da0-8c20-11ea-9fc6-6d2c86545d91;", setup.TestKeyspace, setup.TestTable)).Exec()
@@ -60,16 +59,16 @@ func BasicUpdate(c net.Conn, source *gocql.Session, dest *gocql.Session) {
 		log.WithError(err).Error("Mid-migration update failed.")
 	}
 
-	// Send load table
-	status.Tables[setup.TestKeyspace][setup.TestTable].Step = migration.LoadingData
-	setup.SendTableUpdate(c, status.Tables[setup.TestKeyspace][setup.TestTable])
-
-	// Load the table
-	setup.LoadData(dest, unloadedData, setup.TestTable)
-
-	// Send table complete
-	status.Tables[setup.TestKeyspace][setup.TestTable].Step = migration.LoadingDataComplete
-	setup.SendTableUpdate(c, status.Tables[setup.TestKeyspace][setup.TestTable])
+	//// Send load table
+	//status.Tables[setup.TestKeyspace][setup.TestTable].Step = migration.LoadingData
+	//setup.SendTableUpdate(c, status.Tables[setup.TestKeyspace][setup.TestTable])
+	//
+	//// Load the table
+	//setup.LoadData(dest, unloadedData, setup.TestTable)
+	//
+	//// Send table complete
+	//status.Tables[setup.TestKeyspace][setup.TestTable].Step = migration.LoadingDataComplete
+	//setup.SendTableUpdate(c, status.Tables[setup.TestKeyspace][setup.TestTable])
 
 	// Send migration complete
 	setup.SendMigrationComplete(c, status)

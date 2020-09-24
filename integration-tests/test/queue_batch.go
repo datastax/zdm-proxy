@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/riptano/cloud-gate/integration-tests/setup"
-	"github.com/riptano/cloud-gate/migration/migration"
 	"github.com/riptano/cloud-gate/utils"
 
 	"github.com/gocql/gocql"
@@ -55,34 +54,34 @@ func QueueBatch(c net.Conn, source *gocql.Session, dest *gocql.Session) {
 
 	log.Info("Sending table update for unloading table 2")
 
-	// Send unload table2
-	status.Tables[setup.TestKeyspace][setup.TestTable2].Step = migration.UnloadingData
-	setup.SendTableUpdate(c, status.Tables[setup.TestKeyspace][setup.TestTable2])
+	//// Send unload table2
+	//status.Tables[setup.TestKeyspace][setup.TestTable2].Step = migration.UnloadingData
+	//setup.SendTableUpdate(c, status.Tables[setup.TestKeyspace][setup.TestTable2])
 
 	// Unload the table2
 	unloadedData2 := setup.UnloadData(source, setup.TestTable2)
 
 	log.Info("unloaded data", unloadedData2)
 
-	// Send unload table1
-	status.Tables[setup.TestKeyspace][setup.TestTable].Step = migration.UnloadingData
-	setup.SendTableUpdate(c, status.Tables[setup.TestKeyspace][setup.TestTable])
+	//// Send unload table1
+	//status.Tables[setup.TestKeyspace][setup.TestTable].Step = migration.UnloadingData
+	//setup.SendTableUpdate(c, status.Tables[setup.TestKeyspace][setup.TestTable])
 
 	// Unload the table1
 	unloadedData1 := setup.UnloadData(source, setup.TestTable)
 
 	log.Info("unloaded data", unloadedData1)
 
-	// Send load table2
-	status.Tables[setup.TestKeyspace][setup.TestTable2].Step = migration.LoadingData
-	setup.SendTableUpdate(c, status.Tables[setup.TestKeyspace][setup.TestTable2])
+	//// Send load table2
+	//status.Tables[setup.TestKeyspace][setup.TestTable2].Step = migration.LoadingData
+	//setup.SendTableUpdate(c, status.Tables[setup.TestKeyspace][setup.TestTable2])
 
 	// Load the table2
 	setup.LoadData(dest, unloadedData2, setup.TestTable2)
 
-	// Send table2 completed loading data
-	status.Tables[setup.TestKeyspace][setup.TestTable2].Step = migration.LoadingDataComplete
-	setup.SendTableUpdate(c, status.Tables[setup.TestKeyspace][setup.TestTable2])
+	//// Send table2 completed loading data
+	//status.Tables[setup.TestKeyspace][setup.TestTable2].Step = migration.LoadingDataComplete
+	//setup.SendTableUpdate(c, status.Tables[setup.TestKeyspace][setup.TestTable2])
 
 	//Batch statement: update one row task value to katelyn, insert terrance as a new row
 	b := proxy.NewBatch(gocql.LoggedBatch)
@@ -116,15 +115,15 @@ func QueueBatch(c net.Conn, source *gocql.Session, dest *gocql.Session) {
 	setup.Assert(0, count)
 
 	// Send load table1
-	status.Tables[setup.TestKeyspace][setup.TestTable].Step = migration.LoadingData
-	setup.SendTableUpdate(c, status.Tables[setup.TestKeyspace][setup.TestTable])
+	//status.Tables[setup.TestKeyspace][setup.TestTable].Step = migration.LoadingData
+	//setup.SendTableUpdate(c, status.Tables[setup.TestKeyspace][setup.TestTable])
 
 	// Load the table1
 	setup.LoadData(dest, unloadedData1, setup.TestTable)
 
 	// Send loading data complete for table1
-	status.Tables[setup.TestKeyspace][setup.TestTable].Step = migration.LoadingDataComplete
-	setup.SendTableUpdate(c, status.Tables[setup.TestKeyspace][setup.TestTable])
+	//status.Tables[setup.TestKeyspace][setup.TestTable].Step = migration.LoadingDataComplete
+	//setup.SendTableUpdate(c, status.Tables[setup.TestKeyspace][setup.TestTable])
 
 	// Send migration complete
 	setup.SendMigrationComplete(c, status)
