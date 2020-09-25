@@ -68,7 +68,7 @@ func (m *CPMetadata) Init(cp *cloudgateproxy.CloudgateProxy) error {
 	return nil
 }
 
-
+// TODO: remove struct
 type CPMetadata struct {
 	// Sessions TODO rename these more clearly
 	sourceSession *gocql.Session
