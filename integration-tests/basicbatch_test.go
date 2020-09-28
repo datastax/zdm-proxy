@@ -1,22 +1,20 @@
-package test
+package integration_tests
 
 import (
 	"fmt"
-	"net"
-	"time"
-
+	"github.com/bmizerany/assert"
 	"github.com/riptano/cloud-gate/integration-tests/setup"
 	"github.com/riptano/cloud-gate/utils"
+	"testing"
 
 	"github.com/gocql/gocql"
-	log "github.com/sirupsen/logrus"
 )
 
 // BasicBatch tests basic batch statement functionality
 // The test runs a basic batch statement, which includes an insert and update,
 // and then runs an insert and update after to make sure it works
-func BasicBatch(c net.Conn, source *gocql.Session, dest *gocql.Session) {
-	status := setup.CreateStatusObject()
+func TestBasicBatch(t *testing.T) {
+
 	// Initialize test data
 	dataIds1 := []string{
 		"cf0f4cf0-8c20-11ea-9fc6-6d2c86545d91",
@@ -28,29 +26,15 @@ func BasicBatch(c net.Conn, source *gocql.Session, dest *gocql.Session) {
 		"FgQfJesbNcxAebzFPRRcW2p1bBtoz1P1"}
 
 	// Seed source and dest w/ schema and data
-	setup.SeedData(source, dest, setup.TestTable, dataIds1, dataTasks1)
-
-	// Send start
-	log.Info("Sending start signal to proxy")
-	setup.SendStart(c, status)
-
-	log.Info("Attempting to connect to db as client through proxy...")
+	setup.SeedData(source.GetSession(), dest.GetSession(), setup.TestTable, dataIds1, dataTasks1)
 
 	// Connect to proxy as a "client"
 	proxy, err := utils.ConnectToCluster("127.0.0.1", "", "", 14002)
 
 	if err != nil {
-		log.WithError(err).Error("Unable to connect to proxy session.")
+		t.Log("Unable to connect to proxy session.")
+		t.Fatal(err)
 	}
-	//
-	//// Send unload table
-	//status.Tables[setup.TestKeyspace][setup.TestTable].Step = migration.UnloadingData
-	//setup.SendTableUpdate(c, status.Tables[setup.TestKeyspace][setup.TestTable])
-
-	// Unload the table
-	unloadedData := setup.UnloadData(source, setup.TestTable)
-
-	log.Info("unloaded data", unloadedData)
 
 	// Run queries on proxied connection
 
@@ -61,43 +45,30 @@ func BasicBatch(c net.Conn, source *gocql.Session, dest *gocql.Session) {
 
 	err = proxy.ExecuteBatch(b)
 	if err != nil {
-		log.WithError(err).Error("Batch failed.")
+		t.Log("Batch failed.")
+		t.Fatal(err)
 	}
 
 	// Update: terrance --> kelvin
 	err = proxy.Query(fmt.Sprintf("UPDATE %s.%s SET task = 'kelvin' WHERE id = d1b05da0-8c20-11ea-9fc6-6d2c86545d92;", setup.TestKeyspace, setup.TestTable)).Exec()
 	if err != nil {
-		log.WithError(err).Error("Post-batch update failed.")
+		t.Log("Post-batch update failed.")
+		t.Fatal(err)
 	}
 
 	// Insert isabelle
 	err = proxy.Query(fmt.Sprintf("INSERT INTO %s.%s (id, task) VALUES (d1b05da0-8c20-11ea-9fc6-6d2c86545d93 ,'isabelle');", setup.TestKeyspace, setup.TestTable)).Exec()
 	if err != nil {
-		log.WithError(err).Error("Post-batch insert failed.")
+		t.Log("Post-batch insert failed.")
+		t.Fatal(err)
 	}
 
 	// Update: isabelle --> ryan
 	err = proxy.Query(fmt.Sprintf("UPDATE %s.%s SET task = 'ryan' WHERE id = d1b05da0-8c20-11ea-9fc6-6d2c86545d93;", setup.TestKeyspace, setup.TestTable)).Exec()
 	if err != nil {
-		log.WithError(err).Error("Post-batch update failed.")
+		t.Log("Post-batch update failed.")
+		t.Fatal(err)
 	}
-
-	//// Send load table
-	//status.Tables[setup.TestKeyspace][setup.TestTable].Step = migration.LoadingData
-	//setup.SendTableUpdate(c, status.Tables[setup.TestKeyspace][setup.TestTable])
-	//
-	//// Load the table
-	//setup.LoadData(dest, unloadedData, setup.TestTable)
-	//
-	//// Send table complete
-	//status.Tables[setup.TestKeyspace][setup.TestTable].Step = migration.LoadingDataComplete
-	//setup.SendTableUpdate(c, status.Tables[setup.TestKeyspace][setup.TestTable])
-
-	// Send migration complete
-	setup.SendMigrationComplete(c, status)
-
-	time.Sleep(2 * time.Second)
-	log.Info("Sleep 2 seconds")
 
 	// Assertions!
 
@@ -105,26 +76,26 @@ func BasicBatch(c net.Conn, source *gocql.Session, dest *gocql.Session) {
 	itr := proxy.Query(fmt.Sprintf("SELECT * FROM %s.%s WHERE id = d1b05da0-8c20-11ea-9fc6-6d2c86545d91;", setup.TestKeyspace, setup.TestTable)).Iter()
 	row := make(map[string]interface{})
 
-	itr.MapScan(row)
+	assert.T(t, itr.MapScan(row))
 	task := setup.MapToTask(row)
 
-	setup.Assert("katelyn", task.Task)
+	setup.AssertEqual(t, "katelyn", task.Task)
 
 	// Check kelvin
 	itr = proxy.Query(fmt.Sprintf("SELECT * FROM %s.%s WHERE id = d1b05da0-8c20-11ea-9fc6-6d2c86545d92;", setup.TestKeyspace, setup.TestTable)).Iter()
 	row = make(map[string]interface{})
 
-	itr.MapScan(row)
+	assert.T(t, itr.MapScan(row))
 	task = setup.MapToTask(row)
 
-	setup.Assert("kelvin", task.Task)
+	setup.AssertEqual(t, "kelvin", task.Task)
 
 	// Check ryan
 	itr = proxy.Query(fmt.Sprintf("SELECT * FROM %s.%s WHERE id = d1b05da0-8c20-11ea-9fc6-6d2c86545d93;", setup.TestKeyspace, setup.TestTable)).Iter()
 	row = make(map[string]interface{})
 
-	itr.MapScan(row)
+	assert.T(t, itr.MapScan(row))
 	task = setup.MapToTask(row)
 
-	setup.Assert("ryan", task.Task)
+	setup.AssertEqual(t, "ryan", task.Task)
 }

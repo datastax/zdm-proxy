@@ -159,6 +159,7 @@ func (cc *ClusterConnector) deleteChannelForClusterResponse(streamId uint16) {
 }
 
 func (cc *ClusterConnector) sendRequestToCluster(rawBytes []byte) error {
+	// TODO: remove locks (we should only need them for the streamid channel map?)
 	cc.lock.Lock()
 	defer cc.lock.Unlock()
 	log.Debugf("Executing %x on cluster with address %v, len=%d", rawBytes[:9], cc.connection.RemoteAddr(), len(rawBytes))

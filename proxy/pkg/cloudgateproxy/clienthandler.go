@@ -70,6 +70,7 @@ func (ch *ClientHandler) listenForClientRequests() {
 	log.Debugf("listenForClientRequests loop starting now")
 	go func() {
 		for {
+			// TODO: handle channel closed
 			frame := <-ch.clientConnectorRequestChan
 			log.Debugf("frame received")
 			if !authenticated {
@@ -121,7 +122,6 @@ func (ch *ClientHandler) handleRequest(f *Frame) error {
 	if isWriteRequest {
 		log.Debugf("Forwarding query of type %v with opcode %v and path %v for stream %v to TC", query.Type, query.Opcode, paths, query.Stream)
 		responseFromTargetCassandraChan := ch.targetCassandraConnector.forwardToCluster(query.Query, query.Stream)
-		// wait for the TargetCassandra response if the request was sent to TC (this is why the receive from this channel is in the if block)
 		responseFromTargetCassandra, ok = <- responseFromTargetCassandraChan
 		if !ok {
 			return fmt.Errorf("did not receive response from TargetCassandra channel, stream: %d", f.Stream)

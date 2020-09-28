@@ -56,6 +56,7 @@ func (cc *ClientConnector) listenForRequests() {
 
 	var err error
 
+	// TODO: goroutine needs to handle the error, not return it
 	go func() error {
 		for {
 			var frame *Frame
@@ -69,6 +70,7 @@ func (cc *ClientConnector) listenForRequests() {
 					log.Debugf("in listenForRequests: error reading frame header: %s", err)
 					log.Error(err)
 				}
+				// TODO: handle some errors without stopping the loop?
 				log.Debugf("listenForRequests: returning error %s", err)
 				return err
 			}
@@ -94,6 +96,7 @@ func (cc *ClientConnector) listenForResponses() error {
 	go func() {
 		for {
 			log.Debugf("Waiting for next response to dispatch to client %s", cc.connection.RemoteAddr())
+			// TODO: handle channel closed
 			response := <-cc.responseChannel
 
 			log.Debugf("Response with opcode %d (%v) received, dispatching to client %s", response[4], string(*&response), cc.connection.RemoteAddr())
