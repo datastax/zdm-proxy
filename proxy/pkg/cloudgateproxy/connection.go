@@ -1,6 +1,7 @@
 package cloudgateproxy
 
 import (
+	"context"
 	"github.com/jpillora/backoff"
 	log "github.com/sirupsen/logrus"
 	"net"
@@ -8,7 +9,7 @@ import (
 )
 
 // Establishes a TCP connection with the passed in IP. Retries using exponential backoff.
-func establishConnection(ip string) net.Conn {
+func establishConnection(ip string, shutdownContext context.Context) (net.Conn, error) {
 	b := &backoff.Backoff{
 		Min:    100 * time.Millisecond,
 		Max:    10 * time.Second,
@@ -20,13 +21,19 @@ func establishConnection(ip string) net.Conn {
 	for {
 		conn, err := net.Dial("tcp", ip)
 		if err != nil {
-			nextDuration := b.Duration()
-			log.Errorf("Couldn't connect to %s, retrying in %s...", ip, nextDuration.String())
-			time.Sleep(nextDuration)
-			continue
+			select {
+			case <-shutdownContext.Done():
+				return nil, ShutdownErr
+			default:
+				nextDuration := b.Duration()
+				log.Errorf("Couldn't connect to %s, retrying in %s...", ip, nextDuration.String())
+				time.Sleep(nextDuration)
+				continue
+
+			}
 		}
 		log.Infof("Successfully established connection with %s", conn.RemoteAddr())
-		return conn
+		return conn, nil
 	}
 }
 
@@ -39,9 +46,14 @@ func writeToConnection(connection net.Conn, message []byte) error {
 }
 
 // TODO: Is there a better way to check that we can connect to both databases?
-func checkConnection(ip string) {
+func checkConnection(ip string, shutdownContext context.Context) error {
 	// Wait until the source database is up and ready to accept TCP connections.
-	originCassandra := establishConnection(ip)
-	originCassandra.Close()
+	originCassandra, err := establishConnection(ip, shutdownContext)
 
+	if err != nil {
+		return err
+	}
+
+	originCassandra.Close()
+	return nil
 }

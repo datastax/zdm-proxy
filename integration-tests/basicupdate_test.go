@@ -13,6 +13,8 @@ import (
 // performs an update where through the proxy
 // then loads the unloaded data into the destination
 func TestBasicUpdate(t *testing.T) {
+	proxyInstance := NewProxyInstance()
+	defer proxyInstance.Shutdown()
 
 	// Initialize test data
 	dataIds1 := []string{

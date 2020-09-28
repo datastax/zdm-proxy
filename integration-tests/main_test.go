@@ -14,11 +14,10 @@ import (
 
 var source setup.TestCluster
 var dest setup.TestCluster
-var proxyInstance *cloudgateproxy.CloudgateProxy
 
 func TestMain(m *testing.M) {
 	gocql.TimeoutLimit = 5
-	log.SetLevel(log.InfoLevel)
+	log.SetLevel(log.DebugLevel)
 
 	if env.UseCcmGlobal {
 		ccm.RemoveCurrent()
@@ -72,8 +71,11 @@ func RunTests(m *testing.M) int {
 
 	// Seed source and dest with keyspace
 	setup.SeedKeyspace(sourceSession, destSession)
-	proxyInstance = cloudgateproxy.Run(NewTestConfig(source, dest))
 	return m.Run()
+}
+
+func NewProxyInstance() *cloudgateproxy.CloudgateProxy {
+	return cloudgateproxy.Run(NewTestConfig(source, dest))
 }
 
 func NewTestConfig(origin setup.TestCluster, target setup.TestCluster) *config.Config {

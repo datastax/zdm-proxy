@@ -1,6 +1,7 @@
 package cloudgateproxy
 
 import (
+	"context"
 	"errors"
 	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
@@ -18,26 +19,33 @@ import (
 type ClientConnector struct {
 
 	// connection to the client
-	connection 					net.Conn
+	connection net.Conn
 
 	// channel on which the ClientConnector sends requests as it receives them from the client
 	requestChannel chan *Frame
 	// channel on which the ClientConnector listens for responses to send to the client
 	responseChannel chan []byte
 
-	lock 						*sync.RWMutex	// TODO do we need a lock here?
-	metrics						*metrics.Metrics	// Global metrics object
+	lock    *sync.RWMutex    // TODO do we need a lock here?
+	metrics *metrics.Metrics // Global metrics object
+
+	waitGroup *sync.WaitGroup
+	shutdownContext context.Context
 }
 
 func NewClientConnector(connection net.Conn,
-						requestChannel chan *Frame,
-						metrics *metrics.Metrics) *ClientConnector {
+	requestChannel chan *Frame,
+	metrics *metrics.Metrics,
+	waitGroup *sync.WaitGroup,
+	shutdownContext context.Context) *ClientConnector {
 	return &ClientConnector{
 		connection:      connection,
 		requestChannel:  requestChannel,
 		responseChannel: make(chan []byte),
 		lock:            &sync.RWMutex{},
 		metrics:         metrics,
+		waitGroup:       waitGroup,
+		shutdownContext: shutdownContext,
 	}
 }
 
@@ -55,24 +63,29 @@ func (cc *ClientConnector) listenForRequests() {
 	log.Debugf("listenForRequests for client %s", cc.connection.RemoteAddr())
 
 	var err error
+	cc.waitGroup.Add(1)
 
-	// TODO: goroutine needs to handle the error, not return it
-	go func() error {
+	go func() {
+		defer cc.waitGroup.Done()
+		defer close(cc.requestChannel)
 		for {
 			var frame *Frame
 			frameHeader := make([]byte, cassHdrLen)
-			frame, err = parseFrame(cc.connection, frameHeader, cc.metrics)
+			frame, err = readAndParseFrame(cc.connection, frameHeader, cc.metrics, cc.shutdownContext)
 
 			if err != nil {
+				if err == ShutdownErr {
+					return
+				}
+
+				// TODO: handle disconnects -> notify something else that will shutdown client connector + both cluster connectors
 				if err == io.EOF {
-					log.Debugf("in listenForRequests: %s disconnected", cc.connection.RemoteAddr())
+					log.Errorf("in listenForRequests: %s disconnected", cc.connection.RemoteAddr())
 				} else {
-					log.Debugf("in listenForRequests: error reading frame header: %s", err)
-					log.Error(err)
+					log.Errorf("in listenForRequests: error reading: %s", err)
 				}
 				// TODO: handle some errors without stopping the loop?
-				log.Debugf("listenForRequests: returning error %s", err)
-				return err
+				break
 			}
 
 			if frame.Direction != 0 {
@@ -90,22 +103,31 @@ func (cc *ClientConnector) listenForRequests() {
 
 // listens on responseChannel, dequeues any responses and sends them to the client
 func (cc *ClientConnector) listenForResponses() error {
-	log.Debugf("listenForResponses for client %s", cc.connection.RemoteAddr())
+	clientAddrStr := cc.connection.RemoteAddr().String()
+	log.Debugf("listenForResponses for client %s", clientAddrStr)
 
+	cc.waitGroup.Add(1)
 	var err error
 	go func() {
+		cc.waitGroup.Done()
 		for {
-			log.Debugf("Waiting for next response to dispatch to client %s", cc.connection.RemoteAddr())
-			// TODO: handle channel closed
-			response := <-cc.responseChannel
+			log.Debugf("Waiting for next response to dispatch to client %s", clientAddrStr)
 
-			log.Debugf("Response with opcode %d (%v) received, dispatching to client %s", response[4], string(*&response), cc.connection.RemoteAddr())
+			response, ok := <-cc.responseChannel
+
+			if !ok {
+				log.Infof("shutting down response forwarder to %s", clientAddrStr)
+				return
+			}
+
+			log.Debugf("Response with opcode %d (%v) received, dispatching to client %s", response[4], string(*&response), clientAddrStr)
 			err = writeToConnection(cc.connection, response)
-			log.Debugf("Response with opcode %d dispatched to client %s", response[4], cc.connection.RemoteAddr())
+			log.Debugf("Response with opcode %d dispatched to client %s", response[4], clientAddrStr)
 			if err != nil {
 				log.Errorf("Error writing response to client connection: %s", err)
 				break
 			}
+
 		}
 	}()
 	return err

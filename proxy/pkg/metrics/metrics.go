@@ -1,11 +1,13 @@
 package metrics
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	log "github.com/sirupsen/logrus"
 	"net/http"
 	"sync"
+	"sync/atomic"
 )
 
 type Metrics struct {
@@ -24,6 +26,10 @@ type Metrics struct {
 	port int
 }
 
+var globalMetrics = &atomic.Value{}
+var globalMux = &sync.Mutex{}
+var addedHandler = false
+
 // New returns a new Metrics struct for the port it is given.
 func New(port int) *Metrics {
 	return &Metrics{
@@ -33,11 +39,39 @@ func New(port int) *Metrics {
 }
 
 // Expose exposes the port associated with the Metrics struct.
-func (m *Metrics) Expose() {
+func (m *Metrics) Expose(ctx context.Context) {
 	go func() {
-		http.HandleFunc("/", m.write)
-		log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", m.port), nil))
+		setGlobalMetricsObject(m)
+		globalMux.Lock()
+		if !addedHandler {
+			addedHandler = true
+			http.HandleFunc("/", globalWrite)
+		}
+		globalMux.Unlock()
+
+		srv := http.Server{}
+		srv.Addr = fmt.Sprintf(":%d", m.port)
+
+		go func() {
+			<-ctx.Done()
+			srv.Shutdown(context.Background())
+		}()
+
+		err := srv.ListenAndServe()
+		if err == http.ErrServerClosed {
+			log.Info("http server shutdown")
+		} else {
+			log.Fatalf("http server error: ", err)
+		}
 	}()
+}
+
+func setGlobalMetricsObject(m *Metrics) {
+	globalMetrics.Store(m)
+}
+
+func globalWrite(w http.ResponseWriter, r *http.Request) {
+	globalMetrics.Load().(*Metrics).write(w, r)
 }
 
 // write Marshals the Metrics struct and writes it to the repsonse.
