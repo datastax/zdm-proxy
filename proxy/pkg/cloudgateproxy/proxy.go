@@ -126,3 +126,18 @@ func (p *CloudgateProxy) acceptConnectionsFromClients(port int) error {
 
 	return nil
 }
+
+func Run(conf *config.Config) *CloudgateProxy {
+	cp := &CloudgateProxy{
+		Conf: conf,
+	}
+
+	err2 := cp.Start()
+	if err2 != nil {
+		// TODO: handle error
+		log.Error(err2)
+		panic(err2)
+	}
+
+	return cp
+}
