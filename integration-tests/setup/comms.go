@@ -1,14 +1,11 @@
 package setup
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"net"
-	"sync"
 	"time"
 
-	"github.com/riptano/cloud-gate/migration/migration"
 	"github.com/riptano/cloud-gate/updates"
 
 	"github.com/jpillora/backoff"
@@ -76,57 +73,57 @@ func PrintProxyOutput(proxyOut io.ReadCloser) {
 	}
 }
 
-// CreateStatusObject creates Status for testing
-func CreateStatusObject() migration.Status {
-	status := migration.Status{
-		Timestamp: time.Now(),
-		Tables:    make(map[string]map[string]*migration.Table),
-		Lock:      new(sync.Mutex),
-	}
+//// CreateStatusObject creates Status for testing
+//func CreateStatusObject() migration.Status {
+//	status := migration.Status{
+//		Timestamp: time.Now(),
+//		Tables:    make(map[string]map[string]*migration.Table),
+//		Lock:      new(sync.Mutex),
+//	}
+//
+//	status.Tables[TestKeyspace] = make(map[string]*migration.Table)
+//	for _, tableName := range TestTables {
+//		status.Tables[TestKeyspace][tableName] = &migration.Table{
+//			Keyspace: TestKeyspace,
+//			Name:     tableName,
+//			Step:     migration.MigratingSchemaComplete,
+//			Error:    nil,
+//			Lock:     new(sync.Mutex),
+//		}
+//	}
+//
+//	return status
+//}
 
-	status.Tables[TestKeyspace] = make(map[string]*migration.Table)
-	for _, tableName := range TestTables {
-		status.Tables[TestKeyspace][tableName] = &migration.Table{
-			Keyspace: TestKeyspace,
-			Name:     tableName,
-			Step:     migration.MigratingSchemaComplete,
-			Error:    nil,
-			Lock:     new(sync.Mutex),
-		}
-	}
-
-	return status
-}
-
-// SendStart sends a Start update
-func SendStart(conn net.Conn, status migration.Status) {
-	bytes, err := json.Marshal(status)
-	if err != nil {
-		log.WithError(err).Fatal("Error marshalling status for start signal")
-	}
-
-	SendRequest(updates.New(updates.Start, bytes), conn)
-}
-
-// SendTableUpdate sends a TableUpdate update
-func SendTableUpdate(conn net.Conn, table *migration.Table) {
-	bytes, err := json.Marshal(table)
-	if err != nil {
-		log.WithError(err).Fatal("Error marshalling table for update")
-	}
-
-	SendRequest(updates.New(updates.TableUpdate, bytes), conn)
-}
-
-// SendMigrationComplete sends a Complete update
-func SendMigrationComplete(conn net.Conn, status migration.Status) {
-	bytes, err := json.Marshal(status)
-	if err != nil {
-		log.WithError(err).Fatal("Error marshalling status for complete signal")
-	}
-
-	SendRequest(updates.New(updates.Complete, bytes), conn)
-}
+//// SendStart sends a Start update
+//func SendStart(conn net.Conn, status migration.Status) {
+//	bytes, err := json.Marshal(status)
+//	if err != nil {
+//		log.WithError(err).Fatal("Error marshalling status for start signal")
+//	}
+//
+//	SendRequest(updates.New(updates.Start, bytes), conn)
+//}
+//
+//// SendTableUpdate sends a TableUpdate update
+//func SendTableUpdate(conn net.Conn, table *migration.Table) {
+//	bytes, err := json.Marshal(table)
+//	if err != nil {
+//		log.WithError(err).Fatal("Error marshalling table for update")
+//	}
+//
+//	SendRequest(updates.New(updates.TableUpdate, bytes), conn)
+//}
+//
+//// SendMigrationComplete sends a Complete update
+//func SendMigrationComplete(conn net.Conn, status migration.Status) {
+//	bytes, err := json.Marshal(status)
+//	if err != nil {
+//		log.WithError(err).Fatal("Error marshalling status for complete signal")
+//	}
+//
+//	SendRequest(updates.New(updates.Complete, bytes), conn)
+//}
 
 // SendRequest will notify the proxy service about the migration progress
 func SendRequest(req *updates.Update, conn net.Conn) {

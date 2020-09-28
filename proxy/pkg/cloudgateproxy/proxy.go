@@ -3,11 +3,10 @@ package cloudgateproxy
 import (
 	"fmt"
 	"github.com/riptano/cloud-gate/proxy/pkg/config"
-	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
 	"net"
 	"sync"
 	"time"
-
+	"github.com/go-kit/kit/metrics"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -45,7 +44,8 @@ type CloudgateProxy struct {
 	shutdown bool	// TODO can this go?
 
 	// Created here and passed around to any other struct or function that needs it, so all metrics are incremented globally
-	Metrics *metrics.Metrics
+	
+
 }
 
 

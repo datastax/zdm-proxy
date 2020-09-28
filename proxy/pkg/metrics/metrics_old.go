@@ -8,7 +8,7 @@ import (
 	"sync"
 )
 
-type Metrics struct {
+type MetricsOld struct {
 	FrameCount int
 
 	Reads  int
@@ -24,24 +24,24 @@ type Metrics struct {
 	port int
 }
 
-// New returns a new Metrics struct for the port it is given.
-func New(port int) *Metrics {
-	return &Metrics{
+// New returns a new MetricsOld struct for the port it is given.
+func New(port int) *MetricsOld {
+	return &MetricsOld{
 		lock: &sync.Mutex{},
 		port: port,
 	}
 }
 
-// Expose exposes the port associated with the Metrics struct.
-func (m *Metrics) Expose() {
+// Expose exposes the port associated with the MetricsOld struct.
+func (m *MetricsOld) Expose() {
 	go func() {
 		http.HandleFunc("/", m.write)
 		log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", m.port), nil))
 	}()
 }
 
-// write Marshals the Metrics struct and writes it to the repsonse.
-func (m *Metrics) write(w http.ResponseWriter, r *http.Request) {
+// write Marshals the MetricsOld struct and writes it to the repsonse.
+func (m *MetricsOld) write(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	marshaled, err := json.Marshal(m)
 	if err != nil {
@@ -52,63 +52,63 @@ func (m *Metrics) write(w http.ResponseWriter, r *http.Request) {
 	w.Write(marshaled)
 }
 
-func (m *Metrics) IncrementFrames() {
+func (m *MetricsOld) IncrementFrames() {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 
 	m.FrameCount++
 }
 
-func (m *Metrics) IncrementReads() {
+func (m *MetricsOld) IncrementReads() {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 
 	m.Reads++
 }
 
-func (m *Metrics) IncrementWrites() {
+func (m *MetricsOld) IncrementWrites() {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 
 	m.Writes++
 }
 
-func (m *Metrics) IncrementWriteFails() {
+func (m *MetricsOld) IncrementWriteFails() {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 
 	m.WriteFails++
 }
 
-func (m *Metrics) IncrementReadFails() {
+func (m *MetricsOld) IncrementReadFails() {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 
 	m.ReadFails++
 }
 
-func (m *Metrics) IncrementServerErrors() {
+func (m *MetricsOld) IncrementServerErrors() {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 
 	m.ServerErrors++
 }
 
-func (m *Metrics) IncrementConnections() {
+func (m *MetricsOld) IncrementConnections() {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 
 	m.ConnectionsToSource++
 }
 
-func (m *Metrics) DecrementConnections() {
+func (m *MetricsOld) DecrementConnections() {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 
 	m.ConnectionsToSource--
 }
 
-func (m *Metrics) SourceConnections() int {
+func (m *MetricsOld) SourceConnections() int {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 

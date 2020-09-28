@@ -25,13 +25,13 @@ type ClientConnector struct {
 	// channel on which the ClientConnector listens for responses to send to the client
 	responseChannel chan []byte
 
-	lock 						*sync.RWMutex	// TODO do we need a lock here?
-	metrics						*metrics.Metrics	// Global metrics object
+	lock 						*sync.RWMutex          // TODO do we need a lock here?
+	metrics						*metrics.MetricsOld // Global metrics object
 }
 
 func NewClientConnector(connection net.Conn,
 						requestChannel chan *Frame,
-						metrics *metrics.Metrics) *ClientConnector {
+						metrics *metrics.MetricsOld) *ClientConnector {
 	return &ClientConnector{
 		connection:      connection,
 		requestChannel:  requestChannel,

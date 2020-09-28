@@ -30,14 +30,14 @@ type ClientHandler struct {
 
 	preparedStatementCache		*PreparedStatementCache
 
-	metrics						*metrics.Metrics
+	metrics						*metrics.MetricsOld
 }
 
 func NewClientHandler(	clientTcpConn net.Conn,
 						originCassandraConnInfo *ClusterConnectionInfo,
 						targetCassandraConnInfo *ClusterConnectionInfo,
 						psCache *PreparedStatementCache,
-						metrics *metrics.Metrics) *ClientHandler{
+						metrics *metrics.MetricsOld) *ClientHandler{
 	clientReqChan := make(chan *Frame)
 
 	return &ClientHandler{
@@ -189,13 +189,13 @@ func checkError(body []byte) {
 	switch errCode {
 	case 0x0000:
 		// Server Error
-		//TODO p.Metrics.IncrementServerErrors()
+		//TODO p.MetricsOld.IncrementServerErrors()
 	case 0x1100:
 		// Write Timeout
-		//TODO p.Metrics.IncrementWriteFails()
+		//TODO p.MetricsOld.IncrementWriteFails()
 	case 0x1200:
 		// Read Timeout
-		//TODO p.Metrics.IncrementReadFails()
+		//TODO p.MetricsOld.IncrementReadFails()
 	}
 
 }

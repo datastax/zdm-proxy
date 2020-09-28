@@ -31,7 +31,7 @@ type ClusterConnector struct {
 	username				string
 	password				string
 	lock 					*sync.RWMutex		// TODO do we need a lock here?
-	metrics					*metrics.Metrics
+	metrics					*metrics.MetricsOld
 }
 
 func NewClusterConnectionInfo(ipAddress string, port int, isOriginCassandra bool, username string, password string) *ClusterConnectionInfo {
@@ -45,7 +45,7 @@ func NewClusterConnectionInfo(ipAddress string, port int, isOriginCassandra bool
 }
 
 func NewClusterConnector(	connInfo *ClusterConnectionInfo,
-							metrics *metrics.Metrics) *ClusterConnector{
+							metrics *metrics.MetricsOld) *ClusterConnector{
 
 	var clusterType ClusterType
 	 if connInfo.isOriginCassandra {

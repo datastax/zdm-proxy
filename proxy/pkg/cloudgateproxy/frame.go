@@ -33,7 +33,7 @@ func NewFrame(frame []byte) *Frame {
 }
 
 // Simple function that reads data from a connection and builds a frame
-func parseFrame(connection net.Conn, frameHeader []byte, metrics *metrics.Metrics) (*Frame, error) {
+func parseFrame(connection net.Conn, frameHeader []byte, metrics *metrics.MetricsOld) (*Frame, error) {
 	sourceAddress := connection.RemoteAddr().String()
 
 	// [Alice] read the frameHeader, whose length is constant (9 bytes), and put it into this slice
