@@ -1,9 +1,11 @@
 package cloudgateproxy
 
 import (
+	"context"
 	"fmt"
 	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
+	"io"
 	"net"
 	"sync"
 	"time"
@@ -32,6 +34,10 @@ type ClusterConnector struct {
 	password				string
 	lock 					*sync.RWMutex		// TODO do we need a lock here?
 	metrics					metrics.IMetricsHandler
+	waitGroup 				*sync.WaitGroup
+	shutdownContext			context.Context
+	connectorContext		context.Context
+	connectorCancelFunc		context.CancelFunc
 }
 
 func NewClusterConnectionInfo(ipAddress string, port int, isOriginCassandra bool, username string, password string) *ClusterConnectionInfo {
@@ -44,8 +50,10 @@ func NewClusterConnectionInfo(ipAddress string, port int, isOriginCassandra bool
 	}
 }
 
-func NewClusterConnector(connInfo *ClusterConnectionInfo,
-							metrics metrics.IMetricsHandler) *ClusterConnector{
+func NewClusterConnector(	connInfo *ClusterConnectionInfo,
+							metrics metrics.IMetricsHandler,
+							waitGroup *sync.WaitGroup,
+							shutdownContext context.Context) (*ClusterConnector, error){
 
 	var clusterType ClusterType
 	 if connInfo.isOriginCassandra {
@@ -54,15 +62,34 @@ func NewClusterConnector(connInfo *ClusterConnectionInfo,
 	 	clusterType = TARGET_CASSANDRA
 	 }
 
+	 conn, err := establishConnection(connInfo.getConnectionString(), shutdownContext)
+	 if err != nil {
+	 	return nil, err
+	 }
+
+	 go func() {
+	 	<-shutdownContext.Done()
+	 	err := conn.Close()
+	 	if err != nil {
+	 		log.Warn("error closing connection to %s", conn.RemoteAddr().String())
+		}
+	 }()
+
+	 connectorContext, connectorCancelFunc := context.WithCancel(context.Background())
+
 	return &ClusterConnector{
-		connection: 				establishConnection(connInfo.getConnectionString()),
+		connection: 				conn,
 		clusterResponseChannels:	make(map[uint16]chan *Frame),
 		clusterType: 				clusterType,
 		username:					connInfo.username,
 		password:					connInfo.password,
 		lock: 						&sync.RWMutex{},
 		metrics:					metrics,
-	}
+		waitGroup: 					waitGroup,
+		shutdownContext: 			shutdownContext,
+		connectorContext:			connectorContext,
+		connectorCancelFunc:		connectorCancelFunc,
+	}, nil
 }
 
 
@@ -76,11 +103,28 @@ func (cc *ClusterConnector) run() {
  */
 func (cc *ClusterConnector) runResponseListeningLoop() {
 
+	cc.waitGroup.Add(1)
 	log.Debugf("Listening to replies sent by node %s", cc.connection.RemoteAddr())
 	go func() {
+		defer cc.waitGroup.Done()
 		for {
 			frameHeader := make([]byte, cassHdrLen)
-			response, _ := parseFrame(cc.connection, frameHeader)
+			response, err := readAndParseFrame(cc.connection, frameHeader, cc.shutdownContext)
+
+			if err != nil {
+				if err == ShutdownErr {
+					return
+				}
+
+				// TODO: handle disconnects -> notify something else that will shutdown client connector + both cluster connectors
+				if err == io.EOF {
+					log.Errorf("in runResponseListeningLoop: %s disconnected", cc.connection.RemoteAddr())
+				} else {
+					log.Errorf("in runResponseListeningLoop: error reading: %s", err)
+				}
+				// TODO: handle some errors without stopping the loop?
+				continue
+			}
 
 			log.Debugf(
 				"Received response from %s (%s), opcode=%d, streamid=%d: %v",
@@ -117,20 +161,20 @@ func (cc *ClusterConnector) forwardToCluster(rawBytes []byte, streamId uint16) c
 
 		err := cc.sendRequestToCluster(rawBytes)
 		if err != nil {
-			log.Errorf("Error while sending request to %s: %s", cc.connection.RemoteAddr(), err)
+			log.Errorf("Error while sending request to %s: %s", cc.connection.RemoteAddr().String(), err)
 		}
 
-		timeout := time.NewTimer(queryTimeout)
-		for {
-			select {
-			case response := <-responseFromClusterChan:
-				log.Debugf("Received response from %s for query with stream id %d", cc.clusterType, response.Stream)
-				responseToCallerChan <- response
-				timeout.Stop()
-			case <-timeout.C:
-				log.Debugf("Timeout for query %d from %s", streamId, cc.clusterType)
-				// TODO clean up channel for that stream (already being done via defer deleteChannelForClusterResponse ?)
+		select {
+		case response, ok := <-responseFromClusterChan:
+			if !ok {
+				log.Debugf("response from cluster channel was closed, connection: %s", cc.connection.RemoteAddr().String())
+				return
 			}
+			log.Debugf("Received response from %s for query with stream id %d", cc.clusterType, response.Stream)
+			responseToCallerChan <- response
+		case <-time.After(queryTimeout):
+			log.Debugf("Timeout for query %d from %s", streamId, cc.clusterType)
+			// TODO clean up channel for that stream (already being done via defer deleteChannelForClusterResponse ?)
 		}
 	}()
 
@@ -159,9 +203,6 @@ func (cc *ClusterConnector) deleteChannelForClusterResponse(streamId uint16) {
 }
 
 func (cc *ClusterConnector) sendRequestToCluster(rawBytes []byte) error {
-	// TODO: remove locks (we should only need them for the streamid channel map?)
-	cc.lock.Lock()
-	defer cc.lock.Unlock()
 	log.Debugf("Executing %x on cluster with address %v, len=%d", rawBytes[:9], cc.connection.RemoteAddr(), len(rawBytes))
 	err := writeToConnection(cc.connection, rawBytes)
 	return err
@@ -169,4 +210,8 @@ func (cc *ClusterConnector) sendRequestToCluster(rawBytes []byte) error {
 
 func (cci *ClusterConnectionInfo) getConnectionString() string {
 	return fmt.Sprintf("%s:%d", cci.ipAddress, cci.port)
+}
+
+func (cc *ClusterConnector) Stop() {
+	cc.connectorCancelFunc()
 }
