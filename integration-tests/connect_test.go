@@ -10,6 +10,9 @@ import (
 // The test runs a basic batch statement, which includes an insert and update,
 // and then runs an insert and update after to make sure it works
 func TestGoCqlConnect(t *testing.T) {
+	proxyInstance := NewProxyInstance()
+	defer proxyInstance.Shutdown()
+	
 	// Connect to proxy as a "client"
 	proxy, err := utils.ConnectToCluster("127.0.0.1", "", "", 14002)
 	defer proxy.Close()

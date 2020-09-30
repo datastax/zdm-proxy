@@ -14,6 +14,8 @@ import (
 // The test runs a basic batch statement, which includes an insert and update,
 // and then runs an insert and update after to make sure it works
 func TestBasicBatch(t *testing.T) {
+	proxyInstance := NewProxyInstance()
+	defer proxyInstance.Shutdown()
 
 	// Initialize test data
 	dataIds1 := []string{

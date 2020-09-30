@@ -1,11 +1,13 @@
 package cloudgateproxy
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
 	"net"
+	"sync"
 )
 
 /*
@@ -31,23 +33,39 @@ type ClientHandler struct {
 	preparedStatementCache		*PreparedStatementCache
 
 	metrics						*metrics.Metrics
+	waitGroup 					*sync.WaitGroup
+	shutdownContext			    context.Context
 }
 
 func NewClientHandler(	clientTcpConn net.Conn,
 						originCassandraConnInfo *ClusterConnectionInfo,
 						targetCassandraConnInfo *ClusterConnectionInfo,
 						psCache *PreparedStatementCache,
-						metrics *metrics.Metrics) *ClientHandler{
+						metrics *metrics.Metrics,
+						waitGroup *sync.WaitGroup,
+						shutdownContext context.Context) (*ClientHandler, error){
 	clientReqChan := make(chan *Frame)
 
+	originConnector, err := NewClusterConnector(originCassandraConnInfo, metrics, waitGroup, shutdownContext)
+	if err != nil {
+		return nil, err
+	}
+	targetConnector, err := NewClusterConnector(targetCassandraConnInfo, metrics, waitGroup, shutdownContext)
+	if err != nil {
+		originConnector.Stop()
+		return nil, err
+	}
+
 	return &ClientHandler{
-		clientConnector:			NewClientConnector(clientTcpConn, clientReqChan, metrics),
+		clientConnector:			NewClientConnector(clientTcpConn, clientReqChan, metrics, waitGroup, shutdownContext),
 		clientConnectorRequestChan: clientReqChan,
-		originCassandraConnector: 	NewClusterConnector(originCassandraConnInfo, metrics),
-		targetCassandraConnector: 	NewClusterConnector(targetCassandraConnInfo, metrics),
+		originCassandraConnector: 	originConnector,
+		targetCassandraConnector: 	targetConnector,
 		preparedStatementCache: 	psCache,
 		metrics:					metrics,
-	}
+		waitGroup: 					waitGroup,
+		shutdownContext: 			shutdownContext,
+	}, nil
 }
 
 /**
@@ -67,11 +85,21 @@ func (ch *ClientHandler) run() {
 func (ch *ClientHandler) listenForClientRequests() {
 	authenticated := false
 	var err error
+	ch.waitGroup.Add(1)
 	log.Debugf("listenForClientRequests loop starting now")
 	go func() {
+		defer ch.waitGroup.Done()
+		defer close(ch.clientConnector.responseChannel)
+
+		handleWaitGroup := &sync.WaitGroup{}
 		for {
-			// TODO: handle channel closed
-			frame := <-ch.clientConnectorRequestChan
+			frame, ok := <-ch.clientConnectorRequestChan
+
+			if !ok {
+				log.Debug("Shutting down client requests listener.")
+				break
+			}
+
 			log.Debugf("frame received")
 			if !authenticated {
 				log.Debugf("not authenticated")
@@ -84,8 +112,11 @@ func (ch *ClientHandler) listenForClientRequests() {
 				continue
 			}
 
-			go ch.handleRequest(frame)
+			handleWaitGroup.Add(1)
+			go ch.handleRequest(frame, handleWaitGroup)
 		}
+
+		handleWaitGroup.Wait()
 	}()
 }
 
@@ -95,8 +126,9 @@ func (ch *ClientHandler) listenForClientRequests() {
  *
  *	Calls one or two goroutines forwardToCluster(), so the request is executed on each cluster concurrently
  */
-func (ch *ClientHandler) handleRequest(f *Frame) error {
+func (ch *ClientHandler) handleRequest(f *Frame, waitGroup *sync.WaitGroup) error {
 
+	defer waitGroup.Done()
 	paths, isWriteRequest, err := CassandraParseRequest(ch.preparedStatementCache, f.RawBytes)
 	if err != nil {
 		return err
