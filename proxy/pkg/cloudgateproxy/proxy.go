@@ -43,9 +43,9 @@ type CloudgateProxy struct {
 	shutdownWaitGroup          *sync.WaitGroup
 	shutdownClientListenerChan chan bool
 
-	// Global Metrics object. Created here and passed around to any other struct or function that needs it,
-	// so all metrics are incremented globally
-	Metrics metrics.IMetricsHandler
+	// Global metricsHandler object. Created here and passed around to any other struct or function that needs it,
+	// so all metricsHandler are incremented globally
+	metricsHandler metrics.IMetricsHandler
 }
 
 
@@ -93,9 +93,9 @@ func (p *CloudgateProxy) initializeGlobalStructures() {
 	p.shutdownWaitGroup = &sync.WaitGroup{}
 	p.shutdownClientListenerChan = make(chan bool)
 
-	// This is the Prometheus-specific implementation of the global Metrics object
-	// To switch to a different implementation, change the type instantiated here to another one that implements metrics.MetricsHandler
-	p.Metrics = metrics.NewPrometheusCloudgateProxyMetrics()
+	// This is the Prometheus-specific implementation of the global metricsHandler object
+	// To switch to a different implementation, change the type instantiated here to another one that implements metricsHandler.metricsHandler
+	p.metricsHandler = metrics.NewPrometheusCloudgateProxyMetrics()
 
 	p.lock.Unlock()
 }
@@ -156,7 +156,7 @@ func (p *CloudgateProxy) acceptConnectionsFromClients(port int) error {
 				originCassandraConnInfo,
 				targetCassandraConnInfo,
 				p.preparedStatementCache,
-				p.Metrics,
+				p.metricsHandler,
 				p.shutdownWaitGroup,
 				p.shutdownContext)
 

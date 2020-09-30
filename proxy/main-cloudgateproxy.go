@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/riptano/cloud-gate/proxy/pkg/cloudgateproxy"
 	"github.com/riptano/cloud-gate/proxy/pkg/config"
 	log "github.com/sirupsen/logrus"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -20,6 +22,10 @@ func main() {
 	log.Debugf("parsed env vars")
 
 	cp := cloudgateproxy.Run(conf)
+
+	// HTTP Handler to expose the metrics endpoint used by Prometheus to pull metrics
+	http.Handle("/metrics", promhttp.Handler())
+	log.Fatal(http.ListenAndServe(":8080", nil))
 
 	log.Info("Started, waiting for SIGINT/SIGTERM")
 	<-registerSigHandler().Done()

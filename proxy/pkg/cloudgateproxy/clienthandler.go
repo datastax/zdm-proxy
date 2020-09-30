@@ -17,7 +17,7 @@ import (
     	- a connector to TC
 
 	Additionally, it has:
-    - a global metrics object (must be a reference to the one created in the proxy)
+    - a global metricsHandler object (must be a reference to the one created in the proxy)
 	- the prepared statement cache
 
  */
@@ -172,8 +172,8 @@ func (ch *ClientHandler) handleRequest(f *Frame, waitGroup *sync.WaitGroup) erro
 		response = aggregateResponses(responseFromOriginCassandra, responseFromTargetCassandra, ch.metricsHandler)
 	} else {
 		log.Debugf("Non-write request: just returning the response received from OC: %d", responseFromOriginCassandra.Opcode)
-		trackReadResponse(response, ch.metricsHandler)
 		response = responseFromOriginCassandra
+		trackReadResponse(response, ch.metricsHandler)
 	}
 
 	// send overall response back to client
@@ -225,7 +225,7 @@ func trackReadResponse(response *Frame, mh metrics.IMetricsHandler) {
 	if isResponseSuccessful(response) {
 		mh.IncrementCountByOne(metrics.SuccessReadCount)
 	} else {
-		errCode := binary.BigEndian.Uint16(response.RawBytes[9:11])
+		errCode := binary.BigEndian.Uint16(response.Body[0:2])
 		switch errCode {
 		case 0x2500:
 			mh.IncrementCountByOne(metrics.UnpreparedReadCount)
@@ -236,5 +236,5 @@ func trackReadResponse(response *Frame, mh metrics.IMetricsHandler) {
 }
 
 func isResponseSuccessful(response *Frame) bool {
-	return response.Opcode == 0x08 || response.Opcode == 0x06
+	return !(response.Opcode == 0x00)
 }

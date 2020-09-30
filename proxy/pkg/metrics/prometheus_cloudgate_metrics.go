@@ -111,7 +111,32 @@ func (pm *PrometheusCloudgateProxyMetrics) TrackInHistogram(mn MetricsName, valu
 
 /***
 	Methods for internal use only
+	TODO decide if we should use counters or just gauges
  ***/
+
+//func (pm *PrometheusCloudgateProxyMetrics) addCounter(mn MetricsName) error {
+//	pm.lock.Lock()
+//	defer pm.lock.Unlock()
+//
+//	c := prometheus.NewCounter(prometheus.CounterOpts{
+//		Name:        string(mn),
+//		Help:        getMetricsDescription(mn),
+//	})
+//	pm.collectorMap[mn] = c
+//	return pm.registerCollector(c)
+//}
+
+func (pm *PrometheusCloudgateProxyMetrics) addGauge(mn MetricsName) error {
+	pm.lock.Lock()
+	defer pm.lock.Unlock()
+
+	g := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name:        string(mn),
+		Help:        getMetricsDescription(mn),
+	})
+	pm.collectorMap[mn] = g
+	return pm.registerCollector(g)
+}
 
 func (pm *PrometheusCloudgateProxyMetrics) addHistogram(mn MetricsName) error {
 	pm.lock.Lock()
@@ -126,28 +151,20 @@ func (pm *PrometheusCloudgateProxyMetrics) addHistogram(mn MetricsName) error {
 	return pm.registerCollector(h)
 }
 
-func (pm *PrometheusCloudgateProxyMetrics) addGauge(mn MetricsName) error {
-	pm.lock.Lock()
-	defer pm.lock.Unlock()
-
-	g := prometheus.NewGauge(prometheus.GaugeOpts{
-		Name:        string(mn),
-		Help:        getMetricsDescription(mn),
-	})
-	pm.collectorMap[mn] = g
-	return pm.registerCollector(g)
-}
-
-// Register this collector with Prometheus's DefaultRegisterer.
-func (pm *PrometheusCloudgateProxyMetrics) registerCollector(c prometheus.Collector) error{
-	if err := prometheus.Register(c); err != nil {
-		log.Errorf("Collector %s could not be registered due to @s", c, err)
-		return err
-	} else {
-		log.Debugf("Collector %s registered", c)
-	}
-	return nil
-}
+//func (pm *PrometheusCloudgateProxyMetrics) getCounterFromMap(mn MetricsName) (prometheus.Counter, error) {
+//	c, foundInMap := pm.collectorMap[mn]
+//	if !foundInMap {
+//		log.Errorf("No counter could be found with name %s", mn)
+//		return nil, errors.New("counter not found")
+//	}
+//
+//	if ct, isCounter := c.(prometheus.Counter); !isCounter {
+//		log.Errorf("The specified metrics %s is not a counter", mn)
+//		return nil, errors.New("the specified metrics is not a counter")
+//	} else {
+//		return ct, nil
+//	}
+//}
 
 func (pm *PrometheusCloudgateProxyMetrics) getGaugeFromMap(mn MetricsName) (prometheus.Gauge, error) {
 	c, foundInMap := pm.collectorMap[mn]
@@ -177,4 +194,16 @@ func (pm *PrometheusCloudgateProxyMetrics) getHistogramFromMap(mn MetricsName) (
 	} else {
 		return h, nil
 	}
+}
+
+
+// Register this collector with Prometheus's DefaultRegisterer.
+func (pm *PrometheusCloudgateProxyMetrics) registerCollector(c prometheus.Collector) error{
+	if err := prometheus.Register(c); err != nil {
+		log.Errorf("Collector %s could not be registered due to @s", c, err)
+		return err
+	} else {
+		log.Debugf("Collector %s registered", c)
+	}
+	return nil
 }

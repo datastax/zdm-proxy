@@ -95,7 +95,8 @@ func (ch *ClientHandler) handleTargetCassandraStartup(startupFrame *Frame) error
 		// if it gets to this point, then we're in the middle of the auth flow. Read again from the client connection
 		// and load the next frame into clientFrame to be sent to the db on the next iteration of the loop
 		frameHeader := make([]byte, cassHdrLen)
-		f, err = readAndParseFrame(ch.clientConnector.connection, frameHeader, ch.metrics, ch.shutdownContext)
+		f, err = readAndParseFrame(ch.clientConnector.connection, frameHeader,
+			ch.shutdownContext)
 
 		if err != nil {
 			if err == io.EOF {
