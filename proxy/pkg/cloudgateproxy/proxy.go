@@ -3,11 +3,11 @@ package cloudgateproxy
 import (
 	"fmt"
 	"github.com/riptano/cloud-gate/proxy/pkg/config"
+	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
+	log "github.com/sirupsen/logrus"
 	"net"
 	"sync"
 	"time"
-	"github.com/go-kit/kit/metrics"
-	log "github.com/sirupsen/logrus"
 )
 
 const (
@@ -43,9 +43,9 @@ type CloudgateProxy struct {
 
 	shutdown bool	// TODO can this go?
 
-	// Created here and passed around to any other struct or function that needs it, so all metrics are incremented globally
-	
-
+	// Global Metrics object. Created here and passed around to any other struct or function that needs it,
+	// so all metrics are incremented globally
+	Metrics metrics.IMetricsHandler
 }
 
 
@@ -77,8 +77,9 @@ func (p *CloudgateProxy) initializeGlobalStructures() {
 	p.preparedStatementCache = NewPreparedStatementCache()
 
 	p.shutdown = false
-	p.Metrics = metrics.New(p.Conf.ProxyMetricsPort)
-	p.Metrics.Expose()
+	// This is the Prometheus-specific implementation of the global Metrics object
+	// To switch to a different implementation, change the type instantiated here to another one that implements metrics.MetricsHandler
+	p.Metrics = metrics.NewPrometheusCloudgateProxyMetrics()
 
 	p.lock.Unlock()
 }

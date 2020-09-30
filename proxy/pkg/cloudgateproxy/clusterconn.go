@@ -31,7 +31,7 @@ type ClusterConnector struct {
 	username				string
 	password				string
 	lock 					*sync.RWMutex		// TODO do we need a lock here?
-	metrics					*metrics.MetricsOld
+	metrics					metrics.IMetricsHandler
 }
 
 func NewClusterConnectionInfo(ipAddress string, port int, isOriginCassandra bool, username string, password string) *ClusterConnectionInfo {
@@ -44,8 +44,8 @@ func NewClusterConnectionInfo(ipAddress string, port int, isOriginCassandra bool
 	}
 }
 
-func NewClusterConnector(	connInfo *ClusterConnectionInfo,
-							metrics *metrics.MetricsOld) *ClusterConnector{
+func NewClusterConnector(connInfo *ClusterConnectionInfo,
+							metrics metrics.IMetricsHandler) *ClusterConnector{
 
 	var clusterType ClusterType
 	 if connInfo.isOriginCassandra {
@@ -80,7 +80,7 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 	go func() {
 		for {
 			frameHeader := make([]byte, cassHdrLen)
-			response, _ := parseFrame(cc.connection, frameHeader, cc.metrics)
+			response, _ := parseFrame(cc.connection, frameHeader)
 
 			log.Debugf(
 				"Received response from %s (%s), opcode=%d, streamid=%d: %v",

@@ -6,7 +6,6 @@ import (
 	log "github.com/sirupsen/logrus"
 	"io"
 	"net"
-	"sync"
 )
 
 /*
@@ -18,26 +17,25 @@ import (
 type ClientConnector struct {
 
 	// connection to the client
-	connection 					net.Conn
+	connection		net.Conn
 
 	// channel on which the ClientConnector sends requests as it receives them from the client
-	requestChannel chan *Frame
+	requestChannel	chan *Frame
 	// channel on which the ClientConnector listens for responses to send to the client
 	responseChannel chan []byte
 
-	lock 						*sync.RWMutex          // TODO do we need a lock here?
-	metrics						*metrics.MetricsOld // Global metrics object
+	// Global metrics object
+	metrics			metrics.IMetricsHandler
 }
 
 func NewClientConnector(connection net.Conn,
 						requestChannel chan *Frame,
-						metrics *metrics.MetricsOld) *ClientConnector {
+						metricsHandler metrics.IMetricsHandler) *ClientConnector {
 	return &ClientConnector{
 		connection:      connection,
 		requestChannel:  requestChannel,
 		responseChannel: make(chan []byte),
-		lock:            &sync.RWMutex{},
-		metrics:         metrics,
+		metrics:         metricsHandler,
 	}
 }
 
@@ -54,14 +52,10 @@ func (cc *ClientConnector) listenForRequests() {
 
 	log.Debugf("listenForRequests for client %s", cc.connection.RemoteAddr())
 
-	var err error
-
-	// TODO: goroutine needs to handle the error, not return it
-	go func() error {
+	go func() {
 		for {
-			var frame *Frame
 			frameHeader := make([]byte, cassHdrLen)
-			frame, err = parseFrame(cc.connection, frameHeader, cc.metrics)
+			frame, err := parseFrame(cc.connection, frameHeader)
 
 			if err != nil {
 				if err == io.EOF {
@@ -71,8 +65,7 @@ func (cc *ClientConnector) listenForRequests() {
 					log.Error(err)
 				}
 				// TODO: handle some errors without stopping the loop?
-				log.Debugf("listenForRequests: returning error %s", err)
-				return err
+				log.Debugf("listenForRequests: error %s", err)
 			}
 
 			if frame.Direction != 0 {
@@ -89,10 +82,9 @@ func (cc *ClientConnector) listenForRequests() {
 }
 
 // listens on responseChannel, dequeues any responses and sends them to the client
-func (cc *ClientConnector) listenForResponses() error {
+func (cc *ClientConnector) listenForResponses() {
 	log.Debugf("listenForResponses for client %s", cc.connection.RemoteAddr())
 
-	var err error
 	go func() {
 		for {
 			log.Debugf("Waiting for next response to dispatch to client %s", cc.connection.RemoteAddr())
@@ -100,7 +92,7 @@ func (cc *ClientConnector) listenForResponses() error {
 			response := <-cc.responseChannel
 
 			log.Debugf("Response with opcode %d (%v) received, dispatching to client %s", response[4], string(*&response), cc.connection.RemoteAddr())
-			err = writeToConnection(cc.connection, response)
+			err := writeToConnection(cc.connection, response)
 			log.Debugf("Response with opcode %d dispatched to client %s", response[4], cc.connection.RemoteAddr())
 			if err != nil {
 				log.Errorf("Error writing response to client connection: %s", err)
@@ -108,5 +100,4 @@ func (cc *ClientConnector) listenForResponses() error {
 			}
 		}
 	}()
-	return err
 }

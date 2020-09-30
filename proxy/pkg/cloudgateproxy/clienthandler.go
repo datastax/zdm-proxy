@@ -30,23 +30,23 @@ type ClientHandler struct {
 
 	preparedStatementCache		*PreparedStatementCache
 
-	metrics						*metrics.MetricsOld
+	metricsHandler				metrics.IMetricsHandler
 }
 
 func NewClientHandler(	clientTcpConn net.Conn,
 						originCassandraConnInfo *ClusterConnectionInfo,
 						targetCassandraConnInfo *ClusterConnectionInfo,
 						psCache *PreparedStatementCache,
-						metrics *metrics.MetricsOld) *ClientHandler{
+						metricsHandler metrics.IMetricsHandler) *ClientHandler{
 	clientReqChan := make(chan *Frame)
 
 	return &ClientHandler{
-		clientConnector:			NewClientConnector(clientTcpConn, clientReqChan, metrics),
+		clientConnector:			NewClientConnector(clientTcpConn, clientReqChan, metricsHandler),
 		clientConnectorRequestChan: clientReqChan,
-		originCassandraConnector: 	NewClusterConnector(originCassandraConnInfo, metrics),
-		targetCassandraConnector: 	NewClusterConnector(targetCassandraConnInfo, metrics),
+		originCassandraConnector: 	NewClusterConnector(originCassandraConnInfo, metricsHandler),
+		targetCassandraConnector: 	NewClusterConnector(targetCassandraConnInfo, metricsHandler),
 		preparedStatementCache: 	psCache,
-		metrics:					metrics,
+		metricsHandler:				metricsHandler,
 	}
 }
 
@@ -137,9 +137,10 @@ func (ch *ClientHandler) handleRequest(f *Frame) error {
 	var response *Frame
 	if isWriteRequest {
 		log.Debugf("Write request: aggregating the responses received - OC: %d && TC: %d", responseFromOriginCassandra.Opcode, responseFromTargetCassandra.Opcode)
-		response = aggregateResponses(responseFromOriginCassandra, responseFromTargetCassandra)
+		response = aggregateResponses(responseFromOriginCassandra, responseFromTargetCassandra, ch.metricsHandler)
 	} else {
 		log.Debugf("Non-write request: just returning the response received from OC: %d", responseFromOriginCassandra.Opcode)
+		trackReadResponse(response, ch.metricsHandler)
 		response = responseFromOriginCassandra
 	}
 
@@ -159,43 +160,49 @@ func (ch *ClientHandler) handleRequest(f *Frame) error {
  *		- if both responses are a success OR both responses are a failure: return responseFromOC
  *		- if either response is a failure, the failure "wins": return the failed response
  */
-func aggregateResponses(responseFromOriginalCassandra *Frame, responseFromTargetCassandra *Frame) *Frame {
+func aggregateResponses(responseFromOriginalCassandra *Frame, responseFromTargetCassandra *Frame, mh metrics.IMetricsHandler) *Frame {
 
 	log.Debugf("Aggregating responses. OC opcode %d, TargetCassandra opcode %d", responseFromOriginalCassandra.Opcode, responseFromTargetCassandra.Opcode)
 
-	if (isResponseSuccessful(responseFromOriginalCassandra) && isResponseSuccessful(responseFromTargetCassandra)) ||
-		(!isResponseSuccessful(responseFromOriginalCassandra) && !isResponseSuccessful(responseFromTargetCassandra)) {
-		log.Debugf("Aggregated response: both successes or both failures, sending back OC's response with opcode %d", responseFromOriginalCassandra.Opcode)
+	if isResponseSuccessful(responseFromOriginalCassandra) && isResponseSuccessful(responseFromTargetCassandra) {
+		log.Debugf("Aggregated response: both successes, sending back OC's response with opcode %d", responseFromOriginalCassandra.Opcode)
+		mh.IncrementCountByOne(metrics.SuccessWriteCount)
+		return responseFromOriginalCassandra
+	}
+
+	if !isResponseSuccessful(responseFromOriginalCassandra) && !isResponseSuccessful(responseFromTargetCassandra) {
+		log.Debugf("Aggregated response: both failures, sending back OC's response with opcode %d", responseFromOriginalCassandra.Opcode)
+		mh.IncrementCountByOne(metrics.FailedBothWriteCount)
 		return responseFromOriginalCassandra
 	}
 
 	// if either response is a failure, the failure "wins" --> return the failed response
 	if !isResponseSuccessful(responseFromOriginalCassandra) {
 		log.Debugf("Aggregated response: failure only on OC, sending back OC's response with opcode %d", responseFromOriginalCassandra.Opcode)
+		mh.IncrementCountByOne(metrics.FailedOriginWriteCount)
 		return responseFromOriginalCassandra
 	} else {
 		log.Debugf("Aggregated response: failure only on TargetCassandra, sending back TargetCassandra's response with opcode %d", responseFromOriginalCassandra.Opcode)
+		mh.IncrementCountByOne(metrics.FailedTargetWriteCount)
 		return responseFromTargetCassandra
 	}
 
 }
 
-func isResponseSuccessful(f *Frame) bool {
-	return f.Opcode == 0x08 || f.Opcode == 0x06
+func trackReadResponse(response *Frame, mh metrics.IMetricsHandler) {
+	if isResponseSuccessful(response) {
+		mh.IncrementCountByOne(metrics.SuccessReadCount)
+	} else {
+		errCode := binary.BigEndian.Uint16(response.RawBytes[9:11])
+		switch errCode {
+		case 0x2500:
+			mh.IncrementCountByOne(metrics.UnpreparedReadCount)
+		default:
+			mh.IncrementCountByOne(metrics.FailedReadCount)
+		}
+	}
 }
 
-func checkError(body []byte) {
-	errCode := binary.BigEndian.Uint16(body[0:2])
-	switch errCode {
-	case 0x0000:
-		// Server Error
-		//TODO p.MetricsOld.IncrementServerErrors()
-	case 0x1100:
-		// Write Timeout
-		//TODO p.MetricsOld.IncrementWriteFails()
-	case 0x1200:
-		// Read Timeout
-		//TODO p.MetricsOld.IncrementReadFails()
-	}
-
+func isResponseSuccessful(response *Frame) bool {
+	return response.Opcode == 0x08 || response.Opcode == 0x06
 }
