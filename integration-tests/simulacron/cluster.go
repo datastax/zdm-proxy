@@ -85,7 +85,7 @@ func (instance *SimulacronDatacenter) GetId() string {
 }
 
 func GetNewCluster(numberOfNodes int) (*SimulacronCluster, error) {
-	process, err := GetGlobalSimulacronProcess()
+	process, err := GetOrCreateGlobalSimulacronProcess()
 
 	if err != nil {
 		return nil, err

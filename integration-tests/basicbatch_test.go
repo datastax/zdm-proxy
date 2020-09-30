@@ -3,6 +3,7 @@ package integration_tests
 import (
 	"fmt"
 	"github.com/bmizerany/assert"
+	"github.com/riptano/cloud-gate/integration-tests/env"
 	"github.com/riptano/cloud-gate/integration-tests/setup"
 	"github.com/riptano/cloud-gate/utils"
 	"testing"
@@ -14,7 +15,11 @@ import (
 // The test runs a basic batch statement, which includes an insert and update,
 // and then runs an insert and update after to make sure it works
 func TestBasicBatch(t *testing.T) {
-	proxyInstance := NewProxyInstance()
+	if !env.UseCcm {
+		t.Skip("Test requires CCM, set USE_CCM env variable to TRUE")
+	}
+
+	proxyInstance := NewDefaultProxyInstance()
 	defer proxyInstance.Shutdown()
 
 	// Initialize test data

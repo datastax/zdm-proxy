@@ -73,10 +73,6 @@ func (process *SimulacronProcess) cancelInternal() {
 
 	go func() {
 		if tempCmd.Process != nil {
-			err := tempCmd.Process.Kill()
-			if err != nil {
-				log.Warn("failed to kill simulacron process:", err)
-			}
 			state, err := tempCmd.Process.Wait()
 			if err != nil {
 				log.Warn("failed to wait for simulacron process to exit:", err)
@@ -229,7 +225,16 @@ func (process *SimulacronProcess) Start() error {
 	}
 }
 
-func GetGlobalSimulacronProcess() (*SimulacronProcess, error) {
+func GetGlobalSimulacronProcess() *SimulacronProcess {
+	instance := globalInstance.Load()
+	if instance != nil {
+		return instance.(*SimulacronProcess)
+	}
+
+	return nil
+}
+
+func GetOrCreateGlobalSimulacronProcess() (*SimulacronProcess, error) {
 	instance := globalInstance.Load()
 	if instance != nil {
 		return instance.(*SimulacronProcess), nil

@@ -38,12 +38,12 @@ func (psc* PreparedStatementCache) trackStatementToBePrepared(q *Query, isWriteR
 }
 
 func (psc* PreparedStatementCache) cachePreparedID(f *Frame) {
-	log.Debugf("In cachePreparedID")
+	log.Tracef("In cachePreparedID")
 
 	data := f.RawBytes
 
 	kind := int(binary.BigEndian.Uint32(data[9:13]))
-	log.Debugf("Kind: %d", kind)
+	log.Tracef("Kind: %d", kind)
 	if kind != 4 {
 		// TODO error: this result is not a reply to a PREPARE request
 	}
@@ -53,18 +53,18 @@ func (psc* PreparedStatementCache) cachePreparedID(f *Frame) {
 	idLength := int(binary.BigEndian.Uint16(data[13 : 15]))
 	preparedID := string(data[15 : 15+idLength])
 
-	log.Debugf("PreparedID: %s for stream %d", preparedID, f.Stream)
+	log.Tracef("PreparedID: %s for stream %d", preparedID, f.Stream)
 
 	psc.lock.Lock()
-	log.Debugf("cachePreparedID: lock acquired")
+	log.Tracef("cachePreparedID: lock acquired")
 	// move the information about this statement into the cache
 	psc.cache[preparedID] = psc.statementsBeingPrepared[f.Stream]
-	log.Debugf("PSInfo set in map for PreparedID: %s", preparedID, f.Stream)
+	log.Tracef("PSInfo set in map for PreparedID: %s", preparedID, f.Stream)
 	// remove it from the temporary map
 	delete(psc.statementsBeingPrepared, f.Stream)
-	log.Debugf("cachePreparedID: removing statement info from transient map")
+	log.Tracef("cachePreparedID: removing statement info from transient map")
 	psc.lock.Unlock()
-	log.Debugf("cachePreparedID: lock released")
+	log.Tracef("cachePreparedID: lock released")
 
 }
 

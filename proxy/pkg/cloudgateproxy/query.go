@@ -65,39 +65,39 @@ func createQuery(f *Frame, paths []string, psCache *PreparedStatementCache, isWr
 	}
 
 	if len(paths) > 1 {
-		log.Debugf("batch query")
+		log.Tracef("batch query")
 		return createBatchQuery(f), nil
 	}
 
 	// currently handles query and prepare statements that involve 'use, insert, update, delete, and truncate'
 	fields := strings.Split(paths[0], "/")
-	log.Debugf("Path %s split into following fields: %s", paths[0], fields)
+	log.Tracef("Path %s split into following fields: %s", paths[0], fields)
 	// NOTE: fields[0] is an empty element. the first meaningful element in the path is fields[1]
 	for i := range fields {
 		fields[i] = strings.TrimSpace(fields[i])
-		log.Debugf("fields[%d]: %s", i, fields[i])
+		log.Tracef("fields[%d]: %s", i, fields[i])
 	}
-	log.Debugf("fields: %s", fields)
+	log.Tracef("fields: %s", fields)
 
 	if len(fields) > 2 {
-		log.Debugf("at least two fields found")
+		log.Tracef("at least two fields found")
 		switch fields[1] {
 		case "prepare":
-			log.Debugf("prepare statement query")
+			log.Tracef("prepare statement query")
 			return createPrepareQuery(f, psCache, isWriteRequest), nil
 		case "query":
-			log.Debugf("statement query")
+			log.Tracef("statement query")
 			queryType := Type(fields[2])
-			log.Debugf("fields: %s", queryType)
+			log.Tracef("fields: %s", queryType)
 			switch queryType {
 			case USE:
-				log.Debugf("query type use")
+				log.Tracef("query type use")
 				return createUseQuery(f), nil
 			case INSERT, UPDATE, DELETE, TRUNCATE:
-				log.Debugf("query type insert update delete or truncate")
+				log.Tracef("query type insert update delete or truncate")
 				return createWriteQuery(queryType, f), nil
 			case SELECT:
-				log.Debugf("query type select")
+				log.Tracef("query type select")
 				return createReadQuery(f), nil
 			}
 		case "batch":
@@ -107,20 +107,20 @@ func createQuery(f *Frame, paths []string, psCache *PreparedStatementCache, isWr
 		// path is '/opcode' case
 		// FIXME: decide if there are any cases we need to handle here
 
-		log.Debugf("len(fields) < 2: %s, %v", fields, len(fields))
+		log.Tracef("len(fields) < 2: %s, %v", fields, len(fields))
 		switch fields[1] {
 		case "execute":
-			log.Debugf("Execute")
+			log.Tracef("Execute")
 			// create and return execute query. this will just be of type EXECUTE, containing the raw request bytes. nothing else is needed.
 			q = NewQuery(EXECUTE, f)
 		case "register":
-			log.Debugf("Register")
+			log.Tracef("Register")
 			q = NewQuery(REGISTER, f)
 		case "options":
-			log.Debugf("Options")
+			log.Tracef("Options")
 			q = NewQuery(OPTIONS, f)
 		default:
-			log.Debugf("Misc query")
+			log.Tracef("Misc query")
 			q = NewQuery(MISC, f)
 		}
 

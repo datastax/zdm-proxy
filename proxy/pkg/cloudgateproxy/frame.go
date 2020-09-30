@@ -9,7 +9,7 @@ import (
 )
 
 type Frame struct {
-	Direction int		// [Alice] 0 if from client application to db
+	Direction int // [Alice] 0 if from client application to db
 	Version   uint8
 	Flags     uint8
 	Stream    uint16
@@ -33,7 +33,7 @@ func NewFrame(frame []byte) *Frame {
 }
 
 type shutdownError struct {
-	err    string
+	err string
 }
 
 func (e *shutdownError) Error() string {
@@ -44,7 +44,7 @@ var ShutdownErr = &shutdownError{err: "aborted due to shutdown request"}
 
 // Simple function that reads data from a connection and builds a frame
 func readAndParseFrame(
-	connection net.Conn, frameHeader []byte, shutdownContext context.Context) (*Frame, error) {
+	connection net.Conn, frameHeader []byte, clientHandlerContext context.Context) (*Frame, error) {
 	sourceAddress := connection.RemoteAddr().String()
 
 	// [Alice] read the frameHeader, whose length is constant (9 bytes), and put it into this slice
@@ -52,7 +52,7 @@ func readAndParseFrame(
 	_, err := io.ReadFull(connection, frameHeader)
 	if err != nil {
 		select {
-		case <-shutdownContext.Done():
+		case <-clientHandlerContext.Done():
 			log.Infof("Shutting down connection to %s", sourceAddress)
 			return nil, ShutdownErr
 		default:
@@ -74,7 +74,7 @@ func readAndParseFrame(
 			bytesRead, err := io.ReadFull(connection, rest)
 			if err != nil {
 				select {
-				case <-shutdownContext.Done():
+				case <-clientHandlerContext.Done():
 					log.Infof("Shutting down connection to %s", sourceAddress)
 					return nil, ShutdownErr
 				default:

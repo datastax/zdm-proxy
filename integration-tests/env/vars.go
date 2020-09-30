@@ -9,12 +9,12 @@ var ServerVersion string
 var CassandraVersion string
 var DseVersion string
 var IsDse bool
-var UseCcmGlobal bool
+var UseCcm bool
 
 func init() {
 	CassandraVersion = os.Getenv("CASSANDRA_VERSION")
 	DseVersion = os.Getenv("DSE_VERSION")
-	ccmGlobal := os.Getenv("USE_CCM_GLOBAL")
+	useCcm := os.Getenv("USE_CCM")
 	if DseVersion != "" {
 		IsDse = true
 		ServerVersion = DseVersion
@@ -27,7 +27,7 @@ func init() {
 		IsDse = false
 	}
 
-	if strings.ToLower(ccmGlobal) == "true" {
-		UseCcmGlobal = true
+	if strings.ToLower(useCcm) == "true" {
+		UseCcm = true
 	}
 }

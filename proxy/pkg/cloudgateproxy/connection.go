@@ -17,7 +17,7 @@ func establishConnection(ip string, shutdownContext context.Context) (net.Conn, 
 		Jitter: false,
 	}
 
-	log.Debugf("Attempting to connect to %s...", ip)
+	log.Infof("Attempting to connect to %s...", ip)
 	for {
 		conn, err := net.Dial("tcp", ip)
 		if err != nil {
@@ -54,6 +54,7 @@ func checkConnection(ip string, shutdownContext context.Context) error {
 		return err
 	}
 
+	log.Infof("Closing test connection to %s", ip)
 	originCassandra.Close()
 	return nil
 }

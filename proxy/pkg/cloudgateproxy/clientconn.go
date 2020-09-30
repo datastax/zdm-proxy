@@ -14,7 +14,7 @@ import (
   This owns:
     - a response channel to send responses back to the client
     - the actual TCP connection
- */
+*/
 
 type ClientConnector struct {
 
@@ -29,23 +29,26 @@ type ClientConnector struct {
 	lock           *sync.RWMutex           // TODO do we need a lock here?
 	metricsHandler metrics.IMetricsHandler // Global metricsHandler object
 
-	waitGroup *sync.WaitGroup
-	shutdownContext context.Context
+	waitGroup               *sync.WaitGroup
+	clientHandlerContext    context.Context
+	clientHandlerCancelFunc context.CancelFunc
 }
 
 func NewClientConnector(connection net.Conn,
-						requestChannel chan *Frame,
-						metricsHandler metrics.IMetricsHandler,
-						waitGroup *sync.WaitGroup,
-						shutdownContext context.Context) *ClientConnector {
+	requestChannel chan *Frame,
+	metricsHandler metrics.IMetricsHandler,
+	waitGroup *sync.WaitGroup,
+	clientHandlerContext context.Context,
+	clientHandlerCancelFunc context.CancelFunc) *ClientConnector {
 	return &ClientConnector{
-		connection:      connection,
-		requestChannel:  requestChannel,
-		responseChannel: make(chan []byte),
-		lock:            &sync.RWMutex{},
-		metricsHandler:  metricsHandler,
-		waitGroup:       waitGroup,
-		shutdownContext: shutdownContext,
+		connection:              connection,
+		requestChannel:          requestChannel,
+		responseChannel:         make(chan []byte),
+		lock:                    &sync.RWMutex{},
+		metricsHandler:          metricsHandler,
+		waitGroup:               waitGroup,
+		clientHandlerContext:    clientHandlerContext,
+		clientHandlerCancelFunc: clientHandlerCancelFunc,
 	}
 }
 
@@ -57,10 +60,9 @@ func (cc *ClientConnector) run() {
 	cc.listenForResponses()
 }
 
-
 func (cc *ClientConnector) listenForRequests() {
 
-	log.Debugf("listenForRequests for client %s", cc.connection.RemoteAddr())
+	log.Tracef("listenForRequests for client %s", cc.connection.RemoteAddr())
 
 	var err error
 	cc.waitGroup.Add(1)
@@ -71,20 +73,20 @@ func (cc *ClientConnector) listenForRequests() {
 		for {
 			var frame *Frame
 			frameHeader := make([]byte, cassHdrLen)
-			frame, err = readAndParseFrame(cc.connection, frameHeader, cc.shutdownContext)
+			frame, err = readAndParseFrame(cc.connection, frameHeader, cc.clientHandlerContext)
 
 			if err != nil {
 				if err == ShutdownErr {
 					return
 				}
 
-				// TODO: handle disconnects -> notify something else that will shutdown client connector + both cluster connectors
 				if err == io.EOF {
-					log.Errorf("in listenForRequests: %s disconnected", cc.connection.RemoteAddr())
+					log.Infof("in listenForRequests: %s disconnected", cc.connection.RemoteAddr())
 				} else {
 					log.Errorf("in listenForRequests: error reading: %s", err)
 				}
-				// TODO: handle some errors without stopping the loop?
+
+				cc.clientHandlerCancelFunc()
 				break
 			}
 
@@ -94,9 +96,9 @@ func (cc *ClientConnector) listenForRequests() {
 				continue
 			}
 
-			log.Debugf("sending frame on channel ")
+			log.Tracef("sending frame on channel ")
 			cc.requestChannel <- frame
-			log.Debugf("frame sent")
+			log.Tracef("frame sent")
 		}
 	}()
 }
@@ -104,14 +106,14 @@ func (cc *ClientConnector) listenForRequests() {
 // listens on responseChannel, dequeues any responses and sends them to the client
 func (cc *ClientConnector) listenForResponses() error {
 	clientAddrStr := cc.connection.RemoteAddr().String()
-	log.Debugf("listenForResponses for client %s", clientAddrStr)
+	log.Tracef("listenForResponses for client %s", clientAddrStr)
 
 	cc.waitGroup.Add(1)
 	var err error
 	go func() {
 		cc.waitGroup.Done()
 		for {
-			log.Debugf("Waiting for next response to dispatch to client %s", clientAddrStr)
+			log.Tracef("Waiting for next response to dispatch to client %s", clientAddrStr)
 
 			response, ok := <-cc.responseChannel
 
@@ -120,9 +122,9 @@ func (cc *ClientConnector) listenForResponses() error {
 				return
 			}
 
-			log.Debugf("Response with opcode %d (%v) received, dispatching to client %s", response[4], string(*&response), clientAddrStr)
+			log.Tracef("Response with opcode %d (%v) received, dispatching to client %s", response[4], string(*&response), clientAddrStr)
 			err = writeToConnection(cc.connection, response)
-			log.Debugf("Response with opcode %d dispatched to client %s", response[4], clientAddrStr)
+			log.Tracef("Response with opcode %d dispatched to client %s", response[4], clientAddrStr)
 			if err != nil {
 				log.Errorf("Error writing response to client connection: %s", err)
 				break

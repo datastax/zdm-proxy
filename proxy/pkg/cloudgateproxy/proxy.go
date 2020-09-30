@@ -51,6 +51,8 @@ type CloudgateProxy struct {
 
 // Start starts up the proxy and start listening for client connections.
 func (p *CloudgateProxy) Start() error {
+	log.Infof("Starting proxy...")
+
 	p.initializeGlobalStructures()
 	err := checkConnection(p.originCassandraIP, p.shutdownContext)
 	if err != nil {
@@ -103,7 +105,6 @@ func (p *CloudgateProxy) initializeGlobalStructures() {
 // acceptConnectionsFromClients creates a listener on the passed in port argument, and every connection
 // that is received over that port instantiates a ClientHandler that then takes over managing that connection
 func (p *CloudgateProxy) acceptConnectionsFromClients(port int) error {
-	log.Debugf("Proxy connected and ready to accept queries on port %d", port)
 	l, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
 		return err
@@ -138,6 +139,8 @@ func (p *CloudgateProxy) acceptConnectionsFromClients(port int) error {
 				}
 			}
 
+			log.Infof("Accepted connection from %s", conn.RemoteAddr().String())
+
 			go func() {
 				<-p.shutdownContext.Done()
 				err := conn.Close()
@@ -166,7 +169,7 @@ func (p *CloudgateProxy) acceptConnectionsFromClients(port int) error {
 				continue
 			}
 			// TODO if we want to keep the ClientHandler instances into an array or map, store it here
-			log.Debugf("ClientHandler created")
+			log.Tracef("ClientHandler created")
 			clientHandler.run()
 		}
 	}()
@@ -190,6 +193,8 @@ func Run(conf *config.Config) *CloudgateProxy {
 }
 
 func (p *CloudgateProxy) Shutdown() {
+	log.Info("Shutting down proxy...")
+
 	p.cancelFunc()
 	p.listenerLock.Lock()
 	if !p.listenerClosed {
@@ -198,4 +203,6 @@ func (p *CloudgateProxy) Shutdown() {
 	}
 	p.listenerLock.Unlock()
 	p.shutdownWaitGroup.Wait()
+
+	log.Info("Proxy shutdown.")
 }

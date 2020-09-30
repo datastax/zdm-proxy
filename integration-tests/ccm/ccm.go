@@ -17,6 +17,7 @@ func execCcm(arg string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), cmdTimeout)
 	defer cancel() // The cancel should be deferred so resources are cleaned up
 
+	log.Infof("Executing ccm command: ccm %s", arg)
 	// Create the command with our context
 	var cmd *exec.Cmd
 
@@ -79,8 +80,8 @@ func Switch(name string) (string, error) {
 
 func Start() (string, error) {
 	if runtime.GOOS == "windows" {
-		return execCcm("start --quiet-windows")
+		return execCcm("start --quiet-windows --wait-for-binary-proto")
 	} else {
-		return execCcm("start")
+		return execCcm("start --wait-for-binary-proto")
 	}
 }
