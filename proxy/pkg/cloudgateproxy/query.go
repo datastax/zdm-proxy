@@ -17,7 +17,7 @@ const (
 	DELETE   = Type("delete")
 	TRUNCATE = Type("truncate")
 	PREPARE  = Type("prepare")
-	EXECUTE	 = Type("execute")
+	EXECUTE  = Type("execute")
 	BATCH    = Type("batch")
 	REGISTER = Type("register")
 	OPTIONS  = Type("options")
@@ -32,16 +32,16 @@ type Type string
 
 // Query represents a query sent to the proxy, destined to be executed on the TargetCassandra database.
 type Query struct {
-	Timestamp	uint64
-	Stream		uint16
-	Type        Type
-	Query       []byte
-	Opcode      byte
+	Timestamp uint64
+	Stream    uint16
+	Type      Type
+	Query     []byte
+	Opcode    byte
 }
 
 // New returns a new query struct with the Timestamp set to the struct's creation time.
-func NewQuery(	queryType Type,
-				f *Frame) *Query {
+func NewQuery(queryType Type,
+	f *Frame) *Query {
 	var opcode byte
 	if len(f.RawBytes) >= 5 {
 		opcode = f.RawBytes[4]
@@ -49,14 +49,14 @@ func NewQuery(	queryType Type,
 
 	return &Query{
 		Timestamp: uint64(time.Now().UnixNano() / 1000000),
-		Stream:          f.Stream,
-		Type:            queryType,
-		Query:           f.RawBytes,
-		Opcode:          opcode,
+		Stream:    f.Stream,
+		Type:      queryType,
+		Query:     f.RawBytes,
+		Opcode:    opcode,
 	}
 }
 
-func createQuery(f *Frame, paths []string, psCache *PreparedStatementCache, isWriteRequest bool) (*Query, error){
+func createQuery(f *Frame, paths []string, psCache *PreparedStatementCache, isWriteRequest bool) (*Query, error) {
 	var q *Query
 
 	if paths[0] == UnknownPreparedQueryPath {
@@ -139,7 +139,7 @@ func createUseQuery(f *Frame) *Query {
 }
 
 func createWriteQuery(queryType Type, f *Frame) *Query {
-return NewQuery(queryType, f).UsingTimestamp()
+	return NewQuery(queryType, f).UsingTimestamp()
 }
 
 func createReadQuery(f *Frame) *Query {

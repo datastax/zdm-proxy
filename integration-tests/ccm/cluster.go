@@ -6,13 +6,13 @@ import (
 )
 
 type Cluster struct {
-	name string
-	version string
+	name                string
+	version             string
 	initialContactPoint string
-	isDse bool
+	isDse               bool
 
 	startNodeIndex int
-	session *gocql.Session
+	session        *gocql.Session
 }
 
 func NewCluster(name string, version string, isDse bool, startNodeIndex int) *Cluster {
@@ -55,8 +55,8 @@ func (ccmCluster *Cluster) Create(numberOfNodes int) error {
 		_, err = Add(
 			true,
 			fmt.Sprintf("127.0.0.%d", nodeIndex),
-			2000 + nodeIndex*100,
-			7000 + nodeIndex*100,
+			2000+nodeIndex*100,
+			7000+nodeIndex*100,
 			fmt.Sprintf("node%d", nodeIndex))
 
 		if err != nil {

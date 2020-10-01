@@ -7,7 +7,7 @@ import (
 )
 
 type PreparedStatementInfo struct {
-	IsWriteStatement	bool
+	IsWriteStatement bool
 }
 
 type PreparedStatementCache struct {
@@ -15,21 +15,21 @@ type PreparedStatementCache struct {
 	// Map containing the statement to be prepared and whether it is a read or a write by streamID
 	// This is kind of transient: it only contains statements that are being prepared at the moment.
 	// Once the response to the prepare request is processed, the statement is removed from this map
-	statementsBeingPrepared	map[uint16]PreparedStatementInfo
+	statementsBeingPrepared map[uint16]PreparedStatementInfo
 	// Map containing the prepared queries (raw bytes) keyed on prepareId
-	cache					map[string]PreparedStatementInfo
-	lock					*sync.RWMutex
+	cache map[string]PreparedStatementInfo
+	lock  *sync.RWMutex
 }
 
-func NewPreparedStatementCache() *PreparedStatementCache{
+func NewPreparedStatementCache() *PreparedStatementCache {
 	return &PreparedStatementCache{
-		statementsBeingPrepared: 	make(map[uint16]PreparedStatementInfo),
-		cache:						make(map[string]PreparedStatementInfo),
-		lock:						&sync.RWMutex{},
+		statementsBeingPrepared: make(map[uint16]PreparedStatementInfo),
+		cache:                   make(map[string]PreparedStatementInfo),
+		lock:                    &sync.RWMutex{},
 	}
 }
 
-func (psc* PreparedStatementCache) trackStatementToBePrepared(q *Query, isWriteRequest bool) {
+func (psc *PreparedStatementCache) trackStatementToBePrepared(q *Query, isWriteRequest bool) {
 	// add the statement info for this query to the transient map of statements to be prepared
 	stmtInfo := PreparedStatementInfo{IsWriteStatement: isWriteRequest}
 	psc.lock.Lock()
@@ -37,7 +37,7 @@ func (psc* PreparedStatementCache) trackStatementToBePrepared(q *Query, isWriteR
 	psc.lock.Unlock()
 }
 
-func (psc* PreparedStatementCache) cachePreparedID(f *Frame) {
+func (psc *PreparedStatementCache) cachePreparedID(f *Frame) {
 	log.Tracef("In cachePreparedID")
 
 	data := f.RawBytes
@@ -50,7 +50,7 @@ func (psc* PreparedStatementCache) cachePreparedID(f *Frame) {
 
 	//idLength := int(binary.BigEndian.Uint16(data[13:15]))
 	//log.Debugf("idLength %d", idLength)
-	idLength := int(binary.BigEndian.Uint16(data[13 : 15]))
+	idLength := int(binary.BigEndian.Uint16(data[13:15]))
 	preparedID := string(data[15 : 15+idLength])
 
 	log.Tracef("PreparedID: %s for stream %d", preparedID, f.Stream)

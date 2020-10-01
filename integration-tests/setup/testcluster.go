@@ -122,7 +122,7 @@ func CleanUpClusters() {
 type TestSetup struct {
 	origin TestCluster
 	target TestCluster
-	proxy *cloudgateproxy.CloudgateProxy
+	proxy  *cloudgateproxy.CloudgateProxy
 }
 
 func NewTestSetup() *TestSetup {

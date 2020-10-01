@@ -18,10 +18,10 @@ type Config struct {
 	TargetCassandraPassword string `required:"true" split_words:"true"`
 	TargetCassandraPort     int    `required:"true" split_words:"true"`
 
-	ProxyServiceHostname       string `required:"true" split_words:"true"`
-	ProxyCommunicationPort     int    `required:"true" split_words:"true"`
-	ProxyMetricsPort           int    `required:"true" split_words:"true"`
-	ProxyQueryPort             int    `split_words:"true"`
+	ProxyServiceHostname   string `required:"true" split_words:"true"`
+	ProxyCommunicationPort int    `required:"true" split_words:"true"`
+	ProxyMetricsPort       int    `required:"true" split_words:"true"`
+	ProxyQueryPort         int    `split_words:"true"`
 
 	MaxQueueSize int `default:"1000" split_words:"true"`
 

@@ -14,17 +14,17 @@ import (
 )
 
 type ClusterData struct {
-	Id   string `json:"id"`
-	Datacenters   []*DatacenterData `json:"data_centers"`
+	Id          string            `json:"id"`
+	Datacenters []*DatacenterData `json:"data_centers"`
 }
 
 type DatacenterData struct {
-	Id   string `json:"id"`
-	Nodes   []*NodeData `json:"nodes"`
+	Id    string      `json:"id"`
+	Nodes []*NodeData `json:"nodes"`
 }
 
 type NodeData struct {
-	Id string `json:"id"`
+	Id      string `json:"id"`
 	Address string `json:"address"`
 }
 
@@ -68,7 +68,7 @@ func (process *SimulacronProcess) execHttp(method string, url string, body inter
 		requestBody = bytes.NewBuffer(bodyBytes)
 	}
 
-	req, err := http.NewRequest(method, process.baseUrl + url, requestBody)
+	req, err := http.NewRequest(method, process.baseUrl+url, requestBody)
 	if err != nil {
 		return nil, err
 	}
@@ -99,4 +99,3 @@ func (process *SimulacronProcess) execHttp(method string, url string, body inter
 
 	return bytes, nil
 }
-

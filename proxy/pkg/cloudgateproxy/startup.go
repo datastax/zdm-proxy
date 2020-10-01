@@ -33,7 +33,7 @@ func (ch *ClientHandler) handleStartupFrame(f *Frame) (bool, error) {
 		return true, nil
 	default:
 		channel := ch.targetCassandraConnector.forwardToCluster(f.RawBytes, f.Stream)
-		response, ok := <- channel
+		response, ok := <-channel
 		if !ok {
 			return false, fmt.Errorf("failed to forward %d request from %s to target cluster", f.Opcode, clientIPAddress)
 		}
@@ -45,7 +45,6 @@ func (ch *ClientHandler) handleStartupFrame(f *Frame) (bool, error) {
 	}
 	return false, fmt.Errorf("received non STARTUP or OPTIONS query from unauthenticated client %s", clientIPAddress)
 }
-
 
 func (ch *ClientHandler) handleTargetCassandraStartup(startupFrame *Frame) error {
 
@@ -117,7 +116,7 @@ func (cc *ClusterConnector) handleOriginCassandraStartup(startupFrame *Frame, cl
 
 	// Send client's initial startup frame to the database
 	responseChannel := cc.forwardToCluster(startupFrame.RawBytes, startupFrame.Stream)
-	f, ok := <- responseChannel
+	f, ok := <-responseChannel
 	if !ok {
 		select {
 		case <-cc.clientHandlerContext.Done():
@@ -159,7 +158,7 @@ func (cc *ClusterConnector) handleOriginCassandraStartup(startupFrame *Frame, cl
 
 			authResp := authFrame(cc.username, cc.password, startupFrame)
 			responseChannel = cc.forwardToCluster(authResp.RawBytes, authResp.Stream)
-			f, ok = <- responseChannel
+			f, ok = <-responseChannel
 			if !ok {
 				return fmt.Errorf("auth/auth challenge failed from client %s to %s",
 					clientIPAddress, cc.connection.RemoteAddr())

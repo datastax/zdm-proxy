@@ -13,7 +13,7 @@ import (
 func TestGoCqlConnect(t *testing.T) {
 	testSetup := setup.NewTestSetup()
 	defer testSetup.Cleanup()
-	
+
 	// Connect to proxy as a "client"
 	proxy, err := utils.ConnectToCluster("127.0.0.1", "", "", 14002)
 	defer proxy.Close()

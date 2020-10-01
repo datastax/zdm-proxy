@@ -12,14 +12,15 @@ import (
 )
 
 type ClusterConnectionInfo struct {
-	ipAddress			string
-	port				int
-	isOriginCassandra	bool
-	username			string
-	password			string
+	ipAddress         string
+	port              int
+	isOriginCassandra bool
+	username          string
+	password          string
 }
 
 type ClusterType string
+
 const (
 	ORIGIN_CASSANDRA = ClusterType("originCassandra")
 	TARGET_CASSANDRA = ClusterType("targetCassandra")
@@ -41,31 +42,31 @@ type ClusterConnector struct {
 
 func NewClusterConnectionInfo(ipAddress string, port int, isOriginCassandra bool, username string, password string) *ClusterConnectionInfo {
 	return &ClusterConnectionInfo{
-		ipAddress: ipAddress,
-		port: port,
+		ipAddress:         ipAddress,
+		port:              port,
 		isOriginCassandra: isOriginCassandra,
-		username: username,
-		password: password,
+		username:          username,
+		password:          password,
 	}
 }
 
-func NewClusterConnector(	connInfo *ClusterConnectionInfo,
+func NewClusterConnector(connInfo *ClusterConnectionInfo,
 	metricsHandler metrics.IMetricsHandler,
-							waitGroup *sync.WaitGroup,
-							clientHandlerContext context.Context,
-							clientHandlerCancelFunc context.CancelFunc) (*ClusterConnector, error){
+	waitGroup *sync.WaitGroup,
+	clientHandlerContext context.Context,
+	clientHandlerCancelFunc context.CancelFunc) (*ClusterConnector, error) {
 
 	var clusterType ClusterType
-	 if connInfo.isOriginCassandra {
-	 	clusterType = ORIGIN_CASSANDRA
-	 } else {
-	 	clusterType = TARGET_CASSANDRA
-	 }
+	if connInfo.isOriginCassandra {
+		clusterType = ORIGIN_CASSANDRA
+	} else {
+		clusterType = TARGET_CASSANDRA
+	}
 
-	 conn, err := establishConnection(connInfo.getConnectionString(), clientHandlerContext)
-	 if err != nil {
-	 	return nil, err
-	 }
+	conn, err := establishConnection(connInfo.getConnectionString(), clientHandlerContext)
+	if err != nil {
+		return nil, err
+	}
 
 	go func() {
 		<-clientHandlerContext.Done()
@@ -89,11 +90,9 @@ func NewClusterConnector(	connInfo *ClusterConnectionInfo,
 	}, nil
 }
 
-
 func (cc *ClusterConnector) run() {
 	cc.runResponseListeningLoop()
 }
-
 
 /**
  *	Starts a long-running loop that listens for replies being sent by the cluster
@@ -155,7 +154,7 @@ func (cc *ClusterConnector) forwardResponseToChannel(response *Frame) {
  *	Adds a channel to a map (clusterResponseChannels) keyed on streamID. This channel is used by the dequeuer to communicate the response back to this goroutine.
  *	It is this goroutine that has to receive the response, so it can enforce the timeout in case of connection disruption
  */
-func (cc *ClusterConnector) forwardToCluster(rawBytes []byte, streamId uint16) chan *Frame{
+func (cc *ClusterConnector) forwardToCluster(rawBytes []byte, streamId uint16) chan *Frame {
 	responseToCallerChan := make(chan *Frame)
 
 	go func() {

@@ -8,7 +8,6 @@ const (
 	maxAuthRetries = 5
 )
 
-
 // Returns a proper response frame to authenticate using passed in username and password
 // Utilizes the users initial startup frame to maintain the correct version & stream id.
 func authFrame(username string, password string, startupFrame *Frame) *Frame {

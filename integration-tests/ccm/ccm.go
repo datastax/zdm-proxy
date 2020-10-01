@@ -22,7 +22,7 @@ func execCcm(arg string) (string, error) {
 	var cmd *exec.Cmd
 
 	if runtime.GOOS == "windows" {
-		cmd = exec.CommandContext(ctx, "cmd.exe", "/c ccm " + arg)
+		cmd = exec.CommandContext(ctx, "cmd.exe", "/c ccm "+arg)
 	} else {
 		cmd = exec.CommandContext(ctx, "/usr/local/bin/ccm", arg)
 	}

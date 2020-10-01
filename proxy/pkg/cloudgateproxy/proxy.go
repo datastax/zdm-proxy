@@ -21,7 +21,6 @@ const (
 )
 
 type CloudgateProxy struct {
-
 	Conf *config.Config
 
 	originCassandraIP string
@@ -31,12 +30,12 @@ type CloudgateProxy struct {
 
 	// Listener that enables the proxy to listen for clients on the port specified in the configuration
 	clientListener net.Listener
-	listenerLock *sync.Mutex
+	listenerLock   *sync.Mutex
 	listenerClosed bool
 
 	preparedStatementCache *PreparedStatementCache
 
-	shutdown bool	// TODO can this go?
+	shutdown bool // TODO can this go?
 
 	shutdownContext            context.Context
 	cancelFunc                 context.CancelFunc
@@ -47,7 +46,6 @@ type CloudgateProxy struct {
 	// so all metricsHandler are incremented globally
 	metricsHandler metrics.IMetricsHandler
 }
-
 
 // Start starts up the proxy and start listening for client connections.
 func (p *CloudgateProxy) Start() error {
@@ -118,7 +116,7 @@ func (p *CloudgateProxy) acceptConnectionsFromClients(port int) error {
 
 	go func() {
 		defer p.shutdownWaitGroup.Done()
-		defer func(){
+		defer func() {
 			p.listenerLock.Lock()
 			defer p.listenerLock.Unlock()
 			if !p.listenerClosed {
@@ -151,9 +149,9 @@ func (p *CloudgateProxy) acceptConnectionsFromClients(port int) error {
 
 			// there is a ClientHandler for each connection made by a client
 			originCassandraConnInfo := NewClusterConnectionInfo(p.Conf.OriginCassandraHostname, p.Conf.OriginCassandraPort, true,
-																p.Conf.OriginCassandraUsername, p.Conf.OriginCassandraPassword)
+				p.Conf.OriginCassandraUsername, p.Conf.OriginCassandraPassword)
 			targetCassandraConnInfo := NewClusterConnectionInfo(p.Conf.TargetCassandraHostname, p.Conf.TargetCassandraPort, false,
-																p.Conf.TargetCassandraUsername, p.Conf.TargetCassandraPassword)
+				p.Conf.TargetCassandraUsername, p.Conf.TargetCassandraPassword)
 			clientHandler, err := NewClientHandler(
 				conn,
 				originCassandraConnInfo,
