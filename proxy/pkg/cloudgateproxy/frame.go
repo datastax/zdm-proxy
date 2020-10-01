@@ -3,7 +3,6 @@ package cloudgateproxy
 import (
 	"context"
 	"encoding/binary"
-	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
 	"io"
 	"net"
@@ -45,7 +44,7 @@ var ShutdownErr = &shutdownError{err: "aborted due to shutdown request"}
 
 // Simple function that reads data from a connection and builds a frame
 func readAndParseFrame(
-	connection net.Conn, frameHeader []byte, metrics *metrics.Metrics, shutdownContext context.Context) (*Frame, error) {
+	connection net.Conn, frameHeader []byte, shutdownContext context.Context) (*Frame, error) {
 	sourceAddress := connection.RemoteAddr().String()
 
 	// [Alice] read the frameHeader, whose length is constant (9 bytes), and put it into this slice
@@ -88,7 +87,6 @@ func readAndParseFrame(
 	}
 	//log.Debugf("(from %s): %v", connection.RemoteAddr(), string(data))
 	f := NewFrame(data)
-	metrics.IncrementFrames()
 
 	if f.Flags&0x01 == 1 {
 		log.Errorf("compression flag for stream %d set, unable to parse query beyond header", f.Stream)

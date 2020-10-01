@@ -17,7 +17,7 @@ import (
     	- a connector to TC
 
 	Additionally, it has:
-    - a global metrics object (must be a reference to the one created in the proxy)
+    - a global metricsHandler object (must be a reference to the one created in the proxy)
 	- the prepared statement cache
 
  */
@@ -32,7 +32,7 @@ type ClientHandler struct {
 
 	preparedStatementCache		*PreparedStatementCache
 
-	metrics						*metrics.Metrics
+	metricsHandler				metrics.IMetricsHandler
 	waitGroup 					*sync.WaitGroup
 	shutdownContext			    context.Context
 }
@@ -41,28 +41,28 @@ func NewClientHandler(	clientTcpConn net.Conn,
 						originCassandraConnInfo *ClusterConnectionInfo,
 						targetCassandraConnInfo *ClusterConnectionInfo,
 						psCache *PreparedStatementCache,
-						metrics *metrics.Metrics,
+						metricsHandler metrics.IMetricsHandler,
 						waitGroup *sync.WaitGroup,
 						shutdownContext context.Context) (*ClientHandler, error){
 	clientReqChan := make(chan *Frame)
 
-	originConnector, err := NewClusterConnector(originCassandraConnInfo, metrics, waitGroup, shutdownContext)
+	originConnector, err := NewClusterConnector(originCassandraConnInfo, metricsHandler, waitGroup, shutdownContext)
 	if err != nil {
 		return nil, err
 	}
-	targetConnector, err := NewClusterConnector(targetCassandraConnInfo, metrics, waitGroup, shutdownContext)
+	targetConnector, err := NewClusterConnector(targetCassandraConnInfo, metricsHandler, waitGroup, shutdownContext)
 	if err != nil {
 		originConnector.Stop()
 		return nil, err
 	}
 
 	return &ClientHandler{
-		clientConnector:			NewClientConnector(clientTcpConn, clientReqChan, metrics, waitGroup, shutdownContext),
+		clientConnector:			NewClientConnector(clientTcpConn, clientReqChan, metricsHandler, waitGroup, shutdownContext),
 		clientConnectorRequestChan: clientReqChan,
 		originCassandraConnector: 	originConnector,
 		targetCassandraConnector: 	targetConnector,
 		preparedStatementCache: 	psCache,
-		metrics:					metrics,
+		metricsHandler:				metricsHandler,
 		waitGroup: 					waitGroup,
 		shutdownContext: 			shutdownContext,
 	}, nil
@@ -169,10 +169,11 @@ func (ch *ClientHandler) handleRequest(f *Frame, waitGroup *sync.WaitGroup) erro
 	var response *Frame
 	if isWriteRequest {
 		log.Debugf("Write request: aggregating the responses received - OC: %d && TC: %d", responseFromOriginCassandra.Opcode, responseFromTargetCassandra.Opcode)
-		response = aggregateResponses(responseFromOriginCassandra, responseFromTargetCassandra)
+		response = aggregateResponses(responseFromOriginCassandra, responseFromTargetCassandra, ch.metricsHandler)
 	} else {
 		log.Debugf("Non-write request: just returning the response received from OC: %d", responseFromOriginCassandra.Opcode)
 		response = responseFromOriginCassandra
+		trackReadResponse(response, ch.metricsHandler)
 	}
 
 	// send overall response back to client
@@ -191,43 +192,49 @@ func (ch *ClientHandler) handleRequest(f *Frame, waitGroup *sync.WaitGroup) erro
  *		- if both responses are a success OR both responses are a failure: return responseFromOC
  *		- if either response is a failure, the failure "wins": return the failed response
  */
-func aggregateResponses(responseFromOriginalCassandra *Frame, responseFromTargetCassandra *Frame) *Frame {
+func aggregateResponses(responseFromOriginalCassandra *Frame, responseFromTargetCassandra *Frame, mh metrics.IMetricsHandler) *Frame {
 
 	log.Debugf("Aggregating responses. OC opcode %d, TargetCassandra opcode %d", responseFromOriginalCassandra.Opcode, responseFromTargetCassandra.Opcode)
 
-	if (isResponseSuccessful(responseFromOriginalCassandra) && isResponseSuccessful(responseFromTargetCassandra)) ||
-		(!isResponseSuccessful(responseFromOriginalCassandra) && !isResponseSuccessful(responseFromTargetCassandra)) {
-		log.Debugf("Aggregated response: both successes or both failures, sending back OC's response with opcode %d", responseFromOriginalCassandra.Opcode)
+	if isResponseSuccessful(responseFromOriginalCassandra) && isResponseSuccessful(responseFromTargetCassandra) {
+		log.Debugf("Aggregated response: both successes, sending back OC's response with opcode %d", responseFromOriginalCassandra.Opcode)
+		mh.IncrementCountByOne(metrics.SuccessWriteCount)
+		return responseFromOriginalCassandra
+	}
+
+	if !isResponseSuccessful(responseFromOriginalCassandra) && !isResponseSuccessful(responseFromTargetCassandra) {
+		log.Debugf("Aggregated response: both failures, sending back OC's response with opcode %d", responseFromOriginalCassandra.Opcode)
+		mh.IncrementCountByOne(metrics.FailedBothWriteCount)
 		return responseFromOriginalCassandra
 	}
 
 	// if either response is a failure, the failure "wins" --> return the failed response
 	if !isResponseSuccessful(responseFromOriginalCassandra) {
 		log.Debugf("Aggregated response: failure only on OC, sending back OC's response with opcode %d", responseFromOriginalCassandra.Opcode)
+		mh.IncrementCountByOne(metrics.FailedOriginWriteCount)
 		return responseFromOriginalCassandra
 	} else {
 		log.Debugf("Aggregated response: failure only on TargetCassandra, sending back TargetCassandra's response with opcode %d", responseFromOriginalCassandra.Opcode)
+		mh.IncrementCountByOne(metrics.FailedTargetWriteCount)
 		return responseFromTargetCassandra
 	}
 
 }
 
-func isResponseSuccessful(f *Frame) bool {
-	return f.Opcode == 0x08 || f.Opcode == 0x06
+func trackReadResponse(response *Frame, mh metrics.IMetricsHandler) {
+	if isResponseSuccessful(response) {
+		mh.IncrementCountByOne(metrics.SuccessReadCount)
+	} else {
+		errCode := binary.BigEndian.Uint16(response.Body[0:2])
+		switch errCode {
+		case 0x2500:
+			mh.IncrementCountByOne(metrics.UnpreparedReadCount)
+		default:
+			mh.IncrementCountByOne(metrics.FailedReadCount)
+		}
+	}
 }
 
-func checkError(body []byte) {
-	errCode := binary.BigEndian.Uint16(body[0:2])
-	switch errCode {
-	case 0x0000:
-		// Server Error
-		//TODO p.Metrics.IncrementServerErrors()
-	case 0x1100:
-		// Write Timeout
-		//TODO p.Metrics.IncrementWriteFails()
-	case 0x1200:
-		// Read Timeout
-		//TODO p.Metrics.IncrementReadFails()
-	}
-
+func isResponseSuccessful(response *Frame) bool {
+	return !(response.Opcode == 0x00)
 }

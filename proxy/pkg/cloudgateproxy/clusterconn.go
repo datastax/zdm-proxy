@@ -30,14 +30,14 @@ type ClusterConnector struct {
 	clusterResponseChannels	map[uint16]chan *Frame		// map of channels, keyed on streamID, on which to send the response to a request
 	clusterType				ClusterType
 
-	username				string
-	password				string
-	lock 					*sync.RWMutex		// TODO do we need a lock here?
-	metrics					*metrics.Metrics
-	waitGroup 				*sync.WaitGroup
-	shutdownContext			context.Context
-	connectorContext		context.Context
-	connectorCancelFunc		context.CancelFunc
+	username            string
+	password            string
+	lock                *sync.RWMutex		// TODO do we need a lock here?
+	metricsHandler      metrics.IMetricsHandler
+	waitGroup           *sync.WaitGroup
+	shutdownContext     context.Context
+	connectorContext    context.Context
+	connectorCancelFunc context.CancelFunc
 }
 
 func NewClusterConnectionInfo(ipAddress string, port int, isOriginCassandra bool, username string, password string) *ClusterConnectionInfo {
@@ -51,7 +51,7 @@ func NewClusterConnectionInfo(ipAddress string, port int, isOriginCassandra bool
 }
 
 func NewClusterConnector(	connInfo *ClusterConnectionInfo,
-							metrics *metrics.Metrics,
+							metrics metrics.IMetricsHandler,
 							waitGroup *sync.WaitGroup,
 							shutdownContext context.Context) (*ClusterConnector, error){
 
@@ -78,17 +78,17 @@ func NewClusterConnector(	connInfo *ClusterConnectionInfo,
 	 connectorContext, connectorCancelFunc := context.WithCancel(context.Background())
 
 	return &ClusterConnector{
-		connection: 				conn,
-		clusterResponseChannels:	make(map[uint16]chan *Frame),
-		clusterType: 				clusterType,
-		username:					connInfo.username,
-		password:					connInfo.password,
-		lock: 						&sync.RWMutex{},
-		metrics:					metrics,
-		waitGroup: 					waitGroup,
-		shutdownContext: 			shutdownContext,
-		connectorContext:			connectorContext,
-		connectorCancelFunc:		connectorCancelFunc,
+		connection:              conn,
+		clusterResponseChannels: make(map[uint16]chan *Frame),
+		clusterType:             clusterType,
+		username:                connInfo.username,
+		password:                connInfo.password,
+		lock:                    &sync.RWMutex{},
+		metricsHandler:          metrics,
+		waitGroup:               waitGroup,
+		shutdownContext:         shutdownContext,
+		connectorContext:        connectorContext,
+		connectorCancelFunc:     connectorCancelFunc,
 	}, nil
 }
 
@@ -109,7 +109,7 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 		defer cc.waitGroup.Done()
 		for {
 			frameHeader := make([]byte, cassHdrLen)
-			response, err := readAndParseFrame(cc.connection, frameHeader, cc.metrics, cc.shutdownContext)
+			response, err := readAndParseFrame(cc.connection, frameHeader, cc.shutdownContext)
 
 			if err != nil {
 				if err == ShutdownErr {

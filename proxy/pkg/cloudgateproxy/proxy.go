@@ -5,11 +5,10 @@ import (
 	"fmt"
 	"github.com/riptano/cloud-gate/proxy/pkg/config"
 	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
+	log "github.com/sirupsen/logrus"
 	"net"
 	"sync"
 	"time"
-
-	log "github.com/sirupsen/logrus"
 )
 
 const (
@@ -44,8 +43,9 @@ type CloudgateProxy struct {
 	shutdownWaitGroup          *sync.WaitGroup
 	shutdownClientListenerChan chan bool
 
-	// Created here and passed around to any other struct or function that needs it, so all metrics are incremented globally
-	Metrics *metrics.Metrics
+	// Global metricsHandler object. Created here and passed around to any other struct or function that needs it,
+	// so all metricsHandler are incremented globally
+	metricsHandler metrics.IMetricsHandler
 }
 
 
@@ -93,8 +93,9 @@ func (p *CloudgateProxy) initializeGlobalStructures() {
 	p.shutdownWaitGroup = &sync.WaitGroup{}
 	p.shutdownClientListenerChan = make(chan bool)
 
-	p.Metrics = metrics.New(p.Conf.ProxyMetricsPort)
-	p.Metrics.Expose(p.shutdownContext)
+	// This is the Prometheus-specific implementation of the global metricsHandler object
+	// To switch to a different implementation, change the type instantiated here to another one that implements metricsHandler.metricsHandler
+	p.metricsHandler = metrics.NewPrometheusCloudgateProxyMetrics()
 
 	p.lock.Unlock()
 }
@@ -155,7 +156,7 @@ func (p *CloudgateProxy) acceptConnectionsFromClients(port int) error {
 				originCassandraConnInfo,
 				targetCassandraConnInfo,
 				p.preparedStatementCache,
-				p.Metrics,
+				p.metricsHandler,
 				p.shutdownWaitGroup,
 				p.shutdownContext)
 

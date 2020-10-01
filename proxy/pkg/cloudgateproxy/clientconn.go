@@ -26,24 +26,24 @@ type ClientConnector struct {
 	// channel on which the ClientConnector listens for responses to send to the client
 	responseChannel chan []byte
 
-	lock    *sync.RWMutex    // TODO do we need a lock here?
-	metrics *metrics.Metrics // Global metrics object
+	lock           *sync.RWMutex           // TODO do we need a lock here?
+	metricsHandler metrics.IMetricsHandler // Global metricsHandler object
 
 	waitGroup *sync.WaitGroup
 	shutdownContext context.Context
 }
 
 func NewClientConnector(connection net.Conn,
-	requestChannel chan *Frame,
-	metrics *metrics.Metrics,
-	waitGroup *sync.WaitGroup,
-	shutdownContext context.Context) *ClientConnector {
+						requestChannel chan *Frame,
+						metricsHandler metrics.IMetricsHandler,
+						waitGroup *sync.WaitGroup,
+						shutdownContext context.Context) *ClientConnector {
 	return &ClientConnector{
 		connection:      connection,
 		requestChannel:  requestChannel,
 		responseChannel: make(chan []byte),
 		lock:            &sync.RWMutex{},
-		metrics:         metrics,
+		metricsHandler:  metricsHandler,
 		waitGroup:       waitGroup,
 		shutdownContext: shutdownContext,
 	}
@@ -71,7 +71,7 @@ func (cc *ClientConnector) listenForRequests() {
 		for {
 			var frame *Frame
 			frameHeader := make([]byte, cassHdrLen)
-			frame, err = readAndParseFrame(cc.connection, frameHeader, cc.metrics, cc.shutdownContext)
+			frame, err = readAndParseFrame(cc.connection, frameHeader, cc.shutdownContext)
 
 			if err != nil {
 				if err == ShutdownErr {

@@ -1,3 +1,4 @@
+
 module github.com/riptano/cloud-gate
 
 go 1.13
@@ -10,4 +11,5 @@ require (
 	github.com/jpillora/backoff v1.0.0
 	github.com/kelseyhightower/envconfig v1.4.0
 	github.com/sirupsen/logrus v1.6.0
+	github.com/prometheus/client_golang v1.3.0
 )
