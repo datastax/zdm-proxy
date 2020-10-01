@@ -22,6 +22,7 @@ type Config struct {
 	ProxyCommunicationPort int    `required:"true" split_words:"true"`
 	ProxyMetricsPort       int    `required:"true" split_words:"true"`
 	ProxyQueryPort         int    `split_words:"true"`
+	ProxyListenAddress     string `default:"localhost" split_words:"true"`
 
 	MaxQueueSize int `default:"1000" split_words:"true"`
 

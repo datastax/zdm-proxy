@@ -35,8 +35,6 @@ type CloudgateProxy struct {
 
 	preparedStatementCache *PreparedStatementCache
 
-	shutdown bool // TODO can this go?
-
 	shutdownContext            context.Context
 	cancelFunc                 context.CancelFunc
 	shutdownWaitGroup          *sync.WaitGroup
@@ -66,7 +64,7 @@ func (p *CloudgateProxy) Start() error {
 
 	log.Debugf("connection check passed (to %s)", p.targetCassandraIP)
 
-	err = p.acceptConnectionsFromClients(p.Conf.ProxyQueryPort)
+	err = p.acceptConnectionsFromClients(p.Conf.ProxyListenAddress, p.Conf.ProxyQueryPort)
 	if err != nil {
 		return err
 	}
@@ -87,8 +85,6 @@ func (p *CloudgateProxy) initializeGlobalStructures() {
 
 	p.preparedStatementCache = NewPreparedStatementCache()
 
-	p.shutdown = false
-
 	p.shutdownContext, p.cancelFunc = context.WithCancel(context.Background())
 	p.shutdownWaitGroup = &sync.WaitGroup{}
 	p.shutdownClientListenerChan = make(chan bool)
@@ -102,8 +98,8 @@ func (p *CloudgateProxy) initializeGlobalStructures() {
 
 // acceptConnectionsFromClients creates a listener on the passed in port argument, and every connection
 // that is received over that port instantiates a ClientHandler that then takes over managing that connection
-func (p *CloudgateProxy) acceptConnectionsFromClients(port int) error {
-	l, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+func (p *CloudgateProxy) acceptConnectionsFromClients(address string, port int) error {
+	l, err := net.Listen("tcp", fmt.Sprintf("%s:%d", address, port))
 	if err != nil {
 		return err
 	}

@@ -1,6 +1,7 @@
 package env
 
 import (
+	"flag"
 	"os"
 	"strings"
 )
@@ -11,23 +12,49 @@ var DseVersion string
 var IsDse bool
 var UseCcm bool
 
-func init() {
-	CassandraVersion = os.Getenv("CASSANDRA_VERSION")
-	DseVersion = os.Getenv("DSE_VERSION")
-	useCcm := os.Getenv("USE_CCM")
+func InitGlobalVars() {
+	flags := map[string]*string{
+		"CASSANDRA_VERSION":
+		flag.String(
+			"CASSANDRA_VERSION",
+			getEnvironmentVariableOrDefault("CASSANDRA_VERSION", "3.11.7"),
+			"CASSANDRA_VERSION"),
+
+		"DSE_VERSION":
+		flag.String(
+			"DSE_VERSION",
+			getEnvironmentVariableOrDefault("DSE_VERSION", ""),
+			"DSE_VERSION"),
+
+		"USE_CCM":
+		flag.String(
+			"USE_CCM",
+			getEnvironmentVariableOrDefault("USE_CCM", "false"),
+			"USE_CCM"),
+	}
+
+	flag.Parse()
+
+	CassandraVersion = *flags["CASSANDRA_VERSION"]
+	DseVersion = *flags["DSE_VERSION"]
+	useCcm := *flags["USE_CCM"]
 	if DseVersion != "" {
 		IsDse = true
 		ServerVersion = DseVersion
-	} else if CassandraVersion != "" {
-		ServerVersion = CassandraVersion
-		IsDse = false
 	} else {
-		CassandraVersion = "3.11.7" // default
 		ServerVersion = CassandraVersion
 		IsDse = false
 	}
 
 	if strings.ToLower(useCcm) == "true" {
 		UseCcm = true
+	}
+}
+
+func getEnvironmentVariableOrDefault(key string, defaultValue string) string {
+	if value, ok := os.LookupEnv(key); ok {
+		return value
+	} else {
+		return defaultValue
 	}
 }

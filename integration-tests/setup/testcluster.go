@@ -166,6 +166,7 @@ func NewTestConfig(origin TestCluster, target TestCluster) *config.Config {
 	conf.ProxyCommunicationPort = 14000
 	conf.ProxyMetricsPort = 14001
 	conf.ProxyQueryPort = 14002
+	conf.ProxyListenAddress = "localhost"
 	conf.Debug = false
 	conf.Test = false
 
