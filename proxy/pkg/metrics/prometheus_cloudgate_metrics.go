@@ -8,8 +8,8 @@ import (
 )
 
 type PrometheusCloudgateProxyMetrics struct {
-	collectorMap	map[MetricsName]prometheus.Collector
-	lock 			*sync.RWMutex
+	collectorMap map[MetricsName]prometheus.Collector
+	lock         *sync.RWMutex
 }
 
 /***
@@ -18,8 +18,8 @@ type PrometheusCloudgateProxyMetrics struct {
 
 func NewPrometheusCloudgateProxyMetrics() IMetricsHandler {
 	m := &PrometheusCloudgateProxyMetrics{
-		collectorMap:	make(map[MetricsName]prometheus.Collector),
-		lock:			&sync.RWMutex{},
+		collectorMap: make(map[MetricsName]prometheus.Collector),
+		lock:         &sync.RWMutex{},
 	}
 	m.initialize()
 	return m
@@ -131,8 +131,8 @@ func (pm *PrometheusCloudgateProxyMetrics) addGauge(mn MetricsName) error {
 	defer pm.lock.Unlock()
 
 	g := prometheus.NewGauge(prometheus.GaugeOpts{
-		Name:        string(mn),
-		Help:        getMetricsDescription(mn),
+		Name: string(mn),
+		Help: getMetricsDescription(mn),
 	})
 	pm.collectorMap[mn] = g
 	return pm.registerCollector(g)
@@ -143,9 +143,9 @@ func (pm *PrometheusCloudgateProxyMetrics) addHistogram(mn MetricsName) error {
 	defer pm.lock.Unlock()
 
 	h := prometheus.NewHistogram(prometheus.HistogramOpts{
-		Name:        string(mn),
-		Help:        getMetricsDescription(mn),
-		Buckets:     []float64{15, 30, 60, 90, 120, 200},		// TODO define latency buckets in some way that makes sense
+		Name:    string(mn),
+		Help:    getMetricsDescription(mn),
+		Buckets: []float64{15, 30, 60, 90, 120, 200}, // TODO define latency buckets in some way that makes sense
 	})
 	pm.collectorMap[mn] = h
 	return pm.registerCollector(h)
@@ -196,9 +196,8 @@ func (pm *PrometheusCloudgateProxyMetrics) getHistogramFromMap(mn MetricsName) (
 	}
 }
 
-
 // Register this collector with Prometheus's DefaultRegisterer.
-func (pm *PrometheusCloudgateProxyMetrics) registerCollector(c prometheus.Collector) error{
+func (pm *PrometheusCloudgateProxyMetrics) registerCollector(c prometheus.Collector) error {
 	if err := prometheus.Register(c); err != nil {
 		log.Errorf("Collector %s could not be registered due to @s", c, err)
 		return err

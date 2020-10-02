@@ -6,7 +6,8 @@ import (
 	"github.com/riptano/cloud-gate/integration-tests/ccm"
 	"github.com/riptano/cloud-gate/integration-tests/env"
 	"github.com/riptano/cloud-gate/integration-tests/simulacron"
-	log "github.com/sirupsen/logrus"
+	"github.com/riptano/cloud-gate/proxy/pkg/cloudgateproxy"
+	"github.com/riptano/cloud-gate/proxy/pkg/config"
 	"math"
 	"math/rand"
 	"sync"
@@ -33,9 +34,6 @@ var createdGlobalClusters = false
 
 var globalCcmClusterOrigin *ccm.Cluster
 var globalCcmClusterTarget *ccm.Cluster
-
-var globalSimulacronClusterOrigin *simulacron.SimulacronCluster
-var globalSimulacronClusterTarget *simulacron.SimulacronCluster
 
 var globalOriginCluster TestCluster
 var globalTargetCluster TestCluster
@@ -86,30 +84,20 @@ func createClusters() error {
 	firstClusterId := r.Uint64() % (math.MaxUint64 - 1)
 
 	var err error
-	if env.UseCcmGlobal {
-		firstClusterName := fmt.Sprintf("test_cluster%d", firstClusterId)
-		globalCcmClusterOrigin = ccm.NewCluster(firstClusterName, env.ServerVersion, env.IsDse, 1)
-		err = globalCcmClusterOrigin.Create(originNodes)
-		globalOriginCluster = globalCcmClusterOrigin
-	} else {
-		globalSimulacronClusterOrigin, err = simulacron.GetNewCluster(originNodes)
-		globalOriginCluster = globalSimulacronClusterOrigin
-	}
+	firstClusterName := fmt.Sprintf("test_cluster%d", firstClusterId)
+	globalCcmClusterOrigin = ccm.NewCluster(firstClusterName, env.ServerVersion, env.IsDse, 1)
+	err = globalCcmClusterOrigin.Create(originNodes)
+	globalOriginCluster = globalCcmClusterOrigin
 
 	if err != nil {
 		return err
 	}
 
-	if env.UseCcmGlobal {
-		secondClusterId := firstClusterId + 1
-		secondClusterName := fmt.Sprintf("test_cluster%d", secondClusterId)
-		globalCcmClusterTarget = ccm.NewCluster(secondClusterName, env.ServerVersion, env.IsDse, 10)
-		err = globalCcmClusterTarget.Create(targetNodes)
-		globalTargetCluster = globalCcmClusterTarget
-	} else {
-		globalSimulacronClusterTarget, err = simulacron.GetNewCluster(targetNodes)
-		globalTargetCluster = globalSimulacronClusterTarget
-	}
+	secondClusterId := firstClusterId + 1
+	secondClusterName := fmt.Sprintf("test_cluster%d", secondClusterId)
+	globalCcmClusterTarget = ccm.NewCluster(secondClusterName, env.ServerVersion, env.IsDse, 10)
+	err = globalCcmClusterTarget.Create(targetNodes)
+	globalTargetCluster = globalCcmClusterTarget
 
 	if err != nil {
 		return err
@@ -125,27 +113,62 @@ func CleanUpClusters() {
 		return
 	}
 
-	if env.UseCcmGlobal {
-		globalCcmClusterTarget.SwitchToThis()
-		ccm.RemoveCurrent()
-		globalCcmClusterOrigin.SwitchToThis()
-		ccm.RemoveCurrent()
-	} else {
-		err := globalSimulacronClusterOrigin.Remove()
-		if err != nil {
-			log.Warn("failed to remove simulacron cluster", globalSimulacronClusterOrigin.GetId(), ":", err)
-		}
+	globalCcmClusterTarget.SwitchToThis()
+	ccm.RemoveCurrent()
+	globalCcmClusterOrigin.SwitchToThis()
+	ccm.RemoveCurrent()
+}
 
-		err = globalSimulacronClusterTarget.Remove()
-		if err != nil {
-			log.Warn("failed to remove simulacron cluster", globalSimulacronClusterTarget.GetId(), ":", err)
-		}
+type TestSetup struct {
+	origin TestCluster
+	target TestCluster
+	proxy  *cloudgateproxy.CloudgateProxy
+}
 
-		process, err := simulacron.GetGlobalSimulacronProcess()
-		if err != nil {
-			log.Error("unable to get simulacron process", err)
-		}
-
-		process.Cancel()
+func NewTestSetup() *TestSetup {
+	origin, _ := simulacron.GetNewCluster(1)
+	target, _ := simulacron.GetNewCluster(1)
+	proxyInstance := NewProxyInstance(origin, target)
+	return &TestSetup{
+		origin: origin,
+		target: target,
+		proxy:  proxyInstance,
 	}
+}
+
+func (setup *TestSetup) Cleanup() {
+	setup.proxy.Shutdown()
+	setup.target.Remove()
+	setup.origin.Remove()
+}
+
+func NewProxyInstance(origin TestCluster, target TestCluster) *cloudgateproxy.CloudgateProxy {
+	return NewProxyInstanceWithConfig(NewTestConfig(origin, target))
+}
+
+func NewProxyInstanceWithConfig(config *config.Config) *cloudgateproxy.CloudgateProxy {
+	return cloudgateproxy.Run(config)
+}
+
+func NewTestConfig(origin TestCluster, target TestCluster) *config.Config {
+	conf := config.New()
+	conf.OriginCassandraHostname = origin.GetInitialContactPoint()
+	conf.OriginCassandraUsername = "cassandra"
+	conf.OriginCassandraPassword = "cassandra"
+	conf.OriginCassandraPort = 9042
+
+	conf.TargetCassandraHostname = target.GetInitialContactPoint()
+	conf.TargetCassandraUsername = "cassandra"
+	conf.TargetCassandraPassword = "cassandra"
+	conf.TargetCassandraPort = 9042
+
+	conf.ProxyServiceHostname = "localhost"
+	conf.ProxyCommunicationPort = 14000
+	conf.ProxyMetricsPort = 14001
+	conf.ProxyQueryPort = 14002
+	conf.ProxyListenAddress = "localhost"
+	conf.Debug = false
+	conf.Test = false
+
+	return conf
 }

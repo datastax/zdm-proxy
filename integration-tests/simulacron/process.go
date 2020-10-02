@@ -24,8 +24,8 @@ type SimulacronProcess struct {
 	cancelFunc context.CancelFunc
 	lock       *sync.Mutex
 	started    bool
-	cmd *exec.Cmd
-	baseUrl string
+	cmd        *exec.Cmd
+	baseUrl    string
 }
 
 var globalInstance = &atomic.Value{}
@@ -49,8 +49,8 @@ func NewSimulacronProcess(httpPort int, startIp string) *SimulacronProcess {
 		cancelFunc: cancel,
 		lock:       &sync.Mutex{},
 		started:    false,
-		cmd: 		nil,
-		baseUrl: 	"http://127.0.0.1:" + strconv.FormatInt(int64(httpPort), 10),
+		cmd:        nil,
+		baseUrl:    "http://127.0.0.1:" + strconv.FormatInt(int64(httpPort), 10),
 	}
 }
 
@@ -73,10 +73,6 @@ func (process *SimulacronProcess) cancelInternal() {
 
 	go func() {
 		if tempCmd.Process != nil {
-			err := tempCmd.Process.Kill()
-			if err != nil {
-				log.Warn("failed to kill simulacron process:", err)
-			}
 			state, err := tempCmd.Process.Wait()
 			if err != nil {
 				log.Warn("failed to wait for simulacron process to exit:", err)
@@ -219,7 +215,7 @@ func (process *SimulacronProcess) Start() error {
 		}
 	}()
 
-	err := <- mainChannel
+	err := <-mainChannel
 	if err == nil {
 		process.started = true
 		return nil
@@ -229,7 +225,16 @@ func (process *SimulacronProcess) Start() error {
 	}
 }
 
-func GetGlobalSimulacronProcess() (*SimulacronProcess, error) {
+func GetGlobalSimulacronProcess() *SimulacronProcess {
+	instance := globalInstance.Load()
+	if instance != nil {
+		return instance.(*SimulacronProcess)
+	}
+
+	return nil
+}
+
+func GetOrCreateGlobalSimulacronProcess() (*SimulacronProcess, error) {
 	instance := globalInstance.Load()
 	if instance != nil {
 		return instance.(*SimulacronProcess), nil

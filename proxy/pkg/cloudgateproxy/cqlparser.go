@@ -34,21 +34,21 @@ var opcodeMap = map[byte]string{
 
 /*  This function takes a request (represented as raw bytes) and parses it.
 
-	The raw byte representation of the request is parsed according to its type.
-	If the request is to prepare or execute a prepared statement, the map of prepared statements is used (this is keyed on prepareId)
+The raw byte representation of the request is parsed according to its type.
+If the request is to prepare or execute a prepared statement, the map of prepared statements is used (this is keyed on prepareId)
 
-	Returns list of []string paths in form /opcode/action/table (one path if a simple request, multiple paths if a batch)
-	 - opcode is "startup", "query", "batch", etc.
-	 - action is "select", "insert", "update", etc,
-	 - table is the table as written in the command
+Returns list of []string paths in form /opcode/action/table (one path if a simple request, multiple paths if a batch)
+ - opcode is "startup", "query", "batch", etc.
+ - action is "select", "insert", "update", etc,
+ - table is the table as written in the command
 
-	Parsing requests is not cluster-specific, even considering prepared statements (as preparedIDs are computed based on the statement only)
+Parsing requests is not cluster-specific, even considering prepared statements (as preparedIDs are computed based on the statement only)
 
-	This function was taken from
-	https://github.com/cilium/cilium/blob/2bc1fdeb97331761241f2e4b3fb88ad524a0681b/proxylib/cassandra/cassandraparser.go
-	with the following modifications: parsing of EXECUTE statements was modified to determine EXECUTE's action
-	from the bytes of the original PREPARE message associated with it
- */
+This function was taken from
+https://github.com/cilium/cilium/blob/2bc1fdeb97331761241f2e4b3fb88ad524a0681b/proxylib/cassandra/cassandraparser.go
+with the following modifications: parsing of EXECUTE statements was modified to determine EXECUTE's action
+from the bytes of the original PREPARE message associated with it
+*/
 func CassandraParseRequest(psCache *PreparedStatementCache, data []byte) ([]string, bool, error) {
 	opcode := data[4]
 	path := opcodeMap[opcode]
@@ -159,7 +159,6 @@ func extractPreparedIDFromRawRequest(rawRequest []byte, startByteIndex int) (str
 	return preparedID, idLen
 }
 
-
 // Modified from
 // https://github.com/cilium/cilium/blob/2bc1fdeb97331761241f2e4b3fb88ad524a0681b/proxylib/cassandra/cassandraparser.go
 // to return lowercase action and as-is table (including quotations and case-sensitivity)
@@ -167,10 +166,10 @@ func parseCassandra(query string) (string, string) {
 	var action string
 	var table string
 
-	query = strings.TrimRight(query, ";")            // remove potential trailing ;
+	query = strings.TrimRight(query, ";") // remove potential trailing ;
 
-    re := regexp.MustCompile("(?s)//.*?\n|/\\*.*?\\*/")
-    query = re.ReplaceAllString(query, "")          // remove comments
+	re := regexp.MustCompile("(?s)//.*?\n|/\\*.*?\\*/")
+	query = re.ReplaceAllString(query, "") // remove comments
 
 	fields := strings.Fields(strings.ToLower(query)) // handles all whitespace
 	originalFields := strings.Fields(query)          // maintains case-sensitiviy for table

@@ -20,51 +20,69 @@ import (
     - a global metricsHandler object (must be a reference to the one created in the proxy)
 	- the prepared statement cache
 
- */
+*/
 
 type ClientHandler struct {
+	clientConnector            *ClientConnector
+	clientConnectorRequestChan chan *Frame // channel on which the client connector passes requests coming from the client
 
-	clientConnector				*ClientConnector
-	clientConnectorRequestChan	chan *Frame	// channel on which the client connector passes requests coming from the client
+	originCassandraConnector *ClusterConnector
+	targetCassandraConnector *ClusterConnector
 
-	originCassandraConnector	*ClusterConnector
-	targetCassandraConnector	*ClusterConnector
+	preparedStatementCache *PreparedStatementCache
 
-	preparedStatementCache		*PreparedStatementCache
+	metricsHandler  metrics.IMetricsHandler
+	globalWaitGroup *sync.WaitGroup
 
-	metricsHandler				metrics.IMetricsHandler
-	waitGroup 					*sync.WaitGroup
-	shutdownContext			    context.Context
+	clientHandlerContext    context.Context
+	clientHandlerCancelFunc context.CancelFunc
 }
 
-func NewClientHandler(	clientTcpConn net.Conn,
-						originCassandraConnInfo *ClusterConnectionInfo,
-						targetCassandraConnInfo *ClusterConnectionInfo,
-						psCache *PreparedStatementCache,
-						metricsHandler metrics.IMetricsHandler,
-						waitGroup *sync.WaitGroup,
-						shutdownContext context.Context) (*ClientHandler, error){
+func NewClientHandler(clientTcpConn net.Conn,
+	originCassandraConnInfo *ClusterConnectionInfo,
+	targetCassandraConnInfo *ClusterConnectionInfo,
+	psCache *PreparedStatementCache,
+	metricsHandler metrics.IMetricsHandler,
+	waitGroup *sync.WaitGroup,
+	globalContext context.Context) (*ClientHandler, error) {
 	clientReqChan := make(chan *Frame)
 
-	originConnector, err := NewClusterConnector(originCassandraConnInfo, metricsHandler, waitGroup, shutdownContext)
+	clientHandlerContext, clientHandlerCancelFunc := context.WithCancel(context.Background())
+
+	go func() {
+		select {
+		case <-clientHandlerContext.Done():
+			return
+		case <-globalContext.Done():
+			clientHandlerCancelFunc()
+			return
+		}
+	}()
+
+	originConnector, err := NewClusterConnector(
+		originCassandraConnInfo, metricsHandler, waitGroup, clientHandlerContext, clientHandlerCancelFunc)
 	if err != nil {
+		clientHandlerCancelFunc()
 		return nil, err
 	}
-	targetConnector, err := NewClusterConnector(targetCassandraConnInfo, metricsHandler, waitGroup, shutdownContext)
+
+	targetConnector, err := NewClusterConnector(
+		targetCassandraConnInfo, metricsHandler, waitGroup, clientHandlerContext, clientHandlerCancelFunc)
 	if err != nil {
-		originConnector.Stop()
+		clientHandlerCancelFunc()
 		return nil, err
 	}
 
 	return &ClientHandler{
-		clientConnector:			NewClientConnector(clientTcpConn, clientReqChan, metricsHandler, waitGroup, shutdownContext),
+		clientConnector:            NewClientConnector(clientTcpConn, clientReqChan, metricsHandler, waitGroup, clientHandlerContext, clientHandlerCancelFunc),
 		clientConnectorRequestChan: clientReqChan,
-		originCassandraConnector: 	originConnector,
-		targetCassandraConnector: 	targetConnector,
-		preparedStatementCache: 	psCache,
-		metricsHandler:				metricsHandler,
-		waitGroup: 					waitGroup,
-		shutdownContext: 			shutdownContext,
+		originCassandraConnector:   originConnector,
+		targetCassandraConnector:   targetConnector,
+		preparedStatementCache:     psCache,
+		metricsHandler:             metricsHandler,
+		globalWaitGroup:            waitGroup,
+		clientHandlerContext:       clientHandlerContext,
+		clientHandlerCancelFunc:    clientHandlerCancelFunc,
 	}, nil
 }
 
@@ -85,10 +103,10 @@ func (ch *ClientHandler) run() {
 func (ch *ClientHandler) listenForClientRequests() {
 	authenticated := false
 	var err error
-	ch.waitGroup.Add(1)
+	ch.globalWaitGroup.Add(1)
 	log.Debugf("listenForClientRequests loop starting now")
 	go func() {
-		defer ch.waitGroup.Done()
+		defer ch.globalWaitGroup.Done()
 		defer close(ch.clientConnector.responseChannel)
 
 		handleWaitGroup := &sync.WaitGroup{}
@@ -100,15 +118,20 @@ func (ch *ClientHandler) listenForClientRequests() {
 				break
 			}
 
-			log.Debugf("frame received")
+			log.Tracef("frame received")
 			if !authenticated {
-				log.Debugf("not authenticated")
+				log.Tracef("not authenticated")
 				// Handle client authentication
 				authenticated, err = ch.handleStartupFrame(frame)
-				if err != nil {
+				if err != nil && err != ShutdownErr {
 					log.Error(err)
 				}
-				log.Debugf("authenticated? %t", authenticated)
+				if authenticated {
+					log.Infof(
+						"Authentication successful with client %s",
+						ch.clientConnector.connection.RemoteAddr().String())
+				}
+				log.Tracef("authenticated? %t", authenticated)
 				continue
 			}
 
@@ -134,7 +157,7 @@ func (ch *ClientHandler) handleRequest(f *Frame, waitGroup *sync.WaitGroup) erro
 		return err
 	}
 
-	log.Debugf("parsed request, writeRequest? %t, resulting path(s) %v", isWriteRequest, paths)
+	log.Tracef("parsed request, writeRequest? %t, resulting path(s) %v", isWriteRequest, paths)
 
 	query, err := createQuery(f, paths, ch.preparedStatementCache, isWriteRequest)
 	if err != nil {
@@ -154,14 +177,14 @@ func (ch *ClientHandler) handleRequest(f *Frame, waitGroup *sync.WaitGroup) erro
 	if isWriteRequest {
 		log.Debugf("Forwarding query of type %v with opcode %v and path %v for stream %v to TC", query.Type, query.Opcode, paths, query.Stream)
 		responseFromTargetCassandraChan := ch.targetCassandraConnector.forwardToCluster(query.Query, query.Stream)
-		responseFromTargetCassandra, ok = <- responseFromTargetCassandraChan
+		responseFromTargetCassandra, ok = <-responseFromTargetCassandraChan
 		if !ok {
 			return fmt.Errorf("did not receive response from TargetCassandra channel, stream: %d", f.Stream)
 		}
 	}
 
 	// wait for OC response in any case
-	responseFromOriginCassandra, ok = <- responseFromOriginCassandraChan
+	responseFromOriginCassandra, ok = <-responseFromOriginCassandraChan
 	if !ok {
 		return fmt.Errorf("did not receive response from original cassandra channel, stream: %d", f.Stream)
 	}
@@ -180,7 +203,7 @@ func (ch *ClientHandler) handleRequest(f *Frame, waitGroup *sync.WaitGroup) erro
 	ch.clientConnector.responseChannel <- response.RawBytes
 
 	// if it was a prepare request, cache the ID and statement info
-	if query.Type == PREPARE && isResponseSuccessful(response){
+	if query.Type == PREPARE && isResponseSuccessful(response) {
 		ch.preparedStatementCache.cachePreparedID(response)
 	}
 

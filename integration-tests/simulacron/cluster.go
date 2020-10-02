@@ -8,20 +8,20 @@ import (
 
 type SimulacronCluster struct {
 	initialContactPoint string
-	version string
-	id string
-	session *gocql.Session
-	datacenters []*SimulacronDatacenter
-	process *SimulacronProcess
+	version             string
+	id                  string
+	session             *gocql.Session
+	datacenters         []*SimulacronDatacenter
+	process             *SimulacronProcess
 }
 
 type SimulacronDatacenter struct {
-	id string
+	id    string
 	nodes []*SimulacronNode
 }
 
 type SimulacronNode struct {
-	id string
+	id      string
 	address string
 }
 
@@ -85,7 +85,7 @@ func (instance *SimulacronDatacenter) GetId() string {
 }
 
 func GetNewCluster(numberOfNodes int) (*SimulacronCluster, error) {
-	process, err := GetGlobalSimulacronProcess()
+	process, err := GetOrCreateGlobalSimulacronProcess()
 
 	if err != nil {
 		return nil, err

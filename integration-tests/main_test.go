@@ -5,8 +5,8 @@ import (
 	"github.com/riptano/cloud-gate/integration-tests/ccm"
 	"github.com/riptano/cloud-gate/integration-tests/env"
 	"github.com/riptano/cloud-gate/integration-tests/setup"
+	"github.com/riptano/cloud-gate/integration-tests/simulacron"
 	"github.com/riptano/cloud-gate/proxy/pkg/cloudgateproxy"
-	"github.com/riptano/cloud-gate/proxy/pkg/config"
 	log "github.com/sirupsen/logrus"
 	"os"
 	"testing"
@@ -17,26 +17,33 @@ var dest setup.TestCluster
 
 func TestMain(m *testing.M) {
 	gocql.TimeoutLimit = 5
-	log.SetLevel(log.DebugLevel)
+	log.SetLevel(log.InfoLevel)
 
-	if env.UseCcmGlobal {
+	env.InitGlobalVars()
+
+	if env.UseCcm {
 		ccm.RemoveCurrent()
 		ccm.RemoveCurrent()
-	}
+		var err error
+		source, err = setup.GetGlobalTestClusterOrigin()
 
-	var err error
-	source, err = setup.GetGlobalTestClusterOrigin()
+		if err != nil {
+			log.WithError(err).Fatal()
+			os.Exit(-1)
+		}
 
-	if err != nil {
-		log.WithError(err).Fatal()
-		os.Exit(-1)
-	}
+		dest, err = setup.GetGlobalTestClusterTarget()
 
-	dest, err = setup.GetGlobalTestClusterTarget()
+		if err != nil {
+			log.WithError(err).Fatal()
+			os.Exit(-1)
+		}
 
-	if err != nil {
-		log.WithError(err).Fatal()
-		os.Exit(-1)
+		sourceSession := source.GetSession()
+		destSession := dest.GetSession()
+
+		// Seed source and dest with keyspace
+		setup.SeedKeyspace(sourceSession, destSession)
 	}
 
 	os.Exit(RunTests(m))
@@ -64,38 +71,17 @@ func TestMain(m *testing.M) {
 }
 
 func RunTests(m *testing.M) int {
+	defer func() {
+		simulacronProcess := simulacron.GetGlobalSimulacronProcess()
+		if simulacronProcess != nil {
+			simulacronProcess.Cancel()
+		}
+	}()
 	defer setup.CleanUpClusters()
 
-	sourceSession := source.GetSession()
-	destSession := dest.GetSession()
-
-	// Seed source and dest with keyspace
-	setup.SeedKeyspace(sourceSession, destSession)
 	return m.Run()
 }
 
-func NewProxyInstance() *cloudgateproxy.CloudgateProxy {
-	return cloudgateproxy.Run(NewTestConfig(source, dest))
-}
-
-func NewTestConfig(origin setup.TestCluster, target setup.TestCluster) *config.Config {
-	conf := config.New()
-	conf.OriginCassandraHostname = origin.GetInitialContactPoint()
-	conf.OriginCassandraUsername = "cassandra"
-	conf.OriginCassandraPassword = "cassandra"
-	conf.OriginCassandraPort = 9042
-
-	conf.TargetCassandraHostname = target.GetInitialContactPoint()
-	conf.TargetCassandraUsername = "cassandra"
-	conf.TargetCassandraPassword = "cassandra"
-	conf.TargetCassandraPort = 9042
-
-	conf.ProxyServiceHostname = "localhost"
-	conf.ProxyCommunicationPort = 14000
-	conf.ProxyMetricsPort = 14001
-	conf.ProxyQueryPort = 14002
-	conf.Debug = false
-	conf.Test = false
-
-	return conf
+func NewDefaultProxyInstance() *cloudgateproxy.CloudgateProxy {
+	return setup.NewProxyInstance(source, dest)
 }
