@@ -60,6 +60,26 @@ CREATE KEYSPACE test WITH REPLICATION = {'class' : 'SimpleStrategy', 'replicatio
 CREATE TABLE test.keyvalue (key int PRIMARY KEY, value text);
 ```
 
+You can also use ccm instead of docker:
+
+```shell
+ccm create -v 3.11.7 origin
+ccm add -s --binary-itf="127.0.0.1:9042" --storage-itf="127.0.0.1:7000" --thrift-itf="127.0.0.1:9160" -r 5005 -j 9000 node1
+ccm start --wait-for-binary-proto
+
+ccm create -v 3.11.7 target
+ccm add -s --binary-itf="127.0.0.1:9043" --storage-itf="127.0.0.1:7001" --thrift-itf="127.0.0.1:9161" -r 5006 -j 9001 node1
+ccm start --wait-for-binary-proto
+
+# use cqlsh on origin
+ccm switch origin
+ccm node1 cqlsh
+
+# use cqlsh on target
+ccm switch target
+ccm node1 cqlsh
+```
+
 Clone this project into the following directory, using the exact same path specified here: `~/go/src/github.com/riptano`
 
 If using IntelliJ Goland or the go plugin for IntelliJ Idea Ultimate, create a run configuration as shown here:

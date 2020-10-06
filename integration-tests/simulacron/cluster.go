@@ -1,38 +1,39 @@
 package simulacron
 
 import (
+	"fmt"
 	"github.com/gocql/gocql"
 	"github.com/riptano/cloud-gate/integration-tests/env"
 	"strings"
 )
 
-type SimulacronCluster struct {
+type Cluster struct {
+	*baseSimulacron
 	initialContactPoint string
 	version             string
-	id                  string
 	session             *gocql.Session
-	datacenters         []*SimulacronDatacenter
-	process             *SimulacronProcess
+	datacenters         []*Datacenter
 }
 
-type SimulacronDatacenter struct {
-	id    string
-	nodes []*SimulacronNode
+type Datacenter struct {
+	*baseSimulacron
+	nodes []*Node
 }
 
-type SimulacronNode struct {
-	id      string
+type Node struct {
+	*baseSimulacron
 	address string
 }
 
-type SimulacronBase interface {
-	GetId() string
+type baseSimulacron struct {
+	process *Process
+	id      int
 }
 
-func (process *SimulacronProcess) newCluster(data *ClusterData) (*SimulacronCluster, error) {
-	dcs := make([]*SimulacronDatacenter, len(data.Datacenters))
+func (process *Process) newCluster(data *ClusterData) (*Cluster, error) {
+	dcs := make([]*Datacenter, len(data.Datacenters))
 	for i := 0; i < len(dcs); i++ {
-		dcs[i] = newDatacenter(data.Datacenters[i])
+		dcs[i] = newDatacenter(process, data.Datacenters[i])
 	}
 	var contactPoint string
 	var session *gocql.Session
@@ -47,44 +48,35 @@ func (process *SimulacronProcess) newCluster(data *ClusterData) (*SimulacronClus
 		}
 	}
 
-	return &SimulacronCluster{
+	return &Cluster{
 		initialContactPoint: contactPoint,
 		version:             env.ServerVersion,
-		id:                  data.Id,
+		baseSimulacron:      &baseSimulacron{id: data.Id, process: process},
 		session:             session,
 		datacenters:         dcs,
-		process:             process,
 	}, nil
 }
 
-func newNode(data *NodeData) *SimulacronNode {
-	return &SimulacronNode{id: data.Id, address: data.Address}
+func newNode(process *Process, data *NodeData) *Node {
+	return &Node{baseSimulacron: &baseSimulacron{id: data.Id, process: process}, address: data.Address}
 }
 
-func newDatacenter(data *DatacenterData) *SimulacronDatacenter {
-	nodes := make([]*SimulacronNode, len(data.Nodes))
+func newDatacenter(process *Process, data *DatacenterData) *Datacenter {
+	nodes := make([]*Node, len(data.Nodes))
 	for i := 0; i < len(nodes); i++ {
-		nodes[i] = newNode(data.Nodes[i])
+		nodes[i] = newNode(process, data.Nodes[i])
 	}
-	return &SimulacronDatacenter{
-		id:    data.Id,
-		nodes: nodes,
+	return &Datacenter{
+		baseSimulacron: &baseSimulacron{id: data.Id, process: process},
+		nodes:          nodes,
 	}
 }
 
-func (instance *SimulacronCluster) GetId() string {
-	return instance.id
+func (baseSimulacron *baseSimulacron) GetId() string {
+	return fmt.Sprintf("%d", baseSimulacron.id)
 }
 
-func (instance *SimulacronNode) GetId() string {
-	return instance.id
-}
-
-func (instance *SimulacronDatacenter) GetId() string {
-	return instance.id
-}
-
-func GetNewCluster(numberOfNodes int) (*SimulacronCluster, error) {
+func GetNewCluster(numberOfNodes int) (*Cluster, error) {
 	process, err := GetOrCreateGlobalSimulacronProcess()
 
 	if err != nil {
@@ -100,22 +92,31 @@ func GetNewCluster(numberOfNodes int) (*SimulacronCluster, error) {
 	return cluster, nil
 }
 
-func (instance *SimulacronCluster) Remove() error {
+func (instance *Cluster) Remove() error {
 	if instance.session != nil {
 		instance.session.Close()
 	}
 
-	return instance.process.Remove(instance.id)
+	return instance.process.Remove(instance.GetId())
 }
 
-func (instance *SimulacronCluster) GetInitialContactPoint() string {
+func (instance *Cluster) GetInitialContactPoint() string {
 	return instance.initialContactPoint
 }
 
-func (instance *SimulacronCluster) GetVersion() string {
+func (instance *Cluster) GetVersion() string {
 	return instance.version
 }
 
-func (instance *SimulacronCluster) GetSession() *gocql.Session {
+func (instance *Cluster) GetSession() *gocql.Session {
 	return instance.session
+}
+
+func (baseSimulacron *baseSimulacron) Prime(then Then) error {
+	_, err := baseSimulacron.process.execHttp("POST", baseSimulacron.getPath("prime"), then.render())
+	return err
+}
+
+func (baseSimulacron *baseSimulacron) getPath(endpoint string) string {
+	return "/" + endpoint + "/" + baseSimulacron.GetId()
 }

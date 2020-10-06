@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-type SimulacronProcess struct {
+type Process struct {
 	httpPort   int
 	startIp    string
 	ctx        context.Context
@@ -26,6 +26,8 @@ type SimulacronProcess struct {
 	started    bool
 	cmd        *exec.Cmd
 	baseUrl    string
+	waitGroup  *sync.WaitGroup
+	failedBind bool
 }
 
 var globalInstance = &atomic.Value{}
@@ -37,12 +39,12 @@ var simulacronPath = os.Getenv("SIMULACRON_PATH")
 
 const (
 	defaultHttpPort = 8188
-	defaultStartIp  = "127.0.0.101"
+	defaultStartIp  = "127.0.0.20"
 )
 
-func NewSimulacronProcess(httpPort int, startIp string) *SimulacronProcess {
+func NewSimulacronProcess(httpPort int, startIp string) *Process {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &SimulacronProcess{
+	return &Process{
 		httpPort:   httpPort,
 		startIp:    startIp,
 		ctx:        ctx,
@@ -51,57 +53,49 @@ func NewSimulacronProcess(httpPort int, startIp string) *SimulacronProcess {
 		started:    false,
 		cmd:        nil,
 		baseUrl:    "http://127.0.0.1:" + strconv.FormatInt(int64(httpPort), 10),
+		waitGroup:  &sync.WaitGroup{},
+		failedBind: false,
 	}
 }
 
-func (process *SimulacronProcess) Cancel() {
+func (process *Process) Cancel() {
 	process.lock.Lock()
 	defer process.lock.Unlock()
 	process.cancelInternal()
 }
 
-func (process *SimulacronProcess) cancelInternal() {
+func (process *Process) cancelInternal() {
 	process.cancelFunc()
 	ctx, cancel := context.WithCancel(context.Background())
 	process.ctx = ctx
 	process.cancelFunc = cancel
 	process.started = false
-	tempCmd := process.cmd
 	process.cmd = nil
 
 	channel := make(chan bool)
 
 	go func() {
-		if tempCmd.Process != nil {
-			state, err := tempCmd.Process.Wait()
-			if err != nil {
-				log.Warn("failed to wait for simulacron process to exit:", err)
-			}
-			if state != nil && state.Exited() {
-				log.Info("simulacron process exited with code:", state.ExitCode())
-			}
-			if state != nil && !state.Exited() {
-				log.Warn("simulacron process did not exit")
-			}
-		} else {
-			err := tempCmd.Wait()
-			if err != nil {
-				log.Warn("failed to wait for simulacron launch command to exit:", err)
-			}
-		}
+		process.waitGroup.Wait()
 		channel <- true
 	}()
 
 	select {
 	case <-channel:
-		return
+		if process.failedBind {
+			log.Info("Simulacron process did not launch because another instance was already running, " +
+				"skipping process clean up.")
+			return
+		} else {
+			log.Infof("Simulacron process exited. Check previous log messages for the exit code.")
+			return
+		}
 	case <-time.After(60 * time.Second):
 		log.Warn("Timeout while waiting for simulacron process to stop.")
 		return
 	}
 }
 
-func (process *SimulacronProcess) Start() error {
+func (process *Process) Start() error {
 
 	if process.started {
 		return nil
@@ -151,6 +145,25 @@ func (process *SimulacronProcess) Start() error {
 		return startErr
 	}
 
+	tempCmd := process.cmd
+	process.waitGroup.Add(1)
+	go func() {
+		defer process.waitGroup.Done()
+		state, err := tempCmd.Process.Wait()
+		if process.failedBind {
+			return
+		}
+		if err != nil {
+			log.Errorf("failed to wait for simulacron process to exit: %s", err)
+			return
+		}
+		if state.Exited() {
+			log.Infof("Simulacron process exited with code: %d", state.ExitCode())
+		} else {
+			log.Infof("Simulacron process was killed: %s", state.String())
+		}
+	}()
+
 	stopChannel := make(chan error, 10)
 	mainChannel := make(chan error, 10)
 
@@ -173,8 +186,13 @@ func (process *SimulacronProcess) Start() error {
 				log.Info("Simulacron StdOut:", line)
 			}
 
-			if strings.Contains(line, "Created nodes will start with ip") ||
-				strings.Contains(line, "Address already in use") {
+			if strings.Contains(line, "Created nodes will start with ip") {
+				stopChannel <- nil
+				return
+			}
+
+			if strings.Contains(line, "Address already in use") {
+				process.failedBind = true
 				stopChannel <- nil
 				return
 			}
@@ -225,19 +243,19 @@ func (process *SimulacronProcess) Start() error {
 	}
 }
 
-func GetGlobalSimulacronProcess() *SimulacronProcess {
+func GetGlobalSimulacronProcess() *Process {
 	instance := globalInstance.Load()
 	if instance != nil {
-		return instance.(*SimulacronProcess)
+		return instance.(*Process)
 	}
 
 	return nil
 }
 
-func GetOrCreateGlobalSimulacronProcess() (*SimulacronProcess, error) {
+func GetOrCreateGlobalSimulacronProcess() (*Process, error) {
 	instance := globalInstance.Load()
 	if instance != nil {
-		return instance.(*SimulacronProcess), nil
+		return instance.(*Process), nil
 	}
 
 	globalSimulacronMutex.Lock()
@@ -245,7 +263,7 @@ func GetOrCreateGlobalSimulacronProcess() (*SimulacronProcess, error) {
 
 	instance = globalInstance.Load()
 	if instance != nil {
-		return instance.(*SimulacronProcess), nil
+		return instance.(*Process), nil
 	}
 
 	newInstance := NewSimulacronProcess(defaultHttpPort, defaultStartIp)

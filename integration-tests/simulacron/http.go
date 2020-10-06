@@ -14,23 +14,23 @@ import (
 )
 
 type ClusterData struct {
-	Id          string            `json:"id"`
+	Id          int               `json:"id"`
 	Datacenters []*DatacenterData `json:"data_centers"`
 }
 
 type DatacenterData struct {
-	Id    string      `json:"id"`
+	Id    int         `json:"id"`
 	Nodes []*NodeData `json:"nodes"`
 }
 
 type NodeData struct {
-	Id      string `json:"id"`
+	Id      int    `json:"id"`
 	Address string `json:"address"`
 }
 
 const createUrl = "/cluster?data_centers=%s&cassandra_version=%s&dse_version=%s&name=%s&activity_log=%s&num_tokens=%d"
 
-func (process *SimulacronProcess) Create(numberOfNodes int) (*SimulacronCluster, error) {
+func (process *Process) Create(numberOfNodes int) (*Cluster, error) {
 	name := "test_" + uuid.New().String()
 	resp, err := process.execHttp(
 		"POST",
@@ -46,16 +46,16 @@ func (process *SimulacronProcess) Create(numberOfNodes int) (*SimulacronCluster,
 	return process.newCluster(&clusterData)
 }
 
-func (process *SimulacronProcess) Remove(id string) error {
+func (process *Process) Remove(id string) error {
 	_, err := process.execHttp(
 		"DELETE",
-		"/"+id,
+		"/cluster/"+id,
 		nil)
 
 	return err
 }
 
-func (process *SimulacronProcess) execHttp(method string, url string, body interface{}) ([]byte, error) {
+func (process *Process) execHttp(method string, url string, body interface{}) ([]byte, error) {
 	var requestBody io.Reader
 
 	if body == nil {

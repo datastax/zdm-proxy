@@ -11,17 +11,17 @@ import (
 // The test runs a basic batch statement, which includes an insert and update,
 // and then runs an insert and update after to make sure it works
 func TestGoCqlConnect(t *testing.T) {
-	testSetup := setup.NewTestSetup()
+	testSetup := setup.NewSimulacronTestSetup()
 	defer testSetup.Cleanup()
 
 	// Connect to proxy as a "client"
 	proxy, err := utils.ConnectToCluster("127.0.0.1", "", "", 14002)
-	defer proxy.Close()
 
 	if err != nil {
 		t.Log("Unable to connect to proxy session.")
 		t.Fatal(err)
 	}
+	defer proxy.Close()
 
 	iter := proxy.Query("SELECT * FROM fakeks.faketb").Iter()
 	result, err := iter.SliceMap()

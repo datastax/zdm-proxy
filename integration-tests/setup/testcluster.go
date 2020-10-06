@@ -8,6 +8,8 @@ import (
 	"github.com/riptano/cloud-gate/integration-tests/simulacron"
 	"github.com/riptano/cloud-gate/proxy/pkg/cloudgateproxy"
 	"github.com/riptano/cloud-gate/proxy/pkg/config"
+	log "github.com/sirupsen/logrus"
+
 	"math"
 	"math/rand"
 	"sync"
@@ -119,27 +121,35 @@ func CleanUpClusters() {
 	ccm.RemoveCurrent()
 }
 
-type TestSetup struct {
-	origin TestCluster
-	target TestCluster
-	proxy  *cloudgateproxy.CloudgateProxy
+type SimulacronTestSetup struct {
+	Origin *simulacron.Cluster
+	Target *simulacron.Cluster
+	Proxy  *cloudgateproxy.CloudgateProxy
 }
 
-func NewTestSetup() *TestSetup {
+func NewSimulacronTestSetup() *SimulacronTestSetup {
 	origin, _ := simulacron.GetNewCluster(1)
 	target, _ := simulacron.GetNewCluster(1)
 	proxyInstance := NewProxyInstance(origin, target)
-	return &TestSetup{
-		origin: origin,
-		target: target,
-		proxy:  proxyInstance,
+	return &SimulacronTestSetup{
+		Origin: origin,
+		Target: target,
+		Proxy:  proxyInstance,
 	}
 }
 
-func (setup *TestSetup) Cleanup() {
-	setup.proxy.Shutdown()
-	setup.target.Remove()
-	setup.origin.Remove()
+func (setup *SimulacronTestSetup) Cleanup() {
+	setup.Proxy.Shutdown()
+
+	err := setup.Target.Remove()
+	if err != nil {
+		log.Errorf("remove target cluster error: %s", err)
+	}
+
+	err = setup.Origin.Remove()
+	if err != nil {
+		log.Errorf("remove origin cluster error: %s", err)
+	}
 }
 
 func NewProxyInstance(origin TestCluster, target TestCluster) *cloudgateproxy.CloudgateProxy {
