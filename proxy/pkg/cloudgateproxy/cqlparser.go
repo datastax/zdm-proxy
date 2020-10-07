@@ -3,6 +3,7 @@ package cloudgateproxy
 import (
 	"encoding/binary"
 	"errors"
+	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
 	"regexp"
 	"strings"
 
@@ -49,7 +50,7 @@ https://github.com/cilium/cilium/blob/2bc1fdeb97331761241f2e4b3fb88ad524a0681b/p
 with the following modifications: parsing of EXECUTE statements was modified to determine EXECUTE's action
 from the bytes of the original PREPARE message associated with it
 */
-func CassandraParseRequest(psCache *PreparedStatementCache, data []byte) ([]string, bool, error) {
+func CassandraParseRequest(psCache *PreparedStatementCache, data []byte, mh metrics.IMetricsHandler) ([]string, bool, error) {
 	opcode := data[4]
 	path := opcodeMap[opcode]
 
@@ -110,6 +111,7 @@ func CassandraParseRequest(psCache *PreparedStatementCache, data []byte) ([]stri
 					isWriteRequest = isWriteRequest || stmtInfo.IsWriteStatement
 				} else {
 					log.Warnf("No cached entry for prepared-id = '%s'", preparedID)
+					mh.IncrementCountByOne(metrics.PSCacheMissCount)
 					// TODO handle cache miss here! Generate an UNPREPARED response and send straight back to the client?
 					return []string{UnknownPreparedQueryPath}, isWriteRequest, nil
 				}
@@ -131,6 +133,7 @@ func CassandraParseRequest(psCache *PreparedStatementCache, data []byte) ([]stri
 			return []string{"/execute"}, stmtInfo.IsWriteStatement, nil
 		} else {
 			log.Warnf("No cached entry for prepared-id = '%s'", preparedID)
+			mh.IncrementCountByOne(metrics.PSCacheMissCount)
 			// TODO handle cache miss here! Generate an UNPREPARED response and send straight back to the client?
 			return []string{UnknownPreparedQueryPath}, isWriteRequest, nil
 		}

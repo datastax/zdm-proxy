@@ -22,8 +22,8 @@ type ClusterConnectionInfo struct {
 type ClusterType string
 
 const (
-	ORIGIN_CASSANDRA = ClusterType("originCassandra")
-	TARGET_CASSANDRA = ClusterType("targetCassandra")
+	OriginCassandra = ClusterType("originCassandra")
+	TargetCassandra = ClusterType("targetCassandra")
 )
 
 type ClusterConnector struct {
@@ -58,22 +58,19 @@ func NewClusterConnector(connInfo *ClusterConnectionInfo,
 
 	var clusterType ClusterType
 	if connInfo.isOriginCassandra {
-		clusterType = ORIGIN_CASSANDRA
+		clusterType = OriginCassandra
 	} else {
-		clusterType = TARGET_CASSANDRA
+		clusterType = TargetCassandra
 	}
 
-	conn, err := establishConnection(connInfo.getConnectionString(), clientHandlerContext)
+	conn, err := openConnectionToCluster(connInfo, clientHandlerContext, metricsHandler)
 	if err != nil {
 		return nil, err
 	}
 
 	go func() {
 		<-clientHandlerContext.Done()
-		err := conn.Close()
-		if err != nil {
-			log.Warn("error closing connection to %s", conn.RemoteAddr().String())
-		}
+		closeConnectionToCluster(conn, clusterType, metricsHandler)
 	}()
 
 	return &ClusterConnector{
@@ -93,6 +90,35 @@ func NewClusterConnector(connInfo *ClusterConnectionInfo,
 func (cc *ClusterConnector) run() {
 	cc.runResponseListeningLoop()
 }
+
+func openConnectionToCluster(connInfo *ClusterConnectionInfo, context context.Context, metricsHandler metrics.IMetricsHandler) (net.Conn, error){
+	conn, err := establishConnection(connInfo.getConnectionString(), context)
+	if err != nil {
+		return nil, err
+	}
+
+	if connInfo.isOriginCassandra {
+		metricsHandler.IncrementCountByOne(metrics.OpenOriginConnections)
+	} else {
+		metricsHandler.IncrementCountByOne(metrics.OpenTargetConnections)
+	}
+	return conn, nil
+}
+
+func closeConnectionToCluster(conn net.Conn, clusterType ClusterType, metricsHandler metrics.IMetricsHandler) {
+	err := conn.Close()
+	if err != nil {
+		log.Warn("error closing connection to %s", conn.RemoteAddr().String())
+	}
+
+	if clusterType == OriginCassandra {
+		metricsHandler.DecrementCountByOne(metrics.OpenOriginConnections)
+	} else {
+		metricsHandler.DecrementCountByOne(metrics.OpenTargetConnections)
+	}
+
+}
+
 
 /**
  *	Starts a long-running loop that listens for replies being sent by the cluster
@@ -123,10 +149,9 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 			}
 
 			log.Debugf(
-				"Received response from %s (%s), opcode=%d, streamid=%d: %v",
-				cc.clusterType, cc.connection.RemoteAddr(), response.Opcode,
-				response.Stream, string(*&response.RawBytes))
-
+				"Received response from %s (%s), opcode=%d, stream id=%d",
+				cc.clusterType, cc.connection.RemoteAddr(), response.Opcode, response.Stream)
+			log.Tracef("Response content: %v", string(*&response.RawBytes))
 			cc.forwardResponseToChannel(response)
 		}
 	}()
@@ -181,6 +206,11 @@ func (cc *ClusterConnector) forwardToCluster(rawBytes []byte, streamId uint16) c
 			responseToCallerChan <- response
 		case <-time.After(queryTimeout):
 			log.Debugf("Timeout for query %d from %s", streamId, cc.clusterType)
+			if cc.clusterType == OriginCassandra {
+				cc.metricsHandler.IncrementCountByOne(metrics.TimeOutsProxyOrigin)
+			} else {
+				cc.metricsHandler.IncrementCountByOne(metrics.TimeOutsProxyTarget)
+			}
 		}
 	}()
 

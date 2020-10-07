@@ -48,8 +48,6 @@ func (psc *PreparedStatementCache) cachePreparedID(f *Frame) {
 		// TODO error: this result is not a reply to a PREPARE request
 	}
 
-	//idLength := int(binary.BigEndian.Uint16(data[13:15]))
-	//log.Debugf("idLength %d", idLength)
 	idLength := int(binary.BigEndian.Uint16(data[13:15]))
 	preparedID := string(data[15 : 15+idLength])
 

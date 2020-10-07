@@ -1,5 +1,7 @@
 package metrics
 
+import "time"
+
 /*
 	Counters:
 
@@ -12,10 +14,6 @@ package metrics
 	 - Prepared Statement Cache miss
 	 - Unprepared statements on Origin Cassandra
 	 - Unprepared statements on Target Cassandra
-
-	[Not sure about batches - are they worth counting separately? - leaving them out for now]
-	 - Batches, successful
-	 - Batches, failed
 
 	Histograms:
 	 - Read requests, latency
@@ -33,62 +31,75 @@ package metrics
 type MetricsName string
 
 const (
-	SuccessReadCount = MetricsName("SuccessfulReadRequestCount")
-	FailedReadCount  = MetricsName("FailedReadRequestCount")
+	SuccessReads = MetricsName("SuccessfulReadRequests") // handled
+	FailedReads  = MetricsName("FailedReadRequests")     // handled
 
-	SuccessWriteCount      = MetricsName("SuccessfulWriteRequestCount")
-	FailedOriginWriteCount = MetricsName("FailedOnOriginOnlyWriteRequestCount")
-	FailedTargetWriteCount = MetricsName("FailedOnTargetOnlyWriteRequestCount")
-	FailedBothWriteCount   = MetricsName("FailedOnBothWriteRequestCount")
+	SuccessBothWrites      = MetricsName("SuccessfulOnBothWriteRequests")   // handled
+	FailedOriginOnlyWrites = MetricsName("FailedOnOriginOnlyWriteRequests") // handled
+	FailedTargetOnlyWrites = MetricsName("FailedOnTargetOnlyWriteRequests") // handled
+	FailedBothWrites       = MetricsName("FailedOnBothWriteRequests")       // handled
 
-	PSCacheMissCount           = MetricsName("PreparedStatementCacheMissCount")
-	UnpreparedReadCount        = MetricsName("UnpreparedReadRequestCount")
-	UnpreparedOriginWriteCount = MetricsName("UnpreparedWriteRequestOnOriginCount")
-	UnpreparedTargetWriteCount = MetricsName("UnpreparedWriteRequestOnTargetCount")
+	TimeOutsProxyOrigin        = MetricsName("RequestsTimedOutOnProxyFromOrigin") // handled
+	TimeOutsProxyTarget        = MetricsName("RequestsTimedOutOnProxyFromTarget") // handled
+	ReadTimeOutsOriginCluster  = MetricsName("ReadsTimedOutOnOriginCluster")      //TODO
+	WriteTimeOutsOriginCluster = MetricsName("WritesTimedOutOnOriginCluster")     //TODO
+	WriteTimeOutsTargetCluster = MetricsName("WritesTimedOutOnTargetCluster")     // TODO
 
-	SuccessBatchCount = MetricsName("SuccessfulBatchRequestCount")
-	FailedBatchCount  = MetricsName("FailedBatchRequestCount")
+	UnpreparedReads        = MetricsName("UnpreparedReadRequestCount")            // handled
+	UnpreparedOriginWrites = MetricsName("UnpreparedWriteRequestOnOriginCount")   // handled
+	UnpreparedTargetWrites = MetricsName("UnpreparedWriteRequestOnTargetCount")   // handled
+	PSCacheSize            = MetricsName("PreparedStatementCacheNumberOfEntries") // TODO
+	PSCacheMissCount       = MetricsName("PreparedStatementCacheMissCount")       // handled
 
-	ProxyReadLatencyHist   = MetricsName("ReadRequestProxyLatencyHist")
-	OriginReadLatencyHist  = MetricsName("ReadRequestOriginLatencyHist")
-	ProxyWriteLatencyHist  = MetricsName("ProxyWriteRequestLatencyHist")
-	OriginWriteLatencyHist = MetricsName("OriginWriteRequestLatencyHist")
-	TargetWriteLatencyHist = MetricsName("TargetWriteRequestLatencyHist")
 
-	CurrentRequestCount    = MetricsName("CurrentClientRequestCount")
-	CurrentGoroutineCount  = MetricsName("CurrentGoroutineCount")
-	CurrentClientConnCount = MetricsName("CurrentClientConnectionCount")
-	CurrentOriginConnCount = MetricsName("CurrentOriginConnectionCount")
-	CurrentTargetConnCount = MetricsName("CurrentTargetConnectionCount")
+	ProxyReadLatencyHist   = MetricsName("ReadRequestProxyLatencyHist")				// handled
+	OriginReadLatencyHist  = MetricsName("ReadRequestOriginLatencyHist")			// handled
+	ProxyWriteLatencyHist  = MetricsName("ProxyWriteRequestLatencyHist")			// handled
+	OriginWriteLatencyHist = MetricsName("OriginWriteRequestLatencyHist")			// handled
+	TargetWriteLatencyHist = MetricsName("TargetWriteRequestLatencyHist")			// handled
+
+	InFlightReadRequests  = MetricsName("InFlightReadRequests")     // handled
+	InFlightWriteRequests = MetricsName("InFlightWriteRequests")    // handled
+	OpenClientConnections = MetricsName("OpenClientConnections")    // handled
+	OpenOriginConnections = MetricsName("OpenOriginConnections")    // handled
+	OpenTargetConnections = MetricsName("OpenTargetConnections") // handled
 )
 
 func getMetricsDescription(mn MetricsName) string {
 	switch mn {
-	case SuccessReadCount:
+	case SuccessReads:
 		return "Running total of successful read requests"
-	case FailedReadCount:
+	case FailedReads:
 		return "Running total of failed read requests"
-	case SuccessWriteCount:
+	case SuccessBothWrites:
 		return "Running total of successful write requests"
-	case FailedOriginWriteCount:
+	case FailedOriginOnlyWrites:
 		return "Running total of write requests that failed on Origin Cassandra only"
-	case FailedTargetWriteCount:
+	case FailedTargetOnlyWrites:
 		return "Running total of write requests that failed on Target Cassandra only"
-	case FailedBothWriteCount:
+	case FailedBothWrites:
 		return "Running total of write requests that failed on both clusters"
+	case TimeOutsProxyOrigin:
+		return "Running total of requests that timed out at proxy level from Origin Cassandra"
+	case TimeOutsProxyTarget:
+		return "Running total of requests that timed out at proxy level from Target Cassandra"
+	case ReadTimeOutsOriginCluster:
+		return "Running total of read requests that timed out at cluster level on Origin Cassandra"
+	case WriteTimeOutsOriginCluster:
+		return "Running total of write requests that timed out at cluster level on Origin Cassandra"
+	case WriteTimeOutsTargetCluster:
+		return "Running total of write requests that timed out at cluster level on Target Cassandra"
+	case PSCacheSize:
+		return "Number of entries currently in the prepared statement cache"
 	case PSCacheMissCount:
 		return "Running total of prepared statement cache misses in the proxy"
-	case UnpreparedReadCount:
+	case UnpreparedReads:
 		return "Running total of PreparedStatement reads that were found to be unprepared on Origin Cassandra"
-	case UnpreparedOriginWriteCount:
+	case UnpreparedOriginWrites:
 		return "Running total of PreparedStatement writes that were found to be unprepared on Origin Cassandra"
-	case UnpreparedTargetWriteCount:
+	case UnpreparedTargetWrites:
 		return "Running total of PreparedStatement writes that were found to be unprepared on Target Cassandra"
-	case SuccessBatchCount:
-		return "Running total of successful batch requests"
-	case FailedBatchCount:
-		return "Running total of failed batch requests"
-	case ProxyReadLatencyHist:
+ 	case ProxyReadLatencyHist:
 		return "Histogram for read request latency at proxy entry point"
 	case OriginReadLatencyHist:
 		return "Histogram for read request latency on Origin Cassandra"
@@ -98,15 +109,15 @@ func getMetricsDescription(mn MetricsName) string {
 		return "Histogram for write request latency on Origin Cassandra"
 	case TargetWriteLatencyHist:
 		return "Histogram for write request latency on Target Cassandra"
-	case CurrentRequestCount:
-		return "Number of client requests currently in flight in the proxy"
-	case CurrentGoroutineCount:
-		return "Number of goroutines currently running in the proxy"
-	case CurrentClientConnCount:
+	case InFlightReadRequests:
+		return "Number of client read requests currently in flight in the proxy"
+	case InFlightWriteRequests:
+		return "Number of client write requests currently in flight in the proxy"
+	case OpenClientConnections:
 		return "Number of client connections currently open"
-	case CurrentOriginConnCount:
+	case OpenOriginConnections:
 		return "Number of connections to Origin Cassandra currently open"
-	case CurrentTargetConnCount:
+	case OpenTargetConnections:
 		return "Number of connections to Target Cassandra currently open"
 	default:
 		return "Unknown metrics"
@@ -119,5 +130,7 @@ type IMetricsHandler interface {
 	AddToCount(mn MetricsName, valueToAdd int) error
 	SubtractFromCount(mn MetricsName, valueToSubtract int) error
 
-	TrackInHistogram(mn MetricsName, valueToTrack float64) error
+	TrackInHistogram(mn MetricsName, timeToTrack time.Time) error
+
+	UnregisterAllMetrics() error
 }

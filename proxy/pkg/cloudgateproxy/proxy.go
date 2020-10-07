@@ -132,16 +132,8 @@ func (p *CloudgateProxy) acceptConnectionsFromClients(address string, port int) 
 					continue
 				}
 			}
-
+			p.metricsHandler.IncrementCountByOne(metrics.OpenClientConnections)
 			log.Infof("Accepted connection from %s", conn.RemoteAddr().String())
-
-			go func() {
-				<-p.shutdownContext.Done()
-				err := conn.Close()
-				if err != nil {
-					log.Warnf("error received while closing connection to %s", conn.RemoteAddr().String())
-				}
-			}()
 
 			// there is a ClientHandler for each connection made by a client
 			originCassandraConnInfo := NewClusterConnectionInfo(p.Conf.OriginCassandraHostname, p.Conf.OriginCassandraPort, true,
@@ -160,8 +152,19 @@ func (p *CloudgateProxy) acceptConnectionsFromClients(address string, port int) 
 			if err != nil {
 				log.Errorf("Client Handler could not be created. Error %s", err)
 				conn.Close()
+				p.metricsHandler.DecrementCountByOne(metrics.OpenClientConnections)
 				continue
 			}
+
+			go func() {
+				<-p.shutdownContext.Done()
+				err := conn.Close()
+				if err != nil {
+					log.Warnf("error received while closing connection to %s", conn.RemoteAddr().String())
+				}
+				p.metricsHandler.DecrementCountByOne(metrics.OpenClientConnections)
+			}()
+
 			// TODO if we want to keep the ClientHandler instances into an array or map, store it here
 			log.Tracef("ClientHandler created")
 			clientHandler.run()
@@ -188,6 +191,8 @@ func Run(conf *config.Config) *CloudgateProxy {
 
 func (p *CloudgateProxy) Shutdown() {
 	log.Info("Shutting down proxy...")
+
+	p.metricsHandler.UnregisterAllMetrics()
 
 	p.cancelFunc()
 	p.listenerLock.Lock()

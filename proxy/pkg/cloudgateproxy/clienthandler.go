@@ -8,6 +8,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"net"
 	"sync"
+	"time"
 )
 
 /*
@@ -151,10 +152,23 @@ func (ch *ClientHandler) listenForClientRequests() {
  */
 func (ch *ClientHandler) handleRequest(f *Frame, waitGroup *sync.WaitGroup) error {
 
+	overallRequestStartTime := time.Now()
+
 	defer waitGroup.Done()
-	paths, isWriteRequest, err := CassandraParseRequest(ch.preparedStatementCache, f.RawBytes)
+
+	paths, isWriteRequest, err := CassandraParseRequest(ch.preparedStatementCache, f.RawBytes, ch.metricsHandler)
 	if err != nil {
 		return err
+	}
+
+	if isWriteRequest {
+		ch.metricsHandler.IncrementCountByOne(metrics.InFlightWriteRequests)
+		defer ch.metricsHandler.TrackInHistogram(metrics.ProxyWriteLatencyHist, overallRequestStartTime)
+		defer ch.metricsHandler.DecrementCountByOne(metrics.InFlightWriteRequests)
+	} else {
+		ch.metricsHandler.IncrementCountByOne(metrics.InFlightReadRequests)
+		defer ch.metricsHandler.TrackInHistogram(metrics.ProxyReadLatencyHist, overallRequestStartTime)
+		defer ch.metricsHandler.DecrementCountByOne(metrics.InFlightReadRequests)
 	}
 
 	log.Tracef("parsed request, writeRequest? %t, resulting path(s) %v", isWriteRequest, paths)
@@ -170,14 +184,17 @@ func (ch *ClientHandler) handleRequest(f *Frame, waitGroup *sync.WaitGroup) erro
 	var responseFromOriginCassandra *Frame
 	var ok bool
 
+	originCassandraRequestStartTime := time.Now()
 	log.Debugf("Forwarding query of type %v with opcode %v and path %v for stream %v to OC", query.Type, query.Opcode, paths, query.Stream)
 	responseFromOriginCassandraChan := ch.originCassandraConnector.forwardToCluster(query.Query, query.Stream)
 
 	// if it is a write request (also a batch involving at least one write) then also parse it for the TargetCassandra cluster
 	if isWriteRequest {
+		targetCassandraRequestStartTime := time.Now()
 		log.Debugf("Forwarding query of type %v with opcode %v and path %v for stream %v to TC", query.Type, query.Opcode, paths, query.Stream)
 		responseFromTargetCassandraChan := ch.targetCassandraConnector.forwardToCluster(query.Query, query.Stream)
 		responseFromTargetCassandra, ok = <-responseFromTargetCassandraChan
+		ch.metricsHandler.TrackInHistogram(metrics.TargetWriteLatencyHist, targetCassandraRequestStartTime)
 		if !ok {
 			return fmt.Errorf("did not receive response from TargetCassandra channel, stream: %d", f.Stream)
 		}
@@ -185,14 +202,20 @@ func (ch *ClientHandler) handleRequest(f *Frame, waitGroup *sync.WaitGroup) erro
 
 	// wait for OC response in any case
 	responseFromOriginCassandra, ok = <-responseFromOriginCassandraChan
+	if isWriteRequest {
+		ch.metricsHandler.TrackInHistogram(metrics.OriginWriteLatencyHist, originCassandraRequestStartTime)
+	} else {
+		ch.metricsHandler.TrackInHistogram(metrics.OriginReadLatencyHist, originCassandraRequestStartTime)
+	}
 	if !ok {
 		return fmt.Errorf("did not receive response from original cassandra channel, stream: %d", f.Stream)
 	}
 
+
 	var response *Frame
 	if isWriteRequest {
 		log.Debugf("Write request: aggregating the responses received - OC: %d && TC: %d", responseFromOriginCassandra.Opcode, responseFromTargetCassandra.Opcode)
-		response = aggregateResponses(responseFromOriginCassandra, responseFromTargetCassandra, ch.metricsHandler)
+		response = aggregateAndTrackResponses(responseFromOriginCassandra, responseFromTargetCassandra, ch.metricsHandler)
 	} else {
 		log.Debugf("Non-write request: just returning the response received from OC: %d", responseFromOriginCassandra.Opcode)
 		response = responseFromOriginCassandra
@@ -214,49 +237,94 @@ func (ch *ClientHandler) handleRequest(f *Frame, waitGroup *sync.WaitGroup) erro
  *	Aggregates the responses received from the two clusters as follows:
  *		- if both responses are a success OR both responses are a failure: return responseFromOC
  *		- if either response is a failure, the failure "wins": return the failed response
+ *	Also updates metrics appropriately
  */
-func aggregateResponses(responseFromOriginalCassandra *Frame, responseFromTargetCassandra *Frame, mh metrics.IMetricsHandler) *Frame {
+func aggregateAndTrackResponses(responseFromOriginCassandra *Frame, responseFromTargetCassandra *Frame, mh metrics.IMetricsHandler) *Frame {
 
-	log.Debugf("Aggregating responses. OC opcode %d, TargetCassandra opcode %d", responseFromOriginalCassandra.Opcode, responseFromTargetCassandra.Opcode)
+	log.Debugf("Aggregating responses. OC opcode %d, TargetCassandra opcode %d", responseFromOriginCassandra.Opcode, responseFromTargetCassandra.Opcode)
 
-	if isResponseSuccessful(responseFromOriginalCassandra) && isResponseSuccessful(responseFromTargetCassandra) {
-		log.Debugf("Aggregated response: both successes, sending back OC's response with opcode %d", responseFromOriginalCassandra.Opcode)
-		mh.IncrementCountByOne(metrics.SuccessWriteCount)
-		return responseFromOriginalCassandra
+	// track specific write failures in relevant metrics
+	if !isResponseSuccessful(responseFromOriginCassandra) {
+		trackFailedIndividualWriteResponse(responseFromOriginCassandra, true, mh)
 	}
 
-	if !isResponseSuccessful(responseFromOriginalCassandra) && !isResponseSuccessful(responseFromTargetCassandra) {
-		log.Debugf("Aggregated response: both failures, sending back OC's response with opcode %d", responseFromOriginalCassandra.Opcode)
-		mh.IncrementCountByOne(metrics.FailedBothWriteCount)
-		return responseFromOriginalCassandra
+	if !isResponseSuccessful(responseFromTargetCassandra) {
+		trackFailedIndividualWriteResponse(responseFromTargetCassandra, false, mh)
+	}
+
+	// aggregate responses and update relevant aggregate metrics for general failed or successful responses
+	if isResponseSuccessful(responseFromOriginCassandra) && isResponseSuccessful(responseFromTargetCassandra) {
+		log.Debugf("Aggregated response: both successes, sending back OC's response with opcode %d", responseFromOriginCassandra.Opcode)
+		mh.IncrementCountByOne(metrics.SuccessBothWrites)
+		return responseFromOriginCassandra
+	}
+
+	if !isResponseSuccessful(responseFromOriginCassandra) && !isResponseSuccessful(responseFromTargetCassandra) {
+		log.Debugf("Aggregated response: both failures, sending back OC's response with opcode %d", responseFromOriginCassandra.Opcode)
+		mh.IncrementCountByOne(metrics.FailedBothWrites)
+		return responseFromOriginCassandra
 	}
 
 	// if either response is a failure, the failure "wins" --> return the failed response
-	if !isResponseSuccessful(responseFromOriginalCassandra) {
-		log.Debugf("Aggregated response: failure only on OC, sending back OC's response with opcode %d", responseFromOriginalCassandra.Opcode)
-		mh.IncrementCountByOne(metrics.FailedOriginWriteCount)
-		return responseFromOriginalCassandra
+	if !isResponseSuccessful(responseFromOriginCassandra) {
+		log.Debugf("Aggregated response: failure only on OC, sending back OC's response with opcode %d", responseFromOriginCassandra.Opcode)
+		mh.IncrementCountByOne(metrics.FailedOriginOnlyWrites)
+		return responseFromOriginCassandra
 	} else {
-		log.Debugf("Aggregated response: failure only on TargetCassandra, sending back TargetCassandra's response with opcode %d", responseFromOriginalCassandra.Opcode)
-		mh.IncrementCountByOne(metrics.FailedTargetWriteCount)
+		log.Debugf("Aggregated response: failure only on TargetCassandra, sending back TargetCassandra's response with opcode %d", responseFromOriginCassandra.Opcode)
+		mh.IncrementCountByOne(metrics.FailedTargetOnlyWrites)
 		return responseFromTargetCassandra
 	}
 
 }
 
+/**
+	Updates read-related metrics based on the outcome in the response
+ */
+
 func trackReadResponse(response *Frame, mh metrics.IMetricsHandler) {
 	if isResponseSuccessful(response) {
-		mh.IncrementCountByOne(metrics.SuccessReadCount)
+		mh.IncrementCountByOne(metrics.SuccessReads)
 	} else {
 		errCode := binary.BigEndian.Uint16(response.Body[0:2])
 		switch errCode {
 		case 0x2500:
-			mh.IncrementCountByOne(metrics.UnpreparedReadCount)
+			mh.IncrementCountByOne(metrics.UnpreparedReads)
+		case 0x1200:
+			mh.IncrementCountByOne(metrics.ReadTimeOutsOriginCluster)
 		default:
-			mh.IncrementCountByOne(metrics.FailedReadCount)
+			mh.IncrementCountByOne(metrics.FailedReads)
 		}
 	}
 }
+
+/**
+	Updates metrics related to individual write responses for failed writes.
+	Only deals with Unprepared and Timed Out failures, as general write failures are tracked as aggregates
+ */
+func trackFailedIndividualWriteResponse(response *Frame, fromOrigin bool, mh metrics.IMetricsHandler) {
+	errCode := binary.BigEndian.Uint16(response.Body[0:2])
+	switch errCode {
+	case 0x2500:
+		if fromOrigin {
+			mh.IncrementCountByOne(metrics.UnpreparedOriginWrites)
+		} else {
+			mh.IncrementCountByOne(metrics.UnpreparedTargetWrites)
+		}
+	case 0x1100:
+		if fromOrigin {
+			mh.IncrementCountByOne(metrics.WriteTimeOutsOriginCluster)
+		} else {
+			mh.IncrementCountByOne(metrics.WriteTimeOutsTargetCluster)
+		}
+	}
+}
+
+func isUnpreparedError(f *Frame) bool {
+	errCode := binary.BigEndian.Uint16(f.Body[0:2])
+	return errCode == 0x2500
+}
+
 
 func isResponseSuccessful(response *Frame) bool {
 	return !(response.Opcode == 0x00)

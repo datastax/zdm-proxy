@@ -5,6 +5,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	log "github.com/sirupsen/logrus"
 	"sync"
+	"time"
 )
 
 type PrometheusCloudgateProxyMetrics struct {
@@ -26,18 +27,25 @@ func NewPrometheusCloudgateProxyMetrics() IMetricsHandler {
 }
 
 func (pm *PrometheusCloudgateProxyMetrics) initialize() {
-	pm.addGauge(SuccessReadCount)
-	pm.addGauge(FailedReadCount)
-	pm.addGauge(SuccessWriteCount)
-	pm.addGauge(FailedOriginWriteCount)
-	pm.addGauge(FailedTargetWriteCount)
-	pm.addGauge(FailedBothWriteCount)
-	pm.addGauge(PSCacheMissCount)
-	pm.addGauge(UnpreparedReadCount)
-	pm.addGauge(UnpreparedOriginWriteCount)
-	pm.addGauge(UnpreparedTargetWriteCount)
-	pm.addGauge(SuccessBatchCount)
-	pm.addGauge(FailedBatchCount)
+	pm.addCounter(SuccessReads)
+	pm.addCounter(FailedReads)
+	pm.addCounter(SuccessBothWrites)
+	pm.addCounter(FailedOriginOnlyWrites)
+	pm.addCounter(FailedTargetOnlyWrites)
+	pm.addCounter(FailedBothWrites)
+
+	pm.addCounter(TimeOutsProxyOrigin)
+	pm.addCounter(TimeOutsProxyTarget)
+	pm.addCounter(ReadTimeOutsOriginCluster)
+	pm.addCounter(WriteTimeOutsOriginCluster)
+	pm.addCounter(WriteTimeOutsTargetCluster)
+
+	pm.addCounter(UnpreparedReads)
+	pm.addCounter(UnpreparedOriginWrites)
+	pm.addCounter(UnpreparedTargetWrites)
+
+	pm.addCounter(PSCacheMissCount)
+	pm.addGauge(PSCacheSize)
 
 	pm.addHistogram(ProxyReadLatencyHist)
 	pm.addHistogram(OriginReadLatencyHist)
@@ -45,32 +53,40 @@ func (pm *PrometheusCloudgateProxyMetrics) initialize() {
 	pm.addHistogram(OriginWriteLatencyHist)
 	pm.addHistogram(TargetWriteLatencyHist)
 
-	pm.addGauge(CurrentRequestCount)
-	pm.addGauge(CurrentGoroutineCount)
-	pm.addGauge(CurrentClientConnCount)
-	pm.addGauge(CurrentOriginConnCount)
-	pm.addGauge(CurrentTargetConnCount)
+	pm.addGauge(InFlightReadRequests)
+	pm.addGauge(InFlightWriteRequests)
+	pm.addGauge(OpenClientConnections)
+	pm.addGauge(OpenOriginConnections)
+	pm.addGauge(OpenTargetConnections)
 }
 
 /***
 	Methods that implement the IMetricsHandler interface:
-		IncrementCountByOne(name MetricsName) error
-		DecrementCountByOne(name MetricsName) error
-		AddToCount(name MetricsName, valueToAdd int) error
-		SubtractFromCount(name MetricsName, valueToSubtract int) error
-		ResetCount(name MetricsName) error
+		IncrementCountByOne(mn MetricsName) error
+		DecrementCountByOne(mn MetricsName) error
+		AddToCount(mn MetricsName, valueToAdd int) error
+		SubtractFromCount(mn MetricsName, valueToSubtract int) error
 
-		TrackInHistogram(name MetricsName, valueToTrack float64) error
-		ResetHistogram(name MetricsName) error
+		TrackInHistogram(mn MetricsName, timeToTrack time.Time) error
+
+		UnregisterAllMetrics() error
  ***/
 
 func (pm *PrometheusCloudgateProxyMetrics) IncrementCountByOne(mn MetricsName) error {
-	if g, err := pm.getGaugeFromMap(mn); err == nil {
-		g.Inc()
-		return nil
+
+	var c prometheus.Collector
+	var err error
+
+	if c, err = pm.getCounterFromMap(mn); err == nil {
+		// it is a counter: increment it by one
+		c.(prometheus.Counter).Inc()
 	} else {
-		return err
+		if c, err = pm.getGaugeFromMap(mn); err == nil {
+			// it is a gauge: increment it by one
+			c.(prometheus.Gauge).Inc()
+		}
 	}
+	return err
 }
 
 func (pm *PrometheusCloudgateProxyMetrics) DecrementCountByOne(mn MetricsName) error {
@@ -100,31 +116,49 @@ func (pm *PrometheusCloudgateProxyMetrics) SubtractFromCount(mn MetricsName, val
 	}
 }
 
-func (pm *PrometheusCloudgateProxyMetrics) TrackInHistogram(mn MetricsName, valueToTrack float64) error {
+func (pm *PrometheusCloudgateProxyMetrics) TrackInHistogram(mn MetricsName, begin time.Time) error {
 	if h, err := pm.getHistogramFromMap(mn); err == nil {
-		h.Observe(valueToTrack)
+		h.Observe(float64(time.Since(begin)) / float64(time.Second))
 		return nil
 	} else {
 		return err
 	}
 }
 
+func (pm *PrometheusCloudgateProxyMetrics) UnregisterAllMetrics() error {
+
+	failed := false
+	for mn, c := range pm.collectorMap {
+		ok := prometheus.Unregister(c)
+		if !ok {
+			log.Errorf("Collector %s could not be found, unregister failed", mn)
+			failed = true
+		} else {
+			log.Debugf("Collector %s successfully unregistered", mn)
+		}
+	}
+
+	if failed {
+		return errors.New("at least one collector failed to unregister")
+	}
+	return nil
+}
+
 /***
 	Methods for internal use only
-	TODO decide if we should use counters or just gauges
  ***/
 
-//func (pm *PrometheusCloudgateProxyMetrics) addCounter(mn MetricsName) error {
-//	pm.lock.Lock()
-//	defer pm.lock.Unlock()
-//
-//	c := prometheus.NewCounter(prometheus.CounterOpts{
-//		Name:        string(mn),
-//		Help:        getMetricsDescription(mn),
-//	})
-//	pm.collectorMap[mn] = c
-//	return pm.registerCollector(c)
-//}
+func (pm *PrometheusCloudgateProxyMetrics) addCounter(mn MetricsName) error {
+	pm.lock.Lock()
+	defer pm.lock.Unlock()
+
+	c := prometheus.NewCounter(prometheus.CounterOpts{
+		Name:        string(mn),
+		Help:        getMetricsDescription(mn),
+	})
+	pm.collectorMap[mn] = c
+	return pm.registerCollector(c)
+}
 
 func (pm *PrometheusCloudgateProxyMetrics) addGauge(mn MetricsName) error {
 	pm.lock.Lock()
@@ -151,55 +185,55 @@ func (pm *PrometheusCloudgateProxyMetrics) addHistogram(mn MetricsName) error {
 	return pm.registerCollector(h)
 }
 
-//func (pm *PrometheusCloudgateProxyMetrics) getCounterFromMap(mn MetricsName) (prometheus.Counter, error) {
-//	c, foundInMap := pm.collectorMap[mn]
-//	if !foundInMap {
-//		log.Errorf("No counter could be found with name %s", mn)
-//		return nil, errors.New("counter not found")
-//	}
-//
-//	if ct, isCounter := c.(prometheus.Counter); !isCounter {
-//		log.Errorf("The specified metrics %s is not a counter", mn)
-//		return nil, errors.New("the specified metrics is not a counter")
-//	} else {
-//		return ct, nil
-//	}
-//}
+func (pm *PrometheusCloudgateProxyMetrics) getCounterFromMap(mn MetricsName) (prometheus.Counter, error) {
+	if c, foundInMap := pm.collectorMap[mn]; foundInMap {
+		if ct, isCounter := c.(prometheus.Counter); isCounter {
+			return ct, nil
+		} else {
+			log.Errorf("The specified metrics %s is not a counter", mn)
+			return nil, errors.New("the specified metrics is not a counter")
+		}
+	} else {
+		// collector not found
+		log.Errorf("Metrics %s could not be found", mn)
+		return nil, errors.New("the specified metrics could not be found")
+	}
+}
 
 func (pm *PrometheusCloudgateProxyMetrics) getGaugeFromMap(mn MetricsName) (prometheus.Gauge, error) {
-	c, foundInMap := pm.collectorMap[mn]
-	if !foundInMap {
-		log.Errorf("No gauge could be found with name %s", mn)
-		return nil, errors.New("gauge not found")
-	}
-
-	if g, isGauge := c.(prometheus.Gauge); !isGauge {
-		log.Errorf("The specified metrics %s is not a gauge", mn)
-		return nil, errors.New("the specified metrics is not a gauge")
+	if c, foundInMap := pm.collectorMap[mn]; foundInMap {
+		if g, isGauge := c.(prometheus.Gauge); isGauge {
+			return g, nil
+		} else {
+			log.Errorf("The specified metrics %s is not a gauge", mn)
+			return nil, errors.New("the specified metrics is not a gauge")
+		}
 	} else {
-		return g, nil
+		// collector not found
+		log.Errorf("Metrics %s could not be found", mn)
+		return nil, errors.New("the specified metrics could not be found")
 	}
 }
 
 func (pm *PrometheusCloudgateProxyMetrics) getHistogramFromMap(mn MetricsName) (prometheus.Histogram, error) {
-	c, foundInMap := pm.collectorMap[mn]
-	if !foundInMap {
-		log.Errorf("No histogram could be found with name %s", mn)
-		return nil, errors.New("histogram not found")
-	}
-
-	if h, isHistogram := c.(prometheus.Histogram); !isHistogram {
-		log.Errorf("The specified metrics %s is not a histogram", mn)
-		return nil, errors.New("the specified metrics is not a histogram")
+	if c, foundInMap := pm.collectorMap[mn]; foundInMap {
+		if h, isHistogram := c.(prometheus.Histogram); isHistogram {
+			return h, nil
+		} else {
+			log.Errorf("The specified metrics %s is not a histogram", mn)
+			return nil, errors.New("the specified metrics is not a histogram")
+		}
 	} else {
-		return h, nil
+		// collector not found
+		log.Errorf("Metrics %s could not be found", mn)
+		return nil, errors.New("the specified metrics could not be found")
 	}
 }
 
 // Register this collector with Prometheus's DefaultRegisterer.
 func (pm *PrometheusCloudgateProxyMetrics) registerCollector(c prometheus.Collector) error {
 	if err := prometheus.Register(c); err != nil {
-		log.Errorf("Collector %s could not be registered due to @s", c, err)
+		log.Errorf("Collector %s could not be registered due to %s", c, err)
 		return err
 	} else {
 		log.Debugf("Collector %s registered", c)
