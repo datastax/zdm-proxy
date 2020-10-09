@@ -64,7 +64,7 @@ func (p *CloudgateProxy) Start() error {
 
 	log.Debugf("connection check passed (to %s)", p.targetCassandraIP)
 
-	err = p.acceptConnectionsFromClients(p.Conf.ProxyListenAddress, p.Conf.ProxyQueryPort)
+	err = p.acceptConnectionsFromClients(p.Conf.ProxyQueryAddress, p.Conf.ProxyQueryPort)
 	if err != nil {
 		return err
 	}

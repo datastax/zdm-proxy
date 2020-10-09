@@ -172,13 +172,10 @@ func NewTestConfig(origin TestCluster, target TestCluster) *config.Config {
 	conf.TargetCassandraPassword = "cassandra"
 	conf.TargetCassandraPort = 9042
 
-	conf.ProxyServiceHostname = "localhost"
-	conf.ProxyCommunicationPort = 14000
 	conf.ProxyMetricsPort = 14001
 	conf.ProxyQueryPort = 14002
-	conf.ProxyListenAddress = "localhost"
+	conf.ProxyQueryAddress = "localhost"
 	conf.Debug = false
-	conf.Test = false
 
 	return conf
 }
