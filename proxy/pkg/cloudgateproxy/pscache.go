@@ -67,6 +67,8 @@ func (psc *PreparedStatementCache) cachePreparedID(f *Frame) {
 }
 
 func (psc *PreparedStatementCache) retrieveStmtInfoFromCache(preparedID string) (PreparedStatementInfo, bool) {
+	psc.lock.RLock()
+	defer psc.lock.RUnlock()
 	stmtInfo, ok := psc.cache[preparedID]
 	return stmtInfo, ok
 }
