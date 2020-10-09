@@ -156,12 +156,13 @@ func (ch *ClientHandler) handleRequest(f *Frame, waitGroup *sync.WaitGroup) erro
 
 	defer waitGroup.Done()
 
-	paths, isWriteRequest, err := CassandraParseRequest(ch.preparedStatementCache, f.RawBytes, ch.metricsHandler)
+	forwardDecision, err := inspectFrame(f, ch.preparedStatementCache, ch.metricsHandler)
 	if err != nil {
 		return err
 	}
+	log.Tracef("Opcode: %v, Forward decision: %v", f.Opcode, forwardDecision)
 
-	if isWriteRequest {
+	if forwardDecision == forwardToBoth {
 		ch.metricsHandler.IncrementCountByOne(metrics.InFlightWriteRequests)
 		defer ch.metricsHandler.TrackInHistogram(metrics.ProxyWriteLatencyHist, overallRequestStartTime)
 		defer ch.metricsHandler.DecrementCountByOne(metrics.InFlightWriteRequests)
@@ -171,49 +172,39 @@ func (ch *ClientHandler) handleRequest(f *Frame, waitGroup *sync.WaitGroup) erro
 		defer ch.metricsHandler.DecrementCountByOne(metrics.InFlightReadRequests)
 	}
 
-	log.Tracef("parsed request, writeRequest? %t, resulting path(s) %v", isWriteRequest, paths)
-
-	query, err := createQuery(f, paths, ch.preparedStatementCache, isWriteRequest)
-	if err != nil {
-		log.Errorf("Error creating query %v", err)
-		return err
-	}
-	log.Debugf("Statement created of type %s", query.Type)
-
 	var responseFromTargetCassandra *Frame
 	var responseFromOriginCassandra *Frame
 	var ok bool
 
+	log.Debugf("Forwarding request with opcode %v for stream %v to OC", f.Opcode, f.StreamId)
 	originCassandraRequestStartTime := time.Now()
-	log.Debugf("Forwarding query of type %v with opcode %v and path %v for stream %v to OC", query.Type, query.Opcode, paths, query.Stream)
-	responseFromOriginCassandraChan := ch.originCassandraConnector.forwardToCluster(query.Query, query.Stream)
+	responseFromOriginCassandraChan := ch.originCassandraConnector.forwardToCluster(f.RawBytes, f.StreamId)
 
-	// if it is a write request (also a batch involving at least one write) then also parse it for the TargetCassandra cluster
-	if isWriteRequest {
+	// if it is a write request then also parse it for the TargetCassandra cluster
+	if forwardDecision == forwardToBoth {
+		log.Debugf("Forwarding request with opcode %v for stream %v to TC", f.Opcode, f.StreamId)
 		targetCassandraRequestStartTime := time.Now()
-		log.Debugf("Forwarding query of type %v with opcode %v and path %v for stream %v to TC", query.Type, query.Opcode, paths, query.Stream)
-		responseFromTargetCassandraChan := ch.targetCassandraConnector.forwardToCluster(query.Query, query.Stream)
+		responseFromTargetCassandraChan := ch.targetCassandraConnector.forwardToCluster(f.RawBytes, f.StreamId)
 		responseFromTargetCassandra, ok = <-responseFromTargetCassandraChan
 		ch.metricsHandler.TrackInHistogram(metrics.TargetWriteLatencyHist, targetCassandraRequestStartTime)
 		if !ok {
-			return fmt.Errorf("did not receive response from TargetCassandra channel, stream: %d", f.Stream)
+			return fmt.Errorf("did not receive response from TargetCassandra channel, stream: %d", f.StreamId)
 		}
 	}
 
 	// wait for OC response in any case
 	responseFromOriginCassandra, ok = <-responseFromOriginCassandraChan
-	if isWriteRequest {
+	if forwardDecision == forwardToBoth {
 		ch.metricsHandler.TrackInHistogram(metrics.OriginWriteLatencyHist, originCassandraRequestStartTime)
 	} else {
 		ch.metricsHandler.TrackInHistogram(metrics.OriginReadLatencyHist, originCassandraRequestStartTime)
 	}
 	if !ok {
-		return fmt.Errorf("did not receive response from original cassandra channel, stream: %d", f.Stream)
+		return fmt.Errorf("did not receive response from original cassandra channel, stream: %d", f.StreamId)
 	}
 
-
 	var response *Frame
-	if isWriteRequest {
+	if forwardDecision == forwardToBoth {
 		log.Debugf("Write request: aggregating the responses received - OC: %d && TC: %d", responseFromOriginCassandra.Opcode, responseFromTargetCassandra.Opcode)
 		response = aggregateAndTrackResponses(responseFromOriginCassandra, responseFromTargetCassandra, ch.metricsHandler)
 	} else {
@@ -226,7 +217,7 @@ func (ch *ClientHandler) handleRequest(f *Frame, waitGroup *sync.WaitGroup) erro
 	ch.clientConnector.responseChannel <- response.RawBytes
 
 	// if it was a prepare request, cache the ID and statement info
-	if query.Type == PREPARE && isResponseSuccessful(response) {
+	if f.Opcode == OpCodePrepare && isResponseSuccessful(response) {
 		ch.preparedStatementCache.cachePreparedID(response)
 	}
 
@@ -279,8 +270,8 @@ func aggregateAndTrackResponses(responseFromOriginCassandra *Frame, responseFrom
 }
 
 /**
-	Updates read-related metrics based on the outcome in the response
- */
+Updates read-related metrics based on the outcome in the response
+*/
 
 func trackReadResponse(response *Frame, mh metrics.IMetricsHandler) {
 	if isResponseSuccessful(response) {
@@ -299,9 +290,9 @@ func trackReadResponse(response *Frame, mh metrics.IMetricsHandler) {
 }
 
 /**
-	Updates metrics related to individual write responses for failed writes.
-	Only deals with Unprepared and Timed Out failures, as general write failures are tracked as aggregates
- */
+Updates metrics related to individual write responses for failed writes.
+Only deals with Unprepared and Timed Out failures, as general write failures are tracked as aggregates
+*/
 func trackFailedIndividualWriteResponse(response *Frame, fromOrigin bool, mh metrics.IMetricsHandler) {
 	errCode := binary.BigEndian.Uint16(response.Body[0:2])
 	switch errCode {
@@ -324,7 +315,6 @@ func isUnpreparedError(f *Frame) bool {
 	errCode := binary.BigEndian.Uint16(f.Body[0:2])
 	return errCode == 0x2500
 }
-
 
 func isResponseSuccessful(response *Frame) bool {
 	return !(response.Opcode == 0x00)

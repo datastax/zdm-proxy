@@ -8,12 +8,37 @@ import (
 	"net"
 )
 
+type OpCode uint8
+
+const (
+
+	// requests
+	OpCodeStartup      = OpCode(0x01)
+	OpCodeOptions      = OpCode(0x05)
+	OpCodeQuery        = OpCode(0x07)
+	OpCodePrepare      = OpCode(0x09)
+	OpCodeExecute      = OpCode(0x0A)
+	OpCodeRegister     = OpCode(0x0B)
+	OpCodeBatch        = OpCode(0x0D)
+	OpCodeAuthResponse = OpCode(0x0F)
+
+	// responses
+	OpCodeError         = OpCode(0x00)
+	OpCodeReady         = OpCode(0x02)
+	OpCodeAuthenticate  = OpCode(0x03)
+	OpCodeSupported     = OpCode(0x06)
+	OpCodeResult        = OpCode(0x08)
+	OpCodeEvent         = OpCode(0x0C)
+	OpCodeAuthChallenge = OpCode(0x0E)
+	OpCodeAuthSuccess   = OpCode(0x10)
+)
+
 type Frame struct {
 	Direction int // [Alice] 0 if from client application to db
 	Version   uint8
 	Flags     uint8
-	Stream    uint16
-	Opcode    uint8
+	StreamId  uint16
+	Opcode    OpCode
 	Length    uint32
 	Body      []byte
 	RawBytes  []byte
@@ -24,8 +49,8 @@ func NewFrame(frame []byte) *Frame {
 		Direction: int(frame[0]&0x80) >> 7,
 		Version:   frame[0],
 		Flags:     frame[1],
-		Stream:    binary.BigEndian.Uint16(frame[2:4]),
-		Opcode:    frame[4],
+		StreamId:  binary.BigEndian.Uint16(frame[2:4]),
+		Opcode:    OpCode(frame[4]),
 		Length:    binary.BigEndian.Uint32(frame[5:9]),
 		Body:      frame[9:],
 		RawBytes:  frame,
@@ -89,7 +114,7 @@ func readAndParseFrame(
 	f := NewFrame(data)
 
 	if f.Flags&0x01 == 1 {
-		log.Errorf("compression flag for stream %d set, unable to parse query beyond header", f.Stream)
+		log.Errorf("compression flag for stream %d set, unable to parse query beyond header", f.StreamId)
 	}
 
 	return f, nil

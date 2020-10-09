@@ -91,7 +91,7 @@ func (cc *ClusterConnector) run() {
 	cc.runResponseListeningLoop()
 }
 
-func openConnectionToCluster(connInfo *ClusterConnectionInfo, context context.Context, metricsHandler metrics.IMetricsHandler) (net.Conn, error){
+func openConnectionToCluster(connInfo *ClusterConnectionInfo, context context.Context, metricsHandler metrics.IMetricsHandler) (net.Conn, error) {
 	conn, err := establishConnection(connInfo.getConnectionString(), context)
 	if err != nil {
 		return nil, err
@@ -108,7 +108,7 @@ func openConnectionToCluster(connInfo *ClusterConnectionInfo, context context.Co
 func closeConnectionToCluster(conn net.Conn, clusterType ClusterType, metricsHandler metrics.IMetricsHandler) {
 	err := conn.Close()
 	if err != nil {
-		log.Warn("error closing connection to %s", conn.RemoteAddr().String())
+		log.Warnf("error closing connection to %s", conn.RemoteAddr().String())
 	}
 
 	if clusterType == OriginCassandra {
@@ -118,7 +118,6 @@ func closeConnectionToCluster(conn net.Conn, clusterType ClusterType, metricsHan
 	}
 
 }
-
 
 /**
  *	Starts a long-running loop that listens for replies being sent by the cluster
@@ -150,7 +149,7 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 
 			log.Debugf(
 				"Received response from %s (%s), opcode=%d, stream id=%d",
-				cc.clusterType, cc.connection.RemoteAddr(), response.Opcode, response.Stream)
+				cc.clusterType, cc.connection.RemoteAddr(), response.Opcode, response.StreamId)
 			log.Tracef("Response content: %v", string(*&response.RawBytes))
 			cc.forwardResponseToChannel(response)
 		}
@@ -160,12 +159,12 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 func (cc *ClusterConnector) forwardResponseToChannel(response *Frame) {
 	cc.lock.RLock()
 	defer cc.lock.RUnlock()
-	if responseChannel, ok := cc.clusterResponseChannels[response.Stream]; !ok {
+	if responseChannel, ok := cc.clusterResponseChannels[response.StreamId]; !ok {
 		select {
 		case <-cc.clientHandlerContext.Done():
 			return
 		default:
-			log.Errorf("could not find stream %d in clusterResponseChannels for client %s. Cluster %v", response.Stream, cc.clusterType)
+			log.Errorf("could not find stream id %d in clusterResponseChannels for cluster %v", response.StreamId, cc.clusterType)
 		}
 	} else {
 		// Note: the boolean response is sent on the channel here - this will unblock the forwardToCluster goroutine waiting on this
@@ -202,7 +201,7 @@ func (cc *ClusterConnector) forwardToCluster(rawBytes []byte, streamId uint16) c
 				log.Debugf("response from cluster channel was closed, connection: %s", cc.connection.RemoteAddr().String())
 				return
 			}
-			log.Tracef("Received response from %s for query with stream id %d", cc.clusterType, response.Stream)
+			log.Tracef("Received response from %s for query with stream id %d", cc.clusterType, response.StreamId)
 			responseToCallerChan <- response
 		case <-time.After(queryTimeout):
 			log.Debugf("Timeout for query %d from %s", streamId, cc.clusterType)

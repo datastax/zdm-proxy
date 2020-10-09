@@ -32,7 +32,7 @@ func (ch *ClientHandler) handleStartupFrame(f *Frame) (bool, error) {
 		log.Debugf("STARTUP message successfully handled on OriginCassandra")
 		return true, nil
 	default:
-		channel := ch.targetCassandraConnector.forwardToCluster(f.RawBytes, f.Stream)
+		channel := ch.targetCassandraConnector.forwardToCluster(f.RawBytes, f.StreamId)
 		response, ok := <-channel
 		if !ok {
 			return false, fmt.Errorf("failed to forward %d request from %s to target cluster", f.Opcode, clientIPAddress)
@@ -56,7 +56,7 @@ func (ch *ClientHandler) handleTargetCassandraStartup(startupFrame *Frame) error
 	var err error
 	clientFrame := startupFrame
 	for {
-		channel := ch.targetCassandraConnector.forwardToCluster(clientFrame.RawBytes, clientFrame.Stream)
+		channel := ch.targetCassandraConnector.forwardToCluster(clientFrame.RawBytes, clientFrame.StreamId)
 		f, ok := <-channel
 		if !ok {
 			select {
@@ -115,7 +115,7 @@ func (cc *ClusterConnector) handleOriginCassandraStartup(startupFrame *Frame, cl
 	log.Debugf("Initiating startup connecting to node %s", cc.connection.RemoteAddr())
 
 	// Send client's initial startup frame to the database
-	responseChannel := cc.forwardToCluster(startupFrame.RawBytes, startupFrame.Stream)
+	responseChannel := cc.forwardToCluster(startupFrame.RawBytes, startupFrame.StreamId)
 	f, ok := <-responseChannel
 	if !ok {
 		select {
@@ -157,7 +157,7 @@ func (cc *ClusterConnector) handleOriginCassandraStartup(startupFrame *Frame, cl
 				cc.connection.RemoteAddr(), clientIPAddress)
 
 			authResp := authFrame(cc.username, cc.password, startupFrame)
-			responseChannel = cc.forwardToCluster(authResp.RawBytes, authResp.Stream)
+			responseChannel = cc.forwardToCluster(authResp.RawBytes, authResp.StreamId)
 			f, ok = <-responseChannel
 			if !ok {
 				return fmt.Errorf("auth/auth challenge failed from client %s to %s",
