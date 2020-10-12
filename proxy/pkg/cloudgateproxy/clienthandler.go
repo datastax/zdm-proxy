@@ -183,12 +183,20 @@ func (ch *ClientHandler) handleRequest(f *Frame, waitGroup *sync.WaitGroup) erro
 		return err
 	}
 
-	// send overall response back to client
-	ch.clientConnector.responseChannel <- response.RawBytes
+	// Status and topology events should not be forwarded back to the client
+	if response.Opcode == OpCodeEvent {
+		eventType, _ := readString(response.Body)
+		if eventType != "SCHEMA_CHANGE" {
+			return nil
+		}
+	}
 
 	// if it was a prepare request, cache the ID and statement info
-	if f.Opcode == OpCodePrepare && isResponseSuccessful(response) {
-		ch.preparedStatementCache.cachePreparedID(response)
+	if isResponsePrepared(response) {
+		preparedId, _ := readShortBytes(response.Body[4:])
+		if preparedId != nil {
+			ch.preparedStatementCache.cachePreparedId(response.StreamId, preparedId)
+		}
 	}
 
 	if isResponseSetKeyspace(response) {
@@ -197,6 +205,9 @@ func (ch *ClientHandler) handleRequest(f *Frame, waitGroup *sync.WaitGroup) erro
 			ch.currentKeyspaceName.Store(keyspaceName)
 		}
 	}
+
+	// send overall response back to client
+	ch.clientConnector.responseChannel <- response.RawBytes
 
 	return nil
 }
@@ -362,12 +373,22 @@ func isResponseSuccessful(response *Frame) bool {
 }
 
 func isResponseSetKeyspace(response *Frame) bool {
+	kind := getResultKind(response)
+	return kind == ResultKindSetKeyspace
+}
+
+func isResponsePrepared(response *Frame) bool {
+	kind := getResultKind(response)
+	return kind == ResultKindPrepared
+}
+
+func getResultKind(response *Frame) ResultKind {
 	if response.Opcode == OpCodeResult {
 		kind, err := readInt(response.Body)
 		if err != nil {
-			return false
+			return 0
 		}
-		return ResultKind(kind) == ResultKindSetKeyspace
+		return ResultKind(kind)
 	}
-	return false
+	return 0
 }

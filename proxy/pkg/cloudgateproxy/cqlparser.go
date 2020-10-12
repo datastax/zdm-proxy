@@ -61,7 +61,7 @@ func inspectFrame(f *Frame, psCache *PreparedStatementCache, mh metrics.IMetrics
 			return forwardToNone, err
 		}
 		log.Debugf("Execute with prepared-id = '%s'", preparedId)
-		if stmtInfo, ok := psCache.retrieveStmtInfoFromCache(string(preparedId)); ok {
+		if stmtInfo, ok := psCache.retrieveStmtInfoFromCache(preparedId); ok {
 			// The forward decision was set in the cache when handling the corresponding PREPARE request
 			return stmtInfo.forwardDecision, nil
 		} else {
@@ -72,7 +72,7 @@ func inspectFrame(f *Frame, psCache *PreparedStatementCache, mh metrics.IMetrics
 		}
 
 	case OpCodeRegister:
-		// TODO handle REGISTER messages
+		return forwardToOrigin, nil
 	}
 	return forwardToBoth, nil
 }

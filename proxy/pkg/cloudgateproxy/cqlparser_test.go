@@ -44,9 +44,10 @@ func TestInspectFrame(t *testing.T) {
 		{"OpCodeExecute target", args{mockExecuteFrame("TARGET"), psCache, mh, km}, forwardToTarget},
 		{"OpCodeExecute both", args{mockExecuteFrame("BOTH"), psCache, mh, km}, forwardToBoth},
 		{"OpCodeExecute unknown", args{mockExecuteFrame("UNKNOWN"), psCache, mh, km}, forwardToBoth},
+		// REGISTER
+		{"OpCodeRegister", args{mockFrame(OpCodeRegister, "irrelevant"), psCache, mh, km}, forwardToOrigin},
 		// others
 		{"OpCodeBatch", args{mockFrame(OpCodeBatch, "irrelevant"), psCache, mh, km}, forwardToBoth},
-		{"OpCodeRegister", args{mockFrame(OpCodeRegister, "irrelevant"), psCache, mh, km}, forwardToBoth},
 		{"OpCodeStartup", args{mockFrame(OpCodeStartup, "irrelevant"), psCache, mh, km}, forwardToBoth},
 		{"OpCodeOptions", args{mockFrame(OpCodeOptions, "irrelevant"), psCache, mh, km}, forwardToBoth},
 	}

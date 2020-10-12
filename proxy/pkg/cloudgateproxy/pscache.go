@@ -1,7 +1,6 @@
 package cloudgateproxy
 
 import (
-	"encoding/binary"
 	log "github.com/sirupsen/logrus"
 	"sync"
 )
@@ -37,38 +36,24 @@ func (psc *PreparedStatementCache) trackStatementToBePrepared(streamId uint16, f
 	psc.lock.Unlock()
 }
 
-func (psc *PreparedStatementCache) cachePreparedID(f *Frame) {
-	log.Tracef("In cachePreparedID")
-
-	data := f.RawBytes
-
-	kind := int(binary.BigEndian.Uint32(data[9:13]))
-	log.Tracef("Kind: %d", kind)
-	if kind != 4 {
-		// TODO error: this result is not a reply to a PREPARE request
-	}
-
-	idLength := int(binary.BigEndian.Uint16(data[13:15]))
-	preparedID := string(data[15 : 15+idLength])
-
-	log.Tracef("PreparedID: %s for stream %d", preparedID, f.StreamId)
-
+func (psc *PreparedStatementCache) cachePreparedId(streamId uint16, preparedId []byte) {
+	log.Tracef("In cachePreparedId")
+	log.Tracef("PreparedID: %s for stream %d", preparedId, streamId)
 	psc.lock.Lock()
-	log.Tracef("cachePreparedID: lock acquired")
+	log.Tracef("cachePreparedId: lock acquired")
 	// move the information about this statement into the cache
-	psc.cache[preparedID] = psc.statementsBeingPrepared[f.StreamId]
-	log.Tracef("PSInfo set in map for PreparedID: %s", preparedID)
+	psc.cache[string(preparedId)] = psc.statementsBeingPrepared[streamId]
+	log.Tracef("PSInfo set in map for PreparedID: %s", preparedId)
 	// remove it from the temporary map
-	delete(psc.statementsBeingPrepared, f.StreamId)
-	log.Tracef("cachePreparedID: removing statement info from transient map")
+	delete(psc.statementsBeingPrepared, streamId)
+	log.Tracef("cachePreparedId: removing statement info from transient map")
 	psc.lock.Unlock()
-	log.Tracef("cachePreparedID: lock released")
-
+	log.Tracef("cachePreparedId: lock released")
 }
 
-func (psc *PreparedStatementCache) retrieveStmtInfoFromCache(preparedID string) (preparedStatementInfo, bool) {
+func (psc *PreparedStatementCache) retrieveStmtInfoFromCache(preparedId []byte) (preparedStatementInfo, bool) {
 	psc.lock.RLock()
 	defer psc.lock.RUnlock()
-	stmtInfo, ok := psc.cache[preparedID]
+	stmtInfo, ok := psc.cache[string(preparedId)]
 	return stmtInfo, ok
 }
