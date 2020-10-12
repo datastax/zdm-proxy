@@ -6,8 +6,8 @@ import (
 	"sync"
 )
 
-type PreparedStatementInfo struct {
-	IsWriteStatement bool
+type preparedStatementInfo struct {
+	forwardDecision forwardDecision
 }
 
 type PreparedStatementCache struct {
@@ -15,23 +15,23 @@ type PreparedStatementCache struct {
 	// Map containing the statement to be prepared and whether it is a read or a write by streamID
 	// This is kind of transient: it only contains statements that are being prepared at the moment.
 	// Once the response to the prepare request is processed, the statement is removed from this map
-	statementsBeingPrepared map[uint16]PreparedStatementInfo
+	statementsBeingPrepared map[uint16]preparedStatementInfo
 	// Map containing the prepared queries (raw bytes) keyed on prepareId
-	cache map[string]PreparedStatementInfo
+	cache map[string]preparedStatementInfo
 	lock  *sync.RWMutex
 }
 
 func NewPreparedStatementCache() *PreparedStatementCache {
 	return &PreparedStatementCache{
-		statementsBeingPrepared: make(map[uint16]PreparedStatementInfo),
-		cache:                   make(map[string]PreparedStatementInfo),
+		statementsBeingPrepared: make(map[uint16]preparedStatementInfo),
+		cache:                   make(map[string]preparedStatementInfo),
 		lock:                    &sync.RWMutex{},
 	}
 }
 
-func (psc *PreparedStatementCache) trackStatementToBePrepared(streamId uint16, isWriteRequest bool) {
+func (psc *PreparedStatementCache) trackStatementToBePrepared(streamId uint16, forwardDecision forwardDecision) {
 	// add the statement info for this query to the transient map of statements to be prepared
-	stmtInfo := PreparedStatementInfo{IsWriteStatement: isWriteRequest}
+	stmtInfo := preparedStatementInfo{forwardDecision}
 	psc.lock.Lock()
 	psc.statementsBeingPrepared[streamId] = stmtInfo
 	psc.lock.Unlock()
@@ -66,7 +66,7 @@ func (psc *PreparedStatementCache) cachePreparedID(f *Frame) {
 
 }
 
-func (psc *PreparedStatementCache) retrieveStmtInfoFromCache(preparedID string) (PreparedStatementInfo, bool) {
+func (psc *PreparedStatementCache) retrieveStmtInfoFromCache(preparedID string) (preparedStatementInfo, bool) {
 	psc.lock.RLock()
 	defer psc.lock.RUnlock()
 	stmtInfo, ok := psc.cache[preparedID]

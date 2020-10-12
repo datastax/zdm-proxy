@@ -117,6 +117,11 @@ func (baseSimulacron *baseSimulacron) Prime(then Then) error {
 	return err
 }
 
+func (baseSimulacron *baseSimulacron) ClearPrimes() error {
+	_, err := baseSimulacron.process.execHttp("DELETE", baseSimulacron.getPath("prime"), nil)
+	return err
+}
+
 func (baseSimulacron *baseSimulacron) getPath(endpoint string) string {
 	return "/" + endpoint + "/" + baseSimulacron.GetId()
 }

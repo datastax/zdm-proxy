@@ -3,6 +3,7 @@ package cloudgateproxy
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	log "github.com/sirupsen/logrus"
 	"io"
 	"net"
@@ -11,7 +12,6 @@ import (
 type OpCode uint8
 
 const (
-
 	// requests
 	OpCodeStartup      = OpCode(0x01)
 	OpCodeOptions      = OpCode(0x05)
@@ -21,7 +21,6 @@ const (
 	OpCodeRegister     = OpCode(0x0B)
 	OpCodeBatch        = OpCode(0x0D)
 	OpCodeAuthResponse = OpCode(0x0F)
-
 	// responses
 	OpCodeError         = OpCode(0x00)
 	OpCodeReady         = OpCode(0x02)
@@ -31,6 +30,39 @@ const (
 	OpCodeEvent         = OpCode(0x0C)
 	OpCodeAuthChallenge = OpCode(0x0E)
 	OpCodeAuthSuccess   = OpCode(0x10)
+)
+
+type ResultKind uint32
+
+const (
+	ResultKindVoid         = ResultKind(0x0001)
+	ResultKindRows         = ResultKind(0x0002)
+	ResultKindSetKeyspace  = ResultKind(0x0003)
+	ResultKindPrepared     = ResultKind(0x0004)
+	ResultKindSchemaChange = ResultKind(0x0005)
+)
+
+type ErrorCode uint32
+
+const (
+	ErrorCodeServerError          = ErrorCode(0x0000)
+	ErrorCodeProtocolError        = ErrorCode(0x000A)
+	ErrorCodeAuthenticationError  = ErrorCode(0x0100)
+	ErrorCodeUnavailableException = ErrorCode(0x1000)
+	ErrorCodeOverloaded           = ErrorCode(0x1001)
+	ErrorCodeIsBootstrapping      = ErrorCode(0x1002)
+	ErrorCodeTruncateError        = ErrorCode(0x1003)
+	ErrorCodeWriteTimeout         = ErrorCode(0x1100)
+	ErrorCodeReadTimeout          = ErrorCode(0x1200)
+	ErrorCodeReadFailure          = ErrorCode(0x1300)
+	ErrorCodeFunctionFailure      = ErrorCode(0x1400)
+	ErrorCodeWriteFailure         = ErrorCode(0x1500)
+	ErrorCodeSyntaxError          = ErrorCode(0x2000)
+	ErrorCodeUnauthorized         = ErrorCode(0x2100)
+	ErrorCodeInvalid              = ErrorCode(0x2200)
+	ErrorCodeConfigError          = ErrorCode(0x2300)
+	ErrorCodeAlreadyExists        = ErrorCode(0x2400)
+	ErrorCodeUnprepared           = ErrorCode(0x2500)
 )
 
 type Frame struct {
@@ -118,4 +150,69 @@ func readAndParseFrame(
 	}
 
 	return f, nil
+}
+
+// Protocol types decoding functions
+
+// Reads a uint16 from the slice.
+func readShort(data []byte) (uint16, error) {
+	length := len(data)
+	if length < 2 {
+		return 0, errors.New("not enough bytes to read a short")
+	}
+	return binary.BigEndian.Uint16(data[0:2]), nil
+}
+
+// Reads a uint32 from the slice.
+func readInt(data []byte) (uint32, error) {
+	length := len(data)
+	if length < 4 {
+		return 0, errors.New("not enough bytes to read an int")
+	}
+	return binary.BigEndian.Uint32(data[0:4]), nil
+}
+
+// Reads a string from the slice. A string is defined as a [short] n,
+// followed by n bytes representing an UTF-8 string.
+func readString(data []byte) (string, error) {
+	queryLen, err := readShort(data)
+	if err != nil {
+		return "", err
+	}
+	length := len(data)
+	if length < 2+int(queryLen) {
+		return "", errors.New("not enough bytes to read a string")
+	}
+	str := string(data[2 : 2+queryLen])
+	return str, nil
+}
+
+// Reads a "long string" from the slice. A long string is defined as an [int] n,
+// followed by n bytes representing an UTF-8 string.
+func readLongString(data []byte) (string, error) {
+	queryLen, err := readInt(data)
+	if err != nil {
+		return "", err
+	}
+	length := len(data)
+	if length < 4+int(queryLen) {
+		return "", errors.New("not enough bytes to read a long string")
+	}
+	str := string(data[4 : 4+queryLen])
+	return str, nil
+}
+
+// Reads a "short bytes" from the slice. A short bytes is defined as a [short] n,
+// followed by n bytes if n >= 0.
+func readShortBytes(data []byte) ([]byte, error) {
+	idLen, err := readShort(data)
+	if err != nil {
+		return nil, err
+	}
+	length := len(data)
+	if length < 2+int(idLen) {
+		return nil, errors.New("not enough bytes to read a short bytes")
+	}
+	shortBytes := data[2 : 2+idLen]
+	return shortBytes, nil
 }

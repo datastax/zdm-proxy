@@ -1,24 +1,26 @@
 package cloudgateproxy
 
 import (
-	"encoding/binary"
-	"errors"
+	"github.com/antlr/antlr4/runtime/Go/antlr"
+	parser "github.com/riptano/cloud-gate/antlr"
 	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
-	"regexp"
-	"strings"
-
 	log "github.com/sirupsen/logrus"
+	"strings"
+	"sync/atomic"
 )
 
 type forwardDecision string
 
 const (
 	forwardToOrigin = forwardDecision("origin")
+	forwardToTarget = forwardDecision("target")
 	forwardToBoth   = forwardDecision("both")
 	forwardToNone   = forwardDecision("none")
 )
 
-func inspectFrame(f *Frame, psCache *PreparedStatementCache, mh metrics.IMetricsHandler) (forwardDecision, error) {
+func inspectFrame(f *Frame, psCache *PreparedStatementCache, mh metrics.IMetricsHandler, currentKeyspaceName *atomic.Value) (forwardDecision, error) {
+
+	forwardDecision := forwardToBoth
 
 	switch f.Opcode {
 
@@ -27,7 +29,14 @@ func inspectFrame(f *Frame, psCache *PreparedStatementCache, mh metrics.IMetrics
 		if err != nil {
 			return forwardToNone, err
 		}
-		forwardDecision := inspectCqlQuery(query)
+		queryInfo := inspectCqlQuery(query)
+		if queryInfo.getStatementType() == statementTypeSelect {
+			if isSystemLocalOrSystemPeers(queryInfo, currentKeyspaceName) {
+				forwardDecision = forwardToTarget
+			} else {
+				forwardDecision = forwardToOrigin
+			}
+		}
 		return forwardDecision, nil
 
 	case OpCodePrepare:
@@ -35,8 +44,15 @@ func inspectFrame(f *Frame, psCache *PreparedStatementCache, mh metrics.IMetrics
 		if err != nil {
 			return forwardToNone, err
 		}
-		forwardDecision := inspectCqlQuery(query)
-		psCache.trackStatementToBePrepared(f.StreamId, forwardDecision == forwardToBoth)
+		queryInfo := inspectCqlQuery(query)
+		if queryInfo.getStatementType() == statementTypeSelect {
+			if isSystemLocalOrSystemPeers(queryInfo, currentKeyspaceName) {
+				forwardDecision = forwardToTarget
+			} else {
+				forwardDecision = forwardToOrigin
+			}
+		}
+		psCache.trackStatementToBePrepared(f.StreamId, forwardDecision)
 		return forwardDecision, nil
 
 	case OpCodeExecute:
@@ -46,12 +62,8 @@ func inspectFrame(f *Frame, psCache *PreparedStatementCache, mh metrics.IMetrics
 		}
 		log.Debugf("Execute with prepared-id = '%s'", preparedId)
 		if stmtInfo, ok := psCache.retrieveStmtInfoFromCache(string(preparedId)); ok {
-			// The R/W flag was set in the cache when handling the corresponding PREPARE request
-			if stmtInfo.IsWriteStatement {
-				return forwardToBoth, nil
-			} else {
-				return forwardToOrigin, nil
-			}
+			// The forward decision was set in the cache when handling the corresponding PREPARE request
+			return stmtInfo.forwardDecision, nil
 		} else {
 			log.Warnf("No cached entry for prepared-id = '%s'", preparedId)
 			_ = mh.IncrementCountByOne(metrics.PSCacheMissCount)
@@ -65,45 +77,98 @@ func inspectFrame(f *Frame, psCache *PreparedStatementCache, mh metrics.IMetrics
 	return forwardToBoth, nil
 }
 
-// Reads a "long string" from the slice. A long string is defined as an [int] n,
-// followed by n bytes representing an UTF-8 string.
-func readLongString(data []byte) (string, error) {
-	capacity := len(data)
-	if capacity < 4 {
-		return "", errors.New("not enough bytes to read a long string")
+func isSystemLocalOrSystemPeers(info queryInfo, currentKeyspaceName *atomic.Value) bool {
+	keyspaceName := info.getKeyspaceName()
+	if keyspaceName == "" {
+		value := currentKeyspaceName.Load()
+		if value != nil {
+			keyspaceName = value.(string)
+		}
 	}
-	queryLen := int(binary.BigEndian.Uint32(data[0:4]))
-	if capacity < 4+queryLen {
-		return "", errors.New("not enough bytes to read a long string")
+	if keyspaceName == "system" {
+		tableName := info.getTableName()
+		if tableName == "local" ||
+			tableName == "peers" ||
+			tableName == "peers_v2" {
+			return true
+		}
 	}
-	longString := string(data[4 : 4+queryLen])
-	return longString, nil
+	return false
 }
 
-// Reads a "short bytes" from the slice. A short bytes is defined as a [short] n,
-// followed by n bytes if n >= 0.
-func readShortBytes(data []byte) ([]byte, error) {
-	capacity := cap(data)
-	if capacity < 2 {
-		return nil, errors.New("not enough bytes to read a short bytes")
-	}
-	idLen := int(binary.BigEndian.Uint16(data[0:2]))
-	if capacity < 2+idLen {
-		return nil, errors.New("not enough bytes to read a short bytes")
-	}
-	shortBytes := data[2 : 2+idLen]
-	return shortBytes, nil
+type statementType string
+
+const (
+	statementTypeSelect = statementType("select")
+	statementTypeOther  = statementType("other")
+)
+
+type queryInfo interface {
+	getStatementType() statementType
+	getKeyspaceName() string
+	getTableName() string
 }
 
-var commentsRegExp = regexp.MustCompile("(?s)//.*?\n|--.*?\n|/\\*.*?\\*/")
+func inspectCqlQuery(query string) queryInfo {
+	is := antlr.NewInputStream(query)
+	lexer := parser.NewSimplifiedCqlLexer(is)
+	stream := antlr.NewCommonTokenStream(lexer, antlr.TokenDefaultChannel)
+	cqlParser := parser.NewSimplifiedCqlParser(stream)
+	listener := &cqlListener{statementType: statementTypeOther}
+	antlr.ParseTreeWalkerDefault.Walk(listener, cqlParser.CqlStatement())
+	return listener
+}
 
-func inspectCqlQuery(query string) forwardDecision {
-	query = commentsRegExp.ReplaceAllString(query, "") // remove comments
-	query = strings.TrimSpace(query)
-	// TODO detect system.local and system.peers
-	if strings.HasPrefix(strings.ToUpper(query), "SELECT") {
-		return forwardToOrigin
+type cqlListener struct {
+	*parser.BaseSimplifiedCqlListener
+	statementType statementType
+	keyspaceName  string
+	tableName     string
+}
+
+//goland:noinspection GoUnusedParameter
+func (l *cqlListener) ExitSelectStatement(ctx *parser.SelectStatementContext) {
+	l.statementType = statementTypeSelect
+}
+
+func (l *cqlListener) ExitKeyspaceName(ctx *parser.KeyspaceNameContext) {
+	identifier := ctx.Identifier().(*parser.IdentifierContext)
+	l.keyspaceName = extractIdentifier(identifier)
+}
+
+func (l *cqlListener) ExitTableName(ctx *parser.TableNameContext) {
+	for _, child := range ctx.QualifiedIdentifier().GetChildren() {
+		if identifierContext, ok := child.(*parser.IdentifierContext); ok {
+			l.tableName = extractIdentifier(identifierContext)
+		}
+	}
+}
+
+// Returns the identifier in the context object, in its internal form.
+// For unquoted identifiers, the internal form is the form in full lower case;
+// for quoted ones, the internal form is the unquoted string, in its exact case.
+func extractIdentifier(identifierContext *parser.IdentifierContext) string {
+	unquotedIdentifier := identifierContext.UNQUOTED_IDENTIFIER()
+	if unquotedIdentifier != nil {
+		return strings.ToLower(unquotedIdentifier.GetText())
 	} else {
-		return forwardToBoth
+		quotedIdentifier := identifierContext.QUOTED_IDENTIFIER().GetText()
+		// remove surrounding quotes
+		quotedIdentifier = quotedIdentifier[1 : len(quotedIdentifier)-1]
+		// handle escaped double-quotes
+		quotedIdentifier = strings.ReplaceAll(quotedIdentifier, "\"\"", "\"")
+		return quotedIdentifier
 	}
+}
+
+func (l *cqlListener) getStatementType() statementType {
+	return l.statementType
+}
+
+func (l *cqlListener) getKeyspaceName() string {
+	return l.keyspaceName
+}
+
+func (l *cqlListener) getTableName() string {
+	return l.tableName
 }
