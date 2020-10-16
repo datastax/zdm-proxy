@@ -19,7 +19,7 @@ func TestBasicBatch(t *testing.T) {
 		t.Skip("Test requires CCM, set USE_CCM env variable to TRUE")
 	}
 
-	proxyInstance := NewDefaultProxyInstance()
+	proxyInstance := NewProxyInstanceForGlobalCcmClusters()
 	defer proxyInstance.Shutdown()
 
 	// Initialize test data

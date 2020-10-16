@@ -3,6 +3,7 @@ package ccm
 import (
 	"fmt"
 	"github.com/gocql/gocql"
+	"github.com/riptano/cloud-gate/integration-tests/env"
 )
 
 type Cluster struct {
@@ -15,7 +16,7 @@ type Cluster struct {
 	session        *gocql.Session
 }
 
-func NewCluster(name string, version string, isDse bool, startNodeIndex int) *Cluster {
+func newCluster(name string, version string, isDse bool, startNodeIndex int) *Cluster {
 	return &Cluster{
 		name,
 		version,
@@ -24,6 +25,16 @@ func NewCluster(name string, version string, isDse bool, startNodeIndex int) *Cl
 		startNodeIndex,
 		nil,
 	}
+}
+
+func GetNewCluster(id uint64, startNodeIndex int, numberOfNodes int, start bool) (*Cluster, error) {
+	name := fmt.Sprintf("test_cluster%d", id)
+	cluster := newCluster(name, env.ServerVersion, env.IsDse, startNodeIndex)
+	err := cluster.Create(numberOfNodes, start)
+	if err != nil {
+		return nil, err
+	}
+	return cluster, nil
 }
 
 func (ccmCluster *Cluster) GetInitialContactPoint() string {
@@ -42,7 +53,7 @@ func (ccmCluster *Cluster) GetSession() *gocql.Session {
 	return ccmCluster.session
 }
 
-func (ccmCluster *Cluster) Create(numberOfNodes int) error {
+func (ccmCluster *Cluster) Create(numberOfNodes int, start bool) error {
 	_, err := Create(ccmCluster.name, ccmCluster.version, ccmCluster.isDse)
 
 	if err != nil {
@@ -65,22 +76,43 @@ func (ccmCluster *Cluster) Create(numberOfNodes int) error {
 		}
 	}
 
-	_, err = Start()
+	if start {
+		_, err = Start()
 
-	if err != nil {
-		Remove(ccmCluster.name)
-		return err
-	}
+		if err != nil {
+			Remove(ccmCluster.name)
+			return err
+		}
 
-	gocqlCluster := gocql.NewCluster(ccmCluster.initialContactPoint)
-	ccmCluster.session, err = gocqlCluster.CreateSession()
+		gocqlCluster := gocql.NewCluster(ccmCluster.initialContactPoint)
+		ccmCluster.session, err = gocqlCluster.CreateSession()
 
-	if err != nil {
-		Remove(ccmCluster.name)
-		return err
+		if err != nil {
+			Remove(ccmCluster.name)
+			return err
+		}
 	}
 
 	return nil
+}
+
+func (ccmCluster *Cluster) UpdateConf(yamlChanges... string) error {
+	err := ccmCluster.SwitchToThis()
+	if err != nil {
+		return err
+	}
+
+	_, err = UpdateConf(yamlChanges...)
+	return err
+}
+
+func (ccmCluster *Cluster) Start(jvmArgs... string) error {
+	err := ccmCluster.SwitchToThis()
+	if err != nil {
+		return err
+	}
+	_, err = Start(jvmArgs...)
+	return err
 }
 
 func (ccmCluster *Cluster) SwitchToThis() error {

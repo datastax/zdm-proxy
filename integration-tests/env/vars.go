@@ -6,6 +6,11 @@ import (
 	"strings"
 )
 
+const (
+	OriginNodes = 1
+	TargetNodes = 1
+)
+
 var ServerVersion string
 var CassandraVersion string
 var DseVersion string

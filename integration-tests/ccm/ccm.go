@@ -13,7 +13,7 @@ import (
 
 const cmdTimeout = 5 * time.Minute
 
-func execCcm(arg string) (string, error) {
+func execCcm(arg... string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), cmdTimeout)
 	defer cancel() // The cancel should be deferred so resources are cleaned up
 
@@ -22,9 +22,9 @@ func execCcm(arg string) (string, error) {
 	var cmd *exec.Cmd
 
 	if runtime.GOOS == "windows" {
-		cmd = exec.CommandContext(ctx, "cmd.exe", "/c ccm "+arg)
+		cmd = exec.CommandContext(ctx, "cmd.exe", append([]string{"/S", "/C", "ccm"}, arg...)...)
 	} else {
-		cmd = exec.CommandContext(ctx, "/usr/local/bin/ccm", arg)
+		cmd = exec.CommandContext(ctx, "/usr/local/bin/ccm", arg...)
 	}
 
 	out, err := cmd.CombinedOutput()
@@ -50,19 +50,20 @@ func execCcm(arg string) (string, error) {
 
 func Create(name string, version string, isDse bool) (string, error) {
 	if isDse {
-		return execCcm(fmt.Sprintf("create %s -v %s --dse", name, version))
+		return execCcm("create", name, "-v", version, "--dse")
 	} else {
-		return execCcm(fmt.Sprintf("create %s -v %s", name, version))
+		return execCcm("create", name, "-v", version)
 	}
 
 }
 
 func Add(seed bool, address string, remoteDebugPort int, jmxPort int, name string) (string, error) {
-	var addArgs = fmt.Sprintf("-i %s -r %d -j %d %s", address, remoteDebugPort, jmxPort, name)
+	var addArgs = []string{
+		"-i", address, "-r", fmt.Sprintf("%d", remoteDebugPort), "-j", fmt.Sprintf("%d", jmxPort), name}
 	if seed {
-		return execCcm(fmt.Sprintf("add -s %s", addArgs))
+		return execCcm(append([]string{"add", "-s"}, addArgs...)...)
 	} else {
-		return execCcm(fmt.Sprintf("add %s", addArgs))
+		return execCcm(append([]string{"add"}, addArgs...)...)
 	}
 }
 
@@ -71,17 +72,27 @@ func RemoveCurrent() (string, error) {
 }
 
 func Remove(name string) (string, error) {
-	return execCcm(fmt.Sprintf("remove %s", name))
+	return execCcm("remove", name)
 }
 
 func Switch(name string) (string, error) {
-	return execCcm(fmt.Sprintf("switch %s", name))
+	return execCcm("switch", name)
 }
 
-func Start() (string, error) {
+func UpdateConf(yamlChanges... string) (string, error) {
+	return execCcm(append([]string{"updateconf"}, yamlChanges...)...)
+}
+
+func Start(jvmArgs... string) (string, error) {
+	newJvmArgs := make([]string, len(jvmArgs)*2)
+	for i := 0; i < len(newJvmArgs); i += 2 {
+		newJvmArgs[i] = "--jvm_arg"
+		newJvmArgs[i + 1] = jvmArgs[i]
+	}
+
 	if runtime.GOOS == "windows" {
-		return execCcm("start --quiet-windows --wait-for-binary-proto")
+		return execCcm(append ([]string{"start", "--quiet-windows", "--wait-for-binary-proto"}, newJvmArgs...)...)
 	} else {
-		return execCcm("start --wait-for-binary-proto")
+		return execCcm(append ([]string{"start", "--wait-for-binary-proto"}, newJvmArgs...)...)
 	}
 }

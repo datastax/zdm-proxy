@@ -1,7 +1,6 @@
 package setup
 
 import (
-	"fmt"
 	"github.com/gocql/gocql"
 	"github.com/riptano/cloud-gate/integration-tests/ccm"
 	"github.com/riptano/cloud-gate/integration-tests/env"
@@ -23,11 +22,6 @@ type TestCluster interface {
 	GetSession() *gocql.Session
 	Remove() error
 }
-
-const (
-	originNodes = 1
-	targetNodes = 1
-)
 
 var mux = &sync.Mutex{}
 var r = rand.New(rand.NewSource(time.Now().UTC().UnixNano()))
@@ -83,30 +77,24 @@ func GetGlobalTestClusterTarget() (TestCluster, error) {
 func createClusters() error {
 	// assuming we have the lock already
 
-	firstClusterId := r.Uint64() % (math.MaxUint64 - 1)
-
 	var err error
-	firstClusterName := fmt.Sprintf("test_cluster%d", firstClusterId)
-	globalCcmClusterOrigin = ccm.NewCluster(firstClusterName, env.ServerVersion, env.IsDse, 1)
-	err = globalCcmClusterOrigin.Create(originNodes)
-	globalOriginCluster = globalCcmClusterOrigin
 
+	firstClusterId := r.Uint64() % (math.MaxUint64 - 1)
+	globalCcmClusterOrigin, err = ccm.GetNewCluster(firstClusterId, 1, env.OriginNodes, true)
 	if err != nil {
 		return err
 	}
 
 	secondClusterId := firstClusterId + 1
-	secondClusterName := fmt.Sprintf("test_cluster%d", secondClusterId)
-	globalCcmClusterTarget = ccm.NewCluster(secondClusterName, env.ServerVersion, env.IsDse, 10)
-	err = globalCcmClusterTarget.Create(targetNodes)
-	globalTargetCluster = globalCcmClusterTarget
-
+	globalCcmClusterTarget, err = ccm.GetNewCluster(secondClusterId, 10, env.TargetNodes, true)
 	if err != nil {
 		return err
 	}
 
-	createdGlobalClusters = true
+	globalOriginCluster = globalCcmClusterOrigin
+	globalTargetCluster = globalCcmClusterTarget
 
+	createdGlobalClusters = true
 	return nil
 }
 
@@ -127,6 +115,12 @@ type SimulacronTestSetup struct {
 	Proxy  *cloudgateproxy.CloudgateProxy
 }
 
+type CcmTestSetup struct {
+	Origin *ccm.Cluster
+	Target *ccm.Cluster
+	Proxy  *cloudgateproxy.CloudgateProxy
+}
+
 func NewSimulacronTestSetup() *SimulacronTestSetup {
 	origin, _ := simulacron.GetNewCluster(1)
 	target, _ := simulacron.GetNewCluster(1)
@@ -143,12 +137,69 @@ func (setup *SimulacronTestSetup) Cleanup() {
 
 	err := setup.Target.Remove()
 	if err != nil {
-		log.Errorf("remove target cluster error: %s", err)
+		log.Errorf("remove target simulacron cluster error: %s", err)
 	}
 
 	err = setup.Origin.Remove()
 	if err != nil {
-		log.Errorf("remove origin cluster error: %s", err)
+		log.Errorf("remove origin simulacron cluster error: %s", err)
+	}
+}
+
+func NewTemporaryCcmTestSetup(start bool) (*CcmTestSetup, error) {
+	firstClusterId := r.Uint64() % (math.MaxUint64 - 1)
+	origin, err := ccm.GetNewCluster(firstClusterId, 20, env.OriginNodes, start)
+	if err != nil {
+		return nil, err
+	}
+
+	secondClusterId := firstClusterId + 1
+	target, err := ccm.GetNewCluster(secondClusterId, 30, env.TargetNodes, start)
+	if err != nil {
+		origin.Remove()
+		return nil, err
+	}
+
+	var proxyInstance *cloudgateproxy.CloudgateProxy
+	if start {
+		proxyInstance = NewProxyInstance(origin, target)
+	} else {
+		proxyInstance = nil
+	}
+
+	return &CcmTestSetup{
+		Origin: origin,
+		Target: target,
+		Proxy:  proxyInstance,
+	}, nil
+}
+
+func (setup *CcmTestSetup) Start(config *config.Config, jvmArgs... string) error {
+	err := setup.Origin.Start(jvmArgs...)
+	if err != nil {
+		return err
+	}
+	err = setup.Target.Start(jvmArgs...)
+	if err != nil {
+		return err
+	}
+	setup.Proxy = NewProxyInstanceWithConfig(config)
+	return nil
+}
+
+func (setup *CcmTestSetup) Cleanup() {
+	if setup.Proxy != nil {
+		setup.Proxy.Shutdown()
+	}
+
+	err := setup.Target.Remove()
+	if err != nil {
+		log.Errorf("remove target ccm cluster error: %s", err)
+	}
+
+	err = setup.Origin.Remove()
+	if err != nil {
+		log.Errorf("remove origin ccm cluster error: %s", err)
 	}
 }
 

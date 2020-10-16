@@ -47,27 +47,6 @@ func TestMain(m *testing.M) {
 	}
 
 	os.Exit(RunTests(m))
-
-	//conf := &config.Config{
-	//	OriginCassandraHostname: "127.0.0.1",
-	//	OriginCassandraUsername: "",
-	//	OriginCassandraPassword: "",
-	//	OriginCassandraPort:     9042,
-	//
-	//	TargetCassandraHostname: "127.0.0.1",
-	//	TargetCassandraUsername: "",
-	//	TargetCassandraPassword: "",
-	//	TargetCassandraPort:     9043,
-	//
-	//	ProxyServiceHostname:       "127.0.0.1",
-	//	ProxyCommunicationPort:     14000,
-	//	ProxyMetricsPort:           8080,
-	//	ProxyQueryPort:             14002,
-	//
-	//	Test:         false,
-	//	Debug:        true,
-	//	MaxQueueSize: 1000,
-	//}
 }
 
 func RunTests(m *testing.M) int {
@@ -82,6 +61,6 @@ func RunTests(m *testing.M) int {
 	return m.Run()
 }
 
-func NewDefaultProxyInstance() *cloudgateproxy.CloudgateProxy {
+func NewProxyInstanceForGlobalCcmClusters() *cloudgateproxy.CloudgateProxy {
 	return setup.NewProxyInstance(source, dest)
 }
