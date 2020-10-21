@@ -69,7 +69,7 @@ type Frame struct {
 	Direction int // [Alice] 0 if from client application to db
 	Version   uint8
 	Flags     uint8
-	StreamId  uint16
+	StreamId  int16
 	Opcode    OpCode
 	Length    uint32
 	Body      []byte
@@ -77,14 +77,22 @@ type Frame struct {
 }
 
 func NewFrame(frame []byte) *Frame {
+	version := frame[0] & 0x7F
+	hdrLen := GetHeaderLength(version)
+	var streamId int16
+	if Uses2BytesStreamIds(version) {
+		streamId = int16(binary.BigEndian.Uint16(frame[2:4]))
+	} else {
+		streamId = int16(frame[2])
+	}
 	return &Frame{
 		Direction: int(frame[0]&0x80) >> 7,
-		Version:   frame[0],
+		Version:   version,
 		Flags:     frame[1],
-		StreamId:  binary.BigEndian.Uint16(frame[2:4]),
-		Opcode:    OpCode(frame[4]),
-		Length:    binary.BigEndian.Uint32(frame[5:9]),
-		Body:      frame[9:],
+		StreamId:  streamId,
+		Opcode:    OpCode(frame[hdrLen-5]),
+		Length:    binary.BigEndian.Uint32(frame[hdrLen-4:hdrLen]),
+		Body:      frame[hdrLen:],
 		RawBytes:  frame,
 	}
 }
@@ -99,55 +107,50 @@ func (e *shutdownError) Error() string {
 
 var ShutdownErr = &shutdownError{err: "aborted due to shutdown request"}
 
-// Simple function that reads data from a connection and builds a frame
-func readAndParseFrame(
-	connection net.Conn, frameHeader []byte, clientHandlerContext context.Context) (*Frame, error) {
-	sourceAddress := connection.RemoteAddr().String()
-
-	// [Alice] read the frameHeader, whose length is constant (9 bytes), and put it into this slice
-	//log.Debugf("reading frame header from connection %s", sourceAddress)
-	_, err := io.ReadFull(connection, frameHeader)
+func readPartialFrame(connection net.Conn, clientHandlerContext context.Context, buf []byte) error {
+	_, err := io.ReadFull(connection, buf)
 	if err != nil {
 		select {
 		case <-clientHandlerContext.Done():
-			log.Infof("Shutting down connection to %s", sourceAddress)
-			return nil, ShutdownErr
+			log.Infof("Shutting down connection to %s", connection.RemoteAddr().String())
+			return ShutdownErr
 		default:
-			return nil, err
+			return err
 		}
 	}
-	//log.Debugf("frameheader number of bytes read by ReadFull %d", bytesRead) // [Alice]
-	//log.Debugf("frameheader content read by ReadFull %v", frameHeader) // [Alice]
-	bodyLen := binary.BigEndian.Uint32(frameHeader[5:9])
-	//log.Debugf("bodyLen %d", bodyLen) // [Alice]
-	data := frameHeader
-	bytesSoFar := 0
 
-	//log.Debugf("data: %v", data)
+	return nil
+}
 
-	if bodyLen != 0 {
-		for bytesSoFar < int(bodyLen) {
-			rest := make([]byte, int(bodyLen)-bytesSoFar)
-			bytesRead, err := io.ReadFull(connection, rest)
-			if err != nil {
-				select {
-				case <-clientHandlerContext.Done():
-					log.Infof("Shutting down connection to %s", sourceAddress)
-					return nil, ShutdownErr
-				default:
-					return nil, err
-				}
-			}
-			data = append(data, rest[:bytesRead]...)
-			bytesSoFar += bytesRead
-		}
+// Simple function that reads data from a connection and builds a frame
+func readAndParseFrame(
+	connection net.Conn, clientHandlerContext context.Context) (*Frame, error) {
+
+	frameHeader := make([]byte, 9) // max header length
+	err := readPartialFrame(connection, clientHandlerContext, frameHeader[:1])
+	if err != nil {
+		return nil, err
 	}
-	//log.Debugf("(from %s): %v", connection.RemoteAddr(), string(data))
-	f := NewFrame(data)
 
-	if f.Flags&0x01 == 1 {
-		log.Errorf("compression flag for stream %d set, unable to parse query beyond header", f.StreamId)
+	version := frameHeader[0] & 0x7F
+	frameHeader = frameHeader[:GetHeaderLength(version)]
+	err = readPartialFrame(connection, clientHandlerContext, frameHeader[1:])
+	if err != nil {
+		return nil, err
 	}
+
+	if frameHeader[1] & 0x01 == 1 {
+		return nil, errors.New("compression flag set, unable to parse query beyond header")
+	}
+
+	bodyLen := binary.BigEndian.Uint32(frameHeader[len(frameHeader)-4:])
+	body := make([]byte, bodyLen)
+	err = readPartialFrame(connection, clientHandlerContext, body)
+	if err != nil {
+		return nil, err
+	}
+
+	f := NewFrame(append(frameHeader, body...))
 
 	return f, nil
 }
@@ -215,4 +218,16 @@ func readShortBytes(data []byte) ([]byte, error) {
 	}
 	shortBytes := data[2 : 2+idLen]
 	return shortBytes, nil
+}
+
+func Uses2BytesStreamIds(version byte) bool {
+	return version >= 3
+}
+
+func GetHeaderLength(version byte) int {
+	if Uses2BytesStreamIds(version) {
+		return 9
+	} else {
+		return 8
+	}
 }

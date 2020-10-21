@@ -2,6 +2,7 @@ package cloudgateproxy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
@@ -28,7 +29,7 @@ const (
 
 type ClusterConnector struct {
 	connection              net.Conn
-	clusterResponseChannels map[uint16]chan *Frame // map of channels, keyed on streamID, on which to send the response to a request
+	clusterResponseChannels map[int16]chan *Frame // map of channels, keyed on streamID, on which to send the response to a request
 	clusterType             ClusterType
 
 	username                string
@@ -75,7 +76,7 @@ func NewClusterConnector(connInfo *ClusterConnectionInfo,
 
 	return &ClusterConnector{
 		connection:              conn,
-		clusterResponseChannels: make(map[uint16]chan *Frame),
+		clusterResponseChannels: make(map[int16]chan *Frame),
 		clusterType:             clusterType,
 		username:                connInfo.username,
 		password:                connInfo.password,
@@ -129,8 +130,7 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 	go func() {
 		defer cc.waitGroup.Done()
 		for {
-			frameHeader := make([]byte, cassHdrLen)
-			response, err := readAndParseFrame(cc.connection, frameHeader, cc.clientHandlerContext)
+			response, err := readAndParseFrame(cc.connection, cc.clientHandlerContext)
 
 			if err != nil {
 				if err == ShutdownErr {
@@ -178,19 +178,25 @@ func (cc *ClusterConnector) forwardResponseToChannel(response *Frame) {
  *	Adds a channel to a map (clusterResponseChannels) keyed on streamID. This channel is used by the dequeuer to communicate the response back to this goroutine.
  *	It is this goroutine that has to receive the response, so it can enforce the timeout in case of connection disruption
  */
-func (cc *ClusterConnector) forwardToCluster(rawBytes []byte, streamId uint16) chan *Frame {
-	responseToCallerChan := make(chan *Frame)
+func (cc *ClusterConnector) forwardToCluster(rawBytes []byte, streamId int16) chan *Frame {
+	responseToCallerChan := make(chan *Frame, 1)
 
 	go func() {
 		defer close(responseToCallerChan)
 
-		responseFromClusterChan := cc.createChannelForClusterResponse(streamId)
+		responseFromClusterChan, err := cc.createChannelForClusterResponse(streamId)
+		if err != nil {
+			log.Errorf("Error creating cluster response channel for stream id %d: %s", streamId, err.Error())
+			return
+		}
+
 		// once the response has been sent to the caller, remove the channel from the map as it has served its purpose
 		defer cc.deleteChannelForClusterResponse(streamId)
 
-		err := cc.sendRequestToCluster(rawBytes)
+		err = cc.sendRequestToCluster(rawBytes)
 		if err != nil {
 			log.Errorf("Error while sending request to %s: %s", cc.connection.RemoteAddr().String(), err)
+			return
 		}
 
 		select {
@@ -219,22 +225,29 @@ func (cc *ClusterConnector) forwardToCluster(rawBytes []byte, streamId uint16) c
 /**
  *	Creates channel on which the dequeuer will send the response to the request with this streamId and adds it to the map
  */
-func (cc *ClusterConnector) createChannelForClusterResponse(streamId uint16) chan *Frame {
+func (cc *ClusterConnector) createChannelForClusterResponse(streamId int16) (chan *Frame, error) {
 	cc.lock.Lock()
 	defer cc.lock.Unlock()
-	cc.clusterResponseChannels[streamId] = make(chan *Frame, 1)
+	if _, ok := cc.clusterResponseChannels[streamId]; ok {
+		return nil, errors.New(fmt.Sprintf("streamid collision: %d", streamId))
+	}
 
-	return cc.clusterResponseChannels[streamId]
+	cc.clusterResponseChannels[streamId] = make(chan *Frame, 1)
+	return cc.clusterResponseChannels[streamId], nil
 }
 
 /**
  *	Removes the response channel for this streamId from the map
  */
-func (cc *ClusterConnector) deleteChannelForClusterResponse(streamId uint16) {
+func (cc *ClusterConnector) deleteChannelForClusterResponse(streamId int16) {
 	cc.lock.Lock()
 	defer cc.lock.Unlock()
-	close(cc.clusterResponseChannels[streamId])
-	delete(cc.clusterResponseChannels, streamId)
+	if channel, ok := cc.clusterResponseChannels[streamId]; ok {
+		close(channel)
+		delete(cc.clusterResponseChannels, streamId)
+	} else {
+		log.Warnf("could not find cluster response channel for streamid %d, skipping...", streamId)
+	}
 }
 
 func (cc *ClusterConnector) sendRequestToCluster(rawBytes []byte) error {

@@ -3,6 +3,7 @@ package cloudgateproxy
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
@@ -41,6 +42,8 @@ type ClientHandler struct {
 	clientHandlerCancelFunc context.CancelFunc
 
 	currentKeyspaceName *atomic.Value
+
+	startupFrame *Frame
 }
 
 func NewClientHandler(clientTcpConn net.Conn,
@@ -88,7 +91,8 @@ func NewClientHandler(clientTcpConn net.Conn,
 		globalWaitGroup:            waitGroup,
 		clientHandlerContext:       clientHandlerContext,
 		clientHandlerCancelFunc:    clientHandlerCancelFunc,
-		currentKeyspaceName:        new(atomic.Value),
+		currentKeyspaceName:        &atomic.Value{},
+		startupFrame:               nil,
 	}, nil
 }
 
@@ -107,7 +111,7 @@ func (ch *ClientHandler) run() {
  *	Every request that comes through will spawn a handleRequest() goroutine
  */
 func (ch *ClientHandler) listenForClientRequests() {
-	authenticated := false
+	ready := false
 	var err error
 	ch.globalWaitGroup.Add(1)
 	log.Debugf("listenForClientRequests loop starting now")
@@ -125,24 +129,23 @@ func (ch *ClientHandler) listenForClientRequests() {
 			}
 
 			log.Tracef("frame received")
-			if !authenticated {
-				log.Tracef("not authenticated")
+			if !ready {
+				log.Tracef("not ready")
 				// Handle client authentication
-				authenticated, err = ch.handleStartupFrame(frame)
+				ready, err = ch.handleHandshakeRequest(frame, handleWaitGroup)
 				if err != nil && err != ShutdownErr {
 					log.Error(err)
 				}
-				if authenticated {
+				if ready {
 					log.Infof(
-						"Authentication successful with client %s",
+						"Handshake successful with client %s",
 						ch.clientConnector.connection.RemoteAddr().String())
 				}
-				log.Tracef("authenticated? %t", authenticated)
+				log.Tracef("ready? %t", ready)
 				continue
 			}
 
-			handleWaitGroup.Add(1)
-			go ch.handleRequest(frame, handleWaitGroup)
+			ch.handleRequest(frame, handleWaitGroup)
 		}
 
 		handleWaitGroup.Wait()
@@ -155,15 +158,107 @@ func (ch *ClientHandler) listenForClientRequests() {
  *
  *	Calls one or two goroutines forwardToCluster(), so the request is executed on each cluster concurrently
  */
-func (ch *ClientHandler) handleRequest(f *Frame, waitGroup *sync.WaitGroup) error {
+func (ch *ClientHandler) handleHandshakeRequest(f *Frame, waitGroup *sync.WaitGroup) (bool, error) {
+	if f.Opcode == OpCodeStartup {
+		ch.startupFrame = f
+	}
 
+	response, err := ch.forwardRequest(f)
+
+	if err != nil {
+		return false, err
+	}
+
+	if response == nil {
+		return false, nil
+	}
+
+	authSuccess := false
+	if response.Opcode == OpCodeReady || response.Opcode == OpCodeAuthSuccess {
+		// target handshake must happen within a single client request lifetime
+		// to guarantee that no other request with the same
+		// stream id goes to target in the meantime
+
+		// if we add stream id mapping logic in the future, then
+		// we can start the target handshake earlier and wait for it to end here
+
+		targetAuthChannel, err := ch.startTargetHandshake(waitGroup)
+		if err != nil {
+			return false, err
+		}
+
+		select {
+		case err, ok := <-targetAuthChannel:
+			if !ok {
+				err = errors.New("target handshake failed (channel closed)")
+			}
+
+			if err != nil {
+				log.Errorf("handshake failed, shutting down the client handler and connectors: %s", err.Error())
+				ch.clientHandlerCancelFunc()
+				return false, ShutdownErr
+			}
+
+			authSuccess = true
+
+		case <-ch.clientHandlerContext.Done():
+			return false, ShutdownErr
+		}
+	}
+
+	// send overall response back to client
+	ch.clientConnector.responseChannel <- response.RawBytes
+
+	return authSuccess, nil
+}
+
+func (ch *ClientHandler) startTargetHandshake(waitGroup *sync.WaitGroup) (chan error, error) {
+	startupFrame := ch.startupFrame
+	if startupFrame == nil {
+		return nil, errors.New("can not start target handshake before a Startup message was received")
+	}
+
+	channel := make(chan error)
+	waitGroup.Add(1)
+	go func() {
+		defer waitGroup.Done()
+		defer close(channel)
+		err := ch.handleTargetCassandraStartup(startupFrame)
+		channel <- err
+	}()
+	return channel, nil
+}
+
+/**
+ *	Handles a request. Called as a goroutine every time a valid requestFrame is received,
+ *	so each request is executed concurrently to other requests.
+ *
+ *	Calls one or two goroutines forwardToCluster(), so the request is executed on each cluster concurrently
+ */
+func (ch *ClientHandler) handleRequest(f *Frame, waitGroup *sync.WaitGroup) {
+	waitGroup.Add(1)
+	go func() {
+		defer waitGroup.Done()
+		response, err := ch.forwardRequest(f)
+
+		if err != nil {
+			log.Warnf("error handling request with opcode %02x and streamid %d: %s", f.Opcode, f.StreamId, err.Error())
+			return
+		}
+
+		if response != nil {
+			// send overall response back to client
+			ch.clientConnector.responseChannel <- response.RawBytes
+		}
+	}()
+}
+
+func (ch *ClientHandler) forwardRequest(f *Frame) (*Frame, error) {
 	overallRequestStartTime := time.Now()
-
-	defer waitGroup.Done()
 
 	forwardDecision, err := inspectFrame(f, ch.preparedStatementCache, ch.metricsHandler, ch.currentKeyspaceName)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	log.Tracef("Opcode: %v, Forward decision: %v", f.Opcode, forwardDecision)
 
@@ -180,14 +275,14 @@ func (ch *ClientHandler) handleRequest(f *Frame, waitGroup *sync.WaitGroup) erro
 
 	response, err := ch.executeForwardDecision(f, forwardDecision)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Status and topology events should not be forwarded back to the client
 	if response.Opcode == OpCodeEvent {
 		eventType, _ := readString(response.Body)
 		if eventType != "SCHEMA_CHANGE" {
-			return nil
+			return nil, nil
 		}
 	}
 
@@ -206,10 +301,7 @@ func (ch *ClientHandler) handleRequest(f *Frame, waitGroup *sync.WaitGroup) erro
 		}
 	}
 
-	// send overall response back to client
-	ch.clientConnector.responseChannel <- response.RawBytes
-
-	return nil
+	return response, nil
 }
 
 // executeForwardDecision executes the forward decision and waits for one or two responses, then returns the response

@@ -71,10 +71,12 @@ func inspectFrame(f *Frame, psCache *PreparedStatementCache, mh metrics.IMetrics
 			return forwardToBoth, nil
 		}
 
-	case OpCodeRegister:
+	case OpCodeRegister, OpCodeStartup, OpCodeAuthResponseRequest:
 		return forwardToOrigin, nil
+
+	default:
+		return forwardToBoth, nil
 	}
-	return forwardToBoth, nil
 }
 
 func isSystemLocalOrSystemPeers(info queryInfo, currentKeyspaceName *atomic.Value) bool {

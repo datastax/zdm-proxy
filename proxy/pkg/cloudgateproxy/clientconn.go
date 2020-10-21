@@ -72,8 +72,7 @@ func (cc *ClientConnector) listenForRequests() {
 		defer close(cc.requestChannel)
 		for {
 			var frame *Frame
-			frameHeader := make([]byte, cassHdrLen)
-			frame, err = readAndParseFrame(cc.connection, frameHeader, cc.clientHandlerContext)
+			frame, err = readAndParseFrame(cc.connection, cc.clientHandlerContext)
 
 			if err != nil {
 				if err == ShutdownErr {
@@ -111,7 +110,7 @@ func (cc *ClientConnector) listenForResponses() error {
 	cc.waitGroup.Add(1)
 	var err error
 	go func() {
-		cc.waitGroup.Done()
+		defer cc.waitGroup.Done()
 		for {
 			log.Tracef("Waiting for next response to dispatch to client %s", clientAddrStr)
 

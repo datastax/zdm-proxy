@@ -16,7 +16,6 @@ const (
 	maxQueryRetries = 5
 	queryTimeout    = 10 * time.Second
 
-	cassHdrLen = 9
 	cassMaxLen = 256 * 1024 * 1024 // 268435456 // 256 MB, per spec		// TODO is this an actual limit??
 )
 
