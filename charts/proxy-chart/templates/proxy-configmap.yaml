@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "{{ include "proxy-chart.fullname" . }}-configmap"
+data:
+  ORIGIN_CASSANDRA_HOSTNAME: "{{ .Values.proxyConfig.originCassandraHostname }}"
+  ORIGIN_CASSANDRA_USERNAME: "{{ .Values.proxyConfig.originCassandraUsername }}"
+  ORIGIN_CASSANDRA_PASSWORD: "{{ .Values.proxyConfig.originCassandraPassword }}"
+  ORIGIN_CASSANDRA_PORT: "{{ .Values.proxyConfig.originCassandraPort }}"
+  TARGET_CASSANDRA_HOSTNAME: "{{ .Values.proxyConfig.targetCassandraHostname }}"
+  TARGET_CASSANDRA_USERNAME: "{{ .Values.proxyConfig.targetCassandraUsername }}"
+  TARGET_CASSANDRA_PASSWORD: "{{ .Values.proxyConfig.targetCassandraPassword }}"
+  TARGET_CASSANDRA_PORT: "{{ .Values.proxyConfig.targetCassandraPort }}"
+  DEBUG: "{{ .Values.proxyConfig.debug }}"
