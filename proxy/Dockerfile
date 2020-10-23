@@ -37,5 +37,8 @@ FROM scratch
 
 COPY --from=builder /dist/main /
 
+ENV PROXY_QUERY_ADDRESS="0.0.0.0"
+ENV PROXY_METRICS_ADDRESS="0.0.0.0"
+
 # Command to run
 ENTRYPOINT ["/main"]

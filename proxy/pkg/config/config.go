@@ -18,6 +18,7 @@ type Config struct {
 	TargetCassandraPassword string `required:"true" split_words:"true"`
 	TargetCassandraPort     int    `required:"true" split_words:"true"`
 
+	ProxyMetricsAddress  string `default:"localhost" split_words:"true"`
 	ProxyMetricsPort     int    `required:"true" split_words:"true"`
 	ProxyQueryPort       int    `split_words:"true"`
 	ProxyQueryAddress    string `default:"localhost" split_words:"true"`
