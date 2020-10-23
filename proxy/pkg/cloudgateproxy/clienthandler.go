@@ -258,6 +258,15 @@ func (ch *ClientHandler) forwardRequest(f *Frame) (*Frame, error) {
 
 	forwardDecision, err := inspectFrame(f, ch.preparedStatementCache, ch.metricsHandler, ch.currentKeyspaceName)
 	if err != nil {
+		if errVal, ok := err.(*UnpreparedExecuteError); ok {
+			// generate unprepared response
+			unpreparedResponseRawBytes := NewUnpreparedResponse(errVal.version, errVal.streamId, errVal.preparedId)
+			log.Debugf("PS Cache miss, created unprepared response with version %v, streamId %v and preparedId %v", errVal.version, errVal.streamId, errVal.preparedId)
+			// send it back to client
+			ch.clientConnector.responseChannel <- unpreparedResponseRawBytes
+			log.Debugf("Unprepared Response sent, exiting handleRequest now")
+			return nil, nil
+		}
 		return nil, err
 	}
 	log.Tracef("Opcode: %v, Forward decision: %v", f.Opcode, forwardDecision)

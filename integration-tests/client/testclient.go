@@ -159,6 +159,42 @@ func (testClient *TestClient) isClosed() bool {
 	return testClient.closed
 }
 
+func (testClient *TestClient) PerformHandshake() error {
+
+	startup, err := cql.NewStartupRequest(0x04)
+	if err != nil{
+		return err
+	}
+
+	response, _, err := testClient.SendRequest(startup)
+	if err != nil{
+		return err
+	}
+
+	parsedAuthenticateResponse, err := response.ParseAuthenticateResponse()
+	if err != nil{
+		return err
+	}
+
+	authenticator := NewDsePlainTextAuthenticator("cassandra", "cassandra")
+	initialResponse, err := authenticator.InitialResponse(parsedAuthenticateResponse.AuthenticatorName)
+	if err != nil{
+		return err
+	}
+
+	authResponseRequest, err := cql.NewAuthResponseRequest(0x04, initialResponse)
+	if err != nil{
+		return err
+	}
+
+	response, _, err = testClient.SendRequest(authResponseRequest)
+	if err != nil{
+		return err
+	}
+
+	return nil
+}
+
 func (testClient *TestClient) Shutdown() error {
 	err := testClient.shutdownInternal()
 	if err != nil {
@@ -243,15 +279,17 @@ func (testClient *TestClient) SendRawRequest(streamId uint16, reqBuf []byte) (*c
 	return response, nil
 }
 
-func (testClient *TestClient) SendRequest(request []byte) (*cql.Frame, error) {
+func (testClient *TestClient) SendRequest(request []byte) (*cql.Frame, uint16, error) {
 	streamId, err := testClient.BorrowStreamId()
 	if err != nil {
-		return nil, err
+		return nil, streamId, err
 	}
 
 	err = cql.SetStreamId(request[0] & 0x7F, request, streamId)
 	if err != nil {
-		return nil, err
+		return nil, streamId, err
 	}
-	return testClient.SendRawRequest(streamId, request)
+
+	response, err := testClient.SendRawRequest(streamId, request)
+	return response, streamId, err
 }

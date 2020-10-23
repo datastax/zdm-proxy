@@ -45,7 +45,8 @@ func (ch *ClientHandler) handleTargetCassandraStartup(startupFrame *Frame) error
 			}
 		}
 
-		log.Debugf("handleTargetCassandraStartup: Received frame from TargetCassandra for %02x", )
+		// TODO broken debug print - needs fixing with expected value for placeholder
+		//log.Debugf("handleTargetCassandraStartup: Received frame from TargetCassandra for %02x", )
 
 		switch f.Opcode {
 		case OpCodeAuthenticateResponse:

@@ -1,6 +1,7 @@
 package cloudgateproxy
 
 import (
+	"fmt"
 	"github.com/antlr/antlr4/runtime/Go/antlr"
 	parser "github.com/riptano/cloud-gate/antlr"
 	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
@@ -17,6 +18,16 @@ const (
 	forwardToBoth   = forwardDecision("both")
 	forwardToNone   = forwardDecision("none")
 )
+
+type UnpreparedExecuteError struct {
+	version		uint8
+	streamId	int16
+	preparedId 	[]byte
+}
+
+func (uee *UnpreparedExecuteError) Error() string {
+	return fmt.Sprintf("The preparedID of the statement to be executed (%s) does not exist in the proxy cache", uee.preparedId)
+}
 
 func inspectFrame(f *Frame, psCache *PreparedStatementCache, mh metrics.IMetricsHandler, currentKeyspaceName *atomic.Value) (forwardDecision, error) {
 
@@ -60,15 +71,15 @@ func inspectFrame(f *Frame, psCache *PreparedStatementCache, mh metrics.IMetrics
 		if err != nil {
 			return forwardToNone, err
 		}
-		log.Debugf("Execute with prepared-id = '%s'", preparedId)
+		log.Debugf("Execute with prepared-id = '%v'", preparedId)
 		if stmtInfo, ok := psCache.retrieveStmtInfoFromCache(preparedId); ok {
 			// The forward decision was set in the cache when handling the corresponding PREPARE request
 			return stmtInfo.forwardDecision, nil
 		} else {
-			log.Warnf("No cached entry for prepared-id = '%s'", preparedId)
+			log.Warnf("No cached entry for prepared-id = '%v'", preparedId)
 			_ = mh.IncrementCountByOne(metrics.PSCacheMissCount)
-			// TODO handle cache miss here! Generate an UNPREPARED response and send straight back to the client?
-			return forwardToBoth, nil
+			// return meaningful error to caller so it can generate an unprepared response
+			return forwardToNone, &UnpreparedExecuteError{version: f.Version, streamId: f.StreamId, preparedId: preparedId}
 		}
 
 	case OpCodeRegister, OpCodeStartup, OpCodeAuthResponseRequest:

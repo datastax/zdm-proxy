@@ -31,38 +31,38 @@ import "time"
 type MetricsName string
 
 const (
-	SuccessReads = MetricsName("SuccessfulReadRequests") // handled
-	FailedReads  = MetricsName("FailedReadRequests")     // handled
+	SuccessReads = MetricsName("SuccessfulReadRequests")
+	FailedReads  = MetricsName("FailedReadRequests")
 
-	SuccessBothWrites      = MetricsName("SuccessfulOnBothWriteRequests")   // handled
-	FailedOriginOnlyWrites = MetricsName("FailedOnOriginOnlyWriteRequests") // handled
-	FailedTargetOnlyWrites = MetricsName("FailedOnTargetOnlyWriteRequests") // handled
-	FailedBothWrites       = MetricsName("FailedOnBothWriteRequests")       // handled
+	SuccessBothWrites      = MetricsName("SuccessfulOnBothWriteRequests")
+	FailedOriginOnlyWrites = MetricsName("FailedOnOriginOnlyWriteRequests")
+	FailedTargetOnlyWrites = MetricsName("FailedOnTargetOnlyWriteRequests")
+	FailedBothWrites       = MetricsName("FailedOnBothWriteRequests")
 
-	TimeOutsProxyOrigin        = MetricsName("RequestsTimedOutOnProxyFromOrigin") // handled
-	TimeOutsProxyTarget        = MetricsName("RequestsTimedOutOnProxyFromTarget") // handled
-	ReadTimeOutsOriginCluster  = MetricsName("ReadsTimedOutOnOriginCluster")      //TODO
-	WriteTimeOutsOriginCluster = MetricsName("WritesTimedOutOnOriginCluster")     //TODO
-	WriteTimeOutsTargetCluster = MetricsName("WritesTimedOutOnTargetCluster")     // TODO
+	TimeOutsProxyOrigin        = MetricsName("RequestsTimedOutOnProxyFromOrigin")
+	TimeOutsProxyTarget        = MetricsName("RequestsTimedOutOnProxyFromTarget")
+	ReadTimeOutsOriginCluster  = MetricsName("ReadsTimedOutOnOriginCluster")
+	WriteTimeOutsOriginCluster = MetricsName("WritesTimedOutOnOriginCluster")
+	WriteTimeOutsTargetCluster = MetricsName("WritesTimedOutOnTargetCluster")
 
-	UnpreparedReads        = MetricsName("UnpreparedReadRequestCount")            // handled
-	UnpreparedOriginWrites = MetricsName("UnpreparedWriteRequestOnOriginCount")   // handled
-	UnpreparedTargetWrites = MetricsName("UnpreparedWriteRequestOnTargetCount")   // handled
+	UnpreparedReads        = MetricsName("UnpreparedReadRequestCount")
+	UnpreparedOriginWrites = MetricsName("UnpreparedWriteRequestOnOriginCount")
+	UnpreparedTargetWrites = MetricsName("UnpreparedWriteRequestOnTargetCount")
 	PSCacheSize            = MetricsName("PreparedStatementCacheNumberOfEntries") // TODO
-	PSCacheMissCount       = MetricsName("PreparedStatementCacheMissCount")       // handled
+	PSCacheMissCount       = MetricsName("PreparedStatementCacheMissCount")
 
 
-	ProxyReadLatencyHist   = MetricsName("ReadRequestProxyLatencyHist")				// handled
-	OriginReadLatencyHist  = MetricsName("ReadRequestOriginLatencyHist")			// handled
-	ProxyWriteLatencyHist  = MetricsName("ProxyWriteRequestLatencyHist")			// handled
-	OriginWriteLatencyHist = MetricsName("OriginWriteRequestLatencyHist")			// handled
-	TargetWriteLatencyHist = MetricsName("TargetWriteRequestLatencyHist")			// handled
+	ProxyReadLatencyHist   = MetricsName("ReadRequestProxyLatencyHist")
+	OriginReadLatencyHist  = MetricsName("ReadRequestOriginLatencyHist")
+	ProxyWriteLatencyHist  = MetricsName("ProxyWriteRequestLatencyHist")
+	OriginWriteLatencyHist = MetricsName("OriginWriteRequestLatencyHist")
+	TargetWriteLatencyHist = MetricsName("TargetWriteRequestLatencyHist")
 
-	InFlightReadRequests  = MetricsName("InFlightReadRequests")     // handled
-	InFlightWriteRequests = MetricsName("InFlightWriteRequests")    // handled
-	OpenClientConnections = MetricsName("OpenClientConnections")    // handled
-	OpenOriginConnections = MetricsName("OpenOriginConnections")    // handled
-	OpenTargetConnections = MetricsName("OpenTargetConnections") // handled
+	InFlightReadRequests  = MetricsName("InFlightReadRequests")
+	InFlightWriteRequests = MetricsName("InFlightWriteRequests")
+	OpenClientConnections = MetricsName("OpenClientConnections")
+	OpenOriginConnections = MetricsName("OpenOriginConnections")
+	OpenTargetConnections = MetricsName("OpenTargetConnections")
 )
 
 func getMetricsDescription(mn MetricsName) string {

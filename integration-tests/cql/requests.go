@@ -14,6 +14,10 @@ type AuthenticateResponse struct {
 	AuthenticatorName string
 }
 
+type UnpreparedResponse struct {
+	preparedId []byte
+}
+
 type Frame struct {
 	Direction int
 	Version   uint8
@@ -38,7 +42,7 @@ func ParseFrame(frame []byte) (*Frame, error) {
 	} else {
 		streamId = uint16(frame[2])
 	}
-	bodyLen, err := readInt(frame[hdrLen-4:hdrLen])
+	bodyLen, err := readInt(frame[hdrLen-4 : hdrLen])
 	if err != nil {
 		return nil, err
 	}
@@ -79,6 +83,27 @@ func NewAuthResponseRequest(version byte, token []byte) ([]byte, error) {
 	baseRequest := newBaseRequest(version, cloudgateproxy.OpCodeAuthResponseRequest)
 	buffer := &bytes.Buffer{}
 	err := writeBytes(buffer, token)
+	if err != nil {
+		return nil, err
+	}
+	return setBody(baseRequest, buffer.Bytes())
+}
+
+func NewExecuteRequest(version byte, preparedId []byte) ([]byte, error) {
+	baseRequest := newBaseRequest(version, cloudgateproxy.OpCodeExecute)
+
+	buffer := &bytes.Buffer{}
+	err := writeShortBytes(buffer, preparedId)
+	if err != nil {
+		return nil, err
+	}
+	return setBody(baseRequest, buffer.Bytes())
+}
+
+func NewPrepareRequest(version byte, query string) ([]byte, error) {
+	baseRequest := newBaseRequest(version, cloudgateproxy.OpCodePrepare)
+	buffer := &bytes.Buffer{}
+	err := writeLongString(buffer, query)
 	if err != nil {
 		return nil, err
 	}
@@ -167,8 +192,8 @@ func (frame *Frame) ParseAuthenticateResponse() (*AuthenticateResponse, error) {
 }
 
 type ErrorResponse struct {
-	errorCode int
-	message string
+	ErrorCode int
+	Message   string
 }
 
 func (frame *Frame) ParseErrorResponse() (*ErrorResponse, error) {
@@ -186,9 +211,27 @@ func (frame *Frame) ParseErrorResponse() (*ErrorResponse, error) {
 	}
 
 	return &ErrorResponse{
-		errorCode: int(errorCode),
-		message:   msg,
+		ErrorCode: int(errorCode),
+		Message:   msg,
 	}, nil
+}
+
+type PreparedResponse struct {
+	PreparedId []byte
+}
+
+func (frame *Frame) ParsePreparedResponse() (*PreparedResponse, error) {
+	if frame.Opcode != cloudgateproxy.OpCodeResult {
+		return nil, errors.New("not an error response")
+	} else if resultCode, err := readInt(frame.Body[:4]); err != nil {
+		return nil, errors.New("can't read result code")
+	} else if cloudgateproxy.ResultKind(resultCode) != cloudgateproxy.ResultKindPrepared {
+		return nil, errors.New("can't read result code")
+	} else if preparedId, err := readShortBytes(frame.Body[4:]); err != nil {
+		return nil, errors.New("can't read prepared id")
+	} else {
+		return &PreparedResponse{PreparedId: preparedId}, nil
+	}
 }
 
 func Uses2BytesStreamIds(version byte) bool {
@@ -236,6 +279,18 @@ func readString(data []byte) (string, error) {
 	return str, nil
 }
 
+func readShortBytes(data []byte) ([]byte, error) {
+	bytesLen, err := readShort(data)
+	if err != nil {
+		return nil, err
+	}
+	length := len(data)
+	if length < 2+int(bytesLen) {
+		return nil, errors.New("not enough bytes to read a short bytes")
+	}
+	return data[2 : 2+bytesLen], nil
+}
+
 func writeInt16(writer io.Writer, integer int) error {
 	if integer > math.MaxInt16 || integer < math.MinInt16 {
 		return errors.New(fmt.Sprintf("integer larger than 16 bits: %d", integer))
@@ -251,10 +306,18 @@ func writeInt32(writer io.Writer, integer int) error {
 }
 
 func writeBytes(writer io.Writer, bytes []byte) error {
-	if bytes == nil	{
+	if bytes == nil {
 		return writeInt32(writer, -1)
 	}
 	err := writeInt32(writer, len(bytes))
+	if err != nil {
+		return err
+	}
+	return write(writer, bytes)
+}
+
+func writeShortBytes(writer io.Writer, bytes []byte) error {
+	err := writeInt16(writer, len(bytes))
 	if err != nil {
 		return err
 	}
@@ -268,6 +331,19 @@ func writeString(writer io.Writer, str string) error {
 		return err
 	}
 	err = write(writer, bytes)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func writeLongString(writer io.Writer, str string) error {
+	b := []byte(str)
+	err := writeInt32(writer, len(b))
+	if err != nil {
+		return err
+	}
+	err = write(writer, b)
 	if err != nil {
 		return err
 	}

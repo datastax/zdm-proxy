@@ -42,7 +42,7 @@ func TestPlainTextAuth(t *testing.T) {
 	startup, err := cql.NewStartupRequest(0x04)
 	assert.Tf(t, err == nil, "startup request creation failed: %s", err)
 
-	response, err := testClient.SendRequest(startup)
+	response, _, err := testClient.SendRequest(startup)
 	assert.Tf(t, err == nil, "startup request send failed: %s", err)
 
 	parsedAuthenticateResponse, err := response.ParseAuthenticateResponse()
@@ -55,7 +55,7 @@ func TestPlainTextAuth(t *testing.T) {
 	authResponseRequest, err := cql.NewAuthResponseRequest(0x04, initialResponse)
 	assert.Tf(t, err == nil, "auth response request creation failed: %s", err)
 
-	response, err = testClient.SendRequest(authResponseRequest)
+	response, _, err = testClient.SendRequest(authResponseRequest)
 	assert.Tf(t, err == nil, "auth response request send failed: %s", err)
 
 	assert.Equal(t, cloudgateproxy.OpCodeAuthSuccess, response.Opcode)

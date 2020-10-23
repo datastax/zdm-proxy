@@ -66,7 +66,7 @@ const (
 )
 
 type Frame struct {
-	Direction int // [Alice] 0 if from client application to db
+	Direction int // 0 if from client application to db
 	Version   uint8
 	Flags     uint8
 	StreamId  int16
@@ -95,6 +95,45 @@ func NewFrame(frame []byte) *Frame {
 		Body:      frame[hdrLen:],
 		RawBytes:  frame,
 	}
+}
+
+func NewUnpreparedResponse(version uint8, streamId int16, preparedId []byte) []byte {
+	var response []byte
+
+	// *** header
+	//
+	// version (from request) and direction
+	// flags:
+	//   - compression (hardcode to false)
+	//   - tracing (not relevant)
+	//   - custom payload (not relevant)
+	//   - warning (not relevant)
+	// stream id (from request)
+	// opcode (hardcode to ERROR, 0x00)
+
+	header := make([]byte, 9)
+	writeByte(setDirectionForResponseFrame(version), &header, 0)		// setting the direction (MSB) to 1 as this is a response
+	writeByte(0x00, &header, 1)								// no flags need to be set here
+	writeShortBytes(streamId, &header, 2, 4)
+	writeByte(uint8(OpCodeError), &header, 4)
+	bodyLen := 4 + 2 + len(preparedId)
+	writeIntBytes(uint32(bodyLen), &header, 5, 9)
+
+	// *** body
+	//
+	// bodyLen = error code (1 byte) and preparedId length
+	//
+	// error code  (unprepared, 0x2500)
+	// unpreparedId (from request)
+
+	body := make([]byte, 4+2)	// bodyLen (uint32) + messageLen (uint16)
+	writeIntBytes(uint32(ErrorCodeUnprepared), &body, 0, 4)
+	writeShortBytes(int16(len(preparedId)), &body, 4, 6)
+	body = append(body, preparedId...)
+
+	response = append(header, body...)
+
+	return response
 }
 
 type shutdownError struct {
@@ -230,4 +269,34 @@ func GetHeaderLength(version byte) int {
 	} else {
 		return 8
 	}
+}
+// Reads an "int bytes" from the slice. An "int bytes" is defined as an [int] n,
+// followed by n bytes if n >= 0.
+func readIntBytes(data []byte) ([]byte, error) {
+	idLen, err := readInt(data)
+	if err != nil {
+		return nil, err
+	}
+	length := len(data)
+	if length < 4+int(idLen) {
+		return nil, errors.New("not enough bytes to read an int bytes")
+	}
+	intBytes := data[4 : 4+idLen]
+	return intBytes, nil
+}
+
+func setDirectionForResponseFrame(version byte) byte {
+	return version | 0x80
+}
+
+func writeByte(byteVal uint8, data *[]byte, index int){
+	(*data)[index] = byteVal
+}
+
+func writeShortBytes(shortVal int16, data *[]byte, startIndex int, endIndex int) {
+	binary.BigEndian.PutUint16((*data)[startIndex:endIndex], uint16(shortVal))	//TODO check and fix - not sure it is fine
+}
+
+func writeIntBytes(intVal uint32, data *[]byte, startIndex int, endIndex int) {
+	binary.BigEndian.PutUint32((*data)[startIndex:endIndex], intVal)
 }
