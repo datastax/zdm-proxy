@@ -96,7 +96,7 @@ func (ccmCluster *Cluster) Create(numberOfNodes int, start bool) error {
 	return nil
 }
 
-func (ccmCluster *Cluster) UpdateConf(yamlChanges... string) error {
+func (ccmCluster *Cluster) UpdateConf(yamlChanges ...string) error {
 	err := ccmCluster.SwitchToThis()
 	if err != nil {
 		return err
@@ -106,7 +106,7 @@ func (ccmCluster *Cluster) UpdateConf(yamlChanges... string) error {
 	return err
 }
 
-func (ccmCluster *Cluster) Start(jvmArgs... string) error {
+func (ccmCluster *Cluster) Start(jvmArgs ...string) error {
 	err := ccmCluster.SwitchToThis()
 	if err != nil {
 		return err

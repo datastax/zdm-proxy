@@ -23,7 +23,7 @@ type DsePlainTextAuthenticator struct {
 
 var (
 	initialServerChallenge = []byte("PLAIN-START")
-	mechanism = []byte("PLAIN")
+	mechanism              = []byte("PLAIN")
 )
 
 func NewDsePlainTextAuthenticator(username string, password string) *DsePlainTextAuthenticator {
@@ -38,11 +38,11 @@ func (dsePlainTextAuth *DsePlainTextAuthenticator) InitialResponse(name string) 
 }
 
 func (dsePlainTextAuth *DsePlainTextAuthenticator) EvaluateChallenge(challenge []byte) ([]byte, error) {
-	if challenge == nil || bytes.Compare(challenge, initialServerChallenge) != 0	{
+	if challenge == nil || bytes.Compare(challenge, initialServerChallenge) != 0 {
 		return nil, errors.New("incorrect SASL challenge from server")
 	}
 
-	buffer := make([]byte, len(dsePlainTextAuth.username) + len(dsePlainTextAuth.password) + 2)
+	buffer := make([]byte, len(dsePlainTextAuth.username)+len(dsePlainTextAuth.password)+2)
 	buffer[0] = 0
 	buffer = append(buffer[0:1], []byte(dsePlainTextAuth.username)...)
 	buffer = append(buffer, 0)

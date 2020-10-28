@@ -1,7 +1,9 @@
 package cloudgateproxy
 
 import (
-	"encoding/binary"
+	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol"
+	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol/frame"
+	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol/message"
 	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
 	"reflect"
 	"sync/atomic"
@@ -11,7 +13,7 @@ import (
 
 func TestInspectFrame(t *testing.T) {
 	type args struct {
-		f       *Frame
+		f       *frame.RawFrame
 		psCache *PreparedStatementCache
 		mh      metrics.IMetricsHandler
 		km      *atomic.Value
@@ -28,34 +30,34 @@ func TestInspectFrame(t *testing.T) {
 		expected interface{}
 	}{
 		// QUERY
-		{"OpCodeQuery SELECT", args{mockFrame(OpCodeQuery, "SELECT blah FROM ks1.t1"), psCache, mh, km}, forwardToOrigin},
-		{"OpCodeQuery SELECT system.local", args{mockFrame(OpCodeQuery, "SELECT * FROM system.local"), psCache, mh, km}, forwardToTarget},
-		{"OpCodeQuery SELECT system.peers", args{mockFrame(OpCodeQuery, "SELECT * FROM system.peers"), psCache, mh, km}, forwardToTarget},
-		{"OpCodeQuery SELECT system.peers_v2", args{mockFrame(OpCodeQuery, "SELECT * FROM system.peers_v2"), psCache, mh, km}, forwardToTarget},
-		{"OpCodeQuery non SELECT", args{mockFrame(OpCodeQuery, "INSERT blah"), psCache, mh, km}, forwardToBoth},
+		{"OpCodeQuery SELECT", args{mockQueryFrame("SELECT blah FROM ks1.t1"), psCache, mh, km}, forwardToOrigin},
+		{"OpCodeQuery SELECT system.local", args{mockQueryFrame("SELECT * FROM system.local"), psCache, mh, km}, forwardToTarget},
+		{"OpCodeQuery SELECT system.peers", args{mockQueryFrame("SELECT * FROM system.peers"), psCache, mh, km}, forwardToTarget},
+		{"OpCodeQuery SELECT system.peers_v2", args{mockQueryFrame("SELECT * FROM system.peers_v2"), psCache, mh, km}, forwardToTarget},
+		{"OpCodeQuery non SELECT", args{mockQueryFrame("INSERT blah"), psCache, mh, km}, forwardToBoth},
 		// PREPARE
-		{"OpCodePrepare SELECT", args{mockFrame(OpCodePrepare, "SELECT blah FROM ks1.t1"), psCache, mh, km}, forwardToOrigin},
-		{"OpCodePrepare SELECT system.local", args{mockFrame(OpCodePrepare, "SELECT * FROM system.local"), psCache, mh, km}, forwardToTarget},
-		{"OpCodePrepare SELECT system.peers", args{mockFrame(OpCodePrepare, "SELECT * FROM system.peers"), psCache, mh, km}, forwardToTarget},
-		{"OpCodePrepare SELECT system.peers_v2", args{mockFrame(OpCodePrepare, "SELECT * FROM system.peers_v2"), psCache, mh, km}, forwardToTarget},
-		{"OpCodePrepare non SELECT", args{mockFrame(OpCodePrepare, "INSERT blah"), psCache, mh, km}, forwardToBoth},
+		{"OpCodePrepare SELECT", args{mockPrepareFrame("SELECT blah FROM ks1.t1"), psCache, mh, km}, forwardToOrigin},
+		{"OpCodePrepare SELECT system.local", args{mockPrepareFrame("SELECT * FROM system.local"), psCache, mh, km}, forwardToTarget},
+		{"OpCodePrepare SELECT system.peers", args{mockPrepareFrame("SELECT * FROM system.peers"), psCache, mh, km}, forwardToTarget},
+		{"OpCodePrepare SELECT system.peers_v2", args{mockPrepareFrame("SELECT * FROM system.peers_v2"), psCache, mh, km}, forwardToTarget},
+		{"OpCodePrepare non SELECT", args{mockPrepareFrame("INSERT blah"), psCache, mh, km}, forwardToBoth},
 		// EXECUTE
 		{"OpCodeExecute origin", args{mockExecuteFrame("ORIGIN"), psCache, mh, km}, forwardToOrigin},
 		{"OpCodeExecute target", args{mockExecuteFrame("TARGET"), psCache, mh, km}, forwardToTarget},
 		{"OpCodeExecute both", args{mockExecuteFrame("BOTH"), psCache, mh, km}, forwardToBoth},
-		{"OpCodeExecute unknown", args{mockExecuteFrame("UNKNOWN"), psCache, mh, km}, forwardToBoth},
+		{"OpCodeExecute unknown", args{mockExecuteFrame("UNKNOWN"), psCache, mh, km}, "The preparedID of the statement to be executed (UNKNOWN) does not exist in the proxy cache"},
 		// REGISTER
-		{"OpCodeRegister", args{mockFrame(OpCodeRegister, "irrelevant"), psCache, mh, km}, forwardToOrigin},
+		{"OpCodeRegister", args{mockFrame(&message.Register{EventTypes: []cassandraprotocol.EventType{cassandraprotocol.EventTypeSchemaChange}}), psCache, mh, km}, forwardToOrigin},
 		// others
-		{"OpCodeBatch", args{mockFrame(OpCodeBatch, "irrelevant"), psCache, mh, km}, forwardToBoth},
-		{"OpCodeStartup", args{mockFrame(OpCodeStartup, "irrelevant"), psCache, mh, km}, forwardToBoth},
-		{"OpCodeOptions", args{mockFrame(OpCodeOptions, "irrelevant"), psCache, mh, km}, forwardToBoth},
+		{"OpCodeBatch", args{mockBatch("irrelevant"), psCache, mh, km}, forwardToBoth},
+		{"OpCodeStartup", args{mockFrame(message.NewStartup()), psCache, mh, km}, forwardToOrigin},
+		{"OpCodeOptions", args{mockFrame(&message.Options{}), psCache, mh, km}, forwardToBoth},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			actual, err := inspectFrame(tt.args.f, tt.args.psCache, tt.args.mh, tt.args.km)
 			if err != nil {
-				if !reflect.DeepEqual(err, tt.expected) {
+				if !reflect.DeepEqual(err.Error(), tt.expected) {
 					t.Errorf("inspectFrame() actual = %v, expected %v", err, tt.expected)
 				}
 			} else if !reflect.DeepEqual(actual, tt.expected) {
@@ -87,36 +89,40 @@ func (h mockMetricsHandler) TrackInHistogram(mn metrics.MetricsName, timeToTrack
 }
 func (h mockMetricsHandler) UnregisterAllMetrics() error { return nil }
 
-func mockFrame(opcode OpCode, query string) *Frame {
-	body := make([]byte, 4)
-	binary.BigEndian.PutUint32(body, uint32(len(query)))
-	body = append(body, []byte(query)...)
-	return &Frame{
-		Direction: 0,
-		Version:   0,
-		Flags:     0,
-		StreamId:  1,
-		Opcode:    opcode,
-		Length:    5,
-		Body:      body,
-		RawBytes:  nil, // not needed
+func mockPrepareFrame(query string) *frame.RawFrame {
+	prepareMsg := &message.Prepare{
+		Query:    query,
+		Keyspace: "",
 	}
+	return mockFrame(prepareMsg)
 }
 
-func mockExecuteFrame(preparedId string) *Frame {
-	body := make([]byte, 2)
-	binary.BigEndian.PutUint16(body, uint16(len(preparedId)))
-	body = append(body, preparedId...)
-	return &Frame{
-		Direction: 0,
-		Version:   0,
-		Flags:     0,
-		StreamId:  1,
-		Opcode:    OpCodeExecute,
-		Length:    5,
-		Body:      body,
-		RawBytes:  nil, // not needed
+func mockQueryFrame(query string) *frame.RawFrame {
+	queryMsg := &message.Query{
+		Query:   query,
+		Options: message.NewQueryOptions(),
 	}
+	return mockFrame(queryMsg)
+}
+
+func mockExecuteFrame(preparedId string) *frame.RawFrame {
+	executeMsg := &message.Execute{
+		QueryId:          []byte(preparedId),
+		ResultMetadataId: nil,
+		Options:          message.NewQueryOptions(),
+	}
+	return mockFrame(executeMsg)
+}
+
+func mockBatch(query string) *frame.RawFrame {
+	batchMsg := message.NewBatch(message.WithBatchChildren(message.NewQueryBatchChild(query)))
+	return mockFrame(batchMsg)
+}
+
+func mockFrame(message message.Message) *frame.RawFrame {
+	frame, _ := frame.NewRequestFrame(cassandraprotocol.ProtocolVersion4, 1, false, nil, message)
+	rawFrame, _ := defaultCodec.ConvertToRawFrame(frame)
+	return rawFrame
 }
 
 func TestInspectCqlQuery(t *testing.T) {

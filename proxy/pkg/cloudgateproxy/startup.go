@@ -3,10 +3,12 @@ package cloudgateproxy
 import (
 	"errors"
 	"fmt"
+	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol"
+	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol/frame"
 	log "github.com/sirupsen/logrus"
 )
 
-func (ch *ClientHandler) handleTargetCassandraStartup(startupFrame *Frame) error {
+func (ch *ClientHandler) handleTargetCassandraStartup(startupFrame *frame.RawFrame) error {
 
 	// extracting these into variables for convenience
 	clientIPAddress := ch.clientConnector.connection.RemoteAddr().String()
@@ -22,17 +24,21 @@ func (ch *ClientHandler) handleTargetCassandraStartup(startupFrame *Frame) error
 
 		attempts++
 
-		var channel chan *Frame
-		var request *Frame
+		var channel chan *frame.RawFrame
+		var request *frame.RawFrame
 
 		switch phase {
 		case 1:
 			request = startupFrame
 		case 2:
-			request = authFrame(ch.targetCassandraConnector.username, ch.targetCassandraConnector.password, startupFrame)
+			var err error
+			request, err = authFrame(ch.targetCassandraConnector.username, ch.targetCassandraConnector.password, startupFrame)
+			if err != nil {
+				return fmt.Errorf("could not create auth frame: %w", err)
+			}
 		}
 
-		channel = ch.targetCassandraConnector.forwardToCluster(request.RawBytes, request.StreamId)
+		channel = ch.targetCassandraConnector.forwardToCluster(request)
 
 		f, ok := <-channel
 		if !ok {
@@ -48,22 +54,22 @@ func (ch *ClientHandler) handleTargetCassandraStartup(startupFrame *Frame) error
 		// TODO broken debug print - needs fixing with expected value for placeholder
 		//log.Debugf("handleTargetCassandraStartup: Received frame from TargetCassandra for %02x", )
 
-		switch f.Opcode {
-		case OpCodeAuthenticateResponse:
+		switch f.RawHeader.OpCode {
+		case cassandraprotocol.OpCodeAuthenticate:
 			phase = 2
 			log.Debugf("Received AUTHENTICATE for target handshake")
-		case OpCodeAuthChallenge:
+		case cassandraprotocol.OpCodeAuthChallenge:
 			log.Debugf("Received AUTH_CHALLENGE for target handshake")
-		case OpCodeReady:
+		case cassandraprotocol.OpCodeReady:
 			log.Debugf("Target cluster did not request authorization for client %s", clientIPAddress)
 			return nil
-		case OpCodeAuthSuccess:
+		case cassandraprotocol.OpCodeAuthSuccess:
 			log.Debugf("%s successfully authenticated with target (%s)", clientIPAddress, targetCassandraIPAddress)
 			return nil
 		default:
 			return fmt.Errorf(
-				"received response in target handshake that was not " +
-					"READY, AUTHENTICATE, AUTH_CHALLENGE, or AUTH_SUCCESS")
+				"received response in target handshake that was not "+
+					"READY, AUTHENTICATE, AUTH_CHALLENGE, or AUTH_SUCCESS: %02x", f.RawHeader.OpCode)
 		}
 	}
 

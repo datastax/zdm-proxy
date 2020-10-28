@@ -2,11 +2,12 @@ package integration_tests
 
 import (
 	"github.com/bmizerany/assert"
+	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol"
+	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol/frame"
+	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol/message"
 	"github.com/riptano/cloud-gate/integration-tests/client"
-	"github.com/riptano/cloud-gate/integration-tests/cql"
 	"github.com/riptano/cloud-gate/integration-tests/env"
 	"github.com/riptano/cloud-gate/integration-tests/setup"
-	"github.com/riptano/cloud-gate/proxy/pkg/cloudgateproxy"
 	"testing"
 )
 
@@ -39,26 +40,43 @@ func TestPlainTextAuth(t *testing.T) {
 
 	defer testClient.Shutdown()
 
-	startup, err := cql.NewStartupRequest(0x04)
+	startup := message.NewStartup()
+	startupFrame, err := frame.NewRequestFrame(
+		cassandraprotocol.ProtocolVersion4, -1, false, nil, startup)
 	assert.Tf(t, err == nil, "startup request creation failed: %s", err)
 
-	response, _, err := testClient.SendRequest(startup)
+	response, _, err := testClient.SendRequest(startupFrame)
 	assert.Tf(t, err == nil, "startup request send failed: %s", err)
 
-	parsedAuthenticateResponse, err := response.ParseAuthenticateResponse()
-	assert.Tf(t, err == nil, "authenticate response parse failed, got %02x instead: %s", response.Opcode, err)
+	parsedAuthenticateResponse, ok := response.Body.Message.(*message.Authenticate)
+	assert.Tf(t, ok, "authenticate response parse failed, got %02x instead", response.Body.Message.GetOpCode())
 
 	authenticator := client.NewDsePlainTextAuthenticator("cassandra", "cassandra")
-	initialResponse, err := authenticator.InitialResponse(parsedAuthenticateResponse.AuthenticatorName)
+	initialResponse, err := authenticator.InitialResponse(parsedAuthenticateResponse.Authenticator)
 	assert.Tf(t, err == nil, "authenticator initial response creation failed: %s", err)
 
-	authResponseRequest, err := cql.NewAuthResponseRequest(0x04, initialResponse)
+	authResponseRequest := &message.AuthResponse{
+		Token: initialResponse,
+	}
+	authResponseRequestFrame, err := frame.NewRequestFrame(
+		cassandraprotocol.ProtocolVersion4, -1, false, nil, authResponseRequest)
 	assert.Tf(t, err == nil, "auth response request creation failed: %s", err)
 
-	response, _, err = testClient.SendRequest(authResponseRequest)
+	response, _, err = testClient.SendRequest(authResponseRequestFrame)
 	assert.Tf(t, err == nil, "auth response request send failed: %s", err)
 
-	assert.Equal(t, cloudgateproxy.OpCodeAuthSuccess, response.Opcode)
+	assert.Equal(t, cassandraprotocol.OpCodeAuthSuccess, response.Body.Message.GetOpCode())
 
-	// TODO: send query to validate that handshake was successful
+	query := &message.Query{
+		Query:   "SELECT * FROM system.peers",
+		Options: message.NewQueryOptions(),
+	}
+	queryFrame, err := frame.NewRequestFrame(
+		cassandraprotocol.ProtocolVersion4, -1, false, nil, query)
+	assert.Tf(t, err == nil, "query request creation failed: %s", err)
+
+	response, _, err = testClient.SendRequest(queryFrame)
+	assert.Tf(t, err == nil, "query request send failed: %s", err)
+
+	assert.Equal(t, cassandraprotocol.OpCodeResult, response.Body.Message.GetOpCode())
 }

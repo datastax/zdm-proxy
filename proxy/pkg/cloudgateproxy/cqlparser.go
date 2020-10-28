@@ -1,8 +1,12 @@
 package cloudgateproxy
 
 import (
+	"bytes"
 	"fmt"
 	"github.com/antlr/antlr4/runtime/Go/antlr"
+	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol"
+	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol/frame"
+	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol/message"
 	parser "github.com/riptano/cloud-gate/antlr"
 	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
@@ -20,27 +24,35 @@ const (
 )
 
 type UnpreparedExecuteError struct {
-	version		uint8
-	streamId	int16
-	preparedId 	[]byte
+	RawHeader  *frame.RawHeader
+	Body       *frame.Body
+	preparedId []byte
 }
 
 func (uee *UnpreparedExecuteError) Error() string {
 	return fmt.Sprintf("The preparedID of the statement to be executed (%s) does not exist in the proxy cache", uee.preparedId)
 }
 
-func inspectFrame(f *Frame, psCache *PreparedStatementCache, mh metrics.IMetricsHandler, currentKeyspaceName *atomic.Value) (forwardDecision, error) {
+func inspectFrame(
+	f *frame.RawFrame,
+	psCache *PreparedStatementCache,
+	mh metrics.IMetricsHandler,
+	currentKeyspaceName *atomic.Value) (forwardDecision, error) {
 
 	forwardDecision := forwardToBoth
 
-	switch f.Opcode {
+	switch f.RawHeader.OpCode {
 
-	case OpCodeQuery:
-		query, err := readLongString(f.Body)
+	case cassandraprotocol.OpCodeQuery:
+		body, err := defaultCodec.DecodeBody(f.RawHeader, bytes.NewReader(f.RawBody))
 		if err != nil {
 			return forwardToNone, err
 		}
-		queryInfo := inspectCqlQuery(query)
+		queryMsg, ok := body.Message.(*message.Query)
+		if !ok {
+			return forwardToNone, fmt.Errorf("expected Query but got %02x instead", body.Message.GetOpCode())
+		}
+		queryInfo := inspectCqlQuery(queryMsg.Query)
 		if queryInfo.getStatementType() == statementTypeSelect {
 			if isSystemLocalOrSystemPeers(queryInfo, currentKeyspaceName) {
 				forwardDecision = forwardToTarget
@@ -50,12 +62,16 @@ func inspectFrame(f *Frame, psCache *PreparedStatementCache, mh metrics.IMetrics
 		}
 		return forwardDecision, nil
 
-	case OpCodePrepare:
-		query, err := readLongString(f.Body)
+	case cassandraprotocol.OpCodePrepare:
+		body, err := defaultCodec.DecodeBody(f.RawHeader, bytes.NewReader(f.RawBody))
 		if err != nil {
 			return forwardToNone, err
 		}
-		queryInfo := inspectCqlQuery(query)
+		prepareMsg, ok := body.Message.(*message.Prepare)
+		if !ok {
+			return forwardToNone, fmt.Errorf("expected Prepare but got %02x instead", body.Message.GetOpCode())
+		}
+		queryInfo := inspectCqlQuery(prepareMsg.Query)
 		if queryInfo.getStatementType() == statementTypeSelect {
 			if isSystemLocalOrSystemPeers(queryInfo, currentKeyspaceName) {
 				forwardDecision = forwardToTarget
@@ -63,26 +79,30 @@ func inspectFrame(f *Frame, psCache *PreparedStatementCache, mh metrics.IMetrics
 				forwardDecision = forwardToOrigin
 			}
 		}
-		psCache.trackStatementToBePrepared(f.StreamId, forwardDecision)
+		psCache.trackStatementToBePrepared(f.RawHeader.StreamId, forwardDecision)
 		return forwardDecision, nil
 
-	case OpCodeExecute:
-		preparedId, err := readShortBytes(f.Body)
+	case cassandraprotocol.OpCodeExecute:
+		body, err := defaultCodec.DecodeBody(f.RawHeader, bytes.NewReader(f.RawBody))
 		if err != nil {
 			return forwardToNone, err
 		}
-		log.Debugf("Execute with prepared-id = '%v'", preparedId)
-		if stmtInfo, ok := psCache.retrieveStmtInfoFromCache(preparedId); ok {
+		executeMsg, ok := body.Message.(*message.Execute)
+		if !ok {
+			return forwardToNone, fmt.Errorf("expected Execute but got %02x instead", body.Message.GetOpCode())
+		}
+		log.Debugf("Execute with prepared-id = '%s'", executeMsg.QueryId)
+		if stmtInfo, ok := psCache.retrieveStmtInfoFromCache(executeMsg.QueryId); ok {
 			// The forward decision was set in the cache when handling the corresponding PREPARE request
 			return stmtInfo.forwardDecision, nil
 		} else {
-			log.Warnf("No cached entry for prepared-id = '%v'", preparedId)
+			log.Warnf("No cached entry for prepared-id = '%s'", executeMsg.QueryId)
 			_ = mh.IncrementCountByOne(metrics.PSCacheMissCount)
 			// return meaningful error to caller so it can generate an unprepared response
-			return forwardToNone, &UnpreparedExecuteError{version: f.Version, streamId: f.StreamId, preparedId: preparedId}
+			return forwardToNone, &UnpreparedExecuteError{RawHeader: f.RawHeader, Body: body, preparedId: executeMsg.QueryId}
 		}
 
-	case OpCodeRegister, OpCodeStartup, OpCodeAuthResponseRequest:
+	case cassandraprotocol.OpCodeRegister, cassandraprotocol.OpCodeStartup, cassandraprotocol.OpCodeAuthResponse:
 		return forwardToOrigin, nil
 
 	default:

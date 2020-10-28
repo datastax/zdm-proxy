@@ -153,8 +153,8 @@ func (pm *PrometheusCloudgateProxyMetrics) addCounter(mn MetricsName) error {
 	defer pm.lock.Unlock()
 
 	c := prometheus.NewCounter(prometheus.CounterOpts{
-		Name:        string(mn),
-		Help:        getMetricsDescription(mn),
+		Name: string(mn),
+		Help: getMetricsDescription(mn),
 	})
 	pm.collectorMap[mn] = c
 	return pm.registerCollector(c)

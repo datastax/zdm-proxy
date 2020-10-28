@@ -174,7 +174,7 @@ func NewTemporaryCcmTestSetup(start bool) (*CcmTestSetup, error) {
 	}, nil
 }
 
-func (setup *CcmTestSetup) Start(config *config.Config, jvmArgs... string) error {
+func (setup *CcmTestSetup) Start(config *config.Config, jvmArgs ...string) error {
 	err := setup.Origin.Start(jvmArgs...)
 	if err != nil {
 		return err

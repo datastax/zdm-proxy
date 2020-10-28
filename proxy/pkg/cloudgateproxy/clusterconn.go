@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol/frame"
 	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
 	"io"
@@ -29,7 +30,7 @@ const (
 
 type ClusterConnector struct {
 	connection              net.Conn
-	clusterResponseChannels map[int16]chan *Frame // map of channels, keyed on streamID, on which to send the response to a request
+	clusterResponseChannels map[int16]chan *frame.RawFrame // map of channels, keyed on streamID, on which to send the response to a request
 	clusterType             ClusterType
 
 	username                string
@@ -76,7 +77,7 @@ func NewClusterConnector(connInfo *ClusterConnectionInfo,
 
 	return &ClusterConnector{
 		connection:              conn,
-		clusterResponseChannels: make(map[int16]chan *Frame),
+		clusterResponseChannels: make(map[int16]chan *frame.RawFrame),
 		clusterType:             clusterType,
 		username:                connInfo.username,
 		password:                connInfo.password,
@@ -130,7 +131,7 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 	go func() {
 		defer cc.waitGroup.Done()
 		for {
-			response, err := readAndParseFrame(cc.connection, cc.clientHandlerContext)
+			response, err := readRawFrame(cc.connection, cc.clientHandlerContext)
 
 			if err != nil {
 				if err == ShutdownErr {
@@ -149,22 +150,22 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 
 			log.Debugf(
 				"Received response from %s (%s), opcode=%d, stream id=%d",
-				cc.clusterType, cc.connection.RemoteAddr(), response.Opcode, response.StreamId)
-			log.Tracef("Response content: %v", string(*&response.RawBytes))
+				cc.clusterType, cc.connection.RemoteAddr(), response.RawHeader.OpCode, response.RawHeader.StreamId)
+			log.Tracef("Response body: %v", string(*&response.RawBody))
 			cc.forwardResponseToChannel(response)
 		}
 	}()
 }
 
-func (cc *ClusterConnector) forwardResponseToChannel(response *Frame) {
+func (cc *ClusterConnector) forwardResponseToChannel(response *frame.RawFrame) {
 	cc.lock.RLock()
 	defer cc.lock.RUnlock()
-	if responseChannel, ok := cc.clusterResponseChannels[response.StreamId]; !ok {
+	if responseChannel, ok := cc.clusterResponseChannels[response.RawHeader.StreamId]; !ok {
 		select {
 		case <-cc.clientHandlerContext.Done():
 			return
 		default:
-			log.Errorf("could not find stream id %d in clusterResponseChannels for cluster %v", response.StreamId, cc.clusterType)
+			log.Errorf("could not find stream id %d in clusterResponseChannels for cluster %v", response.RawHeader.StreamId, cc.clusterType)
 		}
 	} else {
 		// Note: the boolean response is sent on the channel here - this will unblock the forwardToCluster goroutine waiting on this
@@ -178,9 +179,9 @@ func (cc *ClusterConnector) forwardResponseToChannel(response *Frame) {
  *	Adds a channel to a map (clusterResponseChannels) keyed on streamID. This channel is used by the dequeuer to communicate the response back to this goroutine.
  *	It is this goroutine that has to receive the response, so it can enforce the timeout in case of connection disruption
  */
-func (cc *ClusterConnector) forwardToCluster(rawBytes []byte, streamId int16) chan *Frame {
-	responseToCallerChan := make(chan *Frame, 1)
-
+func (cc *ClusterConnector) forwardToCluster(rawFrame *frame.RawFrame) chan *frame.RawFrame {
+	responseToCallerChan := make(chan *frame.RawFrame, 1)
+	streamId := rawFrame.RawHeader.StreamId
 	go func() {
 		defer close(responseToCallerChan)
 
@@ -193,8 +194,11 @@ func (cc *ClusterConnector) forwardToCluster(rawBytes []byte, streamId int16) ch
 		// once the response has been sent to the caller, remove the channel from the map as it has served its purpose
 		defer cc.deleteChannelForClusterResponse(streamId)
 
-		err = cc.sendRequestToCluster(rawBytes)
-		if err != nil {
+		err = cc.sendRequestToCluster(cc.clientHandlerContext, rawFrame)
+
+		if err == ShutdownErr {
+			return
+		} else if err != nil {
 			log.Errorf("Error while sending request to %s: %s", cc.connection.RemoteAddr().String(), err)
 			return
 		}
@@ -207,7 +211,7 @@ func (cc *ClusterConnector) forwardToCluster(rawBytes []byte, streamId int16) ch
 				log.Debugf("response from cluster channel was closed, connection: %s", cc.connection.RemoteAddr().String())
 				return
 			}
-			log.Tracef("Received response from %s for query with stream id %d", cc.clusterType, response.StreamId)
+			log.Tracef("Received response from %s for query with stream id %d", cc.clusterType, response.RawHeader.StreamId)
 			responseToCallerChan <- response
 		case <-time.After(queryTimeout):
 			log.Debugf("Timeout for query %d from %s", streamId, cc.clusterType)
@@ -225,14 +229,14 @@ func (cc *ClusterConnector) forwardToCluster(rawBytes []byte, streamId int16) ch
 /**
  *	Creates channel on which the dequeuer will send the response to the request with this streamId and adds it to the map
  */
-func (cc *ClusterConnector) createChannelForClusterResponse(streamId int16) (chan *Frame, error) {
+func (cc *ClusterConnector) createChannelForClusterResponse(streamId int16) (chan *frame.RawFrame, error) {
 	cc.lock.Lock()
 	defer cc.lock.Unlock()
 	if _, ok := cc.clusterResponseChannels[streamId]; ok {
 		return nil, errors.New(fmt.Sprintf("streamid collision: %d", streamId))
 	}
 
-	cc.clusterResponseChannels[streamId] = make(chan *Frame, 1)
+	cc.clusterResponseChannels[streamId] = make(chan *frame.RawFrame, 1)
 	return cc.clusterResponseChannels[streamId], nil
 }
 
@@ -250,10 +254,9 @@ func (cc *ClusterConnector) deleteChannelForClusterResponse(streamId int16) {
 	}
 }
 
-func (cc *ClusterConnector) sendRequestToCluster(rawBytes []byte) error {
-	log.Debugf("Executing %x on cluster with address %v, len=%d", rawBytes[:9], cc.connection.RemoteAddr(), len(rawBytes))
-	err := writeToConnection(cc.connection, rawBytes)
-	return err
+func (cc *ClusterConnector) sendRequestToCluster(clientHandlerContext context.Context, frame *frame.RawFrame) error {
+	log.Debugf("Executing %x on cluster with address %v", frame.RawHeader.String(), cc.connection.RemoteAddr())
+	return writeRawFrame(cc.connection, clientHandlerContext, frame)
 }
 
 func (cci *ClusterConnectionInfo) getConnectionString() string {

@@ -51,7 +51,6 @@ const (
 	PSCacheSize            = MetricsName("PreparedStatementCacheNumberOfEntries") // TODO
 	PSCacheMissCount       = MetricsName("PreparedStatementCacheMissCount")
 
-
 	ProxyReadLatencyHist   = MetricsName("ReadRequestProxyLatencyHist")
 	OriginReadLatencyHist  = MetricsName("ReadRequestOriginLatencyHist")
 	ProxyWriteLatencyHist  = MetricsName("ProxyWriteRequestLatencyHist")
@@ -99,7 +98,7 @@ func getMetricsDescription(mn MetricsName) string {
 		return "Running total of PreparedStatement writes that were found to be unprepared on Origin Cassandra"
 	case UnpreparedTargetWrites:
 		return "Running total of PreparedStatement writes that were found to be unprepared on Target Cassandra"
- 	case ProxyReadLatencyHist:
+	case ProxyReadLatencyHist:
 		return "Histogram for read request latency at proxy entry point"
 	case OriginReadLatencyHist:
 		return "Histogram for read request latency on Origin Cassandra"

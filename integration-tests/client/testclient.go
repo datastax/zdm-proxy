@@ -1,10 +1,13 @@
 package client
 
 import (
+	"bytes"
 	"context"
-	"encoding/binary"
 	"errors"
-	"github.com/riptano/cloud-gate/integration-tests/cql"
+	"fmt"
+	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol"
+	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol/frame"
+	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol/message"
 	log "github.com/sirupsen/logrus"
 	"io"
 	"net"
@@ -14,34 +17,34 @@ import (
 
 type TestClient struct {
 	queue                 chan *request
-	streamIds             chan uint16
-	pendingOperations     map[uint16]chan *cql.Frame
+	streamIds             chan int16
+	pendingOperations     map[int16]chan *frame.Frame
 	pendingOperationsLock *sync.RWMutex
 	requestTimeout        time.Duration
 	waitGroup             *sync.WaitGroup
 	cancelFunc            context.CancelFunc
 	context               context.Context
 	stateLock             *sync.RWMutex
-	closed				  bool
-	connection			  net.Conn
+	closed                bool
+	connection            net.Conn
 }
 
 type request struct {
 	buffer          []byte
-	responseChannel chan *cql.Frame
+	responseChannel chan *frame.Frame
 }
 
 func newRequest(buffer []byte) *request {
 	return &request{
 		buffer:          buffer,
-		responseChannel: make(chan *cql.Frame, 1),
+		responseChannel: make(chan *frame.Frame, 1),
 	}
 }
 
-func NewTestClient(address string, numberOfStreamIds int) (*TestClient, error) {
-	streamIdsQueue := make(chan uint16, numberOfStreamIds)
-	for i := 0; i < numberOfStreamIds; i++ {
-		streamIdsQueue <- uint16(i)
+func NewTestClient(address string, numberOfStreamIds int16) (*TestClient, error) {
+	streamIdsQueue := make(chan int16, numberOfStreamIds)
+	for i := int16(0); i < numberOfStreamIds; i++ {
+		streamIdsQueue <- i
 	}
 
 	conn, err := net.Dial("tcp", address)
@@ -53,14 +56,14 @@ func NewTestClient(address string, numberOfStreamIds int) (*TestClient, error) {
 	client := &TestClient{
 		queue:                 make(chan *request, numberOfStreamIds),
 		streamIds:             streamIdsQueue,
-		pendingOperations:     make(map[uint16]chan *cql.Frame),
+		pendingOperations:     make(map[int16]chan *frame.Frame),
 		pendingOperationsLock: &sync.RWMutex{},
 		requestTimeout:        5 * time.Second,
 		waitGroup:             &sync.WaitGroup{},
 		cancelFunc:            cancel,
 		context:               ctx,
-		stateLock: 			   &sync.RWMutex{},
-		connection: 		   conn,
+		stateLock:             &sync.RWMutex{},
+		connection:            conn,
 	}
 
 	client.waitGroup.Add(1)
@@ -87,8 +90,9 @@ func NewTestClient(address string, numberOfStreamIds int) (*TestClient, error) {
 	go func() {
 		defer client.waitGroup.Done()
 		defer client.shutdownInternal()
+		codec := frame.NewCodec()
 		for {
-			frame, err := readFrame(conn)
+			parsedFrame, err := codec.DecodeFrame(conn)
 			if err == io.EOF {
 				log.Infof("EOF in test client connection")
 				break
@@ -97,24 +101,21 @@ func NewTestClient(address string, numberOfStreamIds int) (*TestClient, error) {
 				break
 			}
 
-			parsedFrame, err := cql.ParseFrame(frame)
-			if err != nil {
-				log.Errorf("error while parsing frame from test client connection: ", err.Error())
-				break
+			if parsedFrame.Body.Message.GetOpCode() == cassandraprotocol.OpCodeEvent {
+				continue
 			}
 
 			client.pendingOperationsLock.RLock()
-			respChan, ok := client.pendingOperations[parsedFrame.StreamId]
+			respChan, ok := client.pendingOperations[parsedFrame.Header.StreamId]
 			client.pendingOperationsLock.RUnlock()
 
-			// TODO on event responses, do not free streamid
 			if !ok {
-				log.Warnf("could not find response channel for streamid %d, skipping", parsedFrame.StreamId)
-				client.ReturnStreamId(parsedFrame.StreamId)
+				log.Warnf("could not find response channel for streamid %d, skipping", parsedFrame.Header.StreamId)
+				client.ReturnStreamId(parsedFrame.Header.StreamId)
 				continue
 			}
 			respChan <- parsedFrame
-			client.ReturnStreamId(parsedFrame.StreamId)
+			client.ReturnStreamId(parsedFrame.Header.StreamId)
 		}
 
 		client.pendingOperationsLock.Lock()
@@ -128,31 +129,6 @@ func NewTestClient(address string, numberOfStreamIds int) (*TestClient, error) {
 	return client, nil
 }
 
-func readFrame(connection net.Conn) ([]byte, error) {
-	version := make([]byte, 1)
-	_, err := io.ReadFull(connection, version)
-	if err != nil {
-		return nil, err
-	}
-	data := make([]byte, cql.GetHeaderLength(version[0] & 0x7F))
-	_, err = io.ReadFull(connection, data[1:])
-	if err != nil {
-		return nil, err
-	}
-	data[0] = version[0]
-	bodyLen := binary.BigEndian.Uint32(data[len(data)-4:])
-	rest := make([]byte, int(bodyLen))
-	bytesRead, err := io.ReadFull(connection, rest)
-	if err != nil {
-		return nil, err
-	}
-	if uint32(bytesRead) != bodyLen {
-		return nil, errors.New("failed to read body")
-	}
-	data = append(data, rest[:bytesRead]...)
-	return data, nil
-}
-
 func (testClient *TestClient) isClosed() bool {
 	testClient.stateLock.RLock()
 	defer testClient.stateLock.RUnlock()
@@ -161,34 +137,38 @@ func (testClient *TestClient) isClosed() bool {
 
 func (testClient *TestClient) PerformHandshake() error {
 
-	startup, err := cql.NewStartupRequest(0x04)
-	if err != nil{
+	startupMsg := message.NewStartup()
+	startupFrame, err := frame.NewRequestFrame(cassandraprotocol.ProtocolVersion4, 1, false, nil, startupMsg)
+
+	if err != nil {
 		return err
 	}
 
-	response, _, err := testClient.SendRequest(startup)
-	if err != nil{
+	response, _, err := testClient.SendRequest(startupFrame)
+	if err != nil {
 		return err
 	}
 
-	parsedAuthenticateResponse, err := response.ParseAuthenticateResponse()
-	if err != nil{
-		return err
+	parsedAuthenticateResponse, ok := response.Body.Message.(*message.Authenticate)
+	if !ok {
+		return fmt.Errorf("expected authenticate but got %02x", response.Body.Message.GetOpCode())
 	}
 
 	authenticator := NewDsePlainTextAuthenticator("cassandra", "cassandra")
-	initialResponse, err := authenticator.InitialResponse(parsedAuthenticateResponse.AuthenticatorName)
-	if err != nil{
+	initialResponse, err := authenticator.InitialResponse(parsedAuthenticateResponse.Authenticator)
+	if err != nil {
 		return err
 	}
 
-	authResponseRequest, err := cql.NewAuthResponseRequest(0x04, initialResponse)
-	if err != nil{
+	authResponseRequestMsg := &message.AuthResponse{Token: initialResponse}
+	authResponseFrame, err := frame.NewRequestFrame(
+		cassandraprotocol.ProtocolVersion4, 1, false, nil, authResponseRequestMsg)
+	if err != nil {
 		return err
 	}
 
-	response, _, err = testClient.SendRequest(authResponseRequest)
-	if err != nil{
+	response, _, err = testClient.SendRequest(authResponseFrame)
+	if err != nil {
 		return err
 	}
 
@@ -222,7 +202,7 @@ func (testClient *TestClient) shutdownInternal() error {
 	return nil
 }
 
-func (testClient *TestClient) BorrowStreamId() (uint16, error) {
+func (testClient *TestClient) BorrowStreamId() (int16, error) {
 	select {
 	case id := <-testClient.streamIds:
 		return id, nil
@@ -231,17 +211,11 @@ func (testClient *TestClient) BorrowStreamId() (uint16, error) {
 	}
 }
 
-func (testClient *TestClient) ReturnStreamId(streamId uint16) {
+func (testClient *TestClient) ReturnStreamId(streamId int16) {
 	testClient.streamIds <- streamId
 }
 
-func (testClient *TestClient) SendRawRequest(streamId uint16, reqBuf []byte) (*cql.Frame, error) {
-	if cql.Uses2BytesStreamIds(reqBuf[0]) {
-		binary.BigEndian.PutUint16(reqBuf[2:4], streamId)
-	} else {
-		reqBuf[2] = byte(streamId)
-	}
-
+func (testClient *TestClient) SendRawRequest(streamId int16, reqBuf []byte) (*frame.Frame, error) {
 	req := newRequest(reqBuf)
 
 	testClient.pendingOperationsLock.Lock()
@@ -255,7 +229,7 @@ func (testClient *TestClient) SendRawRequest(streamId uint16, reqBuf []byte) (*c
 
 	testClient.queue <- req
 
-	var response *cql.Frame = nil
+	var response *frame.Frame = nil
 	var ok bool
 	var timedOut bool
 	select {
@@ -279,17 +253,19 @@ func (testClient *TestClient) SendRawRequest(streamId uint16, reqBuf []byte) (*c
 	return response, nil
 }
 
-func (testClient *TestClient) SendRequest(request []byte) (*cql.Frame, uint16, error) {
+func (testClient *TestClient) SendRequest(request *frame.Frame) (*frame.Frame, int16, error) {
 	streamId, err := testClient.BorrowStreamId()
 	if err != nil {
 		return nil, streamId, err
 	}
 
-	err = cql.SetStreamId(request[0] & 0x7F, request, streamId)
+	request.Header.StreamId = streamId
+
+	buf := &bytes.Buffer{}
+	err = frame.NewCodec().EncodeFrame(request, buf)
 	if err != nil {
 		return nil, streamId, err
 	}
-
-	response, err := testClient.SendRawRequest(streamId, request)
+	response, err := testClient.SendRawRequest(streamId, buf.Bytes())
 	return response, streamId, err
 }

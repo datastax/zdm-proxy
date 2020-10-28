@@ -2,7 +2,7 @@ package cloudgateproxy
 
 import (
 	"context"
-	"errors"
+	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol/frame"
 	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
 	"io"
@@ -22,9 +22,9 @@ type ClientConnector struct {
 	connection net.Conn
 
 	// channel on which the ClientConnector sends requests as it receives them from the client
-	requestChannel chan *Frame
+	requestChannel chan *frame.RawFrame
 	// channel on which the ClientConnector listens for responses to send to the client
-	responseChannel chan []byte
+	responseChannel chan *frame.RawFrame
 
 	lock           *sync.RWMutex           // TODO do we need a lock here?
 	metricsHandler metrics.IMetricsHandler // Global metricsHandler object
@@ -35,7 +35,7 @@ type ClientConnector struct {
 }
 
 func NewClientConnector(connection net.Conn,
-	requestChannel chan *Frame,
+	requestChannel chan *frame.RawFrame,
 	metricsHandler metrics.IMetricsHandler,
 	waitGroup *sync.WaitGroup,
 	clientHandlerContext context.Context,
@@ -43,7 +43,7 @@ func NewClientConnector(connection net.Conn,
 	return &ClientConnector{
 		connection:              connection,
 		requestChannel:          requestChannel,
-		responseChannel:         make(chan []byte),
+		responseChannel:         make(chan *frame.RawFrame),
 		lock:                    &sync.RWMutex{},
 		metricsHandler:          metricsHandler,
 		waitGroup:               waitGroup,
@@ -64,15 +64,13 @@ func (cc *ClientConnector) listenForRequests() {
 
 	log.Tracef("listenForRequests for client %s", cc.connection.RemoteAddr())
 
-	var err error
 	cc.waitGroup.Add(1)
 
 	go func() {
 		defer cc.waitGroup.Done()
 		defer close(cc.requestChannel)
 		for {
-			var frame *Frame
-			frame, err = readAndParseFrame(cc.connection, cc.clientHandlerContext)
+			frame, err := readRawFrame(cc.connection, cc.clientHandlerContext)
 
 			if err != nil {
 				if err == ShutdownErr {
@@ -89,12 +87,6 @@ func (cc *ClientConnector) listenForRequests() {
 				break
 			}
 
-			if frame.Direction != 0 {
-				log.Debugf("Unexpected frame direction %d", frame.Direction)
-				log.Error(errors.New("unexpected direction: frame not from client to db - skipping frame"))
-				continue
-			}
-
 			log.Tracef("sending frame on channel ")
 			cc.requestChannel <- frame
 			log.Tracef("frame sent")
@@ -103,12 +95,11 @@ func (cc *ClientConnector) listenForRequests() {
 }
 
 // listens on responseChannel, dequeues any responses and sends them to the client
-func (cc *ClientConnector) listenForResponses() error {
+func (cc *ClientConnector) listenForResponses() {
 	clientAddrStr := cc.connection.RemoteAddr().String()
 	log.Tracef("listenForResponses for client %s", clientAddrStr)
 
 	cc.waitGroup.Add(1)
-	var err error
 	go func() {
 		defer cc.waitGroup.Done()
 		for {
@@ -121,15 +112,17 @@ func (cc *ClientConnector) listenForResponses() error {
 				return
 			}
 
-			log.Tracef("Response with opcode %d (%v) received, dispatching to client %s", response[4], string(*&response), clientAddrStr)
-			err = writeToConnection(cc.connection, response)
-			log.Tracef("Response with opcode %d dispatched to client %s", response[4], clientAddrStr)
-			if err != nil {
+			log.Tracef("Response with opcode %d (%v) received, dispatching to client %s", response.RawHeader.OpCode, string(*&response.RawBody), clientAddrStr)
+
+			err := writeRawFrame(cc.connection, cc.clientHandlerContext, response)
+			log.Tracef("Response with opcode %d dispatched to client %s", response.RawHeader.OpCode, clientAddrStr)
+			if err == ShutdownErr {
+				break
+			} else if err != nil {
 				log.Errorf("Error writing response to client connection: %s", err)
 				break
 			}
 
 		}
 	}()
-	return err
 }
