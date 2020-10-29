@@ -2,10 +2,10 @@ package integration_tests
 
 import (
 	"fmt"
-	"github.com/bmizerany/assert"
 	"github.com/riptano/cloud-gate/integration-tests/env"
 	"github.com/riptano/cloud-gate/integration-tests/setup"
 	"github.com/riptano/cloud-gate/utils"
+	"github.com/stretchr/testify/assert"
 	"testing"
 )
 
@@ -53,7 +53,7 @@ func TestBasicUpdate(t *testing.T) {
 	itr := dest.GetSession().Query(fmt.Sprintf("SELECT * FROM %s.%s WHERE id = d1b05da0-8c20-11ea-9fc6-6d2c86545d91;", setup.TestKeyspace, setup.TestTable)).Iter()
 	row := make(map[string]interface{})
 
-	assert.T(t, itr.MapScan(row))
+	assert.True(t, itr.MapScan(row))
 	task := setup.MapToTask(row)
 
 	setup.AssertEqual(t, "terrance", task.Task)

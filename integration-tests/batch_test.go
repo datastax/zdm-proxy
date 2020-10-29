@@ -1,11 +1,11 @@
 package integration_tests
 
 import (
-	"github.com/bmizerany/assert"
 	"github.com/gocql/gocql"
 	"github.com/riptano/cloud-gate/integration-tests/setup"
 	"github.com/riptano/cloud-gate/integration-tests/simulacron"
 	"github.com/riptano/cloud-gate/utils"
+	"github.com/stretchr/testify/assert"
 	"testing"
 )
 
@@ -36,10 +36,10 @@ func TestBatchBothWriteTimeout(t *testing.T) {
 	batch := newBatch(proxy)
 	err = proxy.ExecuteBatch(batch)
 
-	assert.T(t, err != nil, "batch should have failed but it didn't")
+	assert.True(t, err != nil, "batch should have failed but it didn't")
 
 	errTimeOut, ok := err.(*gocql.RequestErrWriteTimeout)
-	assert.T(t, ok, "error is not Write Timeout: ", err.Error())
+	assert.True(t, ok, "error is not Write Timeout: ", err.Error())
 
 	// assert that the error returned by the proxy matches the origin cluster error not the target cluster one
 	assert.Equal(t, 1, errTimeOut.Received, "errTimeOut.Received: expected 1, got ", errTimeOut.Received)
@@ -74,10 +74,10 @@ func TestBatchOriginWriteTimeout(t *testing.T) {
 	batch := newBatch(proxy)
 	err = proxy.ExecuteBatch(batch)
 
-	assert.T(t, err != nil, "batch should have failed but it didn't")
+	assert.True(t, err != nil, "batch should have failed but it didn't")
 
 	errTimeOut, ok := err.(*gocql.RequestErrWriteTimeout)
-	assert.T(t, ok, "error is not Write Timeout: ", err.Error())
+	assert.True(t, ok, "error is not Write Timeout: ", err.Error())
 
 	// assert that the error returned by the proxy matches the origin cluster error
 	assert.Equal(t, 1, errTimeOut.Received, "errTimeOut.Received: expected 1, got ", errTimeOut.Received)
@@ -112,10 +112,10 @@ func TestBatchTargetWriteTimeout(t *testing.T) {
 	batch := newBatch(proxy)
 	err = proxy.ExecuteBatch(batch)
 
-	assert.T(t, err != nil, "batch should have failed but it didn't")
+	assert.True(t, err != nil, "batch should have failed but it didn't")
 
 	errTimeOut, ok := err.(*gocql.RequestErrWriteTimeout)
-	assert.T(t, ok, "error is not Write Timeout: ", err.Error())
+	assert.True(t, ok, "error is not Write Timeout: ", err.Error())
 
 	// assert that the error returned by the proxy matches the target cluster error
 	assert.Equal(t, 1, errTimeOut.Received, "errTimeOut.Received: expected 1, got ", errTimeOut.Received)
@@ -148,7 +148,7 @@ func TestBatchWriteSuccessful(t *testing.T) {
 	batch := newBatch(proxy)
 	err = proxy.ExecuteBatch(batch)
 
-	assert.T(t, err == nil, "batch shouldn't have failed but it did")
+	assert.True(t, err == nil, "batch shouldn't have failed but it did")
 }
 
 func newBatchOptions() *simulacron.WhenBatchOptions {

@@ -2,10 +2,10 @@ package integration_tests
 
 import (
 	"fmt"
-	"github.com/bmizerany/assert"
 	"github.com/riptano/cloud-gate/integration-tests/env"
 	"github.com/riptano/cloud-gate/integration-tests/setup"
 	"github.com/riptano/cloud-gate/utils"
+	"github.com/stretchr/testify/assert"
 	"testing"
 
 	"github.com/gocql/gocql"
@@ -83,7 +83,7 @@ func TestBasicBatch(t *testing.T) {
 	itr := proxy.Query(fmt.Sprintf("SELECT * FROM %s.%s WHERE id = d1b05da0-8c20-11ea-9fc6-6d2c86545d91;", setup.TestKeyspace, setup.TestTable)).Iter()
 	row := make(map[string]interface{})
 
-	assert.T(t, itr.MapScan(row))
+	assert.True(t, itr.MapScan(row))
 	task := setup.MapToTask(row)
 
 	setup.AssertEqual(t, "katelyn", task.Task)
@@ -92,7 +92,7 @@ func TestBasicBatch(t *testing.T) {
 	itr = proxy.Query(fmt.Sprintf("SELECT * FROM %s.%s WHERE id = d1b05da0-8c20-11ea-9fc6-6d2c86545d92;", setup.TestKeyspace, setup.TestTable)).Iter()
 	row = make(map[string]interface{})
 
-	assert.T(t, itr.MapScan(row))
+	assert.True(t, itr.MapScan(row))
 	task = setup.MapToTask(row)
 
 	setup.AssertEqual(t, "kelvin", task.Task)
@@ -101,7 +101,7 @@ func TestBasicBatch(t *testing.T) {
 	itr = proxy.Query(fmt.Sprintf("SELECT * FROM %s.%s WHERE id = d1b05da0-8c20-11ea-9fc6-6d2c86545d93;", setup.TestKeyspace, setup.TestTable)).Iter()
 	row = make(map[string]interface{})
 
-	assert.T(t, itr.MapScan(row))
+	assert.True(t, itr.MapScan(row))
 	task = setup.MapToTask(row)
 
 	setup.AssertEqual(t, "ryan", task.Task)

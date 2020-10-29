@@ -1,9 +1,9 @@
 package integration_tests
 
 import (
-	"github.com/bmizerany/assert"
 	"github.com/riptano/cloud-gate/integration-tests/setup"
 	"github.com/riptano/cloud-gate/utils"
+	"github.com/stretchr/testify/assert"
 	"testing"
 )
 

@@ -41,7 +41,11 @@ func newRequest(buffer []byte) *request {
 	}
 }
 
-func NewTestClient(address string, numberOfStreamIds int16) (*TestClient, error) {
+const (
+	numberOfStreamIds = int16(2048)
+)
+
+func NewTestClient(address string) (*TestClient, error) {
 	streamIdsQueue := make(chan int16, numberOfStreamIds)
 	for i := int16(0); i < numberOfStreamIds; i++ {
 		streamIdsQueue <- i

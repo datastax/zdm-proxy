@@ -1,10 +1,10 @@
 package integration_tests
 
 import (
-	"github.com/bmizerany/assert"
 	"github.com/riptano/cloud-gate/integration-tests/setup"
 	"github.com/riptano/cloud-gate/integration-tests/simulacron"
 	"github.com/riptano/cloud-gate/utils"
+	"github.com/stretchr/testify/assert"
 	"net"
 	"testing"
 )
@@ -63,11 +63,11 @@ func TestForwardDecisionsForReads(t *testing.T) {
 			}
 
 			iter := proxy.Query(tt.query).Iter()
-			assert.T(t, iter.NumRows() == 1, "query should have returned 1 row but returned instead: ", iter.NumRows())
+			assert.True(t, iter.NumRows() == 1, "query should have returned 1 row but returned instead: ", iter.NumRows())
 			var rpcAddressActual net.IP
 			ok := iter.Scan(&rpcAddressActual)
-			assert.T(t, ok, "row scan failed")
-			assert.T(t, rpcAddressActual.Equal(rpcAddressExpected), "expecting rpc_address to be ", rpcAddressExpected, ", got: ", rpcAddressActual)
+			assert.True(t, ok, "row scan failed")
+			assert.True(t, rpcAddressActual.Equal(rpcAddressExpected), "expecting rpc_address to be ", rpcAddressExpected, ", got: ", rpcAddressActual)
 
 		})
 	}
@@ -123,11 +123,11 @@ func TestForwardDecisionsForReadsWithUseStatement(t *testing.T) {
 			}
 
 			iter := proxy.Query(tt.query).Iter()
-			assert.T(t, iter.NumRows() == 1, "query should have returned 1 row but returned instead: ", iter.NumRows())
+			assert.True(t, iter.NumRows() == 1, "query should have returned 1 row but returned instead: ", iter.NumRows())
 			var rpcAddressActual net.IP
 			ok := iter.Scan(&rpcAddressActual)
-			assert.T(t, ok, "row scan failed")
-			assert.T(t, rpcAddressActual.Equal(rpcAddressExpected), "expecting rpc_address to be ", rpcAddressExpected, ", got: ", rpcAddressActual)
+			assert.True(t, ok, "row scan failed")
+			assert.True(t, rpcAddressActual.Equal(rpcAddressExpected), "expecting rpc_address to be ", rpcAddressExpected, ", got: ", rpcAddressActual)
 
 		})
 	}

@@ -1,11 +1,11 @@
 package integration_tests
 
 import (
-	"github.com/bmizerany/assert"
 	"github.com/gocql/gocql"
 	"github.com/riptano/cloud-gate/integration-tests/setup"
 	"github.com/riptano/cloud-gate/integration-tests/simulacron"
 	"github.com/riptano/cloud-gate/utils"
+	"github.com/stretchr/testify/assert"
 	"testing"
 )
 
@@ -52,10 +52,10 @@ func TestBothWriteTimeout(t *testing.T) {
 
 	err = proxy.Query("INSERT INTO myks.users (name) VALUES (?)", "john").Exec()
 
-	assert.T(t, err != nil, "query should have failed but it didn't")
+	assert.True(t, err != nil, "query should have failed but it didn't")
 
 	errTimeOut, ok := err.(*gocql.RequestErrWriteTimeout)
-	assert.T(t, ok, "error is not Write Timeout: ", err.Error())
+	assert.True(t, ok, "error is not Write Timeout: ", err.Error())
 
 	// assert that the error returned by the proxy matches the origin cluster error not the target cluster one
 	assert.Equal(t, originReceived, errTimeOut.Received, "timeout error received field doesn't match the origin cluster error")
@@ -105,10 +105,10 @@ func TestOriginWriteTimeout(t *testing.T) {
 
 	err = proxy.Query("INSERT INTO myks.users (name) VALUES (?)", "john").Exec()
 
-	assert.T(t, err != nil, "query should have failed but it didn't")
+	assert.True(t, err != nil, "query should have failed but it didn't")
 
 	errTimeOut, ok := err.(*gocql.RequestErrWriteTimeout)
-	assert.T(t, ok, "error is not Write Timeout: ", err.Error())
+	assert.True(t, ok, "error is not Write Timeout: ", err.Error())
 
 	// assert that the error returned by the proxy matches the origin cluster error not the target cluster one
 	assert.Equal(t, originReceived, errTimeOut.Received, "timeout error received field doesn't match the origin cluster error")
@@ -158,10 +158,10 @@ func TestTargetWriteTimeout(t *testing.T) {
 
 	err = proxy.Query("INSERT INTO myks.users (name) VALUES (?)", "john").Exec()
 
-	assert.T(t, err != nil, "query should have failed but it didn't")
+	assert.True(t, err != nil, "query should have failed but it didn't")
 
 	errTimeOut, ok := err.(*gocql.RequestErrWriteTimeout)
-	assert.T(t, ok, "error is not Write Timeout: ", err.Error())
+	assert.True(t, ok, "error is not Write Timeout: ", err.Error())
 
 	// assert that the error returned by the proxy matches the origin cluster error not the target cluster one
 	assert.Equal(t, targetReceived, errTimeOut.Received, "timeout error received field doesn't match the target cluster error")
