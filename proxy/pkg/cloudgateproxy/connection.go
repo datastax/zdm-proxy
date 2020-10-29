@@ -17,7 +17,7 @@ func establishConnection(ip string, shutdownContext context.Context) (net.Conn, 
 		Jitter: false,
 	}
 
-	log.Infof("Attempting to connect to %s...", ip)
+	log.Infof("Attempting to connect to %v...", ip)
 	for {
 		conn, err := net.Dial("tcp", ip)
 		if err != nil {
@@ -26,13 +26,13 @@ func establishConnection(ip string, shutdownContext context.Context) (net.Conn, 
 				return nil, ShutdownErr
 			default:
 				nextDuration := b.Duration()
-				log.Errorf("Couldn't connect to %s, retrying in %s...", ip, nextDuration.String())
+				log.Errorf("Couldn't connect to %v, retrying in %v...", ip, nextDuration)
 				time.Sleep(nextDuration)
 				continue
 
 			}
 		}
-		log.Infof("Successfully established connection with %s", conn.RemoteAddr())
+		log.Infof("Successfully established connection with %v", conn.RemoteAddr())
 		return conn, nil
 	}
 }
@@ -54,7 +54,7 @@ func checkConnection(ip string, shutdownContext context.Context) error {
 		return err
 	}
 
-	log.Infof("Closing test connection to %s", ip)
+	log.Infof("Closing test connection to %v", ip)
 	originCassandra.Close()
 	return nil
 }

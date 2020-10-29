@@ -198,7 +198,7 @@ func (process *Process) Start() error {
 			}
 
 			if err != nil &&
-				(err == io.EOF || strings.Contains(err.Error(), "file already closed")) {
+				(errors.Is(err, io.EOF) || strings.Contains(err.Error(), "file already closed")) {
 				stopChannel <- err
 				return
 			}
@@ -220,7 +220,7 @@ func (process *Process) Start() error {
 			}
 
 			if err != nil &&
-				(err == io.EOF || strings.Contains(err.Error(), "file already closed")) {
+				(errors.Is(err, io.EOF) || strings.Contains(err.Error(), "file already closed")) {
 				stopChannel <- err
 				return
 			}

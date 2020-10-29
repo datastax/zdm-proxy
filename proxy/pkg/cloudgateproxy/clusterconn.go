@@ -17,8 +17,6 @@ type ClusterConnectionInfo struct {
 	ipAddress         string
 	port              int
 	isOriginCassandra bool
-	username          string
-	password          string
 }
 
 type ClusterType string
@@ -33,8 +31,6 @@ type ClusterConnector struct {
 	clusterResponseChannels map[int16]chan *frame.RawFrame // map of channels, keyed on streamID, on which to send the response to a request
 	clusterType             ClusterType
 
-	username                string
-	password                string
 	lock                    *sync.RWMutex // TODO do we need a lock here?
 	metricsHandler          metrics.IMetricsHandler
 	waitGroup               *sync.WaitGroup
@@ -42,13 +38,11 @@ type ClusterConnector struct {
 	clientHandlerCancelFunc context.CancelFunc
 }
 
-func NewClusterConnectionInfo(ipAddress string, port int, isOriginCassandra bool, username string, password string) *ClusterConnectionInfo {
+func NewClusterConnectionInfo(ipAddress string, port int, isOriginCassandra bool) *ClusterConnectionInfo {
 	return &ClusterConnectionInfo{
 		ipAddress:         ipAddress,
 		port:              port,
 		isOriginCassandra: isOriginCassandra,
-		username:          username,
-		password:          password,
 	}
 }
 
@@ -67,7 +61,7 @@ func NewClusterConnector(connInfo *ClusterConnectionInfo,
 
 	conn, err := openConnectionToCluster(connInfo, clientHandlerContext, metricsHandler)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("could not open connection to %v: %w", clusterType, err)
 	}
 
 	go func() {
@@ -79,8 +73,6 @@ func NewClusterConnector(connInfo *ClusterConnectionInfo,
 		connection:              conn,
 		clusterResponseChannels: make(map[int16]chan *frame.RawFrame),
 		clusterType:             clusterType,
-		username:                connInfo.username,
-		password:                connInfo.password,
 		lock:                    &sync.RWMutex{},
 		metricsHandler:          metricsHandler,
 		waitGroup:               waitGroup,
@@ -108,9 +100,10 @@ func openConnectionToCluster(connInfo *ClusterConnectionInfo, context context.Co
 }
 
 func closeConnectionToCluster(conn net.Conn, clusterType ClusterType, metricsHandler metrics.IMetricsHandler) {
+	log.Infof("closing connection to %v", conn.RemoteAddr())
 	err := conn.Close()
 	if err != nil {
-		log.Warnf("error closing connection to %s", conn.RemoteAddr().String())
+		log.Warnf("error closing connection to %v", conn.RemoteAddr())
 	}
 
 	if clusterType == OriginCassandra {
@@ -127,21 +120,21 @@ func closeConnectionToCluster(conn net.Conn, clusterType ClusterType, metricsHan
 func (cc *ClusterConnector) runResponseListeningLoop() {
 
 	cc.waitGroup.Add(1)
-	log.Debugf("Listening to replies sent by node %s", cc.connection.RemoteAddr())
+	log.Debugf("Listening to replies sent by node %v", cc.connection.RemoteAddr())
 	go func() {
 		defer cc.waitGroup.Done()
 		for {
 			response, err := readRawFrame(cc.connection, cc.clientHandlerContext)
 
 			if err != nil {
-				if err == ShutdownErr {
-					return
+				if errors.Is(err, ShutdownErr) {
+					break
 				}
 
-				if err == io.EOF {
-					log.Infof("in runResponseListeningLoop: %s disconnected", cc.connection.RemoteAddr())
+				if errors.Is(err, io.EOF) {
+					log.Infof("in runResponseListeningLoop: %v disconnected", cc.connection.RemoteAddr())
 				} else {
-					log.Errorf("in runResponseListeningLoop: error reading: %s", err)
+					log.Errorf("in runResponseListeningLoop: error reading: %v", err)
 				}
 
 				cc.clientHandlerCancelFunc()
@@ -149,11 +142,12 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 			}
 
 			log.Debugf(
-				"Received response from %s (%s), opcode=%d, stream id=%d",
+				"Received response from %v (%v), opcode=%d, stream id=%d",
 				cc.clusterType, cc.connection.RemoteAddr(), response.RawHeader.OpCode, response.RawHeader.StreamId)
 			log.Tracef("Response body: %v", string(*&response.RawBody))
 			cc.forwardResponseToChannel(response)
 		}
+		log.Infof("shutting down response listening loop from %v", cc.connection.RemoteAddr())
 	}()
 }
 
@@ -187,7 +181,7 @@ func (cc *ClusterConnector) forwardToCluster(rawFrame *frame.RawFrame) chan *fra
 
 		responseFromClusterChan, err := cc.createChannelForClusterResponse(streamId)
 		if err != nil {
-			log.Errorf("Error creating cluster response channel for stream id %d: %s", streamId, err.Error())
+			log.Errorf("Error creating cluster response channel for stream id %d: %v", streamId, err)
 			return
 		}
 
@@ -196,10 +190,10 @@ func (cc *ClusterConnector) forwardToCluster(rawFrame *frame.RawFrame) chan *fra
 
 		err = cc.sendRequestToCluster(cc.clientHandlerContext, rawFrame)
 
-		if err == ShutdownErr {
+		if errors.Is(err, ShutdownErr) {
 			return
 		} else if err != nil {
-			log.Errorf("Error while sending request to %s: %s", cc.connection.RemoteAddr().String(), err)
+			log.Errorf("Error while sending request to %v: %v", cc.connection.RemoteAddr(), err)
 			return
 		}
 
@@ -208,13 +202,13 @@ func (cc *ClusterConnector) forwardToCluster(rawFrame *frame.RawFrame) chan *fra
 			return
 		case response, ok := <-responseFromClusterChan:
 			if !ok {
-				log.Debugf("response from cluster channel was closed, connection: %s", cc.connection.RemoteAddr().String())
+				log.Debugf("response from cluster channel was closed, connection: %v", cc.connection.RemoteAddr())
 				return
 			}
-			log.Tracef("Received response from %s for query with stream id %d", cc.clusterType, response.RawHeader.StreamId)
+			log.Tracef("Received response from %v for query with stream id %d", cc.clusterType, response.RawHeader.StreamId)
 			responseToCallerChan <- response
 		case <-time.After(queryTimeout):
-			log.Debugf("Timeout for query %d from %s", streamId, cc.clusterType)
+			log.Debugf("Timeout for query %d from %v", streamId, cc.clusterType)
 			if cc.clusterType == OriginCassandra {
 				cc.metricsHandler.IncrementCountByOne(metrics.TimeOutsProxyOrigin)
 			} else {
@@ -233,7 +227,7 @@ func (cc *ClusterConnector) createChannelForClusterResponse(streamId int16) (cha
 	cc.lock.Lock()
 	defer cc.lock.Unlock()
 	if _, ok := cc.clusterResponseChannels[streamId]; ok {
-		return nil, errors.New(fmt.Sprintf("streamid collision: %d", streamId))
+		return nil, fmt.Errorf("streamid collision: %d", streamId)
 	}
 
 	cc.clusterResponseChannels[streamId] = make(chan *frame.RawFrame, 1)

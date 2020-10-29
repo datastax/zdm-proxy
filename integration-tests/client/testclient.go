@@ -49,7 +49,7 @@ func NewTestClient(address string, numberOfStreamIds int16) (*TestClient, error)
 
 	conn, err := net.Dial("tcp", address)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("could not open connection: %w", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -74,10 +74,10 @@ func NewTestClient(address string, numberOfStreamIds int16) (*TestClient, error)
 			select {
 			case req := <-client.queue:
 				_, err := conn.Write(req.buffer)
-				if err == io.EOF {
+				if errors.Is(err, io.EOF) {
 					return
 				} else if err != nil {
-					log.Errorf("error in test client connection: ", err.Error())
+					log.Errorf("error in test client connection: %v", err)
 					return
 				}
 			case <-client.context.Done():
@@ -93,11 +93,11 @@ func NewTestClient(address string, numberOfStreamIds int16) (*TestClient, error)
 		codec := frame.NewCodec()
 		for {
 			parsedFrame, err := codec.DecodeFrame(conn)
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				log.Infof("EOF in test client connection")
 				break
 			} else if err != nil {
-				log.Errorf("error while reading from test client connection: ", err.Error())
+				log.Errorf("error while reading from test client connection: %v", err)
 				break
 			}
 
@@ -141,12 +141,12 @@ func (testClient *TestClient) PerformHandshake() error {
 	startupFrame, err := frame.NewRequestFrame(cassandraprotocol.ProtocolVersion4, 1, false, nil, startupMsg)
 
 	if err != nil {
-		return err
+		return fmt.Errorf("could not create startup frame: %w", err)
 	}
 
 	response, _, err := testClient.SendRequest(startupFrame)
 	if err != nil {
-		return err
+		return fmt.Errorf("could not send startup frame: %w", err)
 	}
 
 	parsedAuthenticateResponse, ok := response.Body.Message.(*message.Authenticate)
@@ -157,19 +157,19 @@ func (testClient *TestClient) PerformHandshake() error {
 	authenticator := NewDsePlainTextAuthenticator("cassandra", "cassandra")
 	initialResponse, err := authenticator.InitialResponse(parsedAuthenticateResponse.Authenticator)
 	if err != nil {
-		return err
+		return fmt.Errorf("could not create initial response token: %w", err)
 	}
 
 	authResponseRequestMsg := &message.AuthResponse{Token: initialResponse}
 	authResponseFrame, err := frame.NewRequestFrame(
 		cassandraprotocol.ProtocolVersion4, 1, false, nil, authResponseRequestMsg)
 	if err != nil {
-		return err
+		return fmt.Errorf("could not create auth response: %w", err)
 	}
 
 	response, _, err = testClient.SendRequest(authResponseFrame)
 	if err != nil {
-		return err
+		return fmt.Errorf("could not send auth response: %w", err)
 	}
 
 	return nil
@@ -194,8 +194,15 @@ func (testClient *TestClient) shutdownInternal() error {
 		testClient.closed = true
 		testClient.cancelFunc()
 		err := testClient.connection.Close()
+
+		testClient.pendingOperationsLock.RLock()
+		for _, respChan := range testClient.pendingOperations {
+			close(respChan)
+		}
+		testClient.pendingOperationsLock.RUnlock()
+
 		if err != nil {
-			return err
+			return fmt.Errorf("could not close connection: %w", err)
 		}
 	}
 
@@ -264,7 +271,7 @@ func (testClient *TestClient) SendRequest(request *frame.Frame) (*frame.Frame, i
 	buf := &bytes.Buffer{}
 	err = frame.NewCodec().EncodeFrame(request, buf)
 	if err != nil {
-		return nil, streamId, err
+		return nil, streamId, fmt.Errorf("could not encode request: %w", err)
 	}
 	response, err := testClient.SendRawRequest(streamId, buf.Bytes())
 	return response, streamId, err

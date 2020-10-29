@@ -54,14 +54,14 @@ func (p *CloudgateProxy) Start() error {
 		return err
 	}
 
-	log.Debugf("connection check passed (to %s)", p.originCassandraIP)
+	log.Debugf("connection check passed (to %v)", p.originCassandraIP)
 
 	err = checkConnection(p.targetCassandraIP, p.shutdownContext)
 	if err != nil {
 		return err
 	}
 
-	log.Debugf("connection check passed (to %s)", p.targetCassandraIP)
+	log.Debugf("connection check passed (to %v)", p.targetCassandraIP)
 
 	err = p.acceptConnectionsFromClients(p.Conf.ProxyQueryAddress, p.Conf.ProxyQueryPort)
 	if err != nil {
@@ -132,37 +132,28 @@ func (p *CloudgateProxy) acceptConnectionsFromClients(address string, port int) 
 				}
 			}
 			p.metricsHandler.IncrementCountByOne(metrics.OpenClientConnections)
-			log.Infof("Accepted connection from %s", conn.RemoteAddr().String())
+			log.Infof("Accepted connection from %v", conn.RemoteAddr())
 
 			// there is a ClientHandler for each connection made by a client
-			originCassandraConnInfo := NewClusterConnectionInfo(p.Conf.OriginCassandraHostname, p.Conf.OriginCassandraPort, true,
-				p.Conf.OriginCassandraUsername, p.Conf.OriginCassandraPassword)
-			targetCassandraConnInfo := NewClusterConnectionInfo(p.Conf.TargetCassandraHostname, p.Conf.TargetCassandraPort, false,
-				p.Conf.TargetCassandraUsername, p.Conf.TargetCassandraPassword)
+			originCassandraConnInfo := NewClusterConnectionInfo(p.Conf.OriginCassandraHostname, p.Conf.OriginCassandraPort, true)
+			targetCassandraConnInfo := NewClusterConnectionInfo(p.Conf.TargetCassandraHostname, p.Conf.TargetCassandraPort, false)
 			clientHandler, err := NewClientHandler(
 				conn,
 				originCassandraConnInfo,
 				targetCassandraConnInfo,
+				p.Conf.TargetCassandraUsername,
+				p.Conf.TargetCassandraPassword,
 				p.preparedStatementCache,
 				p.metricsHandler,
 				p.shutdownWaitGroup,
 				p.shutdownContext)
 
 			if err != nil {
-				log.Errorf("Client Handler could not be created. Error %s", err)
+				log.Errorf("Client Handler could not be created: %v", err)
 				conn.Close()
 				p.metricsHandler.DecrementCountByOne(metrics.OpenClientConnections)
 				continue
 			}
-
-			go func() {
-				<-p.shutdownContext.Done()
-				err := conn.Close()
-				if err != nil {
-					log.Warnf("error received while closing connection to %s", conn.RemoteAddr().String())
-				}
-				p.metricsHandler.DecrementCountByOne(metrics.OpenClientConnections)
-			}()
 
 			// TODO if we want to keep the ClientHandler instances into an array or map, store it here
 			log.Tracef("ClientHandler created")

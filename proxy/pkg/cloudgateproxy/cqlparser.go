@@ -46,7 +46,7 @@ func inspectFrame(
 	case cassandraprotocol.OpCodeQuery:
 		body, err := defaultCodec.DecodeBody(f.RawHeader, bytes.NewReader(f.RawBody))
 		if err != nil {
-			return forwardToNone, err
+			return forwardToNone, fmt.Errorf("could not decode body of query message: %w", err)
 		}
 		queryMsg, ok := body.Message.(*message.Query)
 		if !ok {
@@ -65,7 +65,7 @@ func inspectFrame(
 	case cassandraprotocol.OpCodePrepare:
 		body, err := defaultCodec.DecodeBody(f.RawHeader, bytes.NewReader(f.RawBody))
 		if err != nil {
-			return forwardToNone, err
+			return forwardToNone, fmt.Errorf("could not decode body of prepare message: %w", err)
 		}
 		prepareMsg, ok := body.Message.(*message.Prepare)
 		if !ok {
@@ -85,7 +85,7 @@ func inspectFrame(
 	case cassandraprotocol.OpCodeExecute:
 		body, err := defaultCodec.DecodeBody(f.RawHeader, bytes.NewReader(f.RawBody))
 		if err != nil {
-			return forwardToNone, err
+			return forwardToNone, fmt.Errorf("could not decode body of execute message: %w", err)
 		}
 		executeMsg, ok := body.Message.(*message.Execute)
 		if !ok {

@@ -2,6 +2,7 @@ package cloudgateproxy
 
 import (
 	"context"
+	"errors"
 	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol/frame"
 	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
@@ -62,7 +63,7 @@ func (cc *ClientConnector) run() {
 
 func (cc *ClientConnector) listenForRequests() {
 
-	log.Tracef("listenForRequests for client %s", cc.connection.RemoteAddr())
+	log.Tracef("listenForRequests for client %v", cc.connection.RemoteAddr())
 
 	cc.waitGroup.Add(1)
 
@@ -73,14 +74,14 @@ func (cc *ClientConnector) listenForRequests() {
 			frame, err := readRawFrame(cc.connection, cc.clientHandlerContext)
 
 			if err != nil {
-				if err == ShutdownErr {
-					return
+				if errors.Is(err, ShutdownErr) {
+					break
 				}
 
-				if err == io.EOF {
-					log.Infof("in listenForRequests: %s disconnected", cc.connection.RemoteAddr())
+				if errors.Is(err, io.EOF) {
+					log.Infof("in listenForRequests: %v disconnected", cc.connection.RemoteAddr())
 				} else {
-					log.Errorf("in listenForRequests: error reading: %s", err)
+					log.Errorf("in listenForRequests: error reading: %v", err)
 				}
 
 				cc.clientHandlerCancelFunc()
@@ -88,41 +89,53 @@ func (cc *ClientConnector) listenForRequests() {
 			}
 
 			log.Tracef("sending frame on channel ")
-			cc.requestChannel <- frame
+			select {
+			case cc.requestChannel <- frame:
+			case <-cc.clientHandlerContext.Done():
+				break
+			}
+
 			log.Tracef("frame sent")
 		}
+		log.Infof("shutting down client connector request listener %v", cc.connection.RemoteAddr())
 	}()
 }
 
 // listens on responseChannel, dequeues any responses and sends them to the client
 func (cc *ClientConnector) listenForResponses() {
 	clientAddrStr := cc.connection.RemoteAddr().String()
-	log.Tracef("listenForResponses for client %s", clientAddrStr)
+	log.Tracef("listenForResponses for client %v", clientAddrStr)
 
 	cc.waitGroup.Add(1)
 	go func() {
 		defer cc.waitGroup.Done()
+		defer func() {
+			log.Infof("shutting down client connection to %v", cc.connection.RemoteAddr())
+			err := cc.connection.Close()
+			if err != nil {
+				log.Warnf("error received while closing connection to %v: %v", cc.connection.RemoteAddr(), err)
+			}
+			cc.metricsHandler.DecrementCountByOne(metrics.OpenClientConnections)
+		}()
 		for {
-			log.Tracef("Waiting for next response to dispatch to client %s", clientAddrStr)
-
+			log.Tracef("Waiting for next response to dispatch to client %v", clientAddrStr)
 			response, ok := <-cc.responseChannel
-
 			if !ok {
-				log.Infof("shutting down response forwarder to %s", clientAddrStr)
-				return
+				break
 			}
 
-			log.Tracef("Response with opcode %d (%v) received, dispatching to client %s", response.RawHeader.OpCode, string(*&response.RawBody), clientAddrStr)
+			log.Tracef("Response with opcode %d (%v) received, dispatching to client %v", response.RawHeader.OpCode, string(*&response.RawBody), clientAddrStr)
 
 			err := writeRawFrame(cc.connection, cc.clientHandlerContext, response)
-			log.Tracef("Response with opcode %d dispatched to client %s", response.RawHeader.OpCode, clientAddrStr)
-			if err == ShutdownErr {
+			log.Tracef("Response with opcode %d dispatched to client %v", response.RawHeader.OpCode, clientAddrStr)
+			if errors.Is(err, ShutdownErr) {
 				break
 			} else if err != nil {
-				log.Errorf("Error writing response to client connection: %s", err)
+				log.Errorf("Error writing response to client connection: %v", err)
 				break
 			}
 
 		}
+		log.Infof("shutting down response forwarder to %v", clientAddrStr)
 	}()
 }

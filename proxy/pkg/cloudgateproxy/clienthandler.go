@@ -48,11 +48,16 @@ type ClientHandler struct {
 	currentKeyspaceName *atomic.Value
 
 	startupFrame *frame.RawFrame
+
+	targetUsername string
+	targetPassword string
 }
 
 func NewClientHandler(clientTcpConn net.Conn,
 	originCassandraConnInfo *ClusterConnectionInfo,
 	targetCassandraConnInfo *ClusterConnectionInfo,
+	targetUsername string,
+	targetPassword string,
 	psCache *PreparedStatementCache,
 	metricsHandler metrics.IMetricsHandler,
 	waitGroup *sync.WaitGroup,
@@ -97,6 +102,8 @@ func NewClientHandler(clientTcpConn net.Conn,
 		clientHandlerCancelFunc:    clientHandlerCancelFunc,
 		currentKeyspaceName:        &atomic.Value{},
 		startupFrame:               nil,
+		targetUsername:             targetUsername,
+		targetPassword:             targetPassword,
 	}, nil
 }
 
@@ -125,10 +132,15 @@ func (ch *ClientHandler) listenForClientRequests() {
 
 		handleWaitGroup := &sync.WaitGroup{}
 		for {
-			frame, ok := <-ch.clientConnectorRequestChan
+			var frame *frame.RawFrame
+			ok := true
+			select {
+			case frame, ok = <-ch.clientConnectorRequestChan:
+			case <-ch.clientHandlerContext.Done():
+				ok = false
+			}
 
 			if !ok {
-				log.Debug("Shutting down client requests listener.")
 				break
 			}
 
@@ -137,7 +149,7 @@ func (ch *ClientHandler) listenForClientRequests() {
 				log.Tracef("not ready")
 				// Handle client authentication
 				ready, err = ch.handleHandshakeRequest(frame, handleWaitGroup)
-				if err != nil && err != ShutdownErr {
+				if err != nil && !errors.Is(err, ShutdownErr) {
 					log.Error(err)
 				}
 				if ready {
@@ -151,6 +163,8 @@ func (ch *ClientHandler) listenForClientRequests() {
 
 			ch.handleRequest(frame, handleWaitGroup)
 		}
+
+		log.Infof("Shutting down client requests listener.")
 
 		handleWaitGroup.Wait()
 	}()
@@ -199,7 +213,7 @@ func (ch *ClientHandler) handleHandshakeRequest(f *frame.RawFrame, waitGroup *sy
 		if err != nil {
 			log.Errorf("handshake failed, shutting down the client handler and connectors: %s", err.Error())
 			ch.clientHandlerCancelFunc()
-			return false, ShutdownErr
+			return false, fmt.Errorf("handshake failed: %w", ShutdownErr)
 		}
 
 		authSuccess = true

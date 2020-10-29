@@ -24,7 +24,7 @@ func adaptConnErr(connection net.Conn, clientHandlerContext context.Context, err
 	if err != nil {
 		select {
 		case <-clientHandlerContext.Done():
-			log.Infof("Shutting down connection to %s", connection.RemoteAddr().String())
+			log.Infof("Connection error (%v) but shutdown requested (connection to %v)", err, connection.RemoteAddr())
 			return ShutdownErr
 		default:
 			return err

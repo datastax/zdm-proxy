@@ -174,6 +174,7 @@ func NewTemporaryCcmTestSetup(start bool) (*CcmTestSetup, error) {
 	}, nil
 }
 
+// To prevent proxy from being started, pass nil config
 func (setup *CcmTestSetup) Start(config *config.Config, jvmArgs ...string) error {
 	err := setup.Origin.Start(jvmArgs...)
 	if err != nil {
@@ -183,7 +184,9 @@ func (setup *CcmTestSetup) Start(config *config.Config, jvmArgs ...string) error
 	if err != nil {
 		return err
 	}
-	setup.Proxy = NewProxyInstanceWithConfig(config)
+	if config != nil {
+		setup.Proxy = NewProxyInstanceWithConfig(config)
+	}
 	return nil
 }
 
@@ -214,8 +217,6 @@ func NewProxyInstanceWithConfig(config *config.Config) *cloudgateproxy.Cloudgate
 func NewTestConfig(origin TestCluster, target TestCluster) *config.Config {
 	conf := config.New()
 	conf.OriginCassandraHostname = origin.GetInitialContactPoint()
-	conf.OriginCassandraUsername = "cassandra"
-	conf.OriginCassandraPassword = "cassandra"
 	conf.OriginCassandraPort = 9042
 
 	conf.TargetCassandraHostname = target.GetInitialContactPoint()
