@@ -10,9 +10,7 @@ import (
 	log "github.com/sirupsen/logrus"
 
 	"math"
-	"math/rand"
 	"sync"
-	"time"
 )
 
 type TestCluster interface {
@@ -24,7 +22,6 @@ type TestCluster interface {
 }
 
 var mux = &sync.Mutex{}
-var r = rand.New(rand.NewSource(time.Now().UTC().UnixNano()))
 
 var createdGlobalClusters = false
 
@@ -79,7 +76,7 @@ func createClusters() error {
 
 	var err error
 
-	firstClusterId := r.Uint64() % (math.MaxUint64 - 1)
+	firstClusterId := env.Rand.Uint64() % (math.MaxUint64 - 1)
 	globalCcmClusterOrigin, err = ccm.GetNewCluster(firstClusterId, 1, env.OriginNodes, true)
 	if err != nil {
 		return err
@@ -147,7 +144,7 @@ func (setup *SimulacronTestSetup) Cleanup() {
 }
 
 func NewTemporaryCcmTestSetup(start bool) (*CcmTestSetup, error) {
-	firstClusterId := r.Uint64() % (math.MaxUint64 - 1)
+	firstClusterId := env.Rand.Uint64() % (math.MaxUint64 - 1)
 	origin, err := ccm.GetNewCluster(firstClusterId, 20, env.OriginNodes, start)
 	if err != nil {
 		return nil, err

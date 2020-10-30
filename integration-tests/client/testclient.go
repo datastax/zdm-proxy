@@ -27,6 +27,7 @@ type TestClient struct {
 	stateLock             *sync.RWMutex
 	closed                bool
 	connection            net.Conn
+	eventsQueue           chan *frame.Frame
 }
 
 type request struct {
@@ -43,6 +44,7 @@ func newRequest(buffer []byte) *request {
 
 const (
 	numberOfStreamIds = int16(2048)
+	eventQueueLength  = 2048
 )
 
 func NewTestClient(address string) (*TestClient, error) {
@@ -62,12 +64,13 @@ func NewTestClient(address string) (*TestClient, error) {
 		streamIds:             streamIdsQueue,
 		pendingOperations:     make(map[int16]chan *frame.Frame),
 		pendingOperationsLock: &sync.RWMutex{},
-		requestTimeout:        5 * time.Second,
+		requestTimeout:        2 * time.Second,
 		waitGroup:             &sync.WaitGroup{},
 		cancelFunc:            cancel,
 		context:               ctx,
 		stateLock:             &sync.RWMutex{},
 		connection:            conn,
+		eventsQueue:           make(chan *frame.Frame, eventQueueLength),
 	}
 
 	client.waitGroup.Add(1)
@@ -81,7 +84,7 @@ func NewTestClient(address string) (*TestClient, error) {
 				if errors.Is(err, io.EOF) {
 					return
 				} else if err != nil {
-					log.Errorf("error in test client connection: %v", err)
+					log.Errorf("[TestClient] error in test client connection: %v", err)
 					return
 				}
 			case <-client.context.Done():
@@ -98,14 +101,21 @@ func NewTestClient(address string) (*TestClient, error) {
 		for {
 			parsedFrame, err := codec.DecodeFrame(conn)
 			if errors.Is(err, io.EOF) {
-				log.Infof("EOF in test client connection")
+				log.Infof("[TestClient] EOF in test client connection")
 				break
 			} else if err != nil {
-				log.Errorf("error while reading from test client connection: %v", err)
+				log.Errorf("[TestClient] error while reading from test client connection: %v", err)
 				break
 			}
 
+			log.Infof("[TestClient] received response: %v", parsedFrame.Body.Message)
+
 			if parsedFrame.Body.Message.GetOpCode() == cassandraprotocol.OpCodeEvent {
+				select {
+				case client.eventsQueue <- parsedFrame:
+				default:
+					log.Warnf("[TestClient] events queue is full, discarding event message...")
+				}
 				continue
 			}
 
@@ -114,7 +124,7 @@ func NewTestClient(address string) (*TestClient, error) {
 			client.pendingOperationsLock.RUnlock()
 
 			if !ok {
-				log.Warnf("could not find response channel for streamid %d, skipping", parsedFrame.Header.StreamId)
+				log.Warnf("[TestClient] could not find response channel for streamid %d, skipping", parsedFrame.Header.StreamId)
 				client.ReturnStreamId(parsedFrame.Header.StreamId)
 				continue
 			}
@@ -139,16 +149,9 @@ func (testClient *TestClient) isClosed() bool {
 	return testClient.closed
 }
 
-func (testClient *TestClient) PerformHandshake(useAuth bool) error {
-
-	startupMsg := message.NewStartup()
-	startupFrame, err := frame.NewRequestFrame(cassandraprotocol.ProtocolVersion4, 1, false, nil, startupMsg)
-
-	if err != nil {
-		return fmt.Errorf("could not create startup frame: %w", err)
-	}
-
-	response, _, err := testClient.SendRequest(startupFrame)
+func (testClient *TestClient) PerformHandshake(
+	version cassandraprotocol.ProtocolVersion, useAuth bool, username string, password string) error {
+	response, _, err := testClient.SendMessage(version, message.NewStartup())
 	if err != nil {
 		return fmt.Errorf("could not send startup frame: %w", err)
 	}
@@ -159,27 +162,33 @@ func (testClient *TestClient) PerformHandshake(useAuth bool) error {
 			return fmt.Errorf("expected authenticate but got %02x", response.Body.Message.GetOpCode())
 		}
 
-		authenticator := NewDsePlainTextAuthenticator("cassandra", "cassandra")
+		authenticator := NewDsePlainTextAuthenticator(username, password)
 		initialResponse, err := authenticator.InitialResponse(parsedAuthenticateResponse.Authenticator)
 		if err != nil {
 			return fmt.Errorf("could not create initial response token: %w", err)
 		}
 
-		authResponseRequestMsg := &message.AuthResponse{Token: initialResponse}
-		authResponseFrame, err := frame.NewRequestFrame(
-			cassandraprotocol.ProtocolVersion4, 1, false, nil, authResponseRequestMsg)
-		if err != nil {
-			return fmt.Errorf("could not create auth response: %w", err)
-		}
-
-		response, _, err = testClient.SendRequest(authResponseFrame)
+		response, _, err = testClient.SendMessage(version, &message.AuthResponse{Token: initialResponse})
 		if err != nil {
 			return fmt.Errorf("could not send auth response: %w", err)
 		}
 
+		if response.Body.Message.GetOpCode() != cassandraprotocol.OpCodeAuthSuccess {
+			return fmt.Errorf("expected auth success but received %v", response.Body.Message)
+		}
+
+		return nil
+	}
+
+	if response.Body.Message.GetOpCode() != cassandraprotocol.OpCodeReady {
+		return fmt.Errorf("expected ready but received %v", response.Body.Message)
 	}
 
 	return nil
+}
+
+func (testClient *TestClient) PerformDefaultHandshake(version cassandraprotocol.ProtocolVersion, useAuth bool) error {
+	return testClient.PerformHandshake(version, useAuth, "cassandra", "cassandra")
 }
 
 func (testClient *TestClient) Shutdown() error {
@@ -207,6 +216,8 @@ func (testClient *TestClient) shutdownInternal() error {
 			close(respChan)
 		}
 		testClient.pendingOperationsLock.RUnlock()
+
+		close(testClient.eventsQueue)
 
 		if err != nil {
 			return fmt.Errorf("could not close connection: %w", err)
@@ -282,4 +293,38 @@ func (testClient *TestClient) SendRequest(request *frame.Frame) (*frame.Frame, i
 	}
 	response, err := testClient.SendRawRequest(streamId, buf.Bytes())
 	return response, streamId, err
+}
+
+func (testClient *TestClient) SendMessage(
+	protocolVersion cassandraprotocol.ProtocolVersion, message message.Message) (*frame.Frame, int16, error) {
+	streamId, err := testClient.BorrowStreamId()
+	if err != nil {
+		return nil, streamId, err
+	}
+
+	reqFrame, err := frame.NewRequestFrame(protocolVersion, streamId, false, nil, message)
+	if err != nil {
+		return nil, streamId, err
+	}
+
+	buf := &bytes.Buffer{}
+	err = frame.NewCodec().EncodeFrame(reqFrame, buf)
+	if err != nil {
+		return nil, streamId, fmt.Errorf("could not encode request: %w", err)
+	}
+
+	response, err := testClient.SendRawRequest(streamId, buf.Bytes())
+	return response, streamId, err
+}
+
+func (testClient *TestClient) GetEventMessage(timeout time.Duration) (*frame.Frame, error) {
+	select {
+	case eventMsg, ok := <-testClient.eventsQueue:
+		if !ok {
+			return nil, errors.New("channel closed")
+		}
+		return eventMsg, nil
+	case <-time.After(timeout):
+		return nil, errors.New("timeout retrieving event message")
+	}
 }

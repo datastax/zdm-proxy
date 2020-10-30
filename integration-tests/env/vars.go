@@ -2,8 +2,10 @@ package env
 
 import (
 	"flag"
+	"math/rand"
 	"os"
 	"strings"
+	"time"
 )
 
 const (
@@ -11,6 +13,7 @@ const (
 	TargetNodes = 1
 )
 
+var Rand = rand.New(rand.NewSource(time.Now().UTC().UnixNano()))
 var ServerVersion string
 var CassandraVersion string
 var DseVersion string

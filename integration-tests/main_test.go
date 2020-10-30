@@ -17,7 +17,7 @@ var dest setup.TestCluster
 
 func TestMain(m *testing.M) {
 	gocql.TimeoutLimit = 5
-	log.SetLevel(log.InfoLevel)
+	log.SetLevel(log.DebugLevel)
 
 	env.InitGlobalVars()
 

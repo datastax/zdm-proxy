@@ -5,7 +5,7 @@ import (
 	"github.com/riptano/cloud-gate/integration-tests/setup"
 	"github.com/riptano/cloud-gate/integration-tests/simulacron"
 	"github.com/riptano/cloud-gate/utils"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"testing"
 )
 
@@ -36,16 +36,16 @@ func TestBatchBothWriteTimeout(t *testing.T) {
 	batch := newBatch(proxy)
 	err = proxy.ExecuteBatch(batch)
 
-	assert.True(t, err != nil, "batch should have failed but it didn't")
+	require.True(t, err != nil, "batch should have failed but it didn't")
 
 	errTimeOut, ok := err.(*gocql.RequestErrWriteTimeout)
-	assert.True(t, ok, "error is not Write Timeout: ", err.Error())
+	require.True(t, ok, "error is not Write Timeout: ", err.Error())
 
 	// assert that the error returned by the proxy matches the origin cluster error not the target cluster one
-	assert.Equal(t, 1, errTimeOut.Received, "errTimeOut.Received: expected 1, got ", errTimeOut.Received)
-	assert.Equal(t, 1, errTimeOut.BlockFor, "errTimeOut.BlockFor: expected 1, got ", errTimeOut.BlockFor)
-	assert.Equal(t, string(simulacron.Batch), errTimeOut.WriteType, "errTimeOut.WriteType: expected BATCH, got ", errTimeOut.WriteType)
-	assert.Equal(t, gocql.One, errTimeOut.Consistency, "errTimeOut.Consistency: expected ONE, got ", errTimeOut.Consistency)
+	require.Equal(t, 1, errTimeOut.Received, "errTimeOut.Received: expected 1, got ", errTimeOut.Received)
+	require.Equal(t, 1, errTimeOut.BlockFor, "errTimeOut.BlockFor: expected 1, got ", errTimeOut.BlockFor)
+	require.Equal(t, string(simulacron.Batch), errTimeOut.WriteType, "errTimeOut.WriteType: expected BATCH, got ", errTimeOut.WriteType)
+	require.Equal(t, gocql.One, errTimeOut.Consistency, "errTimeOut.Consistency: expected ONE, got ", errTimeOut.Consistency)
 }
 
 func TestBatchOriginWriteTimeout(t *testing.T) {
@@ -74,16 +74,16 @@ func TestBatchOriginWriteTimeout(t *testing.T) {
 	batch := newBatch(proxy)
 	err = proxy.ExecuteBatch(batch)
 
-	assert.True(t, err != nil, "batch should have failed but it didn't")
+	require.True(t, err != nil, "batch should have failed but it didn't")
 
 	errTimeOut, ok := err.(*gocql.RequestErrWriteTimeout)
-	assert.True(t, ok, "error is not Write Timeout: ", err.Error())
+	require.True(t, ok, "error is not Write Timeout: ", err.Error())
 
 	// assert that the error returned by the proxy matches the origin cluster error
-	assert.Equal(t, 1, errTimeOut.Received, "errTimeOut.Received: expected 1, got ", errTimeOut.Received)
-	assert.Equal(t, 1, errTimeOut.BlockFor, "errTimeOut.BlockFor: expected 1, got ", errTimeOut.BlockFor)
-	assert.Equal(t, string(simulacron.Batch), errTimeOut.WriteType, "errTimeOut.WriteType: expected BATCH, got ", errTimeOut.WriteType)
-	assert.Equal(t, gocql.One, errTimeOut.Consistency, "errTimeOut.Consistency: expected ONE, got ", errTimeOut.Consistency)
+	require.Equal(t, 1, errTimeOut.Received, "errTimeOut.Received: expected 1, got ", errTimeOut.Received)
+	require.Equal(t, 1, errTimeOut.BlockFor, "errTimeOut.BlockFor: expected 1, got ", errTimeOut.BlockFor)
+	require.Equal(t, string(simulacron.Batch), errTimeOut.WriteType, "errTimeOut.WriteType: expected BATCH, got ", errTimeOut.WriteType)
+	require.Equal(t, gocql.One, errTimeOut.Consistency, "errTimeOut.Consistency: expected ONE, got ", errTimeOut.Consistency)
 }
 
 func TestBatchTargetWriteTimeout(t *testing.T) {
@@ -112,16 +112,16 @@ func TestBatchTargetWriteTimeout(t *testing.T) {
 	batch := newBatch(proxy)
 	err = proxy.ExecuteBatch(batch)
 
-	assert.True(t, err != nil, "batch should have failed but it didn't")
+	require.True(t, err != nil, "batch should have failed but it didn't")
 
 	errTimeOut, ok := err.(*gocql.RequestErrWriteTimeout)
-	assert.True(t, ok, "error is not Write Timeout: ", err.Error())
+	require.True(t, ok, "error is not Write Timeout: ", err.Error())
 
 	// assert that the error returned by the proxy matches the target cluster error
-	assert.Equal(t, 1, errTimeOut.Received, "errTimeOut.Received: expected 1, got ", errTimeOut.Received)
-	assert.Equal(t, 1, errTimeOut.BlockFor, "errTimeOut.BlockFor: expected 1, got ", errTimeOut.BlockFor)
-	assert.Equal(t, string(simulacron.Batch), errTimeOut.WriteType, "errTimeOut.WriteType: expected BATCH, got ", errTimeOut.WriteType)
-	assert.Equal(t, gocql.One, errTimeOut.Consistency, "errTimeOut.Consistency: expected ONE, got ", errTimeOut.Consistency)
+	require.Equal(t, 1, errTimeOut.Received, "errTimeOut.Received: expected 1, got ", errTimeOut.Received)
+	require.Equal(t, 1, errTimeOut.BlockFor, "errTimeOut.BlockFor: expected 1, got ", errTimeOut.BlockFor)
+	require.Equal(t, string(simulacron.Batch), errTimeOut.WriteType, "errTimeOut.WriteType: expected BATCH, got ", errTimeOut.WriteType)
+	require.Equal(t, gocql.One, errTimeOut.Consistency, "errTimeOut.Consistency: expected ONE, got ", errTimeOut.Consistency)
 }
 
 func TestBatchWriteSuccessful(t *testing.T) {
@@ -148,7 +148,7 @@ func TestBatchWriteSuccessful(t *testing.T) {
 	batch := newBatch(proxy)
 	err = proxy.ExecuteBatch(batch)
 
-	assert.True(t, err == nil, "batch shouldn't have failed but it did")
+	require.True(t, err == nil, "batch shouldn't have failed but it did")
 }
 
 func newBatchOptions() *simulacron.WhenBatchOptions {

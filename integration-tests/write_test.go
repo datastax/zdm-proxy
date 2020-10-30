@@ -5,7 +5,7 @@ import (
 	"github.com/riptano/cloud-gate/integration-tests/setup"
 	"github.com/riptano/cloud-gate/integration-tests/simulacron"
 	"github.com/riptano/cloud-gate/utils"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"testing"
 )
 
@@ -52,14 +52,14 @@ func TestBothWriteTimeout(t *testing.T) {
 
 	err = proxy.Query("INSERT INTO myks.users (name) VALUES (?)", "john").Exec()
 
-	assert.True(t, err != nil, "query should have failed but it didn't")
+	require.True(t, err != nil, "query should have failed but it didn't")
 
 	errTimeOut, ok := err.(*gocql.RequestErrWriteTimeout)
-	assert.True(t, ok, "error is not Write Timeout: ", err.Error())
+	require.True(t, ok, "error is not Write Timeout: ", err.Error())
 
 	// assert that the error returned by the proxy matches the origin cluster error not the target cluster one
-	assert.Equal(t, originReceived, errTimeOut.Received, "timeout error received field doesn't match the origin cluster error")
-	assert.Equal(t, gocql.One, errTimeOut.Consistency, "timeout error consistency field doesn't match the origin cluster error")
+	require.Equal(t, originReceived, errTimeOut.Received, "timeout error received field doesn't match the origin cluster error")
+	require.Equal(t, gocql.One, errTimeOut.Consistency, "timeout error consistency field doesn't match the origin cluster error")
 }
 
 func TestOriginWriteTimeout(t *testing.T) {
@@ -105,14 +105,14 @@ func TestOriginWriteTimeout(t *testing.T) {
 
 	err = proxy.Query("INSERT INTO myks.users (name) VALUES (?)", "john").Exec()
 
-	assert.True(t, err != nil, "query should have failed but it didn't")
+	require.True(t, err != nil, "query should have failed but it didn't")
 
 	errTimeOut, ok := err.(*gocql.RequestErrWriteTimeout)
-	assert.True(t, ok, "error is not Write Timeout: ", err.Error())
+	require.True(t, ok, "error is not Write Timeout: ", err.Error())
 
 	// assert that the error returned by the proxy matches the origin cluster error not the target cluster one
-	assert.Equal(t, originReceived, errTimeOut.Received, "timeout error received field doesn't match the origin cluster error")
-	assert.Equal(t, gocql.Two, errTimeOut.Consistency, "timeout error consistency field doesn't match the origin cluster error")
+	require.Equal(t, originReceived, errTimeOut.Received, "timeout error received field doesn't match the origin cluster error")
+	require.Equal(t, gocql.Two, errTimeOut.Consistency, "timeout error consistency field doesn't match the origin cluster error")
 }
 
 func TestTargetWriteTimeout(t *testing.T) {
@@ -158,14 +158,14 @@ func TestTargetWriteTimeout(t *testing.T) {
 
 	err = proxy.Query("INSERT INTO myks.users (name) VALUES (?)", "john").Exec()
 
-	assert.True(t, err != nil, "query should have failed but it didn't")
+	require.True(t, err != nil, "query should have failed but it didn't")
 
 	errTimeOut, ok := err.(*gocql.RequestErrWriteTimeout)
-	assert.True(t, ok, "error is not Write Timeout: ", err.Error())
+	require.True(t, ok, "error is not Write Timeout: ", err.Error())
 
 	// assert that the error returned by the proxy matches the origin cluster error not the target cluster one
-	assert.Equal(t, targetReceived, errTimeOut.Received, "timeout error received field doesn't match the target cluster error")
-	assert.Equal(t, gocql.Two, errTimeOut.Consistency, "timeout error consistency field doesn't match the target cluster error")
+	require.Equal(t, targetReceived, errTimeOut.Received, "timeout error received field doesn't match the target cluster error")
+	require.Equal(t, gocql.Two, errTimeOut.Consistency, "timeout error consistency field doesn't match the target cluster error")
 }
 
 func TestWriteSuccessful(t *testing.T) {

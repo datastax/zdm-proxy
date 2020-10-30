@@ -3,7 +3,7 @@ package integration_tests
 import (
 	"github.com/riptano/cloud-gate/integration-tests/setup"
 	"github.com/riptano/cloud-gate/utils"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"testing"
 )
 
@@ -30,8 +30,8 @@ func TestGoCqlConnect(t *testing.T) {
 		t.Fatal("query failed:", err)
 	}
 
-	assert.Equal(t, 0, len(result))
+	require.Equal(t, 0, len(result))
 
 	// simulacron generates fake response metadata when queries aren't primed
-	assert.Equal(t, "fake", iter.Columns()[0].Name)
+	require.Equal(t, "fake", iter.Columns()[0].Name)
 }

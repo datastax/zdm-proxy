@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol"
 	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol/frame"
 	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
@@ -31,7 +32,8 @@ type ClusterConnector struct {
 	clusterResponseChannels map[int16]chan *frame.RawFrame // map of channels, keyed on streamID, on which to send the response to a request
 	clusterType             ClusterType
 
-	lock                    *sync.RWMutex // TODO do we need a lock here?
+	clusterConnEventsChan   chan *frame.RawFrame
+	lock                    *sync.RWMutex
 	metricsHandler          metrics.IMetricsHandler
 	waitGroup               *sync.WaitGroup
 	clientHandlerContext    context.Context
@@ -46,7 +48,8 @@ func NewClusterConnectionInfo(ipAddress string, port int, isOriginCassandra bool
 	}
 }
 
-func NewClusterConnector(connInfo *ClusterConnectionInfo,
+func NewClusterConnector(
+	connInfo *ClusterConnectionInfo,
 	metricsHandler metrics.IMetricsHandler,
 	waitGroup *sync.WaitGroup,
 	clientHandlerContext context.Context,
@@ -73,6 +76,7 @@ func NewClusterConnector(connInfo *ClusterConnectionInfo,
 		connection:              conn,
 		clusterResponseChannels: make(map[int16]chan *frame.RawFrame),
 		clusterType:             clusterType,
+		clusterConnEventsChan:   make(chan *frame.RawFrame),
 		lock:                    &sync.RWMutex{},
 		metricsHandler:          metricsHandler,
 		waitGroup:               waitGroup,
@@ -123,6 +127,7 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 	log.Debugf("Listening to replies sent by node %v", cc.connection.RemoteAddr())
 	go func() {
 		defer cc.waitGroup.Done()
+		defer close(cc.clusterConnEventsChan)
 		for {
 			response, err := readRawFrame(cc.connection, cc.clientHandlerContext)
 
@@ -141,11 +146,14 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 				break
 			}
 
-			log.Debugf(
-				"Received response from %v (%v), opcode=%d, stream id=%d",
-				cc.clusterType, cc.connection.RemoteAddr(), response.RawHeader.OpCode, response.RawHeader.StreamId)
-			log.Tracef("Response body: %v", string(*&response.RawBody))
-			cc.forwardResponseToChannel(response)
+			log.Debugf("Received response from %v (%v): %v",
+				cc.clusterType, cc.connection.RemoteAddr(), response.RawHeader)
+
+			if response.RawHeader.OpCode == cassandraprotocol.OpCodeEvent {
+				cc.clusterConnEventsChan <- response
+			} else {
+				cc.forwardResponseToChannel(response)
+			}
 		}
 		log.Infof("shutting down response listening loop from %v", cc.connection.RemoteAddr())
 	}()
@@ -249,7 +257,7 @@ func (cc *ClusterConnector) deleteChannelForClusterResponse(streamId int16) {
 }
 
 func (cc *ClusterConnector) sendRequestToCluster(clientHandlerContext context.Context, frame *frame.RawFrame) error {
-	log.Debugf("Executing %x on cluster with address %v", frame.RawHeader.String(), cc.connection.RemoteAddr())
+	log.Debugf("Executing %v on cluster %v with address %v", frame.RawHeader, cc.clusterType, cc.connection.RemoteAddr())
 	return writeRawFrame(cc.connection, clientHandlerContext, frame)
 }
 

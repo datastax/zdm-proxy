@@ -47,7 +47,7 @@ func TestInspectFrame(t *testing.T) {
 		{"OpCodeExecute both", args{mockExecuteFrame("BOTH"), psCache, mh, km}, forwardToBoth},
 		{"OpCodeExecute unknown", args{mockExecuteFrame("UNKNOWN"), psCache, mh, km}, "The preparedID of the statement to be executed (UNKNOWN) does not exist in the proxy cache"},
 		// REGISTER
-		{"OpCodeRegister", args{mockFrame(&message.Register{EventTypes: []cassandraprotocol.EventType{cassandraprotocol.EventTypeSchemaChange}}), psCache, mh, km}, forwardToOrigin},
+		{"OpCodeRegister", args{mockFrame(&message.Register{EventTypes: []cassandraprotocol.EventType{cassandraprotocol.EventTypeSchemaChange}}), psCache, mh, km}, forwardToBoth},
 		// others
 		{"OpCodeBatch", args{mockBatch("irrelevant"), psCache, mh, km}, forwardToBoth},
 		{"OpCodeStartup", args{mockFrame(message.NewStartup()), psCache, mh, km}, forwardToOrigin},

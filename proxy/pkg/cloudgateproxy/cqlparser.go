@@ -102,7 +102,7 @@ func inspectFrame(
 			return forwardToNone, &UnpreparedExecuteError{RawHeader: f.RawHeader, Body: body, preparedId: executeMsg.QueryId}
 		}
 
-	case cassandraprotocol.OpCodeRegister, cassandraprotocol.OpCodeStartup, cassandraprotocol.OpCodeAuthResponse:
+	case cassandraprotocol.OpCodeStartup, cassandraprotocol.OpCodeAuthResponse:
 		return forwardToOrigin, nil
 
 	default:

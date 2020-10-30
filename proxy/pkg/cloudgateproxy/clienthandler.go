@@ -32,7 +32,6 @@ import (
 
 type ClientHandler struct {
 	clientConnector            *ClientConnector
-	clientConnectorRequestChan chan *frame.RawFrame // channel on which the client connector passes requests coming from the client
 
 	originCassandraConnector *ClusterConnector
 	targetCassandraConnector *ClusterConnector
@@ -49,6 +48,8 @@ type ClientHandler struct {
 
 	startupFrame *frame.RawFrame
 
+	eventsChannel chan *frame.RawFrame
+
 	targetUsername string
 	targetPassword string
 }
@@ -62,7 +63,6 @@ func NewClientHandler(clientTcpConn net.Conn,
 	metricsHandler metrics.IMetricsHandler,
 	waitGroup *sync.WaitGroup,
 	globalContext context.Context) (*ClientHandler, error) {
-	clientReqChan := make(chan *frame.RawFrame)
 
 	clientHandlerContext, clientHandlerCancelFunc := context.WithCancel(context.Background())
 
@@ -90,20 +90,29 @@ func NewClientHandler(clientTcpConn net.Conn,
 		return nil, err
 	}
 
+	eventsChannel := make(chan *frame.RawFrame)
+
 	return &ClientHandler{
-		clientConnector:            NewClientConnector(clientTcpConn, clientReqChan, metricsHandler, waitGroup, clientHandlerContext, clientHandlerCancelFunc),
-		clientConnectorRequestChan: clientReqChan,
-		originCassandraConnector:   originConnector,
-		targetCassandraConnector:   targetConnector,
-		preparedStatementCache:     psCache,
-		metricsHandler:             metricsHandler,
-		globalWaitGroup:            waitGroup,
-		clientHandlerContext:       clientHandlerContext,
-		clientHandlerCancelFunc:    clientHandlerCancelFunc,
-		currentKeyspaceName:        &atomic.Value{},
-		startupFrame:               nil,
-		targetUsername:             targetUsername,
-		targetPassword:             targetPassword,
+		clientConnector: NewClientConnector(
+			clientTcpConn,
+			eventsChannel,
+			metricsHandler,
+			waitGroup,
+			clientHandlerContext,
+			clientHandlerCancelFunc),
+
+		originCassandraConnector: originConnector,
+		targetCassandraConnector: targetConnector,
+		preparedStatementCache:   psCache,
+		metricsHandler:           metricsHandler,
+		globalWaitGroup:          waitGroup,
+		clientHandlerContext:     clientHandlerContext,
+		clientHandlerCancelFunc:  clientHandlerCancelFunc,
+		currentKeyspaceName:      &atomic.Value{},
+		startupFrame:             nil,
+		eventsChannel:            eventsChannel,
+		targetUsername:           targetUsername,
+		targetPassword:           targetPassword,
 	}, nil
 }
 
@@ -115,6 +124,7 @@ func (ch *ClientHandler) run() {
 	ch.originCassandraConnector.run()
 	ch.targetCassandraConnector.run()
 	ch.listenForClientRequests()
+	ch.listenForEventMessages()
 }
 
 /**
@@ -135,7 +145,7 @@ func (ch *ClientHandler) listenForClientRequests() {
 			var frame *frame.RawFrame
 			ok := true
 			select {
-			case frame, ok = <-ch.clientConnectorRequestChan:
+			case frame, ok = <-ch.clientConnector.requestChannel:
 			case <-ch.clientHandlerContext.Done():
 				ok = false
 			}
@@ -144,7 +154,7 @@ func (ch *ClientHandler) listenForClientRequests() {
 				break
 			}
 
-			log.Tracef("frame received")
+			log.Debugf("Request received on client handler: %v", frame.RawHeader)
 			if !ready {
 				log.Tracef("not ready")
 				// Handle client authentication
@@ -167,6 +177,81 @@ func (ch *ClientHandler) listenForClientRequests() {
 		log.Infof("Shutting down client requests listener.")
 
 		handleWaitGroup.Wait()
+	}()
+}
+
+/**
+ *	Infinite loop that blocks on receiving from both cluster connector event channels
+ *	Event messages that come through will only be routed if:
+ *  - it's a schema change from origin
+ */
+func (ch *ClientHandler) listenForEventMessages() {
+	ch.globalWaitGroup.Add(1)
+	log.Debugf("listenForEventMessages loop starting now")
+	go func() {
+		defer ch.globalWaitGroup.Done()
+		defer close(ch.eventsChannel)
+		shutDownChannels := 0
+		targetChannel := ch.targetCassandraConnector.clusterConnEventsChan
+		originChannel := ch.originCassandraConnector.clusterConnEventsChan
+		for {
+			if shutDownChannels >= 2 {
+				break
+			}
+
+			var frame *frame.RawFrame
+			var ok bool
+			var fromTarget bool
+
+			//goland:noinspection ALL
+			select {
+			case frame, ok = <-targetChannel:
+				if !ok {
+					log.Info("Target event channel closed")
+					shutDownChannels++
+					targetChannel = nil
+					continue
+				}
+				fromTarget = true
+			case frame, ok = <-originChannel:
+				if !ok {
+					log.Info("Origin event channel closed")
+					shutDownChannels++
+					originChannel = nil
+					continue
+				}
+				fromTarget = false
+			}
+
+			log.Debugf("Event received (fromTarget: %v) on client handler: %v", fromTarget, frame.RawHeader)
+
+			body, err := defaultCodec.DecodeBody(frame.RawHeader, bytes.NewReader(frame.RawBody))
+			if err != nil {
+				log.Warnf("Error decoding event response: %v", err)
+				continue
+			}
+
+			switch eventMsg := body.Message.(type) {
+			case *message.SchemaChangeEvent:
+				if fromTarget {
+					log.Infof("Received schema change event from target, skipping: %v", eventMsg)
+					continue
+				}
+			case *message.StatusChangeEvent:
+				log.Infof("Received status change event (fromTarget: %v), skipping: %v", fromTarget, eventMsg)
+				continue
+			case *message.TopologyChangeEvent:
+				log.Infof("Received topology change event (fromTarget: %v), skipping: %v", fromTarget, eventMsg)
+				continue
+			default:
+				log.Infof("Expected event message (fromTarget: %v) but got: %v", fromTarget, eventMsg)
+				continue
+			}
+
+			ch.eventsChannel <- frame
+		}
+
+		log.Infof("Shutting down client event messages listener.")
 	}()
 }
 
@@ -306,20 +391,6 @@ func (ch *ClientHandler) forwardRequest(request *frame.RawFrame) (*frame.RawFram
 	}
 
 	switch response.RawHeader.OpCode {
-	case cassandraprotocol.OpCodeEvent:
-		body, err := defaultCodec.DecodeBody(response.RawHeader, bytes.NewReader(response.RawBody))
-		if err != nil {
-			return nil, fmt.Errorf("error decoding event response: %s", err.Error())
-		}
-
-		eventMsg, ok := body.Message.(message.Event)
-		if !ok {
-			return nil, fmt.Errorf("expected EVENT message but got %d", body.Message.GetOpCode())
-		}
-
-		if eventMsg.GetEventType() != cassandraprotocol.EventTypeSchemaChange {
-			return nil, nil
-		}
 	case cassandraprotocol.OpCodeResult:
 		body, err := defaultCodec.DecodeBody(response.RawHeader, bytes.NewReader(response.RawBody))
 		if err != nil {

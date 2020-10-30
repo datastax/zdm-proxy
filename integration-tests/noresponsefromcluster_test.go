@@ -2,7 +2,6 @@ package integration_tests
 
 import (
 	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol"
-	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol/primitives"
 	"github.com/riptano/cloud-gate/integration-tests/client"
@@ -21,7 +20,7 @@ func TestAtLeastOneClusterReturnsNoResponse(t *testing.T) {
 	testClient, err := client.NewTestClient("127.0.0.1:14002")
 	require.True(t, err == nil, "testClient setup failed: %s", err)
 
-	err = testClient.PerformHandshake(false)
+	err = testClient.PerformDefaultHandshake(cassandraprotocol.ProtocolVersion4, false)
 	require.True(t, err == nil, "No-auth handshake failed: %s", err)
 
 	defer testClient.Shutdown()
@@ -80,11 +79,8 @@ func TestAtLeastOneClusterReturnsNoResponse(t *testing.T) {
 				Query:   "INSERT INTO myks.users (name) VALUES (?)",
 				Options: message.NewQueryOptions(message.WithPositionalValues(primitives.NewValue([]byte("john")))),
 			}
-			queryFrame, err := frame.NewRequestFrame(
-				cassandraprotocol.ProtocolVersion4, -1, false, nil, query)
-			require.True(t, err == nil, "query request creation failed: %s", err)
+			response, _, err := testClient.SendMessage(cassandraprotocol.ProtocolVersion4, query)
 
-			response, _, err := testClient.SendRequest(queryFrame)
 			require.True(t, response == nil, "a response has been received")
 			require.True(t, err != nil, "no error has been received, but the request should have failed")
 			require.True(t, strings.EqualFold(err.Error(), "request timed out at client level"), "the request should have timed out at client level, but it didn't")
