@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol"
 	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol/message"
+	"github.com/riptano/cloud-gate/integration-tests/ccm"
 	"github.com/riptano/cloud-gate/integration-tests/client"
 	"github.com/riptano/cloud-gate/integration-tests/env"
 	"github.com/stretchr/testify/require"
@@ -11,11 +12,12 @@ import (
 	"time"
 )
 
-// TestSchemaEvents tests the event message handling
+// TestSchemaEvents tests the schema event message handling
 func TestSchemaEvents(t *testing.T) {
 	if !env.UseCcm {
 		t.Skip("Test requires CCM, set USE_CCM env variable to TRUE")
 	}
+
 	tests := []struct {
 		name           string
 		endpointSchemaChange string
@@ -23,12 +25,12 @@ func TestSchemaEvents(t *testing.T) {
 	}{
 		{
 			name:                 "schema change on origin",
-			endpointSchemaChange: fmt.Sprintf("%s:%d", source.GetInitialContactPoint(), 9042),
+			endpointSchemaChange: fmt.Sprintf("%s:%d", originCluster.GetInitialContactPoint(), 9042),
 			expectedEvent:        true,
 		},
 		{
 			name:                 "schema change on target",
-			endpointSchemaChange: fmt.Sprintf("%s:%d", dest.GetInitialContactPoint(), 9042),
+			endpointSchemaChange: fmt.Sprintf("%s:%d", targetCluster.GetInitialContactPoint(), 9042),
 			expectedEvent:        false,
 		},
 	}
@@ -92,6 +94,98 @@ func TestSchemaEvents(t *testing.T) {
 				require.True(t, err != nil, "did not expect to receive a second event message: %v", response)
 			} else {
 				response, err = testClientForEvents.GetEventMessage(500 * time.Millisecond)
+				require.True(t, err != nil, "did not expect to receive an event message: %v", response)
+			}
+		})
+	}
+}
+
+// TestTopologyStatusEvents tests the topology and status events handling
+func TestTopologyStatusEvents(t *testing.T) {
+	if !env.UseCcm {
+		t.Skip("Test requires CCM, set USE_CCM env variable to TRUE")
+	}
+
+	tests := []struct {
+		name                    string
+		clusterToChangeTopology *ccm.Cluster
+		expectedEvents          bool
+	}{
+		{
+			name:                    "origin should not forward events",
+			clusterToChangeTopology: originCluster,
+			expectedEvents:          false,
+		},
+		{
+			name:                    "target should forward events",
+			clusterToChangeTopology: targetCluster,
+			expectedEvents:          true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			proxyInstance := NewProxyInstanceForGlobalCcmClusters()
+			defer proxyInstance.Shutdown()
+
+			testClientForEvents, err := client.NewTestClient("127.0.0.1:14002")
+			require.True(t, err == nil, "unable to connect to test client: %v", err)
+			defer testClientForEvents.Shutdown()
+
+			err = testClientForEvents.PerformDefaultHandshake(cassandraprotocol.ProtocolVersion4, false)
+			require.True(t, err == nil, "could not perform handshake: %v", err)
+
+			registerMsg := &message.Register{
+				EventTypes: []cassandraprotocol.EventType{
+					cassandraprotocol.EventTypeSchemaChange,
+					cassandraprotocol.EventTypeStatusChange,
+					cassandraprotocol.EventTypeTopologyChange},
+			}
+
+			response, _, err := testClientForEvents.SendMessage(cassandraprotocol.ProtocolVersion4, registerMsg)
+			require.True(t, err == nil, "could not send register frame: %v", err)
+
+			_, ok := response.Body.Message.(*message.Ready)
+			require.True(t, ok, "expected ready but got %v", response.Body.Message)
+
+			clusterToAddNode := tt.clusterToChangeTopology
+			nodeIndex := clusterToAddNode.GetNumberOfSeedNodes()
+			err = clusterToAddNode.AddNode(nodeIndex)
+			require.True(t, err == nil, "failed to add node: %v", err)
+			defer clusterToAddNode.RemoveNode(nodeIndex)
+
+			err = clusterToAddNode.StartNode(nodeIndex)
+			require.True(t, err == nil, "failed to start node: %v", err)
+
+			err = clusterToAddNode.StopNode(nodeIndex)
+			require.True(t, err == nil, "failed to stop node: %v", err)
+
+			if tt.expectedEvents {
+				response, err = testClientForEvents.GetEventMessage(5 * time.Second)
+				require.True(t, err == nil, "could not get event message: %v", err)
+
+				topologyChangeEvent, ok := response.Body.Message.(*message.TopologyChangeEvent)
+				require.True(t, ok, "expected topology change event but was %v", response.Body.Message)
+				require.Equal(t, cassandraprotocol.TopologyChangeTypeNewNode, topologyChangeEvent.ChangeType)
+
+				response, err = testClientForEvents.GetEventMessage(5 * time.Second)
+				require.True(t, err == nil, "could not get second event message: %v", err)
+
+				statusChangeEvent, ok := response.Body.Message.(*message.StatusChangeEvent)
+				require.True(t, ok, "expected status change event but was %v", response.Body.Message)
+				require.Equal(t, cassandraprotocol.StatusChangeTypeUp, statusChangeEvent.ChangeType)
+
+				response, err = testClientForEvents.GetEventMessage(30 * time.Second)
+				require.True(t, err == nil, "could not get third event message: %v", err)
+
+				statusChangeEvent, ok = response.Body.Message.(*message.StatusChangeEvent)
+				require.True(t, ok, "expected status change event but was %v", response.Body.Message)
+				require.Equal(t, cassandraprotocol.StatusChangeTypeDown, statusChangeEvent.ChangeType)
+
+				response, err = testClientForEvents.GetEventMessage(200 * time.Millisecond)
+				require.True(t, err != nil, "did not expect to receive a fourth event message: %v", response)
+			} else {
+				response, err = testClientForEvents.GetEventMessage(5000 * time.Millisecond)
 				require.True(t, err != nil, "did not expect to receive an event message: %v", response)
 			}
 		})

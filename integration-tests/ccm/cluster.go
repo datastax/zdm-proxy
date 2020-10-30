@@ -11,25 +11,27 @@ type Cluster struct {
 	version             string
 	initialContactPoint string
 	isDse               bool
+	numberOfSeedNodes   int
 
 	startNodeIndex int
 	session        *gocql.Session
 }
 
-func newCluster(name string, version string, isDse bool, startNodeIndex int) *Cluster {
+func newCluster(name string, version string, isDse bool, startNodeIndex int, numberOfSeedNodes int) *Cluster {
 	return &Cluster{
-		name,
-		version,
-		fmt.Sprintf("127.0.0.%d", startNodeIndex),
-		isDse,
-		startNodeIndex,
-		nil,
+		name:                name,
+		version:             version,
+		initialContactPoint: fmt.Sprintf("127.0.0.%d", startNodeIndex),
+		isDse:               isDse,
+		numberOfSeedNodes:   numberOfSeedNodes,
+		startNodeIndex:      startNodeIndex,
+		session:             nil,
 	}
 }
 
 func GetNewCluster(id uint64, startNodeIndex int, numberOfNodes int, start bool) (*Cluster, error) {
 	name := fmt.Sprintf("test_cluster%d", id)
-	cluster := newCluster(name, env.ServerVersion, env.IsDse, startNodeIndex)
+	cluster := newCluster(name, env.ServerVersion, env.IsDse, startNodeIndex, numberOfNodes)
 	err := cluster.Create(numberOfNodes, start)
 	if err != nil {
 		return nil, err
@@ -51,6 +53,10 @@ func (ccmCluster *Cluster) GetId() string {
 
 func (ccmCluster *Cluster) GetSession() *gocql.Session {
 	return ccmCluster.session
+}
+
+func (ccmCluster *Cluster) GetNumberOfSeedNodes() int {
+	return ccmCluster.numberOfSeedNodes
 }
 
 func (ccmCluster *Cluster) Create(numberOfNodes int, start bool) error {
@@ -126,5 +132,38 @@ func (ccmCluster *Cluster) Remove() error {
 	}
 
 	_, err := Remove(ccmCluster.name)
+	return err
+}
+
+func (ccmCluster *Cluster) AddNode(index int) error {
+	ccmCluster.SwitchToThis()
+	nodeIndex := ccmCluster.startNodeIndex + index
+	_, err := Add(
+		false,
+		fmt.Sprintf("127.0.0.%d", nodeIndex),
+		2000+nodeIndex*100,
+		7000+nodeIndex*100,
+		fmt.Sprintf("node%d", nodeIndex))
+	return err
+}
+
+func (ccmCluster *Cluster) StartNode(index int, jvmArgs ...string) error {
+	ccmCluster.SwitchToThis()
+	nodeIndex := ccmCluster.startNodeIndex + index
+	_, err := StartNode(fmt.Sprintf("node%d", nodeIndex), jvmArgs...)
+	return err
+}
+
+func (ccmCluster *Cluster) StopNode(index int, jvmArgs ...string) error {
+	ccmCluster.SwitchToThis()
+	nodeIndex := ccmCluster.startNodeIndex + index
+	_, err := StopNode(fmt.Sprintf("node%d", nodeIndex))
+	return err
+}
+
+func (ccmCluster *Cluster) RemoveNode(index int) error {
+	ccmCluster.SwitchToThis()
+	nodeIndex := ccmCluster.startNodeIndex + index
+	_, err := RemoveNode(fmt.Sprintf("node%d", nodeIndex))
 	return err
 }

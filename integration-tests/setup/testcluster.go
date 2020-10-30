@@ -28,18 +28,15 @@ var createdGlobalClusters = false
 var globalCcmClusterOrigin *ccm.Cluster
 var globalCcmClusterTarget *ccm.Cluster
 
-var globalOriginCluster TestCluster
-var globalTargetCluster TestCluster
-
-func GetGlobalTestClusterOrigin() (TestCluster, error) {
+func GetGlobalTestClusterOrigin() (*ccm.Cluster, error) {
 	if createdGlobalClusters {
-		return globalOriginCluster, nil
+		return globalCcmClusterOrigin, nil
 	}
 
 	mux.Lock()
 	defer mux.Unlock()
 	if createdGlobalClusters {
-		return globalOriginCluster, nil
+		return globalCcmClusterOrigin, nil
 	}
 
 	err := createClusters()
@@ -48,18 +45,18 @@ func GetGlobalTestClusterOrigin() (TestCluster, error) {
 		return nil, err
 	}
 
-	return globalOriginCluster, nil
+	return globalCcmClusterOrigin, nil
 }
 
-func GetGlobalTestClusterTarget() (TestCluster, error) {
+func GetGlobalTestClusterTarget() (*ccm.Cluster, error) {
 	if createdGlobalClusters {
-		return globalTargetCluster, nil
+		return globalCcmClusterTarget, nil
 	}
 
 	mux.Lock()
 	defer mux.Unlock()
 	if createdGlobalClusters {
-		return globalTargetCluster, nil
+		return globalCcmClusterTarget, nil
 	}
 
 	err := createClusters()
@@ -68,7 +65,7 @@ func GetGlobalTestClusterTarget() (TestCluster, error) {
 		return nil, err
 	}
 
-	return globalTargetCluster, nil
+	return globalCcmClusterTarget, nil
 }
 
 func createClusters() error {
@@ -87,9 +84,6 @@ func createClusters() error {
 	if err != nil {
 		return err
 	}
-
-	globalOriginCluster = globalCcmClusterOrigin
-	globalTargetCluster = globalCcmClusterTarget
 
 	createdGlobalClusters = true
 	return nil

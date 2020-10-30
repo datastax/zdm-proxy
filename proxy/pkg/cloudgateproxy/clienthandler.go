@@ -238,11 +238,15 @@ func (ch *ClientHandler) listenForEventMessages() {
 					continue
 				}
 			case *message.StatusChangeEvent:
-				log.Infof("Received status change event (fromTarget: %v), skipping: %v", fromTarget, eventMsg)
-				continue
+				if !fromTarget {
+					log.Infof("Received status change event from origin, skipping: %v", eventMsg)
+					continue
+				}
 			case *message.TopologyChangeEvent:
-				log.Infof("Received topology change event (fromTarget: %v), skipping: %v", fromTarget, eventMsg)
-				continue
+				if !fromTarget {
+					log.Infof("Received topology change event from origin, skipping: %v", eventMsg)
+					continue
+				}
 			default:
 				log.Infof("Expected event message (fromTarget: %v) but got: %v", fromTarget, eventMsg)
 				continue

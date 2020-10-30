@@ -32,8 +32,8 @@ func TestBasicBatch(t *testing.T) {
 		"IH0FC3aWM4ynriOFvtr5TfiKxziR5aB1",
 		"FgQfJesbNcxAebzFPRRcW2p1bBtoz1P1"}
 
-	// Seed source and dest w/ schema and data
-	setup.SeedData(source.GetSession(), dest.GetSession(), setup.TestTable, dataIds1, dataTasks1)
+	// Seed originCluster and targetCluster w/ schema and data
+	setup.SeedData(originCluster.GetSession(), targetCluster.GetSession(), setup.TestTable, dataIds1, dataTasks1)
 
 	// Connect to proxy as a "client"
 	proxy, err := utils.ConnectToCluster("127.0.0.1", "", "", 14002)

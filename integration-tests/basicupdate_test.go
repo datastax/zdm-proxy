@@ -10,7 +10,7 @@ import (
 )
 
 // BasicUpdate tests if update queries run correctly
-// Unloads the source database,
+// Unloads the originCluster database,
 // performs an update where through the proxy
 // then loads the unloaded data into the destination
 func TestBasicUpdate(t *testing.T) {
@@ -31,8 +31,8 @@ func TestBasicUpdate(t *testing.T) {
 		"IH0FC3aWM4ynriOFvtr5TfiKxziR5aB1",
 		"FgQfJesbNcxAebzFPRRcW2p1bBtoz1P1"}
 
-	// Seed source and dest w/ schema and data
-	setup.SeedData(source.GetSession(), dest.GetSession(), setup.TestTable, dataIds1, dataTasks1)
+	// Seed originCluster and targetCluster w/ schema and data
+	setup.SeedData(originCluster.GetSession(), targetCluster.GetSession(), setup.TestTable, dataIds1, dataTasks1)
 
 	// Connect to proxy as a "client"
 	proxy, err := utils.ConnectToCluster("127.0.0.1", "", "", 14002)
@@ -50,7 +50,7 @@ func TestBasicUpdate(t *testing.T) {
 	}
 
 	// Assertions!
-	itr := dest.GetSession().Query(fmt.Sprintf("SELECT * FROM %s.%s WHERE id = d1b05da0-8c20-11ea-9fc6-6d2c86545d91;", setup.TestKeyspace, setup.TestTable)).Iter()
+	itr := targetCluster.GetSession().Query(fmt.Sprintf("SELECT * FROM %s.%s WHERE id = d1b05da0-8c20-11ea-9fc6-6d2c86545d91;", setup.TestKeyspace, setup.TestTable)).Iter()
 	row := make(map[string]interface{})
 
 	require.True(t, itr.MapScan(row))

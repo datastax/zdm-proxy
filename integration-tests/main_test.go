@@ -12,8 +12,8 @@ import (
 	"testing"
 )
 
-var source setup.TestCluster
-var dest setup.TestCluster
+var originCluster *ccm.Cluster
+var targetCluster *ccm.Cluster
 
 func TestMain(m *testing.M) {
 	gocql.TimeoutLimit = 5
@@ -25,24 +25,24 @@ func TestMain(m *testing.M) {
 		ccm.RemoveCurrent()
 		ccm.RemoveCurrent()
 		var err error
-		source, err = setup.GetGlobalTestClusterOrigin()
+		originCluster, err = setup.GetGlobalTestClusterOrigin()
 
 		if err != nil {
 			log.WithError(err).Fatal()
 			os.Exit(-1)
 		}
 
-		dest, err = setup.GetGlobalTestClusterTarget()
+		targetCluster, err = setup.GetGlobalTestClusterTarget()
 
 		if err != nil {
 			log.WithError(err).Fatal()
 			os.Exit(-1)
 		}
 
-		sourceSession := source.GetSession()
-		destSession := dest.GetSession()
+		sourceSession := originCluster.GetSession()
+		destSession := targetCluster.GetSession()
 
-		// Seed source and dest with keyspace
+		// Seed originCluster and targetCluster with keyspace
 		setup.SeedKeyspace(sourceSession, destSession)
 	}
 
@@ -62,5 +62,5 @@ func RunTests(m *testing.M) int {
 }
 
 func NewProxyInstanceForGlobalCcmClusters() *cloudgateproxy.CloudgateProxy {
-	return setup.NewProxyInstance(source, dest)
+	return setup.NewProxyInstance(originCluster, targetCluster)
 }

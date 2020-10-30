@@ -14,7 +14,7 @@ import (
 )
 
 // BasicUpdate tests if update queries run correctly
-// Unloads the source database,
+// Unloads the originCluster database,
 // performs an update where through the proxy
 // then loads the unloaded data into the destination
 func TestAuth(t *testing.T) {

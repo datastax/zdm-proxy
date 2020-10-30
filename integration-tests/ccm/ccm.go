@@ -96,3 +96,25 @@ func Start(jvmArgs ...string) (string, error) {
 		return execCcm(append([]string{"start", "--wait-for-binary-proto"}, newJvmArgs...)...)
 	}
 }
+
+func StartNode(nodeName string, jvmArgs ...string) (string, error) {
+	newJvmArgs := make([]string, len(jvmArgs)*2)
+	for i := 0; i < len(newJvmArgs); i += 2 {
+		newJvmArgs[i] = "--jvm_arg"
+		newJvmArgs[i+1] = jvmArgs[i]
+	}
+
+	if runtime.GOOS == "windows" {
+		return execCcm(append([]string{nodeName, "start", "--quiet-windows", "--wait-for-binary-proto"}, newJvmArgs...)...)
+	} else {
+		return execCcm(append([]string{nodeName, "start", "--wait-for-binary-proto"}, newJvmArgs...)...)
+	}
+}
+
+func StopNode(nodeName string) (string, error) {
+	return execCcm(nodeName, "stop")
+}
+
+func RemoveNode(nodeName string) (string, error) {
+	return execCcm(nodeName, "remove")
+}
