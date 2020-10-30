@@ -139,7 +139,7 @@ func (testClient *TestClient) isClosed() bool {
 	return testClient.closed
 }
 
-func (testClient *TestClient) PerformHandshake() error {
+func (testClient *TestClient) PerformHandshake(useAuth bool) error {
 
 	startupMsg := message.NewStartup()
 	startupFrame, err := frame.NewRequestFrame(cassandraprotocol.ProtocolVersion4, 1, false, nil, startupMsg)
@@ -153,27 +153,30 @@ func (testClient *TestClient) PerformHandshake() error {
 		return fmt.Errorf("could not send startup frame: %w", err)
 	}
 
-	parsedAuthenticateResponse, ok := response.Body.Message.(*message.Authenticate)
-	if !ok {
-		return fmt.Errorf("expected authenticate but got %02x", response.Body.Message.GetOpCode())
-	}
+	if useAuth {
+		parsedAuthenticateResponse, ok := response.Body.Message.(*message.Authenticate)
+		if !ok {
+			return fmt.Errorf("expected authenticate but got %02x", response.Body.Message.GetOpCode())
+		}
 
-	authenticator := NewDsePlainTextAuthenticator("cassandra", "cassandra")
-	initialResponse, err := authenticator.InitialResponse(parsedAuthenticateResponse.Authenticator)
-	if err != nil {
-		return fmt.Errorf("could not create initial response token: %w", err)
-	}
+		authenticator := NewDsePlainTextAuthenticator("cassandra", "cassandra")
+		initialResponse, err := authenticator.InitialResponse(parsedAuthenticateResponse.Authenticator)
+		if err != nil {
+			return fmt.Errorf("could not create initial response token: %w", err)
+		}
 
-	authResponseRequestMsg := &message.AuthResponse{Token: initialResponse}
-	authResponseFrame, err := frame.NewRequestFrame(
-		cassandraprotocol.ProtocolVersion4, 1, false, nil, authResponseRequestMsg)
-	if err != nil {
-		return fmt.Errorf("could not create auth response: %w", err)
-	}
+		authResponseRequestMsg := &message.AuthResponse{Token: initialResponse}
+		authResponseFrame, err := frame.NewRequestFrame(
+			cassandraprotocol.ProtocolVersion4, 1, false, nil, authResponseRequestMsg)
+		if err != nil {
+			return fmt.Errorf("could not create auth response: %w", err)
+		}
 
-	response, _, err = testClient.SendRequest(authResponseFrame)
-	if err != nil {
-		return fmt.Errorf("could not send auth response: %w", err)
+		response, _, err = testClient.SendRequest(authResponseFrame)
+		if err != nil {
+			return fmt.Errorf("could not send auth response: %w", err)
+		}
+
 	}
 
 	return nil
@@ -254,7 +257,7 @@ func (testClient *TestClient) SendRawRequest(streamId int16, reqBuf []byte) (*fr
 	testClient.pendingOperationsLock.Unlock()
 
 	if timedOut {
-		return nil, errors.New("timed out")
+		return nil, errors.New("request timed out at client level")
 	}
 
 	if !ok {

@@ -13,6 +13,7 @@ type When interface {
 	ThenServerError(serverError ServerError, message string) Then
 	ThenWriteTimeout(consistencyLevel gocql.Consistency, received int, blockFor int, writeType WriteType) Then
 	ThenReadTimeout(consistencyLevel gocql.Consistency, received int, blockFor int, dataPresent bool) Then
+	ThenNoResult() Then
 }
 
 type baseWhen struct {
@@ -327,6 +328,12 @@ func (when *baseWhen) ThenAlreadyExists(keyspace string, table string) Then {
 		"message":  "already_exists",
 		"keyspace": keyspace,
 		"table":    table,
+	})
+}
+
+func (when *baseWhen) ThenNoResult() Then {
+	return when.then(map[string]interface{}{
+		"result": "no_result",
 	})
 }
 

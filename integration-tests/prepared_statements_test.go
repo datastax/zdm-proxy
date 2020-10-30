@@ -20,8 +20,8 @@ func TestPreparedIdProxyCacheMiss(t *testing.T) {
 	testClient, err := client.NewTestClient("127.0.0.1:14002")
 	assert.True(t, err == nil, "testClient setup failed: %s", err)
 
-	testClient.PerformHandshake() //TODO [Alice] - will fix this as per comment on PR 33
-	assert.True(t, err == nil, "handshake failed: %s", err)
+	err = testClient.PerformHandshake(false)
+	assert.True(t, err == nil, "No-auth handshake failed: %s", err)
 
 	defer testClient.Shutdown()
 
@@ -62,7 +62,10 @@ func TestPreparedIdPreparationMismatch(t *testing.T) {
 
 	testClient, err := client.NewTestClient("127.0.0.1:14002")
 	assert.True(t, err == nil, "testClient setup failed: %s", err)
-	testClient.PerformHandshake()
+
+	err = testClient.PerformHandshake(false)
+	assert.True(t, err == nil, "No-auth handshake failed: %s", err)
+
 	defer testClient.Shutdown()
 
 	tests := map[string]*simulacron.Cluster{
