@@ -112,15 +112,19 @@ type CcmTestSetup struct {
 	Proxy  *cloudgateproxy.CloudgateProxy
 }
 
-func NewSimulacronTestSetup() *SimulacronTestSetup {
-	origin, _ := simulacron.GetNewCluster(1)
-	target, _ := simulacron.GetNewCluster(1)
+func NewSimulacronTestSetupWithSession(createSession bool) *SimulacronTestSetup {
+	origin, _ := simulacron.GetNewCluster(createSession, 1)
+	target, _ := simulacron.GetNewCluster(createSession, 1)
 	proxyInstance := NewProxyInstance(origin, target)
 	return &SimulacronTestSetup{
 		Origin: origin,
 		Target: target,
 		Proxy:  proxyInstance,
 	}
+}
+
+func NewSimulacronTestSetup() *SimulacronTestSetup {
+	return NewSimulacronTestSetupWithSession(false)
 }
 
 func (setup *SimulacronTestSetup) Cleanup() {

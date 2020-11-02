@@ -24,13 +24,14 @@ type DatacenterData struct {
 }
 
 type NodeData struct {
-	Id      int    `json:"id"`
-	Address string `json:"address"`
+	Id          int      `json:"id"`
+	Address     string   `json:"address"`
+	Connections []string `json:"connections"`
 }
 
 const createUrl = "/cluster?data_centers=%s&cassandra_version=%s&dse_version=%s&name=%s&activity_log=%s&num_tokens=%d"
 
-func (process *Process) Create(numberOfNodes int) (*Cluster, error) {
+func (process *Process) Create(startSession bool, numberOfNodes int) (*Cluster, error) {
 	name := "test_" + uuid.New().String()
 	resp, err := process.execHttp(
 		"POST",
@@ -43,7 +44,7 @@ func (process *Process) Create(numberOfNodes int) (*Cluster, error) {
 
 	var clusterData ClusterData
 	json.Unmarshal(resp, &clusterData)
-	return process.newCluster(&clusterData)
+	return process.newCluster(startSession, &clusterData)
 }
 
 func (process *Process) Remove(id string) error {

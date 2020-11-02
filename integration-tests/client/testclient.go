@@ -244,6 +244,11 @@ func (testClient *TestClient) SendRawRequest(streamId int16, reqBuf []byte) (*fr
 	req := newRequest(reqBuf)
 
 	testClient.pendingOperationsLock.Lock()
+	if testClient.closed {
+		testClient.pendingOperationsLock.Unlock()
+		return nil, errors.New("response channel closed")
+	}
+
 	if _, ok := testClient.pendingOperations[streamId]; ok {
 		testClient.pendingOperationsLock.Unlock()
 		return nil, errors.New("stream id already in use")

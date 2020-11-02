@@ -20,10 +20,10 @@ func TestAtLeastOneClusterReturnsNoResponse(t *testing.T) {
 	testClient, err := client.NewTestClient("127.0.0.1:14002")
 	require.True(t, err == nil, "testClient setup failed: %s", err)
 
+	defer testClient.Shutdown()
+
 	err = testClient.PerformDefaultHandshake(cassandraprotocol.ProtocolVersion4, false)
 	require.True(t, err == nil, "No-auth handshake failed: %s", err)
-
-	defer testClient.Shutdown()
 
 	queryPrimeNoResponse :=
 		simulacron.WhenQuery(

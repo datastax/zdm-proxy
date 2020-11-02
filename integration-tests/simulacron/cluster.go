@@ -1,9 +1,11 @@
 package simulacron
 
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/gocql/gocql"
 	"github.com/riptano/cloud-gate/integration-tests/env"
+	"net"
 	"strings"
 )
 
@@ -30,7 +32,7 @@ type baseSimulacron struct {
 	id      int
 }
 
-func (process *Process) newCluster(data *ClusterData) (*Cluster, error) {
+func (process *Process) newCluster(startSession bool, data *ClusterData) (*Cluster, error) {
 	dcs := make([]*Datacenter, len(data.Datacenters))
 	for i := 0; i < len(dcs); i++ {
 		dcs[i] = newDatacenter(process, data.Datacenters[i])
@@ -42,9 +44,11 @@ func (process *Process) newCluster(data *ClusterData) (*Cluster, error) {
 		contactPoint = ""
 	} else {
 		contactPoint = strings.Split(dcs[0].nodes[0].address, ":")[0]
-		session, err = gocql.NewCluster(contactPoint).CreateSession()
-		if err != nil {
-			return nil, err
+		if startSession {
+			session, err = gocql.NewCluster(contactPoint).CreateSession()
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -76,14 +80,14 @@ func (baseSimulacron *baseSimulacron) GetId() string {
 	return fmt.Sprintf("%d", baseSimulacron.id)
 }
 
-func GetNewCluster(numberOfNodes int) (*Cluster, error) {
+func GetNewCluster(startSession bool, numberOfNodes int) (*Cluster, error) {
 	process, err := GetOrCreateGlobalSimulacronProcess()
 
 	if err != nil {
 		return nil, err
 	}
 
-	cluster, createErr := process.Create(numberOfNodes)
+	cluster, createErr := process.Create(startSession, numberOfNodes)
 
 	if createErr != nil {
 		return nil, createErr
@@ -120,6 +124,59 @@ func (baseSimulacron *baseSimulacron) Prime(then Then) error {
 func (baseSimulacron *baseSimulacron) ClearPrimes() error {
 	_, err := baseSimulacron.process.execHttp("DELETE", baseSimulacron.getPath("prime"), nil)
 	return err
+}
+
+func (baseSimulacron *baseSimulacron) GetConnections() ([]string, error) {
+	bytes, err := baseSimulacron.process.execHttp("DELETE", baseSimulacron.getPath("connections"), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var clusterData ClusterData
+	err = json.Unmarshal(bytes, &clusterData)
+	if err != nil {
+		return nil, err
+	}
+
+	var connections []string
+	for _, dc := range clusterData.Datacenters {
+		for _, node := range dc.Nodes {
+			connections = append(connections, node.Connections...)
+		}
+	}
+
+	return connections, nil
+}
+
+func (baseSimulacron *baseSimulacron) DropConnection(endpoint string) error {
+	ip, port, err := net.SplitHostPort(endpoint)
+	if err != nil {
+		return err
+	}
+
+	_, err = baseSimulacron.process.execHttp(
+		"DELETE",
+		fmt.Sprintf("%s/%s/%s", baseSimulacron.getPath("connection"), ip, port),
+		nil)
+
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (baseSimulacron *baseSimulacron) DropAllConnections() error {
+	_, err := baseSimulacron.process.execHttp(
+		"DELETE",
+		baseSimulacron.getPath("connections"),
+		nil)
+
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (baseSimulacron *baseSimulacron) getPath(endpoint string) string {
