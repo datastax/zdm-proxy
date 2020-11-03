@@ -2,7 +2,6 @@ package cloudgateproxy
 
 import (
 	"bytes"
-	"encoding/binary"
 	"fmt"
 	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol/message"
@@ -15,9 +14,7 @@ const (
 // Returns a proper response frame to authenticate using passed in username and password
 // Utilizes the users request frame to maintain the correct version & stream id.
 func authFrame(username string, password string, referenceFrame *frame.RawFrame) (*frame.RawFrame, error) {
-	tokenLen := 2 + len(username) + len(password)
 	token := &bytes.Buffer{}
-	binary.Write(token, binary.BigEndian, uint32(tokenLen))
 	token.WriteByte(0)
 	token.WriteString(username)
 	token.WriteByte(0)
