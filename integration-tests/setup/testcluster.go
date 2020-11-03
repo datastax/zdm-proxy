@@ -112,10 +112,15 @@ type CcmTestSetup struct {
 	Proxy  *cloudgateproxy.CloudgateProxy
 }
 
-func NewSimulacronTestSetupWithSession(createSession bool) *SimulacronTestSetup {
+func NewSimulacronTestSetupWithSession(createProxy bool, createSession bool) *SimulacronTestSetup {
 	origin, _ := simulacron.GetNewCluster(createSession, 1)
 	target, _ := simulacron.GetNewCluster(createSession, 1)
-	proxyInstance := NewProxyInstance(origin, target)
+	var proxyInstance *cloudgateproxy.CloudgateProxy
+	if createProxy {
+		proxyInstance = NewProxyInstance(origin, target)
+	} else {
+		proxyInstance = nil
+	}
 	return &SimulacronTestSetup{
 		Origin: origin,
 		Target: target,
@@ -124,11 +129,13 @@ func NewSimulacronTestSetupWithSession(createSession bool) *SimulacronTestSetup 
 }
 
 func NewSimulacronTestSetup() *SimulacronTestSetup {
-	return NewSimulacronTestSetupWithSession(false)
+	return NewSimulacronTestSetupWithSession(true, false)
 }
 
 func (setup *SimulacronTestSetup) Cleanup() {
-	setup.Proxy.Shutdown()
+	if setup.Proxy != nil {
+		setup.Proxy.Shutdown()
+	}
 
 	err := setup.Target.Remove()
 	if err != nil {
@@ -206,7 +213,11 @@ func NewProxyInstance(origin TestCluster, target TestCluster) *cloudgateproxy.Cl
 }
 
 func NewProxyInstanceWithConfig(config *config.Config) *cloudgateproxy.CloudgateProxy {
-	return cloudgateproxy.Run(config)
+	proxy, err := cloudgateproxy.Run(config)
+	if err != nil {
+		panic(err)
+	}
+	return proxy
 }
 
 func NewTestConfig(origin TestCluster, target TestCluster) *config.Config {

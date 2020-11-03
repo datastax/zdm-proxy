@@ -4,6 +4,7 @@ import (
 	"flag"
 	"math/rand"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -19,9 +20,10 @@ var CassandraVersion string
 var DseVersion string
 var IsDse bool
 var UseCcm bool
+var Debug bool
 
 func InitGlobalVars() {
-	flags := map[string]*string{
+	flags := map[string]interface{}{
 		"CASSANDRA_VERSION":
 		flag.String(
 			"CASSANDRA_VERSION",
@@ -39,13 +41,20 @@ func InitGlobalVars() {
 			"USE_CCM",
 			getEnvironmentVariableOrDefault("USE_CCM", "false"),
 			"USE_CCM"),
+
+		"DEBUG":
+		flag.Bool(
+			"DEBUG",
+			getEnvironmentVariableBoolOrDefault("DEBUG", false),
+			"DEBUG"),
 	}
 
 	flag.Parse()
 
-	CassandraVersion = *flags["CASSANDRA_VERSION"]
-	DseVersion = *flags["DSE_VERSION"]
-	useCcm := *flags["USE_CCM"]
+	CassandraVersion = *flags["CASSANDRA_VERSION"].(*string)
+	DseVersion = *flags["DSE_VERSION"].(*string)
+	useCcm := *flags["USE_CCM"].(*string)
+	Debug = *flags["DEBUG"].(*bool)
 	if DseVersion != "" {
 		IsDse = true
 		ServerVersion = DseVersion
@@ -62,6 +71,19 @@ func InitGlobalVars() {
 func getEnvironmentVariableOrDefault(key string, defaultValue string) string {
 	if value, ok := os.LookupEnv(key); ok {
 		return value
+	} else {
+		return defaultValue
+	}
+}
+
+func getEnvironmentVariableBoolOrDefault(key string, defaultValue bool) bool {
+	if value, ok := os.LookupEnv(key); ok {
+		result, err := strconv.ParseBool(value)
+		if err != nil {
+			return defaultValue
+		} else {
+			return result
+		}
 	} else {
 		return defaultValue
 	}

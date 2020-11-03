@@ -179,6 +179,32 @@ func (baseSimulacron *baseSimulacron) DropAllConnections() error {
 	return nil
 }
 
+func (baseSimulacron *baseSimulacron) DisableConnectionListener() error {
+	_, err := baseSimulacron.process.execHttp(
+		"DELETE",
+		fmt.Sprintf("%s?after=%d&type=%s", baseSimulacron.getPath("listener"), 0, "unbind"),
+		nil)
+
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (baseSimulacron *baseSimulacron) EnableConnectionListener() error {
+	_, err := baseSimulacron.process.execHttp(
+		"PUT",
+		fmt.Sprintf("%s?after=%d&type=%s", baseSimulacron.getPath("listener"), 0, "unbind"),
+		nil)
+
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func (baseSimulacron *baseSimulacron) getPath(endpoint string) string {
 	return "/" + endpoint + "/" + baseSimulacron.GetId()
 }

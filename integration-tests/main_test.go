@@ -16,10 +16,14 @@ var originCluster *ccm.Cluster
 var targetCluster *ccm.Cluster
 
 func TestMain(m *testing.M) {
-	gocql.TimeoutLimit = 5
-	log.SetLevel(log.DebugLevel)
-
 	env.InitGlobalVars()
+
+	gocql.TimeoutLimit = 5
+	if env.Debug {
+		log.SetLevel(log.DebugLevel)
+	} else {
+		log.SetLevel(log.InfoLevel)
+	}
 
 	if env.UseCcm {
 		ccm.RemoveCurrent()

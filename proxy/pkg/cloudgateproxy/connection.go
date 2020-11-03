@@ -47,9 +47,10 @@ func writeToConnection(connection net.Conn, message []byte) error {
 
 // TODO: Is there a better way to check that we can connect to both databases?
 func checkConnection(ip string, shutdownContext context.Context) error {
-	// Wait until the source database is up and ready to accept TCP connections.
-	originCassandra, err := establishConnection(ip, shutdownContext)
+	log.Infof("Opening test connection to %v", ip)
 
+	// Wait until the source database is up and ready to accept TCP connections.
+	originCassandra, err := net.Dial("tcp", ip)
 	if err != nil {
 		return err
 	}

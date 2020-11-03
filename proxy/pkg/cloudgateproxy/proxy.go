@@ -3,6 +3,7 @@ package cloudgateproxy
 import (
 	"context"
 	"fmt"
+	"github.com/jpillora/backoff"
 	"github.com/riptano/cloud-gate/proxy/pkg/config"
 	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
@@ -47,21 +48,21 @@ type CloudgateProxy struct {
 // Start starts up the proxy and start listening for client connections.
 func (p *CloudgateProxy) Start() error {
 	log.Infof("Starting proxy...")
-
 	p.initializeGlobalStructures()
+
 	err := checkConnection(p.originCassandraIP, p.shutdownContext)
 	if err != nil {
 		return err
 	}
-
 	log.Debugf("connection check passed (to %v)", p.originCassandraIP)
 
 	err = checkConnection(p.targetCassandraIP, p.shutdownContext)
 	if err != nil {
 		return err
 	}
-
 	log.Debugf("connection check passed (to %v)", p.targetCassandraIP)
+
+	p.initializeMetricsHandler()
 
 	err = p.acceptConnectionsFromClients(p.Conf.ProxyQueryAddress, p.Conf.ProxyQueryPort)
 	if err != nil {
@@ -70,6 +71,15 @@ func (p *CloudgateProxy) Start() error {
 
 	log.Infof("Proxy connected and ready to accept queries on port %d", p.Conf.ProxyQueryPort)
 	return nil
+}
+
+func (p *CloudgateProxy) initializeMetricsHandler() {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+
+	// This is the Prometheus-specific implementation of the global metricsHandler object
+	// To switch to a different implementation, change the type instantiated here to another one that implements metricsHandler.metricsHandler
+	p.metricsHandler = metrics.NewPrometheusCloudgateProxyMetrics()
 }
 
 func (p *CloudgateProxy) initializeGlobalStructures() {
@@ -87,10 +97,6 @@ func (p *CloudgateProxy) initializeGlobalStructures() {
 	p.shutdownContext, p.cancelFunc = context.WithCancel(context.Background())
 	p.shutdownWaitGroup = &sync.WaitGroup{}
 	p.shutdownClientListenerChan = make(chan bool)
-
-	// This is the Prometheus-specific implementation of the global metricsHandler object
-	// To switch to a different implementation, change the type instantiated here to another one that implements metricsHandler.metricsHandler
-	p.metricsHandler = metrics.NewPrometheusCloudgateProxyMetrics()
 
 	p.lock.Unlock()
 }
@@ -127,71 +133,111 @@ func (p *CloudgateProxy) acceptConnectionsFromClients(address string, port int) 
 					log.Debugf("Shutting down client listener on port %d", port)
 					return
 				default:
-					log.Error(err)
+					log.Errorf("Error while listening for new connections: %v", err)
 					continue
 				}
 			}
-			p.metricsHandler.IncrementCountByOne(metrics.OpenClientConnections)
-			log.Infof("Accepted connection from %v", conn.RemoteAddr())
 
-			// there is a ClientHandler for each connection made by a client
-			originCassandraConnInfo := NewClusterConnectionInfo(p.Conf.OriginCassandraHostname, p.Conf.OriginCassandraPort, true)
-			targetCassandraConnInfo := NewClusterConnectionInfo(p.Conf.TargetCassandraHostname, p.Conf.TargetCassandraPort, false)
-			clientHandler, err := NewClientHandler(
-				conn,
-				originCassandraConnInfo,
-				targetCassandraConnInfo,
-				p.Conf.TargetCassandraUsername,
-				p.Conf.TargetCassandraPassword,
-				p.preparedStatementCache,
-				p.metricsHandler,
-				p.shutdownWaitGroup,
-				p.shutdownContext)
-
-			if err != nil {
-				log.Errorf("Client Handler could not be created: %v", err)
-				conn.Close()
-				p.metricsHandler.DecrementCountByOne(metrics.OpenClientConnections)
-				continue
-			}
-
-			// TODO if we want to keep the ClientHandler instances into an array or map, store it here
-			log.Tracef("ClientHandler created")
-			clientHandler.run()
+			go p.handleNewConnection(conn)
 		}
 	}()
 
 	return nil
 }
 
-func Run(conf *config.Config) *CloudgateProxy {
+// handleNewConnection creates the client handler and connectors for the new client connection
+func (p *CloudgateProxy) handleNewConnection(conn net.Conn) {
+	p.metricsHandler.IncrementCountByOne(metrics.OpenClientConnections)
+	log.Infof("Accepted connection from %v", conn.RemoteAddr())
+
+	// there is a ClientHandler for each connection made by a client
+	originCassandraConnInfo := NewClusterConnectionInfo(p.Conf.OriginCassandraHostname, p.Conf.OriginCassandraPort, true)
+	targetCassandraConnInfo := NewClusterConnectionInfo(p.Conf.TargetCassandraHostname, p.Conf.TargetCassandraPort, false)
+	clientHandler, err := NewClientHandler(
+		conn,
+		originCassandraConnInfo,
+		targetCassandraConnInfo,
+		p.Conf.TargetCassandraUsername,
+		p.Conf.TargetCassandraPassword,
+		p.preparedStatementCache,
+		p.metricsHandler,
+		p.shutdownWaitGroup,
+		p.shutdownContext)
+
+	if err != nil {
+		log.Errorf("Client Handler could not be created: %v", err)
+		conn.Close()
+		p.metricsHandler.DecrementCountByOne(metrics.OpenClientConnections)
+		return
+	}
+
+	log.Tracef("ClientHandler created")
+	clientHandler.run()
+}
+
+func (p *CloudgateProxy) Shutdown() {
+	log.Info("Shutting down proxy...")
+
+	var shutdownWaitGroup *sync.WaitGroup
+
+	p.lock.Lock()
+	if p.metricsHandler != nil {
+		p.metricsHandler.UnregisterAllMetrics()
+	}
+	p.cancelFunc()
+	shutdownWaitGroup = p.shutdownWaitGroup
+	p.lock.Unlock()
+
+	p.listenerLock.Lock()
+	if !p.listenerClosed {
+		p.listenerClosed = true
+		if p.clientListener != nil {
+			p.clientListener.Close()
+		}
+	}
+	p.listenerLock.Unlock()
+
+	shutdownWaitGroup.Wait()
+	log.Info("Proxy shutdown.")
+}
+
+func Run(conf *config.Config) (*CloudgateProxy, error) {
 	cp := &CloudgateProxy{
 		Conf: conf,
 	}
 
 	err2 := cp.Start()
 	if err2 != nil {
-		// TODO: handle error
-		log.Error(err2)
-		panic(err2)
+		cp.Shutdown()
+		return nil, err2
 	}
 
-	return cp
+	return cp, nil
 }
 
-func (p *CloudgateProxy) Shutdown() {
-	log.Info("Shutting down proxy...")
+func RunWithRetries(conf *config.Config, ctx context.Context, b *backoff.Backoff) (*CloudgateProxy, error) {
+	log.Info("Attempting to start the proxy...")
+	for {
+		cp, err := Run(conf)
+		if cp != nil {
+			return cp, nil
+		}
 
-	p.metricsHandler.UnregisterAllMetrics()
-
-	p.cancelFunc()
-	p.listenerLock.Lock()
-	if !p.listenerClosed {
-		p.listenerClosed = true
-		p.clientListener.Close()
+		nextDuration := b.Duration()
+		log.Errorf("Couldn't start proxy, retrying in %v: %v.", nextDuration, err)
+		if !sleepWithContext(nextDuration, ctx) {
+			log.Error("Cancellation detected. Aborting proxy startup...")
+			return nil, ShutdownErr
+		}
 	}
-	p.listenerLock.Unlock()
-	p.shutdownWaitGroup.Wait()
+}
 
-	log.Info("Proxy shutdown.")
+// sleepWithContext returns false if context Done() returns
+func sleepWithContext(d time.Duration, ctx context.Context) bool {
+	select {
+	case <-time.After(d):
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }

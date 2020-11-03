@@ -1,8 +1,8 @@
 package config
 
 import (
+	"fmt"
 	"github.com/kelseyhightower/envconfig"
-	log "github.com/sirupsen/logrus"
 )
 
 // TODO remove unnecessary fields and rename where appropriate
@@ -33,11 +33,11 @@ func New() *Config {
 
 // ParseEnvVars fills out the fields of the Config struct according to envconfig rules
 // See: Usage @ https://github.com/kelseyhightower/envconfig
-func (c *Config) ParseEnvVars() *Config {
+func (c *Config) ParseEnvVars() (*Config, error) {
 	err := envconfig.Process("", c)
 	if err != nil {
-		log.Panicf("could not load environment variables. Error: %s", err.Error())
+		return nil, fmt.Errorf("could not load environment variables: %w", err)
 	}
 
-	return c
+	return c, nil
 }
