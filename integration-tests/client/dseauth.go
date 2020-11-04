@@ -41,13 +41,12 @@ func (dsePlainTextAuth *DsePlainTextAuthenticator) EvaluateChallenge(challenge [
 	if challenge == nil || bytes.Compare(challenge, initialServerChallenge) != 0 {
 		return nil, errors.New("incorrect SASL challenge from server")
 	}
-
-	buffer := make([]byte, len(dsePlainTextAuth.username)+len(dsePlainTextAuth.password)+2)
-	buffer[0] = 0
-	buffer = append(buffer[0:1], []byte(dsePlainTextAuth.username)...)
-	buffer = append(buffer, 0)
-	buffer = append(buffer, []byte(dsePlainTextAuth.password)...)
-	return buffer, nil
+	token := &bytes.Buffer{}
+	token.WriteByte(0)
+	token.WriteString(dsePlainTextAuth.username)
+	token.WriteByte(0)
+	token.WriteString(dsePlainTextAuth.password)
+	return token.Bytes(), nil
 }
 
 func (dsePlainTextAuth *DsePlainTextAuthenticator) GetInitialServerChallenge() []byte {

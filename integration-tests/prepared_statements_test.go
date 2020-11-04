@@ -2,8 +2,8 @@ package integration_tests
 
 import (
 	"fmt"
-	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol"
-	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol/message"
+	"github.com/datastax/go-cassandra-native-protocol/message"
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
 	"github.com/riptano/cloud-gate/integration-tests/client"
 	"github.com/riptano/cloud-gate/integration-tests/setup"
 	"github.com/riptano/cloud-gate/integration-tests/simulacron"
@@ -19,7 +19,7 @@ func TestPreparedIdProxyCacheMiss(t *testing.T) {
 	testClient, err := client.NewTestClient("127.0.0.1:14002")
 	require.True(t, err == nil, "testClient setup failed: %s", err)
 
-	err = testClient.PerformDefaultHandshake(cassandraprotocol.ProtocolVersion4, false)
+	err = testClient.PerformDefaultHandshake(primitive.ProtocolVersion4, false)
 	require.True(t, err == nil, "No-auth handshake failed: %s", err)
 
 	defer testClient.Shutdown()
@@ -29,9 +29,8 @@ func TestPreparedIdProxyCacheMiss(t *testing.T) {
 	executeMsg := &message.Execute{
 		QueryId:          preparedId,
 		ResultMetadataId: nil,
-		Options:          message.NewQueryOptions(),
 	}
-	response, requestStreamId, err := testClient.SendMessage(cassandraprotocol.ProtocolVersion4, executeMsg)
+	response, requestStreamId, err := testClient.SendMessage(primitive.ProtocolVersion4, executeMsg)
 	require.True(t, err == nil, "execute request send failed: %s", err)
 	require.True(t, response != nil, "response received was null")
 
@@ -39,7 +38,7 @@ func TestPreparedIdProxyCacheMiss(t *testing.T) {
 	require.True(t, ok, fmt.Sprintf("expected error result but got %02x", response.Body.Message.GetOpCode()))
 	require.Equal(t, requestStreamId, response.Header.StreamId, "streamId does not match expected value.")
 	require.True(t, err == nil, "Error response could not be parsed: %s", err)
-	require.Equal(t, cassandraprotocol.ErrorCodeUnprepared, errorResponse.GetErrorCode(), "Error code received was not Unprepared.")
+	require.Equal(t, primitive.ErrorCodeUnprepared, errorResponse.GetErrorCode(), "Error code received was not Unprepared.")
 	require.Equal(t, "Prepared query with ID 8f072432e1689d59c7b1efe752c98efd not found "+
 		"(either the query was not prepared on this host (maybe the host has been restarted?) "+
 		"or you have prepared too many queries and it has been evicted from the internal cache)",
@@ -60,7 +59,7 @@ func TestPreparedIdPreparationMismatch(t *testing.T) {
 	testClient, err := client.NewTestClient("127.0.0.1:14002")
 	require.True(t, err == nil, "testClient setup failed: %s", err)
 
-	err = testClient.PerformDefaultHandshake(cassandraprotocol.ProtocolVersion4, false)
+	err = testClient.PerformDefaultHandshake(primitive.ProtocolVersion4, false)
 	require.True(t, err == nil, "No-auth handshake failed: %s", err)
 
 	defer testClient.Shutdown()
@@ -84,7 +83,7 @@ func TestPreparedIdPreparationMismatch(t *testing.T) {
 				Keyspace: "",
 			}
 
-			response, requestStreamId, err := testClient.SendMessage(cassandraprotocol.ProtocolVersion4, prepareMsg)
+			response, requestStreamId, err := testClient.SendMessage(primitive.ProtocolVersion4, prepareMsg)
 			require.True(t, err == nil, "prepare request send failed: %s", err)
 
 			preparedResponse, ok := response.Body.Message.(*message.PreparedResult)
@@ -97,17 +96,16 @@ func TestPreparedIdPreparationMismatch(t *testing.T) {
 			executeMsg := &message.Execute{
 				QueryId:          preparedResponse.PreparedQueryId,
 				ResultMetadataId: preparedResponse.ResultMetadataId,
-				Options:          message.NewQueryOptions(),
 			}
 
-			response, requestStreamId, err = testClient.SendMessage(cassandraprotocol.ProtocolVersion4, executeMsg)
+			response, requestStreamId, err = testClient.SendMessage(primitive.ProtocolVersion4, executeMsg)
 			require.True(t, err == nil, "execute request send failed: %s", err)
 
 			errorResponse, ok := response.Body.Message.(message.Error)
 			require.True(t, ok, fmt.Sprintf("expected error result but got %02x", response.Body.Message.GetOpCode()))
 			require.Equal(t, requestStreamId, response.Header.StreamId, "streamId does not match expected value.")
 			require.True(t, err == nil, "Error response could not be parsed: %s", err)
-			require.Equal(t, cassandraprotocol.ErrorCodeUnprepared, errorResponse.GetErrorCode(), "Error code received was not Unprepared.")
+			require.Equal(t, primitive.ErrorCodeUnprepared, errorResponse.GetErrorCode(), "Error code received was not Unprepared.")
 			require.Equal(t, "No prepared statement with id: 5440fe1",
 				errorResponse.GetErrorMessage(),
 				"Unexpected error message.")

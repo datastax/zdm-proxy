@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol"
-	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol/frame"
+	"github.com/datastax/go-cassandra-native-protocol/frame"
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -55,25 +55,25 @@ func (ch *ClientHandler) handleTargetCassandraStartup(startupFrame *frame.RawFra
 		// TODO broken debug print - needs fixing with expected value for placeholder
 		//log.Debugf("handleTargetCassandraStartup: Received frame from TargetCassandra for %02x", )
 
-		switch f.RawHeader.OpCode {
-		case cassandraprotocol.OpCodeAuthenticate:
+		switch f.Header.OpCode {
+		case primitive.OpCodeAuthenticate:
 			phase = 2
 			log.Debugf("Received AUTHENTICATE for target handshake")
-		case cassandraprotocol.OpCodeAuthChallenge:
+		case primitive.OpCodeAuthChallenge:
 			log.Debugf("Received AUTH_CHALLENGE for target handshake")
-		case cassandraprotocol.OpCodeReady:
+		case primitive.OpCodeReady:
 			log.Debugf("Target cluster did not request authorization for client %v", clientIPAddress)
 			return nil
-		case cassandraprotocol.OpCodeAuthSuccess:
+		case primitive.OpCodeAuthSuccess:
 			log.Debugf("%s successfully authenticated with target (%v)", clientIPAddress, targetCassandraIPAddress)
 			return nil
 		default:
-			body, err := defaultCodec.DecodeBody(f.RawHeader, bytes.NewReader(f.RawBody))
+			body, err := defaultCodec.DecodeBody(f.Header, bytes.NewReader(f.Body))
 			if err != nil {
 				log.Warnf("could not decode body of unexpected handshake response: %v", err)
 				return fmt.Errorf(
 					"received response in target handshake that was not "+
-						"READY, AUTHENTICATE, AUTH_CHALLENGE, or AUTH_SUCCESS: %02x", f.RawHeader.OpCode)
+						"READY, AUTHENTICATE, AUTH_CHALLENGE, or AUTH_SUCCESS: %02x", f.Header.OpCode)
 			}
 			return fmt.Errorf(
 				"received response in target handshake that was not "+

@@ -3,7 +3,7 @@ package cloudgateproxy
 import (
 	"context"
 	"errors"
-	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol/frame"
+	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
 	"io"
@@ -103,14 +103,14 @@ func (cc *ClientConnector) listenForRequests() {
 				break
 			}
 
-			log.Debugf("Received request on client connector: %v", frame.RawHeader)
+			log.Debugf("Received request on client connector: %v", frame.Header)
 			select {
 			case cc.requestChannel <- frame:
 			case <-cc.clientHandlerContext.Done():
 				break
 			}
 
-			log.Tracef("Request sent to client connector's request channel: %v", frame.RawHeader)
+			log.Tracef("Request sent to client connector's request channel: %v", frame.Header)
 		}
 		log.Infof("Shutting down client connector request listener %v", cc.connection.RemoteAddr())
 	}()
@@ -133,10 +133,10 @@ func (cc *ClientConnector) listenForResponses() {
 				break
 			}
 
-			log.Debugf("Response received (%v), dispatching to client %v", response.RawHeader, clientAddrStr)
+			log.Debugf("Response received (%v), dispatching to client %v", response.Header, clientAddrStr)
 
 			err := writeRawFrame(cc.connection, cc.clientHandlerContext, response)
-			log.Tracef("Response with opcode %d dispatched to client %v", response.RawHeader.OpCode, clientAddrStr)
+			log.Tracef("Response with opcode %d dispatched to client %v", response.Header.OpCode, clientAddrStr)
 			if errors.Is(err, ShutdownErr) {
 				break
 			} else if err != nil {
@@ -164,10 +164,10 @@ func (cc *ClientConnector) listenForEvents() {
 				break
 			}
 
-			log.Debugf("Event received (%v), dispatching to client %v", event.RawHeader, cc.connection.RemoteAddr())
+			log.Debugf("Event received (%v), dispatching to client %v", event.Header, cc.connection.RemoteAddr())
 
 			err := writeRawFrame(cc.connection, cc.clientHandlerContext, event)
-			log.Tracef("Event with opcode %d dispatched to client %v", event.RawHeader.OpCode, cc.connection.RemoteAddr())
+			log.Tracef("Event with opcode %d dispatched to client %v", event.Header.OpCode, cc.connection.RemoteAddr())
 			if errors.Is(err, ShutdownErr) {
 				break
 			} else if err != nil {

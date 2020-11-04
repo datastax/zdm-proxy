@@ -6,9 +6,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol"
-	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol/frame"
-	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol/message"
+	"github.com/datastax/go-cassandra-native-protocol/frame"
+	"github.com/datastax/go-cassandra-native-protocol/message"
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
 	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
 	"net"
@@ -31,7 +31,7 @@ import (
 */
 
 type ClientHandler struct {
-	clientConnector            *ClientConnector
+	clientConnector *ClientConnector
 
 	originCassandraConnector *ClusterConnector
 	targetCassandraConnector *ClusterConnector
@@ -154,7 +154,7 @@ func (ch *ClientHandler) listenForClientRequests() {
 				break
 			}
 
-			log.Debugf("Request received on client handler: %v", frame.RawHeader)
+			log.Debugf("Request received on client handler: %v", frame.Header)
 			if !ready {
 				log.Tracef("not ready")
 				// Handle client authentication
@@ -223,9 +223,9 @@ func (ch *ClientHandler) listenForEventMessages() {
 				fromTarget = false
 			}
 
-			log.Debugf("Event received (fromTarget: %v) on client handler: %v", fromTarget, frame.RawHeader)
+			log.Debugf("Event received (fromTarget: %v) on client handler: %v", fromTarget, frame.Header)
 
-			body, err := defaultCodec.DecodeBody(frame.RawHeader, bytes.NewReader(frame.RawBody))
+			body, err := defaultCodec.DecodeBody(frame.Header, bytes.NewReader(frame.Body))
 			if err != nil {
 				log.Warnf("Error decoding event response: %v", err)
 				continue
@@ -266,7 +266,7 @@ func (ch *ClientHandler) listenForEventMessages() {
  *	Calls one or two goroutines forwardToCluster(), so the request is executed on each cluster concurrently
  */
 func (ch *ClientHandler) handleHandshakeRequest(f *frame.RawFrame, waitGroup *sync.WaitGroup) (bool, error) {
-	if f.RawHeader.OpCode == cassandraprotocol.OpCodeStartup {
+	if f.Header.OpCode == primitive.OpCodeStartup {
 		ch.startupFrame = f
 	}
 
@@ -281,7 +281,7 @@ func (ch *ClientHandler) handleHandshakeRequest(f *frame.RawFrame, waitGroup *sy
 	}
 
 	authSuccess := false
-	if response.RawHeader.OpCode == cassandraprotocol.OpCodeReady || response.RawHeader.OpCode == cassandraprotocol.OpCodeAuthSuccess {
+	if response.Header.OpCode == primitive.OpCodeReady || response.Header.OpCode == primitive.OpCodeAuthSuccess {
 		// target handshake must happen within a single client request lifetime
 		// to guarantee that no other request with the same
 		// stream id goes to target in the meantime
@@ -344,7 +344,7 @@ func (ch *ClientHandler) handleRequest(f *frame.RawFrame, waitGroup *sync.WaitGr
 		response, err := ch.forwardRequest(f)
 
 		if err != nil {
-			log.Warnf("error handling request with opcode %02x and streamid %d: %s", f.RawHeader.OpCode, f.RawHeader.StreamId, err.Error())
+			log.Warnf("error handling request with opcode %02x and streamid %d: %s", f.Header.OpCode, f.Header.StreamId, err.Error())
 			return
 		}
 
@@ -367,7 +367,7 @@ func (ch *ClientHandler) forwardRequest(request *frame.RawFrame) (*frame.RawFram
 			}
 			log.Debugf(
 				"PS Cache miss, created unprepared response with version %v, streamId %v and preparedId %v",
-				errVal.RawHeader.Version, errVal.RawHeader.StreamId, errVal.preparedId)
+				errVal.Header.Version, errVal.Header.StreamId, errVal.preparedId)
 
 			// send it back to client
 			ch.clientConnector.responseChannel <- unpreparedFrame
@@ -376,7 +376,7 @@ func (ch *ClientHandler) forwardRequest(request *frame.RawFrame) (*frame.RawFram
 		}
 		return nil, err
 	}
-	log.Tracef("Opcode: %v, Forward decision: %v", request.RawHeader.OpCode, forwardDecision)
+	log.Tracef("Opcode: %v, Forward decision: %v", request.Header.OpCode, forwardDecision)
 
 	if forwardDecision == forwardToTarget || forwardDecision == forwardToBoth {
 		ch.metricsHandler.IncrementCountByOne(metrics.InFlightWriteRequests)
@@ -394,9 +394,9 @@ func (ch *ClientHandler) forwardRequest(request *frame.RawFrame) (*frame.RawFram
 		return nil, err
 	}
 
-	switch response.RawHeader.OpCode {
-	case cassandraprotocol.OpCodeResult:
-		body, err := defaultCodec.DecodeBody(response.RawHeader, bytes.NewReader(response.RawBody))
+	switch response.Header.OpCode {
+	case primitive.OpCodeResult:
+		body, err := defaultCodec.DecodeBody(response.Header, bytes.NewReader(response.Body))
 		if err != nil {
 			return nil, fmt.Errorf("error decoding result response: %w", err)
 		}
@@ -407,13 +407,13 @@ func (ch *ClientHandler) forwardRequest(request *frame.RawFrame) (*frame.RawFram
 		}
 
 		resultType := resultMsg.GetResultType()
-		if resultType == cassandraprotocol.ResultTypePrepared || resultType == cassandraprotocol.ResultTypeSetKeyspace {
+		if resultType == primitive.ResultTypePrepared || resultType == primitive.ResultTypeSetKeyspace {
 			switch bodyMsg := body.Message.(type) {
 			case *message.PreparedResult:
 				if bodyMsg.PreparedQueryId == nil {
 					log.Warnf("unexpected prepared query id nil")
 				} else {
-					ch.preparedStatementCache.cachePreparedId(response.RawHeader.StreamId, bodyMsg.PreparedQueryId)
+					ch.preparedStatementCache.cachePreparedId(response.Header.StreamId, bodyMsg.PreparedQueryId)
 				}
 			case *message.SetKeyspaceResult:
 				if bodyMsg.Keyspace == "" {
@@ -434,33 +434,33 @@ func (ch *ClientHandler) forwardRequest(request *frame.RawFrame) (*frame.RawFram
 func (ch *ClientHandler) executeForwardDecision(f *frame.RawFrame, forwardDecision forwardDecision) (*frame.RawFrame, error) {
 
 	if forwardDecision == forwardToOrigin {
-		log.Debugf("Forwarding request with opcode %v for stream %v to OC", f.RawHeader.OpCode, f.RawHeader.StreamId)
+		log.Debugf("Forwarding request with opcode %v for stream %v to OC", f.Header.OpCode, f.Header.StreamId)
 		startTime := time.Now()
 		originChan := ch.originCassandraConnector.forwardToCluster(f)
 		response, ok := <-originChan
 		if !ok {
-			return nil, fmt.Errorf("did not receive response from original cassandra channel, stream: %d", f.RawHeader.StreamId)
+			return nil, fmt.Errorf("did not receive response from original cassandra channel, stream: %d", f.Header.StreamId)
 		}
 		ch.metricsHandler.TrackInHistogram(metrics.OriginReadLatencyHist, startTime)
-		log.Debugf("Forward to origin: just returning the response received from OC: %d", response.RawHeader.OpCode)
+		log.Debugf("Forward to origin: just returning the response received from OC: %d", response.Header.OpCode)
 		trackReadResponse(response, ch.metricsHandler)
 		return response, nil
 
 	} else if forwardDecision == forwardToTarget {
-		log.Debugf("Forwarding request with opcode %v for stream %v to TC", f.RawHeader.OpCode, f.RawHeader.StreamId)
+		log.Debugf("Forwarding request with opcode %v for stream %v to TC", f.Header.OpCode, f.Header.StreamId)
 		startTime := time.Now()
 		targetChan := ch.targetCassandraConnector.forwardToCluster(f)
 		response, ok := <-targetChan
 		if !ok {
-			return nil, fmt.Errorf("did not receive response from target cassandra channel, stream: %d", f.RawHeader.StreamId)
+			return nil, fmt.Errorf("did not receive response from target cassandra channel, stream: %d", f.Header.StreamId)
 		}
 		ch.metricsHandler.TrackInHistogram(metrics.TargetWriteLatencyHist, startTime)
-		log.Debugf("Forward to target: just returning the response received from TC: %d", response.RawHeader.OpCode)
+		log.Debugf("Forward to target: just returning the response received from TC: %d", response.Header.OpCode)
 		trackReadResponse(response, ch.metricsHandler)
 		return response, nil
 
 	} else if forwardDecision == forwardToBoth {
-		log.Debugf("Forwarding request with opcode %v for stream %v to OC and TC", f.RawHeader.OpCode, f.RawHeader.StreamId)
+		log.Debugf("Forwarding request with opcode %v for stream %v to OC and TC", f.Header.OpCode, f.Header.StreamId)
 		startTime := time.Now()
 		originChan := ch.originCassandraConnector.forwardToCluster(f)
 		targetChan := ch.targetCassandraConnector.forwardToCluster(f)
@@ -471,13 +471,13 @@ func (ch *ClientHandler) executeForwardDecision(f *frame.RawFrame, forwardDecisi
 			select {
 			case originResponse, ok = <-originChan:
 				if !ok {
-					return nil, fmt.Errorf("did not receive response from original cassandra channel, stream: %d", f.RawHeader.StreamId)
+					return nil, fmt.Errorf("did not receive response from original cassandra channel, stream: %d", f.Header.StreamId)
 				}
 				originChan = nil // ignore further channel operations
 				ch.metricsHandler.TrackInHistogram(metrics.OriginWriteLatencyHist, startTime)
 			case targetResponse, ok = <-targetChan:
 				if !ok {
-					return nil, fmt.Errorf("did not receive response from target cassandra channel, stream: %d", f.RawHeader.StreamId)
+					return nil, fmt.Errorf("did not receive response from target cassandra channel, stream: %d", f.Header.StreamId)
 				}
 				targetChan = nil // ignore further channel operations
 				ch.metricsHandler.TrackInHistogram(metrics.TargetWriteLatencyHist, startTime)
@@ -486,7 +486,7 @@ func (ch *ClientHandler) executeForwardDecision(f *frame.RawFrame, forwardDecisi
 		return ch.aggregateAndTrackResponses(originResponse, targetResponse), nil
 
 	} else {
-		return nil, fmt.Errorf("unknown forward decision %v, stream: %d", forwardDecision, f.RawHeader.StreamId)
+		return nil, fmt.Errorf("unknown forward decision %v, stream: %d", forwardDecision, f.Header.StreamId)
 	}
 }
 
@@ -498,7 +498,7 @@ func (ch *ClientHandler) executeForwardDecision(f *frame.RawFrame, forwardDecisi
  */
 func (ch *ClientHandler) aggregateAndTrackResponses(responseFromOriginCassandra *frame.RawFrame, responseFromTargetCassandra *frame.RawFrame) *frame.RawFrame {
 
-	log.Debugf("Aggregating responses. OC opcode %d, TargetCassandra opcode %d", responseFromOriginCassandra.RawHeader.OpCode, responseFromTargetCassandra.RawHeader.OpCode)
+	log.Debugf("Aggregating responses. OC opcode %d, TargetCassandra opcode %d", responseFromOriginCassandra.Header.OpCode, responseFromTargetCassandra.Header.OpCode)
 
 	// track specific write failures in relevant metrics
 	if !isResponseSuccessful(responseFromOriginCassandra) {
@@ -511,24 +511,24 @@ func (ch *ClientHandler) aggregateAndTrackResponses(responseFromOriginCassandra 
 
 	// aggregate responses and update relevant aggregate metrics for general failed or successful responses
 	if isResponseSuccessful(responseFromOriginCassandra) && isResponseSuccessful(responseFromTargetCassandra) {
-		log.Debugf("Aggregated response: both successes, sending back OC's response with opcode %d", responseFromOriginCassandra.RawHeader.OpCode)
+		log.Debugf("Aggregated response: both successes, sending back OC's response with opcode %d", responseFromOriginCassandra.Header.OpCode)
 		ch.metricsHandler.IncrementCountByOne(metrics.SuccessBothWrites)
 		return responseFromOriginCassandra
 	}
 
 	if !isResponseSuccessful(responseFromOriginCassandra) && !isResponseSuccessful(responseFromTargetCassandra) {
-		log.Debugf("Aggregated response: both failures, sending back OC's response with opcode %d", responseFromOriginCassandra.RawHeader.OpCode)
+		log.Debugf("Aggregated response: both failures, sending back OC's response with opcode %d", responseFromOriginCassandra.Header.OpCode)
 		ch.metricsHandler.IncrementCountByOne(metrics.FailedBothWrites)
 		return responseFromOriginCassandra
 	}
 
 	// if either response is a failure, the failure "wins" --> return the failed response
 	if !isResponseSuccessful(responseFromOriginCassandra) {
-		log.Debugf("Aggregated response: failure only on OC, sending back OC's response with opcode %d", responseFromOriginCassandra.RawHeader.OpCode)
+		log.Debugf("Aggregated response: failure only on OC, sending back OC's response with opcode %d", responseFromOriginCassandra.Header.OpCode)
 		ch.metricsHandler.IncrementCountByOne(metrics.FailedOriginOnlyWrites)
 		return responseFromOriginCassandra
 	} else {
-		log.Debugf("Aggregated response: failure only on TargetCassandra, sending back TargetCassandra's response with opcode %d", responseFromOriginCassandra.RawHeader.OpCode)
+		log.Debugf("Aggregated response: failure only on TargetCassandra, sending back TargetCassandra's response with opcode %d", responseFromOriginCassandra.Header.OpCode)
 		ch.metricsHandler.IncrementCountByOne(metrics.FailedTargetOnlyWrites)
 		return responseFromTargetCassandra
 	}
@@ -550,9 +550,9 @@ func trackReadResponse(response *frame.RawFrame, mh metrics.IMetricsHandler) {
 		}
 
 		switch errorMsg.GetErrorCode() {
-		case cassandraprotocol.ErrorCodeUnprepared:
+		case primitive.ErrorCodeUnprepared:
 			mh.IncrementCountByOne(metrics.UnpreparedReads)
-		case cassandraprotocol.ErrorCodeReadTimeout:
+		case primitive.ErrorCodeReadTimeout:
 			mh.IncrementCountByOne(metrics.ReadTimeOutsOriginCluster)
 		default:
 			mh.IncrementCountByOne(metrics.FailedReads)
@@ -571,13 +571,13 @@ func (ch *ClientHandler) trackFailedIndividualWriteResponse(response *frame.RawF
 		return
 	}
 	switch errorMsg.GetErrorCode() {
-	case cassandraprotocol.ErrorCodeUnprepared:
+	case primitive.ErrorCodeUnprepared:
 		if fromOrigin {
 			ch.metricsHandler.IncrementCountByOne(metrics.UnpreparedOriginWrites)
 		} else {
 			ch.metricsHandler.IncrementCountByOne(metrics.UnpreparedTargetWrites)
 		}
-	case cassandraprotocol.ErrorCodeWriteTimeout:
+	case primitive.ErrorCodeWriteTimeout:
 		if fromOrigin {
 			ch.metricsHandler.IncrementCountByOne(metrics.WriteTimeOutsOriginCluster)
 		} else {
@@ -587,7 +587,7 @@ func (ch *ClientHandler) trackFailedIndividualWriteResponse(response *frame.RawF
 }
 
 func decodeErrorResult(frame *frame.RawFrame) (message.Error, error) {
-	body, err := defaultCodec.DecodeBody(frame.RawHeader, bytes.NewReader(frame.RawBody))
+	body, err := defaultCodec.DecodeBody(frame.Header, bytes.NewReader(frame.Body))
 	if err != nil {
 		return nil, fmt.Errorf("could not decode error body: %w", err)
 	}
@@ -601,7 +601,7 @@ func decodeErrorResult(frame *frame.RawFrame) (message.Error, error) {
 }
 
 func isResponseSuccessful(response *frame.RawFrame) bool {
-	return response.RawHeader.OpCode != cassandraprotocol.OpCodeError
+	return response.Header.OpCode != primitive.OpCodeError
 }
 
 func createUnpreparedFrame(errVal *UnpreparedExecuteError) (*frame.RawFrame, error) {
@@ -612,7 +612,7 @@ func createUnpreparedFrame(errVal *UnpreparedExecuteError) (*frame.RawFrame, err
 		Id: errVal.preparedId,
 	}
 	frame, err := frame.NewResponseFrame(
-		errVal.RawHeader.Version, errVal.RawHeader.StreamId, errVal.Body.TracingId, nil, nil, unpreparedMsg)
+		errVal.Header.Version, errVal.Header.StreamId, errVal.Body.TracingId, nil, nil, unpreparedMsg, false)
 	if err != nil {
 		return nil, fmt.Errorf("could not create unprepared response frame: %w", err)
 	}

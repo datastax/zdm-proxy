@@ -3,8 +3,8 @@ package cloudgateproxy
 import (
 	"bytes"
 	"fmt"
-	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol/frame"
-	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol/message"
+	"github.com/datastax/go-cassandra-native-protocol/frame"
+	"github.com/datastax/go-cassandra-native-protocol/message"
 )
 
 const (
@@ -24,7 +24,7 @@ func authFrame(username string, password string, referenceFrame *frame.RawFrame)
 	authResponseMsg := &message.AuthResponse{Token: tokenBytes}
 
 	authResponseFrame, err := frame.NewRequestFrame(
-		referenceFrame.RawHeader.Version, referenceFrame.RawHeader.StreamId, false, nil, authResponseMsg)
+		referenceFrame.Header.Version, referenceFrame.Header.StreamId, false, nil, authResponseMsg, false)
 	if err != nil {
 		return nil, fmt.Errorf("could not create auth response request: %w", err)
 	}

@@ -1,9 +1,8 @@
 package integration_tests
 
 import (
-	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol"
-	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol/message"
-	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol/primitives"
+	"github.com/datastax/go-cassandra-native-protocol/message"
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
 	"github.com/riptano/cloud-gate/integration-tests/client"
 	"github.com/riptano/cloud-gate/integration-tests/setup"
 	"github.com/riptano/cloud-gate/integration-tests/simulacron"
@@ -22,7 +21,7 @@ func TestAtLeastOneClusterReturnsNoResponse(t *testing.T) {
 
 	defer testClient.Shutdown()
 
-	err = testClient.PerformDefaultHandshake(cassandraprotocol.ProtocolVersion4, false)
+	err = testClient.PerformDefaultHandshake(primitive.ProtocolVersion4, false)
 	require.True(t, err == nil, "No-auth handshake failed: %s", err)
 
 	queryPrimeNoResponse :=
@@ -76,10 +75,12 @@ func TestAtLeastOneClusterReturnsNoResponse(t *testing.T) {
 			}
 
 			query := &message.Query{
-				Query:   "INSERT INTO myks.users (name) VALUES (?)",
-				Options: message.NewQueryOptions(message.WithPositionalValues(primitives.NewValue([]byte("john")))),
+				Query: "INSERT INTO myks.users (name) VALUES (?)",
+				Options: &message.QueryOptions{
+					PositionalValues: []*primitive.Value{primitive.NewValue([]byte("john"))},
+				},
 			}
-			response, _, err := testClient.SendMessage(cassandraprotocol.ProtocolVersion4, query)
+			response, _, err := testClient.SendMessage(primitive.ProtocolVersion4, query)
 
 			require.True(t, response == nil, "a response has been received")
 			require.True(t, err != nil, "no error has been received, but the request should have failed")

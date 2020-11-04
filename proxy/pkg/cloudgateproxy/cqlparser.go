@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"fmt"
 	"github.com/antlr/antlr4/runtime/Go/antlr"
-	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol"
-	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol/frame"
-	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol/message"
+	"github.com/datastax/go-cassandra-native-protocol/frame"
+	"github.com/datastax/go-cassandra-native-protocol/message"
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
 	parser "github.com/riptano/cloud-gate/antlr"
 	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
@@ -24,7 +24,7 @@ const (
 )
 
 type UnpreparedExecuteError struct {
-	RawHeader  *frame.RawHeader
+	Header     *frame.Header
 	Body       *frame.Body
 	preparedId []byte
 }
@@ -41,10 +41,10 @@ func inspectFrame(
 
 	forwardDecision := forwardToBoth
 
-	switch f.RawHeader.OpCode {
+	switch f.Header.OpCode {
 
-	case cassandraprotocol.OpCodeQuery:
-		body, err := defaultCodec.DecodeBody(f.RawHeader, bytes.NewReader(f.RawBody))
+	case primitive.OpCodeQuery:
+		body, err := defaultCodec.DecodeBody(f.Header, bytes.NewReader(f.Body))
 		if err != nil {
 			return forwardToNone, fmt.Errorf("could not decode body of query message: %w", err)
 		}
@@ -62,8 +62,8 @@ func inspectFrame(
 		}
 		return forwardDecision, nil
 
-	case cassandraprotocol.OpCodePrepare:
-		body, err := defaultCodec.DecodeBody(f.RawHeader, bytes.NewReader(f.RawBody))
+	case primitive.OpCodePrepare:
+		body, err := defaultCodec.DecodeBody(f.Header, bytes.NewReader(f.Body))
 		if err != nil {
 			return forwardToNone, fmt.Errorf("could not decode body of prepare message: %w", err)
 		}
@@ -79,11 +79,11 @@ func inspectFrame(
 				forwardDecision = forwardToOrigin
 			}
 		}
-		psCache.trackStatementToBePrepared(f.RawHeader.StreamId, forwardDecision)
+		psCache.trackStatementToBePrepared(f.Header.StreamId, forwardDecision)
 		return forwardDecision, nil
 
-	case cassandraprotocol.OpCodeExecute:
-		body, err := defaultCodec.DecodeBody(f.RawHeader, bytes.NewReader(f.RawBody))
+	case primitive.OpCodeExecute:
+		body, err := defaultCodec.DecodeBody(f.Header, bytes.NewReader(f.Body))
 		if err != nil {
 			return forwardToNone, fmt.Errorf("could not decode body of execute message: %w", err)
 		}
@@ -99,10 +99,10 @@ func inspectFrame(
 			log.Warnf("No cached entry for prepared-id = '%s'", executeMsg.QueryId)
 			_ = mh.IncrementCountByOne(metrics.PSCacheMissCount)
 			// return meaningful error to caller so it can generate an unprepared response
-			return forwardToNone, &UnpreparedExecuteError{RawHeader: f.RawHeader, Body: body, preparedId: executeMsg.QueryId}
+			return forwardToNone, &UnpreparedExecuteError{Header: f.Header, Body: body, preparedId: executeMsg.QueryId}
 		}
 
-	case cassandraprotocol.OpCodeStartup, cassandraprotocol.OpCodeAuthResponse:
+	case primitive.OpCodeStartup, primitive.OpCodeAuthResponse:
 		return forwardToOrigin, nil
 
 	default:

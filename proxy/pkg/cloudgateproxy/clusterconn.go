@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol"
-	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol/frame"
+	"github.com/datastax/go-cassandra-native-protocol/frame"
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
 	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
 	"io"
@@ -147,9 +147,9 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 			}
 
 			log.Debugf("Received response from %v (%v): %v",
-				cc.clusterType, cc.connection.RemoteAddr(), response.RawHeader)
+				cc.clusterType, cc.connection.RemoteAddr(), response.Header)
 
-			if response.RawHeader.OpCode == cassandraprotocol.OpCodeEvent {
+			if response.Header.OpCode == primitive.OpCodeEvent {
 				cc.clusterConnEventsChan <- response
 			} else {
 				cc.forwardResponseToChannel(response)
@@ -162,12 +162,12 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 func (cc *ClusterConnector) forwardResponseToChannel(response *frame.RawFrame) {
 	cc.lock.RLock()
 	defer cc.lock.RUnlock()
-	if responseChannel, ok := cc.clusterResponseChannels[response.RawHeader.StreamId]; !ok {
+	if responseChannel, ok := cc.clusterResponseChannels[response.Header.StreamId]; !ok {
 		select {
 		case <-cc.clientHandlerContext.Done():
 			return
 		default:
-			log.Errorf("could not find stream id %d in clusterResponseChannels for cluster %v", response.RawHeader.StreamId, cc.clusterType)
+			log.Errorf("could not find stream id %d in clusterResponseChannels for cluster %v", response.Header.StreamId, cc.clusterType)
 		}
 	} else {
 		// Note: the boolean response is sent on the channel here - this will unblock the forwardToCluster goroutine waiting on this
@@ -183,7 +183,7 @@ func (cc *ClusterConnector) forwardResponseToChannel(response *frame.RawFrame) {
  */
 func (cc *ClusterConnector) forwardToCluster(rawFrame *frame.RawFrame) chan *frame.RawFrame {
 	responseToCallerChan := make(chan *frame.RawFrame, 1)
-	streamId := rawFrame.RawHeader.StreamId
+	streamId := rawFrame.Header.StreamId
 	go func() {
 		defer close(responseToCallerChan)
 
@@ -213,7 +213,7 @@ func (cc *ClusterConnector) forwardToCluster(rawFrame *frame.RawFrame) chan *fra
 				log.Debugf("response from cluster channel was closed, connection: %v", cc.connection.RemoteAddr())
 				return
 			}
-			log.Tracef("Received response from %v for query with stream id %d", cc.clusterType, response.RawHeader.StreamId)
+			log.Tracef("Received response from %v for query with stream id %d", cc.clusterType, response.Header.StreamId)
 			responseToCallerChan <- response
 		case <-time.After(queryTimeout):
 			log.Debugf("Timeout for query %d from %v", streamId, cc.clusterType)
@@ -257,7 +257,7 @@ func (cc *ClusterConnector) deleteChannelForClusterResponse(streamId int16) {
 }
 
 func (cc *ClusterConnector) sendRequestToCluster(clientHandlerContext context.Context, frame *frame.RawFrame) error {
-	log.Debugf("Executing %v on cluster %v with address %v", frame.RawHeader, cc.clusterType, cc.connection.RemoteAddr())
+	log.Debugf("Executing %v on cluster %v with address %v", frame.Header, cc.clusterType, cc.connection.RemoteAddr())
 	return writeRawFrame(cc.connection, clientHandlerContext, frame)
 }
 

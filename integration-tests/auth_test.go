@@ -2,8 +2,8 @@ package integration_tests
 
 import (
 	"fmt"
-	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol"
-	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol/message"
+	"github.com/datastax/go-cassandra-native-protocol/message"
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
 	"github.com/gocql/gocql"
 	"github.com/riptano/cloud-gate/integration-tests/client"
 	"github.com/riptano/cloud-gate/integration-tests/env"
@@ -90,7 +90,7 @@ func TestAuth(t *testing.T) {
 		},
 	}
 
-	protocolVersions := []cassandraprotocol.ProtocolVersion{cassandraprotocol.ProtocolVersion3, cassandraprotocol.ProtocolVersion4}
+	protocolVersions := []primitive.ProtocolVersion{primitive.ProtocolVersion3, primitive.ProtocolVersion4}
 
 	for _, version := range protocolVersions {
 		t.Run(fmt.Sprintf("for version %02x", version), func(t *testing.T) {
@@ -127,13 +127,13 @@ func TestAuth(t *testing.T) {
 
 					query := &message.Query{
 						Query:   "SELECT * FROM system.peers",
-						Options: message.NewQueryOptions(),
+						Options: &message.QueryOptions{Consistency: primitive.ConsistencyLevelOne},
 					}
 
 					response, _, err := testClient.SendMessage(version, query)
 					require.True(t, err == nil, "query request send failed: %s", err)
 
-					require.Equal(t, cassandraprotocol.OpCodeResult, response.Body.Message.GetOpCode())
+					require.Equal(t, primitive.OpCodeResult, response.Body.Message.GetOpCode())
 				})
 			}
 		})

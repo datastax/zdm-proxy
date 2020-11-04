@@ -5,9 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol"
-	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol/frame"
-	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol/message"
+	"github.com/datastax/go-cassandra-native-protocol/frame"
+	"github.com/datastax/go-cassandra-native-protocol/message"
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
 	log "github.com/sirupsen/logrus"
 	"io"
 	"net"
@@ -110,7 +110,7 @@ func NewTestClient(address string) (*TestClient, error) {
 
 			log.Infof("[TestClient] received response: %v", parsedFrame.Body.Message)
 
-			if parsedFrame.Body.Message.GetOpCode() == cassandraprotocol.OpCodeEvent {
+			if parsedFrame.Body.Message.GetOpCode() == primitive.OpCodeEvent {
 				select {
 				case client.eventsQueue <- parsedFrame:
 				default:
@@ -150,7 +150,7 @@ func (testClient *TestClient) isClosed() bool {
 }
 
 func (testClient *TestClient) PerformHandshake(
-	version cassandraprotocol.ProtocolVersion, useAuth bool, username string, password string) error {
+	version primitive.ProtocolVersion, useAuth bool, username string, password string) error {
 	response, _, err := testClient.SendMessage(version, message.NewStartup())
 	if err != nil {
 		return fmt.Errorf("could not send startup frame: %w", err)
@@ -173,21 +173,21 @@ func (testClient *TestClient) PerformHandshake(
 			return fmt.Errorf("could not send auth response: %w", err)
 		}
 
-		if response.Body.Message.GetOpCode() != cassandraprotocol.OpCodeAuthSuccess {
+		if response.Body.Message.GetOpCode() != primitive.OpCodeAuthSuccess {
 			return fmt.Errorf("expected auth success but received %v", response.Body.Message)
 		}
 
 		return nil
 	}
 
-	if response.Body.Message.GetOpCode() != cassandraprotocol.OpCodeReady {
+	if response.Body.Message.GetOpCode() != primitive.OpCodeReady {
 		return fmt.Errorf("expected ready but received %v", response.Body.Message)
 	}
 
 	return nil
 }
 
-func (testClient *TestClient) PerformDefaultHandshake(version cassandraprotocol.ProtocolVersion, useAuth bool) error {
+func (testClient *TestClient) PerformDefaultHandshake(version primitive.ProtocolVersion, useAuth bool) error {
 	return testClient.PerformHandshake(version, useAuth, "cassandra", "cassandra")
 }
 
@@ -301,13 +301,13 @@ func (testClient *TestClient) SendRequest(request *frame.Frame) (*frame.Frame, i
 }
 
 func (testClient *TestClient) SendMessage(
-	protocolVersion cassandraprotocol.ProtocolVersion, message message.Message) (*frame.Frame, int16, error) {
+	protocolVersion primitive.ProtocolVersion, message message.Message) (*frame.Frame, int16, error) {
 	streamId, err := testClient.BorrowStreamId()
 	if err != nil {
 		return nil, streamId, err
 	}
 
-	reqFrame, err := frame.NewRequestFrame(protocolVersion, streamId, false, nil, message)
+	reqFrame, err := frame.NewRequestFrame(protocolVersion, streamId, false, nil, message, false)
 	if err != nil {
 		return nil, streamId, err
 	}

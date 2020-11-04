@@ -1,9 +1,9 @@
 package cloudgateproxy
 
 import (
-	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol"
-	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol/frame"
-	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol/message"
+	"github.com/datastax/go-cassandra-native-protocol/frame"
+	"github.com/datastax/go-cassandra-native-protocol/message"
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
 	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
 	"reflect"
 	"sync/atomic"
@@ -47,7 +47,7 @@ func TestInspectFrame(t *testing.T) {
 		{"OpCodeExecute both", args{mockExecuteFrame("BOTH"), psCache, mh, km}, forwardToBoth},
 		{"OpCodeExecute unknown", args{mockExecuteFrame("UNKNOWN"), psCache, mh, km}, "The preparedID of the statement to be executed (UNKNOWN) does not exist in the proxy cache"},
 		// REGISTER
-		{"OpCodeRegister", args{mockFrame(&message.Register{EventTypes: []cassandraprotocol.EventType{cassandraprotocol.EventTypeSchemaChange}}), psCache, mh, km}, forwardToBoth},
+		{"OpCodeRegister", args{mockFrame(&message.Register{EventTypes: []primitive.EventType{primitive.EventTypeSchemaChange}}), psCache, mh, km}, forwardToBoth},
 		// others
 		{"OpCodeBatch", args{mockBatch("irrelevant"), psCache, mh, km}, forwardToBoth},
 		{"OpCodeStartup", args{mockFrame(message.NewStartup()), psCache, mh, km}, forwardToOrigin},
@@ -99,8 +99,7 @@ func mockPrepareFrame(query string) *frame.RawFrame {
 
 func mockQueryFrame(query string) *frame.RawFrame {
 	queryMsg := &message.Query{
-		Query:   query,
-		Options: message.NewQueryOptions(),
+		Query: query,
 	}
 	return mockFrame(queryMsg)
 }
@@ -109,18 +108,17 @@ func mockExecuteFrame(preparedId string) *frame.RawFrame {
 	executeMsg := &message.Execute{
 		QueryId:          []byte(preparedId),
 		ResultMetadataId: nil,
-		Options:          message.NewQueryOptions(),
 	}
 	return mockFrame(executeMsg)
 }
 
 func mockBatch(query string) *frame.RawFrame {
-	batchMsg := message.NewBatch(message.WithBatchChildren(message.NewQueryBatchChild(query)))
+	batchMsg := &message.Batch{Children: []*message.BatchChild{{QueryOrId: query}}}
 	return mockFrame(batchMsg)
 }
 
 func mockFrame(message message.Message) *frame.RawFrame {
-	frame, _ := frame.NewRequestFrame(cassandraprotocol.ProtocolVersion4, 1, false, nil, message)
+	frame, _ := frame.NewRequestFrame(primitive.ProtocolVersion4, 1, false, nil, message, false)
 	rawFrame, _ := defaultCodec.ConvertToRawFrame(frame)
 	return rawFrame
 }

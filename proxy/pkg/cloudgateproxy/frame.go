@@ -3,7 +3,7 @@ package cloudgateproxy
 import (
 	"bytes"
 	"context"
-	"github.com/datastax/go-cassandra-native-protocol/cassandraprotocol/frame"
+	"github.com/datastax/go-cassandra-native-protocol/frame"
 	log "github.com/sirupsen/logrus"
 	"net"
 )
@@ -16,7 +16,7 @@ func (e *shutdownError) Error() string {
 	return e.err
 }
 
-var defaultCodec = frame.NewCodec()
+var defaultCodec = frame.NewRawCodec()
 
 var ShutdownErr = &shutdownError{err: "aborted due to shutdown request"}
 
