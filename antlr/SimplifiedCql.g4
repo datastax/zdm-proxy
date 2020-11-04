@@ -319,3 +319,8 @@ MULTILINE_COMMENT
 EOS
     : ';'
     ;
+
+// A catch-all lexer rule to catch everything that wasn't recognized and avoid "token recognition" warnings.
+OTHER
+    : .
+    ;
