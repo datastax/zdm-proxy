@@ -28,6 +28,13 @@ func NewPreparedStatementCache() *PreparedStatementCache {
 	}
 }
 
+func (psc PreparedStatementCache) GetPreparedStatementCacheSize() float64{
+	psc.lock.RLock()
+	defer psc.lock.RUnlock()
+
+	return float64(len(psc.cache))
+}
+
 func (psc *PreparedStatementCache) trackStatementToBePrepared(streamId int16, forwardDecision forwardDecision) {
 	// add the statement info for this query to the transient map of statements to be prepared
 	stmtInfo := preparedStatementInfo{forwardDecision}

@@ -33,7 +33,7 @@ type CloudgateProxy struct {
 	listenerLock   *sync.Mutex
 	listenerClosed bool
 
-	preparedStatementCache *PreparedStatementCache
+	PreparedStatementCache *PreparedStatementCache
 
 	shutdownContext            context.Context
 	cancelFunc                 context.CancelFunc
@@ -79,7 +79,40 @@ func (p *CloudgateProxy) initializeMetricsHandler() {
 
 	// This is the Prometheus-specific implementation of the global metricsHandler object
 	// To switch to a different implementation, change the type instantiated here to another one that implements metricsHandler.metricsHandler
-	p.metricsHandler = metrics.NewPrometheusCloudgateProxyMetrics()
+	m := metrics.NewPrometheusCloudgateProxyMetrics()
+	p.metricsHandler = m
+
+	m.AddCounter(metrics.SuccessReads)
+	m.AddCounter(metrics.FailedReads)
+	m.AddCounter(metrics.SuccessBothWrites)
+	m.AddCounter(metrics.FailedOriginOnlyWrites)
+	m.AddCounter(metrics.FailedTargetOnlyWrites)
+	m.AddCounter(metrics.FailedBothWrites)
+
+	m.AddCounter(metrics.TimeOutsProxyOrigin)
+	m.AddCounter(metrics.TimeOutsProxyTarget)
+	m.AddCounter(metrics.ReadTimeOutsOriginCluster)
+	m.AddCounter(metrics.WriteTimeOutsOriginCluster)
+	m.AddCounter(metrics.WriteTimeOutsTargetCluster)
+
+	m.AddCounter(metrics.UnpreparedReads)
+	m.AddCounter(metrics.UnpreparedOriginWrites)
+	m.AddCounter(metrics.UnpreparedTargetWrites)
+
+	m.AddCounter(metrics.PSCacheMissCount)
+	m.AddGaugeFunction(metrics.PSCacheSize, p.PreparedStatementCache.GetPreparedStatementCacheSize)
+
+	m.AddHistogram(metrics.ProxyReadLatencyHist)
+	m.AddHistogram(metrics.OriginReadLatencyHist)
+	m.AddHistogram(metrics.ProxyWriteLatencyHist)
+	m.AddHistogram(metrics.OriginWriteLatencyHist)
+	m.AddHistogram(metrics.TargetWriteLatencyHist)
+
+	m.AddGauge(metrics.InFlightReadRequests)
+	m.AddGauge(metrics.InFlightWriteRequests)
+	m.AddGauge(metrics.OpenClientConnections)
+	m.AddGauge(metrics.OpenOriginConnections)
+	m.AddGauge(metrics.OpenTargetConnections)
 }
 
 func (p *CloudgateProxy) initializeGlobalStructures() {
@@ -92,7 +125,7 @@ func (p *CloudgateProxy) initializeGlobalStructures() {
 	p.originCassandraIP = fmt.Sprintf("%s:%d", p.Conf.OriginCassandraHostname, p.Conf.OriginCassandraPort)
 	p.targetCassandraIP = fmt.Sprintf("%s:%d", p.Conf.TargetCassandraHostname, p.Conf.TargetCassandraPort)
 
-	p.preparedStatementCache = NewPreparedStatementCache()
+	p.PreparedStatementCache = NewPreparedStatementCache()
 
 	p.shutdownContext, p.cancelFunc = context.WithCancel(context.Background())
 	p.shutdownWaitGroup = &sync.WaitGroup{}
@@ -159,7 +192,7 @@ func (p *CloudgateProxy) handleNewConnection(conn net.Conn) {
 		targetCassandraConnInfo,
 		p.Conf.TargetCassandraUsername,
 		p.Conf.TargetCassandraPassword,
-		p.preparedStatementCache,
+		p.PreparedStatementCache,
 		p.metricsHandler,
 		p.shutdownWaitGroup,
 		p.shutdownContext)

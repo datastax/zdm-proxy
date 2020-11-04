@@ -48,7 +48,7 @@ const (
 	UnpreparedReads        = MetricsName("UnpreparedReadRequestCount")
 	UnpreparedOriginWrites = MetricsName("UnpreparedWriteRequestOnOriginCount")
 	UnpreparedTargetWrites = MetricsName("UnpreparedWriteRequestOnTargetCount")
-	PSCacheSize            = MetricsName("PreparedStatementCacheNumberOfEntries") // TODO
+	PSCacheSize            = MetricsName("PreparedStatementCacheNumberOfEntries")
 	PSCacheMissCount       = MetricsName("PreparedStatementCacheMissCount")
 
 	ProxyReadLatencyHist   = MetricsName("ReadRequestProxyLatencyHist")
@@ -124,6 +124,12 @@ func getMetricsDescription(mn MetricsName) string {
 }
 
 type IMetricsHandler interface {
+
+	AddCounter(mn MetricsName) error
+	AddGauge(mn MetricsName) error
+	AddGaugeFunction(mn MetricsName, mf func() float64) error
+	AddHistogram(mn MetricsName) error
+
 	IncrementCountByOne(mn MetricsName) error
 	DecrementCountByOne(mn MetricsName) error
 	AddToCount(mn MetricsName, valueToAdd int) error

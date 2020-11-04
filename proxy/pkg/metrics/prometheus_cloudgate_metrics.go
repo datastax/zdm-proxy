@@ -17,47 +17,68 @@ type PrometheusCloudgateProxyMetrics struct {
 	Instantiation and initialization
  ***/
 
-func NewPrometheusCloudgateProxyMetrics() IMetricsHandler {
+func NewPrometheusCloudgateProxyMetrics() *PrometheusCloudgateProxyMetrics {
 	m := &PrometheusCloudgateProxyMetrics{
 		collectorMap: make(map[MetricsName]prometheus.Collector),
 		lock:         &sync.RWMutex{},
 	}
-	m.initialize()
 	return m
 }
 
-func (pm *PrometheusCloudgateProxyMetrics) initialize() {
-	pm.addCounter(SuccessReads)
-	pm.addCounter(FailedReads)
-	pm.addCounter(SuccessBothWrites)
-	pm.addCounter(FailedOriginOnlyWrites)
-	pm.addCounter(FailedTargetOnlyWrites)
-	pm.addCounter(FailedBothWrites)
+/***
+	Methods for adding metrics
+ ***/
 
-	pm.addCounter(TimeOutsProxyOrigin)
-	pm.addCounter(TimeOutsProxyTarget)
-	pm.addCounter(ReadTimeOutsOriginCluster)
-	pm.addCounter(WriteTimeOutsOriginCluster)
-	pm.addCounter(WriteTimeOutsTargetCluster)
+func (pm *PrometheusCloudgateProxyMetrics) AddCounter(mn MetricsName) error {
+	pm.lock.Lock()
+	defer pm.lock.Unlock()
 
-	pm.addCounter(UnpreparedReads)
-	pm.addCounter(UnpreparedOriginWrites)
-	pm.addCounter(UnpreparedTargetWrites)
+	c := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: string(mn),
+		Help: getMetricsDescription(mn),
+	})
+	pm.collectorMap[mn] = c
+	return pm.registerCollector(c)
+}
 
-	pm.addCounter(PSCacheMissCount)
-	pm.addGauge(PSCacheSize)
+func (pm *PrometheusCloudgateProxyMetrics) AddGauge(mn MetricsName) error {
+	pm.lock.Lock()
+	defer pm.lock.Unlock()
 
-	pm.addHistogram(ProxyReadLatencyHist)
-	pm.addHistogram(OriginReadLatencyHist)
-	pm.addHistogram(ProxyWriteLatencyHist)
-	pm.addHistogram(OriginWriteLatencyHist)
-	pm.addHistogram(TargetWriteLatencyHist)
+	g := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: string(mn),
+		Help: getMetricsDescription(mn),
+	})
+	pm.collectorMap[mn] = g
+	return pm.registerCollector(g)
+}
 
-	pm.addGauge(InFlightReadRequests)
-	pm.addGauge(InFlightWriteRequests)
-	pm.addGauge(OpenClientConnections)
-	pm.addGauge(OpenOriginConnections)
-	pm.addGauge(OpenTargetConnections)
+func (pm *PrometheusCloudgateProxyMetrics) AddGaugeFunction(mn MetricsName, mf func() float64) error {
+	pm.lock.Lock()
+	defer pm.lock.Unlock()
+
+	gf := prometheus.NewGaugeFunc(
+		prometheus.GaugeOpts{
+			Name: string(mn),
+			Help: getMetricsDescription(mn),
+		},
+		mf,
+	)
+	pm.collectorMap[mn] = gf
+	return pm.registerCollector(gf)
+}
+
+func (pm *PrometheusCloudgateProxyMetrics) AddHistogram(mn MetricsName) error {
+	pm.lock.Lock()
+	defer pm.lock.Unlock()
+
+	h := prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    string(mn),
+		Help:    getMetricsDescription(mn),
+		Buckets: []float64{15, 30, 60, 90, 120, 200}, // TODO define latency buckets in some way that makes sense
+	})
+	pm.collectorMap[mn] = h
+	return pm.registerCollector(h)
 }
 
 /***
@@ -73,7 +94,6 @@ func (pm *PrometheusCloudgateProxyMetrics) initialize() {
  ***/
 
 func (pm *PrometheusCloudgateProxyMetrics) IncrementCountByOne(mn MetricsName) error {
-
 	var c prometheus.Collector
 	var err error
 
@@ -84,6 +104,8 @@ func (pm *PrometheusCloudgateProxyMetrics) IncrementCountByOne(mn MetricsName) e
 		if c, err = pm.getGaugeFromMap(mn); err == nil {
 			// it is a gauge: increment it by one
 			c.(prometheus.Gauge).Inc()
+		} else {
+			return err
 		}
 	}
 	return err
@@ -127,6 +149,9 @@ func (pm *PrometheusCloudgateProxyMetrics) TrackInHistogram(mn MetricsName, begi
 
 func (pm *PrometheusCloudgateProxyMetrics) UnregisterAllMetrics() error {
 
+	pm.lock.RLock()
+	defer pm.lock.RUnlock()
+
 	failed := false
 	for mn, c := range pm.collectorMap {
 		ok := prometheus.Unregister(c)
@@ -148,44 +173,11 @@ func (pm *PrometheusCloudgateProxyMetrics) UnregisterAllMetrics() error {
 	Methods for internal use only
  ***/
 
-func (pm *PrometheusCloudgateProxyMetrics) addCounter(mn MetricsName) error {
-	pm.lock.Lock()
-	defer pm.lock.Unlock()
-
-	c := prometheus.NewCounter(prometheus.CounterOpts{
-		Name: string(mn),
-		Help: getMetricsDescription(mn),
-	})
-	pm.collectorMap[mn] = c
-	return pm.registerCollector(c)
-}
-
-func (pm *PrometheusCloudgateProxyMetrics) addGauge(mn MetricsName) error {
-	pm.lock.Lock()
-	defer pm.lock.Unlock()
-
-	g := prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: string(mn),
-		Help: getMetricsDescription(mn),
-	})
-	pm.collectorMap[mn] = g
-	return pm.registerCollector(g)
-}
-
-func (pm *PrometheusCloudgateProxyMetrics) addHistogram(mn MetricsName) error {
-	pm.lock.Lock()
-	defer pm.lock.Unlock()
-
-	h := prometheus.NewHistogram(prometheus.HistogramOpts{
-		Name:    string(mn),
-		Help:    getMetricsDescription(mn),
-		Buckets: []float64{15, 30, 60, 90, 120, 200}, // TODO define latency buckets in some way that makes sense
-	})
-	pm.collectorMap[mn] = h
-	return pm.registerCollector(h)
-}
-
 func (pm *PrometheusCloudgateProxyMetrics) getCounterFromMap(mn MetricsName) (prometheus.Counter, error) {
+
+	pm.lock.RLock()
+	defer pm.lock.RUnlock()
+
 	if c, foundInMap := pm.collectorMap[mn]; foundInMap {
 		if ct, isCounter := c.(prometheus.Counter); isCounter {
 			return ct, nil
@@ -201,6 +193,10 @@ func (pm *PrometheusCloudgateProxyMetrics) getCounterFromMap(mn MetricsName) (pr
 }
 
 func (pm *PrometheusCloudgateProxyMetrics) getGaugeFromMap(mn MetricsName) (prometheus.Gauge, error) {
+
+	pm.lock.RLock()
+	defer pm.lock.RUnlock()
+
 	if c, foundInMap := pm.collectorMap[mn]; foundInMap {
 		if g, isGauge := c.(prometheus.Gauge); isGauge {
 			return g, nil
@@ -216,6 +212,10 @@ func (pm *PrometheusCloudgateProxyMetrics) getGaugeFromMap(mn MetricsName) (prom
 }
 
 func (pm *PrometheusCloudgateProxyMetrics) getHistogramFromMap(mn MetricsName) (prometheus.Histogram, error) {
+
+	pm.lock.RLock()
+	defer pm.lock.RUnlock()
+
 	if c, foundInMap := pm.collectorMap[mn]; foundInMap {
 		if h, isHistogram := c.(prometheus.Histogram); isHistogram {
 			return h, nil
@@ -232,6 +232,7 @@ func (pm *PrometheusCloudgateProxyMetrics) getHistogramFromMap(mn MetricsName) (
 
 // Register this collector with Prometheus's DefaultRegisterer.
 func (pm *PrometheusCloudgateProxyMetrics) registerCollector(c prometheus.Collector) error {
+
 	if err := prometheus.Register(c); err != nil {
 		log.Errorf("Collector %s could not be registered due to %s", c, err)
 		return err

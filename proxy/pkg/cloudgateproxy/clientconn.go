@@ -94,9 +94,9 @@ func (cc *ClientConnector) listenForRequests() {
 				}
 
 				if errors.Is(err, io.EOF) {
-					log.Infof("In listenForRequests: %v disconnected", cc.connection.RemoteAddr())
+					log.Infof("[ClientConnector] In listenForRequests: %v disconnected", cc.connection.RemoteAddr())
 				} else {
-					log.Errorf("I listenForRequests: error reading: %v", err)
+					log.Errorf("[ClientConnector] In listenForRequests: error reading: %v", err)
 				}
 
 				cc.clientHandlerCancelFunc()
