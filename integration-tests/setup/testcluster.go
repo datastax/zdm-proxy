@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"context"
 	"github.com/gocql/gocql"
 	"github.com/riptano/cloud-gate/integration-tests/ccm"
 	"github.com/riptano/cloud-gate/integration-tests/env"
@@ -213,7 +214,7 @@ func NewProxyInstance(origin TestCluster, target TestCluster) *cloudgateproxy.Cl
 }
 
 func NewProxyInstanceWithConfig(config *config.Config) *cloudgateproxy.CloudgateProxy {
-	proxy, err := cloudgateproxy.Run(config)
+	proxy, err := cloudgateproxy.Run(config, context.Background())
 	if err != nil {
 		panic(err)
 	}

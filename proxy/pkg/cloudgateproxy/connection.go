@@ -9,7 +9,7 @@ import (
 )
 
 // Establishes a TCP connection with the passed in IP. Retries using exponential backoff.
-func establishConnection(ip string, shutdownContext context.Context) (net.Conn, error) {
+func establishConnection(ip string, ctx context.Context) (net.Conn, error) {
 	b := &backoff.Backoff{
 		Min:    100 * time.Millisecond,
 		Max:    10 * time.Second,
@@ -18,11 +18,12 @@ func establishConnection(ip string, shutdownContext context.Context) (net.Conn, 
 	}
 
 	log.Infof("Attempting to connect to %v...", ip)
+	dialer := net.Dialer{}
 	for {
-		conn, err := net.Dial("tcp", ip)
+		conn, err := dialer.DialContext(ctx, "tcp", ip)
 		if err != nil {
 			select {
-			case <-shutdownContext.Done():
+			case <-ctx.Done():
 				return nil, ShutdownErr
 			default:
 				nextDuration := b.Duration()
@@ -46,13 +47,19 @@ func writeToConnection(connection net.Conn, message []byte) error {
 }
 
 // TODO: Is there a better way to check that we can connect to both databases?
-func checkConnection(ip string, shutdownContext context.Context) error {
+func checkConnection(ip string, ctx context.Context) error {
 	log.Infof("Opening test connection to %v", ip)
 
 	// Wait until the source database is up and ready to accept TCP connections.
-	originCassandra, err := net.Dial("tcp", ip)
+	dialer := net.Dialer{}
+	originCassandra, err := dialer.DialContext(ctx, "tcp", ip)
 	if err != nil {
-		return err
+		select {
+		case <-ctx.Done():
+			return ShutdownErr
+		default:
+			return err
+		}
 	}
 
 	log.Infof("Closing test connection to %v", ip)

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -44,15 +45,22 @@ func main() {
 		return
 	}
 
-	// HTTP Handler to expose the metrics endpoint used by Prometheus to pull metrics
-	http.Handle("/metrics", promhttp.Handler())
-	err = http.ListenAndServe(fmt.Sprintf("%s:%d", conf.ProxyMetricsAddress, conf.ProxyMetricsPort), nil)
-	log.Errorf("Failed to listen on the metrics endpoint: %v. The proxy will stay up and listen for CQL requests.", err)
+	log.Info("Starting http server.")
+	wg := &sync.WaitGroup{}
+	srv := startHttpServer(conf, wg)
 
 	log.Info("Proxy started. Waiting for SIGINT/SIGTERM to shutdown.")
 	<-ctx.Done()
-
 	cp.Shutdown()
+
+	log.Info("Shutting down http server, waiting up to 5 seconds.")
+	metricsShutdownTimeoutCtx, _ := context.WithDeadline(context.Background(), time.Now().Add(5 * time.Second))
+	if err := srv.Shutdown(metricsShutdownTimeoutCtx); err != nil {
+		log.Errorf("Failed to gracefully shutdown http server: %v", err)
+	}
+
+	wg.Wait()
+	log.Info("Http server shutdown.")
 }
 
 func runSignalListener(cancelFunc context.CancelFunc) {
@@ -66,4 +74,21 @@ func runSignalListener(cancelFunc context.CancelFunc) {
 		// let sub-task know to wrap up: cancel
 		cancelFunc()
 	}()
+}
+
+func startHttpServer(conf *config.Config, wg *sync.WaitGroup) *http.Server {
+	srv := &http.Server{Addr: fmt.Sprintf("%s:%d", conf.ProxyMetricsAddress, conf.ProxyMetricsPort)}
+	http.Handle("/metrics", promhttp.Handler())
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		if err := srv.ListenAndServe(); err != http.ErrServerClosed {
+			log.Errorf("Failed to listen on the metrics endpoint: %v. " +
+				"The proxy will stay up and listen for CQL requests.", err)
+		}
+	}()
+
+	return srv
 }

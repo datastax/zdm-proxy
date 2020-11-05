@@ -45,18 +45,25 @@ type CloudgateProxy struct {
 	metricsHandler metrics.IMetricsHandler
 }
 
-// Start starts up the proxy and start listening for client connections.
-func (p *CloudgateProxy) Start() error {
-	log.Infof("Starting proxy...")
-	p.initializeGlobalStructures()
+func NewCloudgateProxy(conf *config.Config) *CloudgateProxy {
+	cp := &CloudgateProxy{
+		Conf: conf,
+	}
+	cp.initializeGlobalStructures()
+	return cp
+}
 
-	err := checkConnection(p.originCassandraIP, p.shutdownContext)
+// Start starts up the proxy and start listening for client connections.
+func (p *CloudgateProxy) Start(ctx context.Context) error {
+	log.Infof("Starting proxy...")
+
+	err := checkConnection(p.originCassandraIP, ctx)
 	if err != nil {
 		return err
 	}
 	log.Debugf("connection check passed (to %v)", p.originCassandraIP)
 
-	err = checkConnection(p.targetCassandraIP, p.shutdownContext)
+	err = checkConnection(p.targetCassandraIP, ctx)
 	if err != nil {
 		return err
 	}
@@ -234,12 +241,10 @@ func (p *CloudgateProxy) Shutdown() {
 	log.Info("Proxy shutdown.")
 }
 
-func Run(conf *config.Config) (*CloudgateProxy, error) {
-	cp := &CloudgateProxy{
-		Conf: conf,
-	}
+func Run(conf *config.Config, ctx context.Context) (*CloudgateProxy, error) {
+	cp := NewCloudgateProxy(conf)
 
-	err2 := cp.Start()
+	err2 := cp.Start(ctx)
 	if err2 != nil {
 		cp.Shutdown()
 		return nil, err2
@@ -251,7 +256,7 @@ func Run(conf *config.Config) (*CloudgateProxy, error) {
 func RunWithRetries(conf *config.Config, ctx context.Context, b *backoff.Backoff) (*CloudgateProxy, error) {
 	log.Info("Attempting to start the proxy...")
 	for {
-		cp, err := Run(conf)
+		cp, err := Run(conf, ctx)
 		if cp != nil {
 			return cp, nil
 		}
