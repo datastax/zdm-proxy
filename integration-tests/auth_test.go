@@ -8,16 +8,19 @@ import (
 	"github.com/riptano/cloud-gate/integration-tests/client"
 	"github.com/riptano/cloud-gate/integration-tests/env"
 	"github.com/riptano/cloud-gate/integration-tests/setup"
+	"github.com/riptano/cloud-gate/integration-tests/utils"
+	"github.com/riptano/cloud-gate/proxy/pkg/health"
 	"github.com/stretchr/testify/require"
 	"strings"
 	"testing"
+	"time"
 )
 
 // BasicUpdate tests if update queries run correctly
 // Unloads the originCluster database,
 // performs an update where through the proxy
 // then loads the unloaded data into the destination
-func TestAuth(t *testing.T) {
+func TestWithCcmAuth(t *testing.T) {
 	if !env.UseCcm {
 		t.Skip("Test requires CCM, set USE_CCM env variable to TRUE")
 	}
@@ -43,49 +46,80 @@ func TestAuth(t *testing.T) {
 
 	PrepareAuthTest(t, ccmSetup, originUsername, originPassword, targetUsername, targetPassword)
 
+	t.Run("TestAuth", func(t *testing.T) {
+		testAuth(t, ccmSetup, originUsername, originPassword, targetUsername, targetPassword)
+	})
+
+	t.Run("TestHealthCheckWithAuth", func(t *testing.T) {
+		testHealthCheckWithAuth(t, ccmSetup, originUsername, originPassword, targetUsername, targetPassword)
+	})
+}
+
+func testAuth(
+	t *testing.T, ccmSetup *setup.CcmTestSetup, originUsername string, originPassword string, targetUsername string, targetPassword string) {
 	tests := []struct {
 		name           string
 		targetUsername string
 		targetPassword string
+		originUsername string
+		originPassword string
 		clientUsername string
 		clientPassword string
 		success        bool
+		successOrigin  bool
+		successTarget  bool
 		authError      bool
 	}{
 		{
 			name:           "CorrectCredentials",
 			targetUsername: targetUsername,
 			targetPassword: targetPassword,
+			originUsername: originUsername,
+			originPassword: originPassword,
 			clientUsername: originUsername,
 			clientPassword: originPassword,
 			success:        true,
+			successOrigin:  true,
+			successTarget:  true,
 			authError:      true,
 		},
 		{
 			name:           "InvalidOriginCredentials",
 			targetUsername: targetUsername,
 			targetPassword: targetPassword,
+			originUsername: "invalidOriginUsername",
+			originPassword: "invalidOriginPassword",
 			clientUsername: "invalidOriginUsername",
 			clientPassword: "invalidOriginPassword",
 			success:        false,
+			successOrigin:  false,
+			successTarget:  true,
 			authError:      true,
 		},
 		{
 			name:           "InvalidTargetCredentials",
 			targetUsername: "invalidTargetUsername",
 			targetPassword: "invalidTargetPassword",
+			originUsername: originUsername,
+			originPassword: originPassword,
 			clientUsername: originUsername,
 			clientPassword: originPassword,
 			success:        false,
+			successOrigin:  true,
+			successTarget:  false,
 			authError:      false,
 		},
 		{
 			name:           "InvalidTargetAndOriginCredentials",
 			targetUsername: "invalidTargetUsername",
 			targetPassword: "invalidTargetPassword",
+			originUsername: "invalidOriginUsername",
+			originPassword: "invalidOriginPassword",
 			clientUsername: "invalidOriginUsername",
 			clientPassword: "invalidOriginPassword",
 			success:        false,
+			successOrigin:  false,
+			successTarget:  false,
 			authError:      true,
 		},
 	}
@@ -97,10 +131,12 @@ func TestAuth(t *testing.T) {
 			for _, tt := range tests {
 				t.Run(tt.name, func(t *testing.T) {
 
-					config := setup.NewTestConfig(ccmSetup.Origin, ccmSetup.Target)
-					config.TargetCassandraUsername = tt.targetUsername
-					config.TargetCassandraPassword = tt.targetPassword
-					proxy := setup.NewProxyInstanceWithConfig(config)
+					conf := setup.NewTestConfig(ccmSetup.Origin, ccmSetup.Target)
+					conf.TargetCassandraUsername = tt.targetUsername
+					conf.TargetCassandraPassword = tt.targetPassword
+					conf.OriginCassandraUsername = tt.originUsername
+					conf.OriginCassandraPassword = tt.originPassword
+					proxy := setup.NewProxyInstanceWithConfig(conf)
 					defer proxy.Shutdown()
 
 					testClient, err := client.NewTestClient("127.0.0.1:14002")
@@ -115,26 +151,142 @@ func TestAuth(t *testing.T) {
 							require.True(t, err != nil, "expected failure in handshake")
 							require.True(t, strings.Contains(err.Error(), "expected auth success but received "))
 							require.True(t, strings.Contains(err.Error(), "ERROR AUTHENTICATION ERROR"))
-							return
 						} else {
 							require.True(t, err != nil, "expected err")
 							require.True(t, strings.Contains(err.Error(), "response channel closed"), "expected channel closed but got %v", err)
-							return
 						}
+					} else {
+						require.True(t, err == nil, "handshake failed: %v", err)
+
+						query := &message.Query{
+							Query:   "SELECT * FROM system.peers",
+							Options: &message.QueryOptions{Consistency: primitive.ConsistencyLevelOne},
+						}
+
+						response, _, err := testClient.SendMessage(version, query)
+						require.True(t, err == nil, "query request send failed: %s", err)
+
+						require.Equal(t, primitive.OpCodeResult, response.Body.Message.GetOpCode())
 					}
-
-					require.True(t, err == nil, "handshake failed: %v", err)
-
-					query := &message.Query{
-						Query:   "SELECT * FROM system.peers",
-						Options: &message.QueryOptions{Consistency: primitive.ConsistencyLevelOne},
-					}
-
-					response, _, err := testClient.SendMessage(version, query)
-					require.True(t, err == nil, "query request send failed: %s", err)
-
-					require.Equal(t, primitive.OpCodeResult, response.Body.Message.GetOpCode())
 				})
+			}
+		})
+	}
+}
+
+func testHealthCheckWithAuth(
+	t *testing.T, ccmSetup *setup.CcmTestSetup, originUsername string, originPassword string, targetUsername string, targetPassword string) {
+	tests := []struct {
+		name           string
+		targetUsername string
+		targetPassword string
+		originUsername string
+		originPassword string
+		clientUsername string
+		clientPassword string
+		successOrigin  bool
+		successTarget  bool
+	}{
+		{
+			name:           "CorrectCredentials",
+			targetUsername: targetUsername,
+			targetPassword: targetPassword,
+			originUsername: originUsername,
+			originPassword: originPassword,
+			clientUsername: originUsername,
+			clientPassword: originPassword,
+			successOrigin:  true,
+			successTarget:  true,
+		},
+		{
+			name:           "InvalidOriginCredentials",
+			targetUsername: targetUsername,
+			targetPassword: targetPassword,
+			originUsername: "invalidOriginUsername",
+			originPassword: "invalidOriginPassword",
+			clientUsername: "invalidOriginUsername",
+			clientPassword: "invalidOriginPassword",
+			successOrigin:  false,
+			successTarget:  true,
+		},
+		{
+			name:           "InvalidTargetCredentials",
+			targetUsername: "invalidTargetUsername",
+			targetPassword: "invalidTargetPassword",
+			originUsername: originUsername,
+			originPassword: originPassword,
+			clientUsername: originUsername,
+			clientPassword: originPassword,
+			successOrigin:  true,
+			successTarget:  false,
+		},
+		{
+			name:           "InvalidTargetAndOriginCredentials",
+			targetUsername: "invalidTargetUsername",
+			targetPassword: "invalidTargetPassword",
+			originUsername: "invalidOriginUsername",
+			originPassword: "invalidOriginPassword",
+			clientUsername: "invalidOriginUsername",
+			clientPassword: "invalidOriginPassword",
+			successOrigin:  false,
+			successTarget:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+
+			conf := setup.NewTestConfig(ccmSetup.Origin, ccmSetup.Target)
+			conf.HeartbeatIntervalMs = 500
+			conf.HeartbeatRetryIntervalMaxMs = 500
+			conf.HeartbeatRetryIntervalMinMs = 100
+			conf.TargetCassandraUsername = tt.targetUsername
+			conf.TargetCassandraPassword = tt.targetPassword
+			conf.OriginCassandraUsername = tt.originUsername
+			conf.OriginCassandraPassword = tt.originPassword
+			proxy := setup.NewProxyInstanceWithConfig(conf)
+			defer proxy.Shutdown()
+
+			if tt.successOrigin || tt.successTarget {
+				time.Sleep(time.Duration(conf.HeartbeatIntervalMs) * time.Millisecond * 5)
+				r := health.PerformHealthCheck(proxy)
+				if tt.successOrigin && tt.successTarget {
+					require.Equal(t, health.UP, r.Status)
+				}
+				if tt.successOrigin {
+					require.Equal(t, health.UP, r.OriginStatus.Status)
+					require.Equal(t, 0, r.OriginStatus.CurrentFailureCount)
+				}
+				if tt.successTarget {
+					require.Equal(t, health.UP, r.TargetStatus.Status)
+					require.Equal(t, 0, r.TargetStatus.CurrentFailureCount)
+				}
+			}
+
+			if !tt.successOrigin || !tt.successTarget {
+				utils.RequireWithRetries(t, func() (error, bool) {
+					r := health.PerformHealthCheck(proxy)
+
+					if !tt.successOrigin {
+						if r.OriginStatus.CurrentFailureCount < r.OriginStatus.FailureCountThreshold {
+							return fmt.Errorf(
+								"expected current failure count on origin greater or equal than threshold but got %v",
+								r.OriginStatus.CurrentFailureCount), false
+						}
+						require.Equal(t, health.DOWN, r.Status)
+						require.Equal(t, health.DOWN, r.OriginStatus.Status)
+					}
+					if !tt.successTarget {
+						if r.TargetStatus.CurrentFailureCount < r.TargetStatus.FailureCountThreshold {
+							return fmt.Errorf(
+								"expected current failure count on target greater or equal than threshold but got %v",
+								r.TargetStatus.CurrentFailureCount), false
+						}
+						require.Equal(t, health.DOWN, r.Status)
+						require.Equal(t, health.DOWN, r.TargetStatus.Status)
+					}
+					return nil, false
+				}, 30, 100*time.Millisecond)
 			}
 		})
 	}

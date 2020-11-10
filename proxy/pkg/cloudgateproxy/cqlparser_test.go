@@ -70,6 +70,18 @@ func TestInspectFrame(t *testing.T) {
 type mockMetricsHandler struct{}
 
 //goland:noinspection GoUnusedParameter
+func (h mockMetricsHandler) AddCounter(mn metrics.MetricsName) error { return nil }
+
+//goland:noinspection GoUnusedParameter
+func (h mockMetricsHandler) AddGauge(mn metrics.MetricsName) error { return nil }
+
+//goland:noinspection GoUnusedParameter
+func (h mockMetricsHandler) AddGaugeFunction(mn metrics.MetricsName, mf func() float64) error { return nil }
+
+//goland:noinspection GoUnusedParameter
+func (h mockMetricsHandler) AddHistogram(mn metrics.MetricsName) error { return nil }
+
+//goland:noinspection GoUnusedParameter
 func (h mockMetricsHandler) IncrementCountByOne(mn metrics.MetricsName) error { return nil }
 
 //goland:noinspection GoUnusedParameter

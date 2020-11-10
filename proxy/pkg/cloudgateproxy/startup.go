@@ -1,12 +1,15 @@
 package cloudgateproxy
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
 	log "github.com/sirupsen/logrus"
+)
+
+const (
+	maxAuthRetries = 5
 )
 
 func (ch *ClientHandler) handleTargetCassandraStartup(startupFrame *frame.RawFrame) error {
@@ -18,6 +21,15 @@ func (ch *ClientHandler) handleTargetCassandraStartup(startupFrame *frame.RawFra
 	log.Infof("Initiating startup between %v and %v", clientIPAddress, targetCassandraIPAddress)
 	phase := 1
 	attempts := 0
+	authCreds := &AuthCredentials{
+		Username: ch.targetUsername,
+		Password: ch.targetPassword,
+	}
+	authenticator := &PlainTextAuthenticator{
+		Credentials: authCreds,
+	}
+
+	var lastResponse *frame.Frame
 	for {
 		if attempts > maxAuthRetries {
 			return errors.New("reached max number of attempts to complete target cluster handshake")
@@ -33,9 +45,15 @@ func (ch *ClientHandler) handleTargetCassandraStartup(startupFrame *frame.RawFra
 			request = startupFrame
 		case 2:
 			var err error
-			request, err = authFrame(ch.targetUsername, ch.targetPassword, startupFrame)
+			var parsedRequest *frame.Frame
+			parsedRequest, err = performHandshakeStep(authenticator, startupFrame.Header.Version, startupFrame.Header.StreamId, lastResponse)
 			if err != nil {
-				return fmt.Errorf("could not create auth frame: %w", err)
+				return fmt.Errorf("could not perform handshake step: %w", err)
+			}
+
+			request, err = defaultCodec.ConvertToRawFrame(parsedRequest)
+			if err != nil {
+				return fmt.Errorf("could not convert auth response frame to raw frame: %w", err)
 			}
 		}
 
@@ -43,17 +61,19 @@ func (ch *ClientHandler) handleTargetCassandraStartup(startupFrame *frame.RawFra
 
 		f, ok := <-channel
 		if !ok {
-			select {
-			case <-ch.clientHandlerContext.Done():
+			if ch.clientHandlerContext.Err() != nil {
 				return ShutdownErr
-			default:
-				return fmt.Errorf("unable to send startup frame from clientConnection %v to %v",
-					clientIPAddress, targetCassandraIPAddress)
 			}
+
+			return fmt.Errorf("unable to send startup frame from clientConnection %v to %v",
+				clientIPAddress, targetCassandraIPAddress)
 		}
 
-		// TODO broken debug print - needs fixing with expected value for placeholder
-		//log.Debugf("handleTargetCassandraStartup: Received frame from TargetCassandra for %02x", )
+		parsedFrame, err := defaultCodec.ConvertFromRawFrame(f)
+		if err != nil {
+			return fmt.Errorf("could not decode frame from %v: %w", targetCassandraIPAddress, err)
+		}
+		lastResponse = parsedFrame
 
 		switch f.Header.OpCode {
 		case primitive.OpCodeAuthenticate:
@@ -68,18 +88,9 @@ func (ch *ClientHandler) handleTargetCassandraStartup(startupFrame *frame.RawFra
 			log.Debugf("%s successfully authenticated with target (%v)", clientIPAddress, targetCassandraIPAddress)
 			return nil
 		default:
-			body, err := defaultCodec.DecodeBody(f.Header, bytes.NewReader(f.Body))
-			if err != nil {
-				log.Warnf("could not decode body of unexpected handshake response: %v", err)
-				return fmt.Errorf(
-					"received response in target handshake that was not "+
-						"READY, AUTHENTICATE, AUTH_CHALLENGE, or AUTH_SUCCESS: %02x", f.Header.OpCode)
-			}
 			return fmt.Errorf(
 				"received response in target handshake that was not "+
-					"READY, AUTHENTICATE, AUTH_CHALLENGE, or AUTH_SUCCESS: %v", body.Message)
+					"READY, AUTHENTICATE, AUTH_CHALLENGE, or AUTH_SUCCESS: %v", parsedFrame.Body.Message)
 		}
 	}
-
-	return nil
 }

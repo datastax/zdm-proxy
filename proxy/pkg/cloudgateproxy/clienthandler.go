@@ -57,6 +57,7 @@ type ClientHandler struct {
 func NewClientHandler(clientTcpConn net.Conn,
 	originCassandraConnInfo *ClusterConnectionInfo,
 	targetCassandraConnInfo *ClusterConnectionInfo,
+	connectionOpenTimeout time.Duration,
 	targetUsername string,
 	targetPassword string,
 	psCache *PreparedStatementCache,
@@ -77,14 +78,14 @@ func NewClientHandler(clientTcpConn net.Conn,
 	}()
 
 	originConnector, err := NewClusterConnector(
-		originCassandraConnInfo, metricsHandler, waitGroup, clientHandlerContext, clientHandlerCancelFunc)
+		originCassandraConnInfo, connectionOpenTimeout, metricsHandler, waitGroup, clientHandlerContext, clientHandlerCancelFunc)
 	if err != nil {
 		clientHandlerCancelFunc()
 		return nil, err
 	}
 
 	targetConnector, err := NewClusterConnector(
-		targetCassandraConnInfo, metricsHandler, waitGroup, clientHandlerContext, clientHandlerCancelFunc)
+		targetCassandraConnInfo, connectionOpenTimeout, metricsHandler, waitGroup, clientHandlerContext, clientHandlerCancelFunc)
 	if err != nil {
 		clientHandlerCancelFunc()
 		return nil, err

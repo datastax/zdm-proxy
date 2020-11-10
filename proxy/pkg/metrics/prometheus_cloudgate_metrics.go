@@ -4,6 +4,7 @@ import (
 	"errors"
 	"github.com/prometheus/client_golang/prometheus"
 	log "github.com/sirupsen/logrus"
+	"net/http"
 	"sync"
 	"time"
 )
@@ -240,4 +241,10 @@ func (pm *PrometheusCloudgateProxyMetrics) registerCollector(c prometheus.Collec
 		log.Debugf("Collector %s registered", c)
 	}
 	return nil
+}
+
+func DefaultHandler() http.Handler {
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		http.Error(writer, "Proxy metrics haven't been initialized yet.", http.StatusServiceUnavailable)
+	})
 }

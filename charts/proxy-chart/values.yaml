@@ -4,7 +4,7 @@
 
 replicaCount: 1
 
-image: registry.localhost:5000/83381babd515
+image: registry.localhost:5000/85aa1b1984a2
 imagePullPolicy: IfNotPresent
 imagePullSecrets: []
 nameOverride: ""
@@ -19,6 +19,12 @@ proxyConfig:
   targetCassandraUsername: cassandra
   targetCassandraPassword: cassandra
   targetCassandraPort: 9043
+  clusterConnectionTimeoutMs:
+  heartbeatIntervalMs:
+  heartbeatRetryIntervalMinMs:
+  heartbeatRetryIntervalMaxMs:
+  heartbeatRetryBackoffFactor:
+  heartbeatFailureThreshold:
   debug: false
   proxyMetricsPort: 14001
   proxyQueryPort: 14002

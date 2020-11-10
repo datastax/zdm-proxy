@@ -34,7 +34,7 @@ spec:
           image: "{{ .Values.image }}"
           imagePullPolicy: {{ .Values.imagePullPolicy }}
           ports:
-            - name: metrics
+            - name: httpproxy
               containerPort: {{ .Values.proxyConfig.proxyMetricsPort }}
               protocol: TCP
             - name: cql
@@ -50,12 +50,12 @@ spec:
                 name: "{{ include "proxy-chart.fullname" . }}-configmap"
           livenessProbe:
             httpGet:
-              path: /metrics
-              port: metrics
+              path: /health/liveness
+              port: httpproxy
           readinessProbe:
             httpGet:
-              path: /metrics
-              port: metrics
+              path: /health/readiness
+              port: httpproxy
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
       {{- with .Values.nodeSelector }}

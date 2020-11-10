@@ -2,6 +2,7 @@ package cloudgateproxy
 
 import (
 	"context"
+	"fmt"
 	"github.com/jpillora/backoff"
 	log "github.com/sirupsen/logrus"
 	"net"
@@ -22,16 +23,13 @@ func establishConnection(ip string, ctx context.Context) (net.Conn, error) {
 	for {
 		conn, err := dialer.DialContext(ctx, "tcp", ip)
 		if err != nil {
-			select {
-			case <-ctx.Done():
+			if ctx.Err() != nil {
 				return nil, ShutdownErr
-			default:
-				nextDuration := b.Duration()
-				log.Errorf("Couldn't connect to %v, retrying in %v...", ip, nextDuration)
-				time.Sleep(nextDuration)
-				continue
-
 			}
+			nextDuration := b.Duration()
+			log.Errorf("Couldn't connect to %v, retrying in %v...", ip, nextDuration)
+			time.Sleep(nextDuration)
+			continue
 		}
 		log.Infof("Successfully established connection with %v", conn.RemoteAddr())
 		return conn, nil
@@ -46,23 +44,18 @@ func writeToConnection(connection net.Conn, message []byte) error {
 	return nil
 }
 
-// TODO: Is there a better way to check that we can connect to both databases?
-func checkConnection(ip string, ctx context.Context) error {
-	log.Infof("Opening test connection to %v", ip)
+func openConnection(addr string, ctx context.Context) (net.Conn, error) {
+	log.Infof("Opening connection to %v", addr)
 
 	// Wait until the source database is up and ready to accept TCP connections.
 	dialer := net.Dialer{}
-	originCassandra, err := dialer.DialContext(ctx, "tcp", ip)
+	conn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
-		select {
-		case <-ctx.Done():
-			return ShutdownErr
-		default:
-			return err
+		if ctx.Err() == context.Canceled {
+			return nil, fmt.Errorf("connection error (%v) but context was canceled (%v): %w", err, ctx.Err(), ShutdownErr)
 		}
+		return nil, err
 	}
 
-	log.Infof("Closing test connection to %v", ip)
-	originCassandra.Close()
-	return nil
+	return conn, nil
 }

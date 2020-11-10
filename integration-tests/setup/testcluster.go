@@ -114,8 +114,14 @@ type CcmTestSetup struct {
 }
 
 func NewSimulacronTestSetupWithSession(createProxy bool, createSession bool) *SimulacronTestSetup {
-	origin, _ := simulacron.GetNewCluster(createSession, 1)
-	target, _ := simulacron.GetNewCluster(createSession, 1)
+	origin, err := simulacron.GetNewCluster(createSession, 1)
+	if err != nil {
+		log.Error("simulacron error: %v", err)
+	}
+	target, err := simulacron.GetNewCluster(createSession, 1)
+	if err != nil {
+		log.Error("simulacron error: %v", err)
+	}
 	var proxyInstance *cloudgateproxy.CloudgateProxy
 	if createProxy {
 		proxyInstance = NewProxyInstance(origin, target)
@@ -235,7 +241,16 @@ func NewTestConfig(origin TestCluster, target TestCluster) *config.Config {
 	conf.ProxyMetricsPort = 14001
 	conf.ProxyQueryPort = 14002
 	conf.ProxyQueryAddress = "localhost"
+
 	conf.Debug = false
+
+	conf.HeartbeatIntervalMs = 30000
+	conf.HeartbeatRetryIntervalMaxMs = 30000
+	conf.HeartbeatRetryIntervalMinMs = 100
+	conf.HeartbeatRetryBackoffFactor = 2
+	conf.HeartbeatFailureThreshold = 1
+
+	conf.ClusterConnectionTimeoutMs = 30000
 
 	return conf
 }

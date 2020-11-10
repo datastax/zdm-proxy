@@ -11,4 +11,29 @@ data:
   TARGET_CASSANDRA_USERNAME: "{{ .Values.proxyConfig.targetCassandraUsername }}"
   TARGET_CASSANDRA_PASSWORD: "{{ .Values.proxyConfig.targetCassandraPassword }}"
   TARGET_CASSANDRA_PORT: "{{ .Values.proxyConfig.targetCassandraPort }}"
+  
+  {{- if .Values.proxyConfig.clusterConnectionTimeoutMs }}
+  CLUSTER_CONNECTION_TIMEOUT_MS: "{{ .Values.proxyConfig.clusterConnectionTimeoutMs }}"
+  {{- end }}
+
+  {{- if .Values.proxyConfig.heartbeatIntervalMs }}
+  HEARTBEAT_INTERVAL_MS: "{{ .Values.proxyConfig.heartbeatIntervalMs }}"
+  {{- end }}
+
+  {{- if .Values.proxyConfig.heartbeatRetryIntervalMinMs }}
+  HEARTBEAT_RETRY_INTERVAL_MIN_MS: "{{ .Values.proxyConfig.heartbeatRetryIntervalMinMs }}"
+  {{- end }}
+
+  {{- if .Values.proxyConfig.heartbeatRetryIntervalMaxMs }}
+  HEARTBEAT_RETRY_INTERVAL_MAX_MS: "{{ .Values.proxyConfig.heartbeatRetryIntervalMaxMs }}"
+  {{- end }}
+
+  {{- if .Values.proxyConfig.heartbeatRetryBackoffFactor }}
+  HEARTBEAT_RETRY_BACKOFF_FACTOR: "{{ .Values.proxyConfig.heartbeatRetryBackoffFactor }}"
+  {{- end }}
+
+  {{- if .Values.proxyConfig.heartbeatFailureThreshold }}
+  HEARTBEAT_FAILURE_THRESHOLD: "{{ .Values.proxyConfig.heartbeatFailureThreshold }}"
+  {{- end }}
+
   DEBUG: "{{ .Values.proxyConfig.debug }}"

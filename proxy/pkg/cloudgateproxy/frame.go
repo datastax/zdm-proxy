@@ -3,8 +3,8 @@ package cloudgateproxy
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"github.com/datastax/go-cassandra-native-protocol/frame"
-	log "github.com/sirupsen/logrus"
 	"net"
 )
 
@@ -22,13 +22,11 @@ var ShutdownErr = &shutdownError{err: "aborted due to shutdown request"}
 
 func adaptConnErr(connection net.Conn, clientHandlerContext context.Context, err error) error {
 	if err != nil {
-		select {
-		case <-clientHandlerContext.Done():
-			log.Infof("Connection error (%v) but shutdown requested (connection to %v)", err, connection.RemoteAddr())
-			return ShutdownErr
-		default:
-			return err
+		if clientHandlerContext.Err() != nil {
+			return fmt.Errorf("connection error (%v) but shutdown requested (connection to %v): %w", err, connection.RemoteAddr(), ShutdownErr)
 		}
+
+		return err
 	}
 
 	return nil

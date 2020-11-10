@@ -8,9 +8,9 @@ spec:
   type: ClusterIP
   ports:
     - port: {{ .Values.proxyConfig.proxyMetricsPort }}
-      targetPort: metrics
+      targetPort: httpproxy
       protocol: TCP
-      name: metrics
+      name: httpproxy
     - port: {{ .Values.proxyConfig.proxyQueryPort }}
       targetPort: cql
       protocol: TCP

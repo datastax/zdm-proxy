@@ -2,6 +2,7 @@ package cloudgateproxy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/jpillora/backoff"
 	"github.com/riptano/cloud-gate/proxy/pkg/config"
@@ -43,6 +44,9 @@ type CloudgateProxy struct {
 	// Global metricsHandler object. Created here and passed around to any other struct or function that needs it,
 	// so all metricsHandler are incremented globally
 	metricsHandler metrics.IMetricsHandler
+
+	targetControlConn *ControlConn
+	originControlConn *ControlConn
 }
 
 func NewCloudgateProxy(conf *config.Config) *CloudgateProxy {
@@ -57,18 +61,22 @@ func NewCloudgateProxy(conf *config.Config) *CloudgateProxy {
 func (p *CloudgateProxy) Start(ctx context.Context) error {
 	log.Infof("Starting proxy...")
 
-	err := checkConnection(p.originCassandraIP, ctx)
+	timeout := time.Duration(p.Conf.ClusterConnectionTimeoutMs) * time.Millisecond
+	openConnectionTimeoutCtx, _ := context.WithTimeout(ctx, timeout)
+	originConn, err := openConnection(p.originCassandraIP, openConnectionTimeoutCtx)
 	if err != nil {
 		return err
 	}
-	log.Debugf("connection check passed (to %v)", p.originCassandraIP)
+	log.Debugf("origin connection check passed (to %v)", p.originCassandraIP)
 
-	err = checkConnection(p.targetCassandraIP, ctx)
+	openConnectionTimeoutCtx, _ = context.WithTimeout(ctx, timeout)
+	targetConn, err := openConnection(p.targetCassandraIP, openConnectionTimeoutCtx)
 	if err != nil {
 		return err
 	}
-	log.Debugf("connection check passed (to %v)", p.targetCassandraIP)
+	log.Debugf("target connection check passed (to %v)", p.targetCassandraIP)
 
+	p.initializeControlConnections(originConn, targetConn)
 	p.initializeMetricsHandler()
 
 	err = p.acceptConnectionsFromClients(p.Conf.ProxyQueryAddress, p.Conf.ProxyQueryPort)
@@ -78,6 +86,20 @@ func (p *CloudgateProxy) Start(ctx context.Context) error {
 
 	log.Infof("Proxy connected and ready to accept queries on port %d", p.Conf.ProxyQueryPort)
 	return nil
+}
+
+func (p *CloudgateProxy) initializeControlConnections(origin net.Conn, target net.Conn) {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+
+	p.originControlConn =
+		NewControlConn(
+			origin, p.shutdownContext, p.originCassandraIP, p.Conf.OriginCassandraUsername, p.Conf.OriginCassandraPassword, p.Conf)
+	p.originControlConn.Start(p.shutdownWaitGroup)
+	p.targetControlConn =
+		NewControlConn(
+			target, p.shutdownContext, p.targetCassandraIP, p.Conf.TargetCassandraUsername, p.Conf.TargetCassandraPassword, p.Conf)
+	p.targetControlConn.Start(p.shutdownWaitGroup)
 }
 
 func (p *CloudgateProxy) initializeMetricsHandler() {
@@ -168,14 +190,13 @@ func (p *CloudgateProxy) acceptConnectionsFromClients(address string, port int) 
 		for {
 			conn, err := l.Accept()
 			if err != nil {
-				select {
-				case <-p.shutdownContext.Done():
+				if p.shutdownContext.Err() != nil {
 					log.Debugf("Shutting down client listener on port %d", port)
 					return
-				default:
-					log.Errorf("Error while listening for new connections: %v", err)
-					continue
 				}
+
+				log.Errorf("Error while listening for new connections: %v", err)
+				continue
 			}
 
 			go p.handleNewConnection(conn)
@@ -197,6 +218,7 @@ func (p *CloudgateProxy) handleNewConnection(conn net.Conn) {
 		conn,
 		originCassandraConnInfo,
 		targetCassandraConnInfo,
+		time.Duration(p.Conf.ClusterConnectionTimeoutMs) * time.Millisecond,
 		p.Conf.TargetCassandraUsername,
 		p.Conf.TargetCassandraPassword,
 		p.PreparedStatementCache,
@@ -225,6 +247,8 @@ func (p *CloudgateProxy) Shutdown() {
 		p.metricsHandler.UnregisterAllMetrics()
 	}
 	p.cancelFunc()
+	p.originControlConn = nil
+	p.targetControlConn = nil
 	shutdownWaitGroup = p.shutdownWaitGroup
 	p.lock.Unlock()
 
@@ -239,6 +263,20 @@ func (p *CloudgateProxy) Shutdown() {
 
 	shutdownWaitGroup.Wait()
 	log.Info("Proxy shutdown.")
+}
+
+func (p *CloudgateProxy) GetOriginControlConn() *ControlConn {
+	p.lock.RLock()
+	defer p.lock.RUnlock()
+
+	return p.originControlConn
+}
+
+func (p *CloudgateProxy) GetTargetControlConn() *ControlConn {
+	p.lock.RLock()
+	defer p.lock.RUnlock()
+
+	return p.targetControlConn
 }
 
 func Run(conf *config.Config, ctx context.Context) (*CloudgateProxy, error) {
@@ -262,9 +300,11 @@ func RunWithRetries(conf *config.Config, ctx context.Context, b *backoff.Backoff
 		}
 
 		nextDuration := b.Duration()
-		log.Errorf("Couldn't start proxy, retrying in %v: %v.", nextDuration, err)
+		if !errors.Is(err, ShutdownErr) {
+			log.Errorf("Couldn't start proxy, retrying in %v: %v.", nextDuration, err)
+		}
 		if !sleepWithContext(nextDuration, ctx) {
-			log.Error("Cancellation detected. Aborting proxy startup...")
+			log.Info("Cancellation detected. Aborting proxy startup...")
 			return nil, ShutdownErr
 		}
 	}

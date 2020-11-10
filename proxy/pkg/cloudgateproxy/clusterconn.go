@@ -50,6 +50,7 @@ func NewClusterConnectionInfo(ipAddress string, port int, isOriginCassandra bool
 
 func NewClusterConnector(
 	connInfo *ClusterConnectionInfo,
+	connectionOpenTimeout time.Duration,
 	metricsHandler metrics.IMetricsHandler,
 	waitGroup *sync.WaitGroup,
 	clientHandlerContext context.Context,
@@ -62,8 +63,14 @@ func NewClusterConnector(
 		clusterType = TargetCassandra
 	}
 
-	conn, err := openConnectionToCluster(connInfo, clientHandlerContext, metricsHandler)
+	timeoutCtx, _ := context.WithTimeout(clientHandlerContext, connectionOpenTimeout)
+	conn, err := openConnectionToCluster(connInfo, timeoutCtx, metricsHandler)
 	if err != nil {
+		if errors.Is(err, ShutdownErr) {
+			if timeoutCtx.Err() != nil {
+				return nil, fmt.Errorf("context timed out or cancelled while opening connection to %v: %w", clusterType, timeoutCtx.Err())
+			}
+		}
 		return nil, fmt.Errorf("could not open connection to %v: %w", clusterType, err)
 	}
 
@@ -163,10 +170,7 @@ func (cc *ClusterConnector) forwardResponseToChannel(response *frame.RawFrame) {
 	cc.lock.RLock()
 	defer cc.lock.RUnlock()
 	if responseChannel, ok := cc.clusterResponseChannels[response.Header.StreamId]; !ok {
-		select {
-		case <-cc.clientHandlerContext.Done():
-			return
-		default:
+		if cc.clientHandlerContext.Err() == nil {
 			log.Errorf("could not find stream id %d in clusterResponseChannels for cluster %v", response.Header.StreamId, cc.clusterType)
 		}
 	} else {
