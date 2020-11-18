@@ -15,14 +15,8 @@ github.com/bmizerany/assert v0.0.0-20160611221934-b7ed37b82869/go.mod h1:Ekp36dR
 github.com/cespare/xxhash/v2 v2.1.1 h1:6MnRN8NT7+YBpUIWxHtefFZOKTAPgGjpQSxqLNn0+qY=
 github.com/cespare/xxhash/v2 v2.1.1/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XLFGgcrjCOs=
 github.com/coreos/go-systemd v0.0.0-20190321100706-95778dfbb74e/go.mod h1:F5haX7vjVVG0kc13fIWeqUViNPyEJxv/OmvnBo0Yme4=
-github.com/datastax/go-cassandra-native-protocol v0.0.0-20201103154112-75b2e36abc4b h1:LODt3hgPrJ9wTx0ndULH9fJKS2nmzozzah4yzUWGf2M=
-github.com/datastax/go-cassandra-native-protocol v0.0.0-20201103154112-75b2e36abc4b/go.mod h1:/46Y/R+qXwB234l4llHyHCRCPQZKCXu0JZgIntOzUh0=
-github.com/datastax/go-cassandra-native-protocol v0.0.0-20201104193500-4cfa84e49fe4 h1:0QlxyGfGGQ7qx8/1a3nrjyYBWYAsPlSyXSA1JGVxt+4=
-github.com/datastax/go-cassandra-native-protocol v0.0.0-20201104193500-4cfa84e49fe4/go.mod h1:/46Y/R+qXwB234l4llHyHCRCPQZKCXu0JZgIntOzUh0=
-github.com/datastax/go-cassandra-native-protocol v0.0.0-20201104202020-37630ddc1cd9 h1:UjeUKcwTKRQPPmG1HGUfTv0z6ZgR4Eeysffch4isLEM=
-github.com/datastax/go-cassandra-native-protocol v0.0.0-20201104202020-37630ddc1cd9/go.mod h1:/46Y/R+qXwB234l4llHyHCRCPQZKCXu0JZgIntOzUh0=
-github.com/datastax/go-cassandra-native-protocol v0.0.0-20201110182159-8fc64246ab4b h1:0Yc1Zh8lCyt2NyItp5X4l/MyWkWJoFbV6t+PkzhQYLM=
-github.com/datastax/go-cassandra-native-protocol v0.0.0-20201110182159-8fc64246ab4b/go.mod h1:n6F7IFlMxffEUMfTBvNqwaxwpJMvMnRT5L93km1qeNc=
+github.com/datastax/go-cassandra-native-protocol v0.0.0-20201113171131-1330c1255747 h1:u0NLhfmv4mdKfPgYt2DZ2XFKVX8ff2QUdKxPhpb33CY=
+github.com/datastax/go-cassandra-native-protocol v0.0.0-20201113171131-1330c1255747/go.mod h1:n6F7IFlMxffEUMfTBvNqwaxwpJMvMnRT5L93km1qeNc=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
@@ -98,6 +92,7 @@ github.com/prometheus/procfs v0.0.2/go.mod h1:TjEm7ze935MbeOT/UhFTIMYKhuLP4wbCsT
 github.com/prometheus/procfs v0.0.8 h1:+fpWZdT24pJBiqJdAwYBjPSk+5YmQzYNPYzQsdzLkt8=
 github.com/prometheus/procfs v0.0.8/go.mod h1:7Qr8sr6344vo1JqZ6HhLceV9o3AJ1Ff+GxbHq6oeK9A=
 github.com/rs/xid v1.2.1/go.mod h1:+uKXf+4Djp6Md1KODXJxgGQPKngRmWyn10oCKFzNHOQ=
+github.com/rs/zerolog v1.20.0 h1:38k9hgtUBdxFwE34yS8rTHmHBa4eN16E4DJlv177LNs=
 github.com/rs/zerolog v1.20.0/go.mod h1:IzD0RJ65iWH0w97OQQebJEvTZYvsCUm9WVLWBQrJRjo=
 github.com/sirupsen/logrus v1.2.0/go.mod h1:LxeOpSwHxABJmUn/MG1IvRgCAasNZTLOkJPxbbu5VWo=
 github.com/sirupsen/logrus v1.4.2/go.mod h1:tLMulIdttU9McNUspp0xgXVQah82FyeX6MwdIuYE2rE=

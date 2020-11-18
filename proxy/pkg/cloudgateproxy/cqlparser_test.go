@@ -70,33 +70,35 @@ func TestInspectFrame(t *testing.T) {
 type mockMetricsHandler struct{}
 
 //goland:noinspection GoUnusedParameter
-func (h mockMetricsHandler) AddCounter(mn metrics.MetricsName) error { return nil }
+func (h mockMetricsHandler) AddCounter(mn metrics.MetricName) error { return nil }
 
 //goland:noinspection GoUnusedParameter
-func (h mockMetricsHandler) AddGauge(mn metrics.MetricsName) error { return nil }
+func (h mockMetricsHandler) AddGauge(mn metrics.MetricName) error { return nil }
 
 //goland:noinspection GoUnusedParameter
-func (h mockMetricsHandler) AddGaugeFunction(mn metrics.MetricsName, mf func() float64) error { return nil }
-
-//goland:noinspection GoUnusedParameter
-func (h mockMetricsHandler) AddHistogram(mn metrics.MetricsName) error { return nil }
-
-//goland:noinspection GoUnusedParameter
-func (h mockMetricsHandler) IncrementCountByOne(mn metrics.MetricsName) error { return nil }
-
-//goland:noinspection GoUnusedParameter
-func (h mockMetricsHandler) DecrementCountByOne(mn metrics.MetricsName) error { return nil }
-
-//goland:noinspection GoUnusedParameter
-func (h mockMetricsHandler) AddToCount(mn metrics.MetricsName, valueToAdd int) error { return nil }
-
-//goland:noinspection GoUnusedParameter
-func (h mockMetricsHandler) SubtractFromCount(mn metrics.MetricsName, valueToSubtract int) error {
+func (h mockMetricsHandler) AddGaugeFunction(mn metrics.MetricName, mf func() float64) error {
 	return nil
 }
 
 //goland:noinspection GoUnusedParameter
-func (h mockMetricsHandler) TrackInHistogram(mn metrics.MetricsName, timeToTrack time.Time) error {
+func (h mockMetricsHandler) AddHistogram(mn metrics.MetricName) error { return nil }
+
+//goland:noinspection GoUnusedParameter
+func (h mockMetricsHandler) IncrementCountByOne(mn metrics.MetricName) error { return nil }
+
+//goland:noinspection GoUnusedParameter
+func (h mockMetricsHandler) DecrementCountByOne(mn metrics.MetricName) error { return nil }
+
+//goland:noinspection GoUnusedParameter
+func (h mockMetricsHandler) AddToCount(mn metrics.MetricName, valueToAdd int) error { return nil }
+
+//goland:noinspection GoUnusedParameter
+func (h mockMetricsHandler) SubtractFromCount(mn metrics.MetricName, valueToSubtract int) error {
+	return nil
+}
+
+//goland:noinspection GoUnusedParameter
+func (h mockMetricsHandler) TrackInHistogram(mn metrics.MetricName, timeToTrack time.Time) error {
 	return nil
 }
 func (h mockMetricsHandler) UnregisterAllMetrics() error { return nil }

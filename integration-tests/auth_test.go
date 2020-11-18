@@ -131,7 +131,7 @@ func testAuth(
 			for _, tt := range tests {
 				t.Run(tt.name, func(t *testing.T) {
 
-					conf := setup.NewTestConfig(ccmSetup.Origin, ccmSetup.Target)
+					conf := setup.NewTestConfig(ccmSetup.Origin.GetInitialContactPoint(), ccmSetup.Target.GetInitialContactPoint())
 					conf.TargetCassandraUsername = tt.targetUsername
 					conf.TargetCassandraPassword = tt.targetPassword
 					conf.OriginCassandraUsername = tt.originUsername
@@ -236,7 +236,7 @@ func testHealthCheckWithAuth(
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 
-			conf := setup.NewTestConfig(ccmSetup.Origin, ccmSetup.Target)
+			conf := setup.NewTestConfig(ccmSetup.Origin.GetInitialContactPoint(), ccmSetup.Target.GetInitialContactPoint())
 			conf.HeartbeatIntervalMs = 500
 			conf.HeartbeatRetryIntervalMaxMs = 500
 			conf.HeartbeatRetryIntervalMinMs = 100

@@ -216,7 +216,7 @@ func (setup *CcmTestSetup) Cleanup() {
 }
 
 func NewProxyInstance(origin TestCluster, target TestCluster) *cloudgateproxy.CloudgateProxy {
-	return NewProxyInstanceWithConfig(NewTestConfig(origin, target))
+	return NewProxyInstanceWithConfig(NewTestConfig(origin.GetInitialContactPoint(), target.GetInitialContactPoint()))
 }
 
 func NewProxyInstanceWithConfig(config *config.Config) *cloudgateproxy.CloudgateProxy {
@@ -227,12 +227,12 @@ func NewProxyInstanceWithConfig(config *config.Config) *cloudgateproxy.Cloudgate
 	return proxy
 }
 
-func NewTestConfig(origin TestCluster, target TestCluster) *config.Config {
+func NewTestConfig(originHost string, targetHost string) *config.Config {
 	conf := config.New()
-	conf.OriginCassandraHostname = origin.GetInitialContactPoint()
+	conf.OriginCassandraHostname = originHost
 	conf.OriginCassandraPort = 9042
 
-	conf.TargetCassandraHostname = target.GetInitialContactPoint()
+	conf.TargetCassandraHostname = targetHost
 	conf.TargetCassandraUsername = "cassandra"
 	conf.TargetCassandraPassword = "cassandra"
 	conf.TargetCassandraPort = 9042

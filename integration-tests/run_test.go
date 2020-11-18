@@ -41,7 +41,7 @@ func TestRunWithRetries(t *testing.T) {
 	waitGroup.Add(1)
 	go func() {
 		defer waitGroup.Done()
-		p, err := cloudgateproxy.RunWithRetries(setup.NewTestConfig(testSetup.Origin, testSetup.Target), ctx, b)
+		p, err := cloudgateproxy.RunWithRetries(setup.NewTestConfig(testSetup.Origin.GetInitialContactPoint(), testSetup.Target.GetInitialContactPoint()), ctx, b)
 		if err == nil {
 			proxy.Store(&p)
 			<-ctx.Done()

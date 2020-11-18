@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"github.com/jpillora/backoff"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/riptano/cloud-gate/proxy/pkg/config"
 	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
+	"github.com/riptano/cloud-gate/proxy/pkg/metrics/prommetrics"
 	log "github.com/sirupsen/logrus"
 	"net"
 	"sync"
@@ -106,9 +108,11 @@ func (p *CloudgateProxy) initializeMetricsHandler() {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
-	// This is the Prometheus-specific implementation of the global metricsHandler object
-	// To switch to a different implementation, change the type instantiated here to another one that implements metricsHandler.metricsHandler
-	m := metrics.NewPrometheusCloudgateProxyMetrics()
+	// This is the Prometheus-specific implementation of the global IMetricsHandler object
+	// To switch to a different implementation, change the type instantiated here to another one that implements
+	// metrics.IMetricsHandler.
+	// You will also need to change the HTTP handler, see runner.go.
+	m := prommetrics.NewPrometheusCloudgateProxyMetrics(prometheus.DefaultRegisterer)
 	p.metricsHandler = m
 
 	m.AddCounter(metrics.SuccessReads)
@@ -218,7 +222,7 @@ func (p *CloudgateProxy) handleNewConnection(conn net.Conn) {
 		conn,
 		originCassandraConnInfo,
 		targetCassandraConnInfo,
-		time.Duration(p.Conf.ClusterConnectionTimeoutMs) * time.Millisecond,
+		time.Duration(p.Conf.ClusterConnectionTimeoutMs)*time.Millisecond,
 		p.Conf.TargetCassandraUsername,
 		p.Conf.TargetCassandraPassword,
 		p.PreparedStatementCache,

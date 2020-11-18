@@ -1,6 +1,9 @@
 package metrics
 
-import "time"
+import (
+	"net/http"
+	"time"
+)
 
 /*
 	Counters:
@@ -28,43 +31,43 @@ import "time"
 
 
 */
-type MetricsName string
+type MetricName string
 
 const (
-	SuccessReads = MetricsName("SuccessfulReadRequests")
-	FailedReads  = MetricsName("FailedReadRequests")
+	SuccessReads = MetricName("SuccessfulReadRequests")
+	FailedReads  = MetricName("FailedReadRequests")
 
-	SuccessBothWrites      = MetricsName("SuccessfulOnBothWriteRequests")
-	FailedOriginOnlyWrites = MetricsName("FailedOnOriginOnlyWriteRequests")
-	FailedTargetOnlyWrites = MetricsName("FailedOnTargetOnlyWriteRequests")
-	FailedBothWrites       = MetricsName("FailedOnBothWriteRequests")
+	SuccessBothWrites      = MetricName("SuccessfulOnBothWriteRequests")
+	FailedOriginOnlyWrites = MetricName("FailedOnOriginOnlyWriteRequests")
+	FailedTargetOnlyWrites = MetricName("FailedOnTargetOnlyWriteRequests")
+	FailedBothWrites       = MetricName("FailedOnBothWriteRequests")
 
-	TimeOutsProxyOrigin        = MetricsName("RequestsTimedOutOnProxyFromOrigin")
-	TimeOutsProxyTarget        = MetricsName("RequestsTimedOutOnProxyFromTarget")
-	ReadTimeOutsOriginCluster  = MetricsName("ReadsTimedOutOnOriginCluster")
-	WriteTimeOutsOriginCluster = MetricsName("WritesTimedOutOnOriginCluster")
-	WriteTimeOutsTargetCluster = MetricsName("WritesTimedOutOnTargetCluster")
+	TimeOutsProxyOrigin        = MetricName("RequestsTimedOutOnProxyFromOrigin")
+	TimeOutsProxyTarget        = MetricName("RequestsTimedOutOnProxyFromTarget")
+	ReadTimeOutsOriginCluster  = MetricName("ReadsTimedOutOnOriginCluster")
+	WriteTimeOutsOriginCluster = MetricName("WritesTimedOutOnOriginCluster")
+	WriteTimeOutsTargetCluster = MetricName("WritesTimedOutOnTargetCluster")
 
-	UnpreparedReads        = MetricsName("UnpreparedReadRequestCount")
-	UnpreparedOriginWrites = MetricsName("UnpreparedWriteRequestOnOriginCount")
-	UnpreparedTargetWrites = MetricsName("UnpreparedWriteRequestOnTargetCount")
-	PSCacheSize            = MetricsName("PreparedStatementCacheNumberOfEntries")
-	PSCacheMissCount       = MetricsName("PreparedStatementCacheMissCount")
+	UnpreparedReads        = MetricName("UnpreparedReadRequestCount")
+	UnpreparedOriginWrites = MetricName("UnpreparedWriteRequestOnOriginCount")
+	UnpreparedTargetWrites = MetricName("UnpreparedWriteRequestOnTargetCount")
+	PSCacheSize            = MetricName("PreparedStatementCacheNumberOfEntries")
+	PSCacheMissCount       = MetricName("PreparedStatementCacheMissCount")
 
-	ProxyReadLatencyHist   = MetricsName("ReadRequestProxyLatencyHist")
-	OriginReadLatencyHist  = MetricsName("ReadRequestOriginLatencyHist")
-	ProxyWriteLatencyHist  = MetricsName("ProxyWriteRequestLatencyHist")
-	OriginWriteLatencyHist = MetricsName("OriginWriteRequestLatencyHist")
-	TargetWriteLatencyHist = MetricsName("TargetWriteRequestLatencyHist")
+	ProxyReadLatencyHist   = MetricName("ReadRequestProxyLatencyHist")
+	OriginReadLatencyHist  = MetricName("ReadRequestOriginLatencyHist")
+	ProxyWriteLatencyHist  = MetricName("ProxyWriteRequestLatencyHist")
+	OriginWriteLatencyHist = MetricName("OriginWriteRequestLatencyHist")
+	TargetWriteLatencyHist = MetricName("TargetWriteRequestLatencyHist")
 
-	InFlightReadRequests  = MetricsName("InFlightReadRequests")
-	InFlightWriteRequests = MetricsName("InFlightWriteRequests")
-	OpenClientConnections = MetricsName("OpenClientConnections")
-	OpenOriginConnections = MetricsName("OpenOriginConnections")
-	OpenTargetConnections = MetricsName("OpenTargetConnections")
+	InFlightReadRequests  = MetricName("InFlightReadRequests")
+	InFlightWriteRequests = MetricName("InFlightWriteRequests")
+	OpenClientConnections = MetricName("OpenClientConnections")
+	OpenOriginConnections = MetricName("OpenOriginConnections")
+	OpenTargetConnections = MetricName("OpenTargetConnections")
 )
 
-func getMetricsDescription(mn MetricsName) string {
+func (mn MetricName) GetDescription() string {
 	switch mn {
 	case SuccessReads:
 		return "Running total of successful read requests"
@@ -124,18 +127,39 @@ func getMetricsDescription(mn MetricsName) string {
 }
 
 type IMetricsHandler interface {
+	AddCounter(mn MetricName) error
+	AddGauge(mn MetricName) error
+	AddGaugeFunction(mn MetricName, mf func() float64) error
+	AddHistogram(mn MetricName) error
 
-	AddCounter(mn MetricsName) error
-	AddGauge(mn MetricsName) error
-	AddGaugeFunction(mn MetricsName, mf func() float64) error
-	AddHistogram(mn MetricsName) error
+	// Increments an existing metric by one. The metric must be a counter or a gauge.
+	// An error is returned if the metric does not exist, or is not a counter nor a gauge.
+	IncrementCountByOne(mn MetricName) error
 
-	IncrementCountByOne(mn MetricsName) error
-	DecrementCountByOne(mn MetricsName) error
-	AddToCount(mn MetricsName, valueToAdd int) error
-	SubtractFromCount(mn MetricsName, valueToSubtract int) error
+	// Decrements an existing metric by one. The metric must be a gauge.
+	// An error is returned if the metric does not exist, or is not a gauge.
+	DecrementCountByOne(mn MetricName) error
 
-	TrackInHistogram(mn MetricsName, timeToTrack time.Time) error
+	// Adds the given value to an existing metric. The metric can be either a counter or a gauge.
+	// An error is returned if the metric does not exist, or is not a counter nor a gauge; an error is
+	// also returned if the metric is a counter, and valueToAdd is negative.
+	AddToCount(mn MetricName, valueToAdd int) error
 
+	// Subtracts the given value to an existing metric. The metric must be a gauge.
+	// An error is returned if the metric does not exist, or is not a gauge.
+	SubtractFromCount(mn MetricName, valueToSubtract int) error
+
+	// Tracks startTime, or more precisely, the duration obtained from time.Since(startTime).
+	// An error is returned if the metric does not exist, or is not a histogram.
+	TrackInHistogram(mn MetricName, startTime time.Time) error
+
+	// Unregisters all registered metrics and discards all internal references to them.
+	// An error is returned if at least one metric could not be unregistered.
 	UnregisterAllMetrics() error
+}
+
+func DefaultHandler() http.Handler {
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		http.Error(writer, "Proxy metrics haven't been initialized yet.", http.StatusServiceUnavailable)
+	})
 }

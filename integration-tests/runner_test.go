@@ -19,7 +19,7 @@ import (
 /*
 This file contains tests that require the http endpoints. Because the http handlers are global,
 they are registered separately on the parent test.
- */
+*/
 
 func TestRunner(t *testing.T) {
 	metricsHandler, readinessHandler := runner.SetupHandlers()
@@ -48,7 +48,7 @@ func testHttpEndpointsWithProxyNotInitialized(
 	err = simulacronSetup.Target.DisableConnectionListener()
 	require.Nil(t, err, "target disable listener failed: %v", err)
 
-	conf := setup.NewTestConfig(simulacronSetup.Origin, simulacronSetup.Target)
+	conf := setup.NewTestConfig(simulacronSetup.Origin.GetInitialContactPoint(), simulacronSetup.Target.GetInitialContactPoint())
 	modifyConfForHealthTests(conf)
 
 	ctx, cancelFunc := context.WithCancel(context.Background())
@@ -82,7 +82,7 @@ func testHttpEndpointsWithProxyInitialized(
 	simulacronSetup := setup.NewSimulacronTestSetupWithSession(false, false)
 	defer simulacronSetup.Cleanup()
 
-	conf := setup.NewTestConfig(simulacronSetup.Origin, simulacronSetup.Target)
+	conf := setup.NewTestConfig(simulacronSetup.Origin.GetInitialContactPoint(), simulacronSetup.Target.GetInitialContactPoint())
 	modifyConfForHealthTests(conf)
 
 	ctx, cancelFunc := context.WithCancel(context.Background())
@@ -128,7 +128,7 @@ func testHttpEndpointsWithUnavailableNode(
 	simulacronSetup := setup.NewSimulacronTestSetupWithSession(false, false)
 	defer simulacronSetup.Cleanup()
 
-	conf := setup.NewTestConfig(simulacronSetup.Origin, simulacronSetup.Target)
+	conf := setup.NewTestConfig(simulacronSetup.Origin.GetInitialContactPoint(), simulacronSetup.Target.GetInitialContactPoint())
 	modifyConfForHealthTests(conf)
 
 	ctx, cancelFunc := context.WithCancel(context.Background())
@@ -181,7 +181,7 @@ func testHttpEndpointsWithUnavailableNode(
 		*healthReportPtr = r
 		*statusCodePtr = statusCode
 		return nil, false
-	}, 100, 50 * time.Millisecond)
+	}, 100, 50*time.Millisecond)
 
 	healthReport := *healthReportPtr
 	statusCode = *statusCodePtr
@@ -216,7 +216,7 @@ func testHttpEndpointsWithUnavailableNode(
 		*healthReportPtr = r
 		*statusCodePtr = statusCode
 		return nil, false
-	}, 200, 100 * time.Millisecond)
+	}, 200, 100*time.Millisecond)
 
 	healthReport = *healthReportPtr
 	statusCode = *statusCodePtr
@@ -256,7 +256,7 @@ func testHttpEndpointsWithUnavailableNode(
 		*healthReportPtr = r
 		*statusCodePtr = statusCode
 		return nil, false
-	}, 100, 50 * time.Millisecond)
+	}, 100, 50*time.Millisecond)
 
 	healthReport = *healthReportPtr
 	statusCode = *statusCodePtr
@@ -291,7 +291,7 @@ func testHttpEndpointsWithUnavailableNode(
 		*healthReportPtr = r
 		*statusCodePtr = statusCode
 		return nil, false
-	}, 200, 100 * time.Millisecond)
+	}, 200, 100*time.Millisecond)
 
 	healthReport = *healthReportPtr
 	statusCode = *statusCodePtr
