@@ -43,6 +43,8 @@ func TestBasicBatch(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	defer proxy.Close()
+
 	// Run queries on proxied connection
 
 	// Batch statement: Update to katelyn, Insert terrance

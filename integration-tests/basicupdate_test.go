@@ -41,6 +41,7 @@ func TestBasicUpdate(t *testing.T) {
 		t.Log("Unable to connect to proxy session.")
 		t.Fatal(err)
 	}
+	defer proxy.Close()
 
 	// Run query on proxied connection
 	err = proxy.Query(fmt.Sprintf("UPDATE %s.%s SET task = 'terrance' WHERE id = d1b05da0-8c20-11ea-9fc6-6d2c86545d91;", setup.TestKeyspace, setup.TestTable)).Exec()

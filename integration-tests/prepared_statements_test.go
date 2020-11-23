@@ -19,10 +19,10 @@ func TestPreparedIdProxyCacheMiss(t *testing.T) {
 	testClient, err := client.NewTestClient("127.0.0.1:14002")
 	require.True(t, err == nil, "testClient setup failed: %s", err)
 
+	defer testClient.Shutdown()
+
 	err = testClient.PerformDefaultHandshake(primitive.ProtocolVersion4, false)
 	require.True(t, err == nil, "No-auth handshake failed: %s", err)
-
-	defer testClient.Shutdown()
 
 	preparedId := []byte{143, 7, 36, 50, 225, 104, 157, 89, 199, 177, 239, 231, 82, 201, 142, 253}
 
@@ -59,10 +59,10 @@ func TestPreparedIdPreparationMismatch(t *testing.T) {
 	testClient, err := client.NewTestClient("127.0.0.1:14002")
 	require.True(t, err == nil, "testClient setup failed: %s", err)
 
+	defer testClient.Shutdown()
+
 	err = testClient.PerformDefaultHandshake(primitive.ProtocolVersion4, false)
 	require.True(t, err == nil, "No-auth handshake failed: %s", err)
-
-	defer testClient.Shutdown()
 
 	tests := map[string]*simulacron.Cluster{
 		"origin": simulacronSetup.Origin,

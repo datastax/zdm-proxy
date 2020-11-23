@@ -379,15 +379,21 @@ func (ch *ClientHandler) forwardRequest(request *frame.RawFrame) (*frame.RawFram
 	}
 	log.Tracef("Opcode: %v, Forward decision: %v", request.Header.OpCode, forwardDecision)
 
-	if forwardDecision == forwardToTarget || forwardDecision == forwardToBoth {
-		ch.metricsHandler.IncrementCountByOne(metrics.InFlightWriteRequests)
-		defer ch.metricsHandler.TrackInHistogram(metrics.ProxyWriteLatencyHist, overallRequestStartTime)
-		defer ch.metricsHandler.DecrementCountByOne(metrics.InFlightWriteRequests)
-	}
-	if forwardDecision == forwardToOrigin || forwardDecision == forwardToBoth {
-		ch.metricsHandler.IncrementCountByOne(metrics.InFlightReadRequests)
-		defer ch.metricsHandler.TrackInHistogram(metrics.ProxyReadLatencyHist, overallRequestStartTime)
-		defer ch.metricsHandler.DecrementCountByOne(metrics.InFlightReadRequests)
+	switch forwardDecision {
+	case forwardToBoth:
+		ch.metricsHandler.IncrementCountByOne(metrics.InFlightRequestsBoth)
+		defer ch.metricsHandler.TrackInHistogram(metrics.ProxyRequestDurationBoth, overallRequestStartTime)
+		defer ch.metricsHandler.DecrementCountByOne(metrics.InFlightRequestsBoth)
+	case forwardToOrigin:
+		ch.metricsHandler.IncrementCountByOne(metrics.InFlightRequestsOrigin)
+		defer ch.metricsHandler.TrackInHistogram(metrics.ProxyRequestDurationOrigin, overallRequestStartTime)
+		defer ch.metricsHandler.DecrementCountByOne(metrics.InFlightRequestsOrigin)
+	case forwardToTarget:
+		ch.metricsHandler.IncrementCountByOne(metrics.InFlightRequestsTarget)
+		defer ch.metricsHandler.TrackInHistogram(metrics.ProxyRequestDurationTarget, overallRequestStartTime)
+		defer ch.metricsHandler.DecrementCountByOne(metrics.InFlightRequestsTarget)
+	default:
+		log.Errorf("unexpected forwardDecision %v, unable to track proxy level metrics", forwardDecision)
 	}
 
 	response, err := ch.executeForwardDecision(request, forwardDecision)
@@ -436,33 +442,32 @@ func (ch *ClientHandler) executeForwardDecision(f *frame.RawFrame, forwardDecisi
 
 	if forwardDecision == forwardToOrigin {
 		log.Debugf("Forwarding request with opcode %v for stream %v to OC", f.Header.OpCode, f.Header.StreamId)
-		startTime := time.Now()
 		originChan := ch.originCassandraConnector.forwardToCluster(f)
 		response, ok := <-originChan
 		if !ok {
 			return nil, fmt.Errorf("did not receive response from original cassandra channel, stream: %d", f.Header.StreamId)
 		}
-		ch.metricsHandler.TrackInHistogram(metrics.OriginReadLatencyHist, startTime)
 		log.Debugf("Forward to origin: just returning the response received from OC: %d", response.Header.OpCode)
-		trackReadResponse(response, ch.metricsHandler)
+		if !isResponseSuccessful(response) {
+			ch.metricsHandler.IncrementCountByOne(metrics.FailedRequestsOrigin)
+		}
 		return response, nil
 
 	} else if forwardDecision == forwardToTarget {
 		log.Debugf("Forwarding request with opcode %v for stream %v to TC", f.Header.OpCode, f.Header.StreamId)
-		startTime := time.Now()
 		targetChan := ch.targetCassandraConnector.forwardToCluster(f)
 		response, ok := <-targetChan
 		if !ok {
 			return nil, fmt.Errorf("did not receive response from target cassandra channel, stream: %d", f.Header.StreamId)
 		}
-		ch.metricsHandler.TrackInHistogram(metrics.TargetWriteLatencyHist, startTime)
 		log.Debugf("Forward to target: just returning the response received from TC: %d", response.Header.OpCode)
-		trackReadResponse(response, ch.metricsHandler)
+		if !isResponseSuccessful(response) {
+			ch.metricsHandler.IncrementCountByOne(metrics.FailedRequestsTarget)
+		}
 		return response, nil
 
 	} else if forwardDecision == forwardToBoth {
 		log.Debugf("Forwarding request with opcode %v for stream %v to OC and TC", f.Header.OpCode, f.Header.StreamId)
-		startTime := time.Now()
 		originChan := ch.originCassandraConnector.forwardToCluster(f)
 		targetChan := ch.targetCassandraConnector.forwardToCluster(f)
 		var originResponse, targetResponse *frame.RawFrame
@@ -475,13 +480,11 @@ func (ch *ClientHandler) executeForwardDecision(f *frame.RawFrame, forwardDecisi
 					return nil, fmt.Errorf("did not receive response from original cassandra channel, stream: %d", f.Header.StreamId)
 				}
 				originChan = nil // ignore further channel operations
-				ch.metricsHandler.TrackInHistogram(metrics.OriginWriteLatencyHist, startTime)
 			case targetResponse, ok = <-targetChan:
 				if !ok {
 					return nil, fmt.Errorf("did not receive response from target cassandra channel, stream: %d", f.Header.StreamId)
 				}
 				targetChan = nil // ignore further channel operations
-				ch.metricsHandler.TrackInHistogram(metrics.TargetWriteLatencyHist, startTime)
 			}
 		}
 		return ch.aggregateAndTrackResponses(originResponse, targetResponse), nil
@@ -501,90 +504,29 @@ func (ch *ClientHandler) aggregateAndTrackResponses(responseFromOriginCassandra 
 
 	log.Debugf("Aggregating responses. OC opcode %d, TargetCassandra opcode %d", responseFromOriginCassandra.Header.OpCode, responseFromTargetCassandra.Header.OpCode)
 
-	// track specific write failures in relevant metrics
-	if !isResponseSuccessful(responseFromOriginCassandra) {
-		ch.trackFailedIndividualWriteResponse(responseFromOriginCassandra, true)
-	}
-
-	if !isResponseSuccessful(responseFromTargetCassandra) {
-		ch.trackFailedIndividualWriteResponse(responseFromTargetCassandra, false)
-	}
-
 	// aggregate responses and update relevant aggregate metrics for general failed or successful responses
 	if isResponseSuccessful(responseFromOriginCassandra) && isResponseSuccessful(responseFromTargetCassandra) {
 		log.Debugf("Aggregated response: both successes, sending back OC's response with opcode %d", responseFromOriginCassandra.Header.OpCode)
-		ch.metricsHandler.IncrementCountByOne(metrics.SuccessBothWrites)
 		return responseFromOriginCassandra
 	}
 
 	if !isResponseSuccessful(responseFromOriginCassandra) && !isResponseSuccessful(responseFromTargetCassandra) {
 		log.Debugf("Aggregated response: both failures, sending back OC's response with opcode %d", responseFromOriginCassandra.Header.OpCode)
-		ch.metricsHandler.IncrementCountByOne(metrics.FailedBothWrites)
+		ch.metricsHandler.IncrementCountByOne(metrics.FailedRequestsBoth)
 		return responseFromOriginCassandra
 	}
 
 	// if either response is a failure, the failure "wins" --> return the failed response
 	if !isResponseSuccessful(responseFromOriginCassandra) {
 		log.Debugf("Aggregated response: failure only on OC, sending back OC's response with opcode %d", responseFromOriginCassandra.Header.OpCode)
-		ch.metricsHandler.IncrementCountByOne(metrics.FailedOriginOnlyWrites)
+		ch.metricsHandler.IncrementCountByOne(metrics.FailedRequestsBothFailedOnOriginOnly)
 		return responseFromOriginCassandra
 	} else {
 		log.Debugf("Aggregated response: failure only on TargetCassandra, sending back TargetCassandra's response with opcode %d", responseFromOriginCassandra.Header.OpCode)
-		ch.metricsHandler.IncrementCountByOne(metrics.FailedTargetOnlyWrites)
+		ch.metricsHandler.IncrementCountByOne(metrics.FailedRequestsBothFailedOnTargetOnly)
 		return responseFromTargetCassandra
 	}
 
-}
-
-/**
-Updates read-related metrics based on the outcome in the response
-*/
-
-func trackReadResponse(response *frame.RawFrame, mh metrics.IMetricsHandler) {
-	if isResponseSuccessful(response) {
-		mh.IncrementCountByOne(metrics.SuccessReads)
-	} else {
-		errorMsg, err := decodeErrorResult(response)
-		if err != nil {
-			log.Errorf("could not track read response: %v", err)
-			return
-		}
-
-		switch errorMsg.GetErrorCode() {
-		case primitive.ErrorCodeUnprepared:
-			mh.IncrementCountByOne(metrics.UnpreparedReads)
-		case primitive.ErrorCodeReadTimeout:
-			mh.IncrementCountByOne(metrics.ReadTimeOutsOriginCluster)
-		default:
-			mh.IncrementCountByOne(metrics.FailedReads)
-		}
-	}
-}
-
-/**
-Updates metrics related to individual write responses for failed writes.
-Only deals with Unprepared and Timed Out failures, as general write failures are tracked as aggregates
-*/
-func (ch *ClientHandler) trackFailedIndividualWriteResponse(response *frame.RawFrame, fromOrigin bool) {
-	errorMsg, err := decodeErrorResult(response)
-	if err != nil {
-		log.Errorf("could not track write response: %v", err)
-		return
-	}
-	switch errorMsg.GetErrorCode() {
-	case primitive.ErrorCodeUnprepared:
-		if fromOrigin {
-			ch.metricsHandler.IncrementCountByOne(metrics.UnpreparedOriginWrites)
-		} else {
-			ch.metricsHandler.IncrementCountByOne(metrics.UnpreparedTargetWrites)
-		}
-	case primitive.ErrorCodeWriteTimeout:
-		if fromOrigin {
-			ch.metricsHandler.IncrementCountByOne(metrics.WriteTimeOutsOriginCluster)
-		} else {
-			ch.metricsHandler.IncrementCountByOne(metrics.WriteTimeOutsTargetCluster)
-		}
-	}
 }
 
 func decodeErrorResult(frame *frame.RawFrame) (message.Error, error) {

@@ -200,6 +200,8 @@ func (cc *ClusterConnector) forwardToCluster(rawFrame *frame.RawFrame) chan *fra
 		// once the response has been sent to the caller, remove the channel from the map as it has served its purpose
 		defer cc.deleteChannelForClusterResponse(streamId)
 
+		startTime := time.Now()
+
 		err = cc.sendRequestToCluster(cc.clientHandlerContext, rawFrame)
 
 		if errors.Is(err, ShutdownErr) {
@@ -218,13 +220,19 @@ func (cc *ClusterConnector) forwardToCluster(rawFrame *frame.RawFrame) chan *fra
 				return
 			}
 			log.Tracef("Received response from %v for query with stream id %d", cc.clusterType, response.Header.StreamId)
+
+			cc.trackClusterLevelDuration(startTime)
+			cc.trackClusterErrorMetrics(response)
+
 			responseToCallerChan <- response
 		case <-time.After(queryTimeout):
 			log.Debugf("Timeout for query %d from %v", streamId, cc.clusterType)
+
+			cc.trackClusterLevelDuration(startTime)
 			if cc.clusterType == OriginCassandra {
-				cc.metricsHandler.IncrementCountByOne(metrics.TimeOutsProxyOrigin)
+				cc.metricsHandler.IncrementCountByOne(metrics.OriginClientTimeouts)
 			} else {
-				cc.metricsHandler.IncrementCountByOne(metrics.TimeOutsProxyTarget)
+				cc.metricsHandler.IncrementCountByOne(metrics.TargetClientTimeouts)
 			}
 		}
 	}()
@@ -267,4 +275,56 @@ func (cc *ClusterConnector) sendRequestToCluster(clientHandlerContext context.Co
 
 func (cci *ClusterConnectionInfo) getConnectionString() string {
 	return fmt.Sprintf("%s:%d", cci.ipAddress, cci.port)
+}
+
+/**
+Updates cluster level error metrics based on the outcome in the response
+*/
+func (cc *ClusterConnector) trackClusterErrorMetrics(response *frame.RawFrame) {
+	if !isResponseSuccessful(response) {
+		errorMsg, err := decodeErrorResult(response)
+		if err != nil {
+			log.Errorf("could not track read response: %v", err)
+			return
+		}
+
+		switch cc.clusterType {
+		case OriginCassandra:
+			switch errorMsg.GetErrorCode() {
+			case primitive.ErrorCodeUnprepared:
+				cc.metricsHandler.IncrementCountByOne(metrics.OriginUnpreparedErrors)
+			case primitive.ErrorCodeReadTimeout:
+				cc.metricsHandler.IncrementCountByOne(metrics.OriginReadTimeouts)
+			case primitive.ErrorCodeWriteTimeout:
+				cc.metricsHandler.IncrementCountByOne(metrics.OriginWriteTimeouts)
+			default:
+				cc.metricsHandler.IncrementCountByOne(metrics.OriginOtherErrors)
+			}
+		case TargetCassandra:
+			switch errorMsg.GetErrorCode() {
+			case primitive.ErrorCodeUnprepared:
+				cc.metricsHandler.IncrementCountByOne(metrics.TargetUnpreparedErrors)
+			case primitive.ErrorCodeReadTimeout:
+				cc.metricsHandler.IncrementCountByOne(metrics.TargetReadTimeouts)
+			case primitive.ErrorCodeWriteTimeout:
+				cc.metricsHandler.IncrementCountByOne(metrics.TargetWriteTimeouts)
+			default:
+				cc.metricsHandler.IncrementCountByOne(metrics.TargetOtherErrors)
+			}
+		default:
+			log.Errorf("unexpected clusterType %v, unable to track cluster metrics", cc.clusterType)
+		}
+	}
+}
+
+func (cc *ClusterConnector) trackClusterLevelDuration(startTime time.Time) {
+
+	switch cc.clusterType {
+	case OriginCassandra:
+		cc.metricsHandler.TrackInHistogram(metrics.OriginRequestDuration, startTime)
+	case TargetCassandra:
+		cc.metricsHandler.TrackInHistogram(metrics.TargetRequestDuration, startTime)
+	default:
+		log.Errorf("Unknown cluster type %v, will not track this request duration.", cc.clusterType)
+	}
 }

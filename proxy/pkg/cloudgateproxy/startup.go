@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
+	"time"
 )
 
 const (
@@ -57,9 +59,13 @@ func (ch *ClientHandler) handleTargetCassandraStartup(startupFrame *frame.RawFra
 			}
 		}
 
+		overallRequestStartTime := time.Now()
+		ch.metricsHandler.IncrementCountByOne(metrics.InFlightRequestsTarget)
 		channel = ch.targetCassandraConnector.forwardToCluster(request)
 
 		f, ok := <-channel
+		ch.metricsHandler.DecrementCountByOne(metrics.InFlightRequestsTarget)
+		ch.metricsHandler.TrackInHistogram(metrics.ProxyRequestDurationTarget, overallRequestStartTime)
 		if !ok {
 			if ch.clientHandlerContext.Err() != nil {
 				return ShutdownErr
@@ -67,6 +73,10 @@ func (ch *ClientHandler) handleTargetCassandraStartup(startupFrame *frame.RawFra
 
 			return fmt.Errorf("unable to send startup frame from clientConnection %v to %v",
 				clientIPAddress, targetCassandraIPAddress)
+		}
+
+		if !isResponseSuccessful(f) {
+			ch.metricsHandler.IncrementCountByOne(metrics.FailedRequestsTarget)
 		}
 
 		parsedFrame, err := defaultCodec.ConvertFromRawFrame(f)

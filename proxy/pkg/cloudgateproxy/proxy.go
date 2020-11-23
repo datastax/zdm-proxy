@@ -115,35 +115,44 @@ func (p *CloudgateProxy) initializeMetricsHandler() {
 	m := prommetrics.NewPrometheusCloudgateProxyMetrics(prometheus.DefaultRegisterer)
 	p.metricsHandler = m
 
-	m.AddCounter(metrics.SuccessReads)
-	m.AddCounter(metrics.FailedReads)
-	m.AddCounter(metrics.SuccessBothWrites)
-	m.AddCounter(metrics.FailedOriginOnlyWrites)
-	m.AddCounter(metrics.FailedTargetOnlyWrites)
-	m.AddCounter(metrics.FailedBothWrites)
+	// proxy level metrics
 
-	m.AddCounter(metrics.TimeOutsProxyOrigin)
-	m.AddCounter(metrics.TimeOutsProxyTarget)
-	m.AddCounter(metrics.ReadTimeOutsOriginCluster)
-	m.AddCounter(metrics.WriteTimeOutsOriginCluster)
-	m.AddCounter(metrics.WriteTimeOutsTargetCluster)
-
-	m.AddCounter(metrics.UnpreparedReads)
-	m.AddCounter(metrics.UnpreparedOriginWrites)
-	m.AddCounter(metrics.UnpreparedTargetWrites)
+	m.AddCounter(metrics.FailedRequestsBoth)
+	m.AddCounter(metrics.FailedRequestsBothFailedOnOriginOnly)
+	m.AddCounter(metrics.FailedRequestsBothFailedOnTargetOnly)
+	m.AddCounter(metrics.FailedRequestsOrigin)
+	m.AddCounter(metrics.FailedRequestsTarget)
 
 	m.AddCounter(metrics.PSCacheMissCount)
 	m.AddGaugeFunction(metrics.PSCacheSize, p.PreparedStatementCache.GetPreparedStatementCacheSize)
 
-	m.AddHistogram(metrics.ProxyReadLatencyHist)
-	m.AddHistogram(metrics.OriginReadLatencyHist)
-	m.AddHistogram(metrics.ProxyWriteLatencyHist)
-	m.AddHistogram(metrics.OriginWriteLatencyHist)
-	m.AddHistogram(metrics.TargetWriteLatencyHist)
+	m.AddHistogram(metrics.ProxyRequestDurationBoth)
+	m.AddHistogram(metrics.ProxyRequestDurationOrigin)
+	m.AddHistogram(metrics.ProxyRequestDurationTarget)
 
-	m.AddGauge(metrics.InFlightReadRequests)
-	m.AddGauge(metrics.InFlightWriteRequests)
+	m.AddGauge(metrics.InFlightRequestsBoth)
+	m.AddGauge(metrics.InFlightRequestsOrigin)
+	m.AddGauge(metrics.InFlightRequestsTarget)
+
 	m.AddGauge(metrics.OpenClientConnections)
+
+	// cluster level metrics
+
+	m.AddHistogram(metrics.OriginRequestDuration)
+	m.AddHistogram(metrics.TargetRequestDuration)
+
+	m.AddCounter(metrics.OriginClientTimeouts)
+	m.AddCounter(metrics.OriginReadTimeouts)
+	m.AddCounter(metrics.OriginWriteTimeouts)
+	m.AddCounter(metrics.OriginUnpreparedErrors)
+	m.AddCounter(metrics.OriginOtherErrors)
+
+	m.AddCounter(metrics.TargetClientTimeouts)
+	m.AddCounter(metrics.TargetReadTimeouts)
+	m.AddCounter(metrics.TargetWriteTimeouts)
+	m.AddCounter(metrics.TargetUnpreparedErrors)
+	m.AddCounter(metrics.TargetOtherErrors)
+
 	m.AddGauge(metrics.OpenOriginConnections)
 	m.AddGauge(metrics.OpenTargetConnections)
 }
@@ -248,7 +257,10 @@ func (p *CloudgateProxy) Shutdown() {
 
 	p.lock.Lock()
 	if p.metricsHandler != nil {
-		p.metricsHandler.UnregisterAllMetrics()
+		err := p.metricsHandler.UnregisterAllMetrics()
+		if err != nil {
+			log.Warnf("Failed to unregister metrics: %v.", err.Error())
+		}
 	}
 	p.cancelFunc()
 	p.originControlConn = nil

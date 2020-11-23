@@ -8,6 +8,7 @@ import (
 	"github.com/riptano/cloud-gate/proxy/pkg/config"
 	"github.com/riptano/cloud-gate/proxy/pkg/health"
 	"github.com/riptano/cloud-gate/proxy/pkg/httpcloudgate"
+	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
 	"github.com/riptano/cloud-gate/proxy/pkg/runner"
 	"github.com/stretchr/testify/require"
 	"net/http"
@@ -21,8 +22,14 @@ This file contains tests that require the http endpoints. Because the http handl
 they are registered separately on the parent test.
 */
 
-func TestRunner(t *testing.T) {
+func TestWithHttpHandlers(t *testing.T) {
 	metricsHandler, readinessHandler := runner.SetupHandlers()
+
+	t.Run("testMetrics", func(t *testing.T) {
+		testMetrics(t, metricsHandler)
+	})
+
+	metricsHandler.SetHandler(metrics.DefaultHandler())
 
 	t.Run("testHttpEndpointsWithProxyNotInitialized", func(t *testing.T) {
 		testHttpEndpointsWithProxyNotInitialized(t, metricsHandler, readinessHandler)
