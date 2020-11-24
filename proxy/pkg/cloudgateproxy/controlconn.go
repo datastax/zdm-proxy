@@ -39,7 +39,7 @@ func NewControlConn(conn net.Conn, ctx context.Context, addr string, username st
 			Factor: conf.HeartbeatRetryBackoffFactor,
 			Jitter: true,
 			Min:    time.Duration(conf.HeartbeatRetryIntervalMinMs) * time.Millisecond,
-			Max:    time.Duration(conf.HeartbeatRetryIntervalMaxMs) * time.Second,
+			Max:    time.Duration(conf.HeartbeatRetryIntervalMaxMs) * time.Millisecond,
 		},
 		heartbeatPeriod:       time.Duration(conf.HeartbeatIntervalMs) * time.Millisecond,
 		context:               ctx,
