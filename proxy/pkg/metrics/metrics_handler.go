@@ -9,7 +9,7 @@ type IMetricsHandler interface {
 	AddCounter(mn Metric) error
 	AddGauge(mn Metric) error
 	AddGaugeFunction(mn Metric, mf func() float64) error
-	AddHistogram(mn HistogramMetric) error
+	AddHistogram(mn Metric, buckets []float64) error
 
 	// Increments an existing metric by one. The metric must be a counter or a gauge.
 	// An error is returned if the metric does not exist, or is not a counter nor a gauge.

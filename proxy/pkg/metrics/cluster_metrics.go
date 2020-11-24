@@ -89,15 +89,13 @@ var (
 		},
 	)
 
-	OriginRequestDuration = NewHistogramMetric(
+	OriginRequestDuration = NewMetric(
 		"origin_request_duration_seconds",
 		"Histogram that tracks the latency of requests sent to origin clusters at cluster connector level",
-		defaultHistogramBuckets,
 	)
-	TargetRequestDuration = NewHistogramMetric(
+	TargetRequestDuration = NewMetric(
 		"target_request_duration_seconds",
 		"Histogram that tracks the latency of requests sent to target clusters at cluster connector level",
-		defaultHistogramBuckets,
 	)
 
 	OpenOriginConnections = NewMetric(

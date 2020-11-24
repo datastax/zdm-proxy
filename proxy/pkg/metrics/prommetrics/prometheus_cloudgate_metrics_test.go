@@ -153,17 +153,17 @@ func TestPrometheusCloudgateProxyMetrics_AddGaugeFunction(t *testing.T) {
 
 func TestPrometheusCloudgateProxyMetrics_AddHistogram(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	histogramMetric := newTestHistogram("test_histogram", nil)
+	histogramMetric := newTestMetric("test_histogram")
 	handler := NewPrometheusCloudgateProxyMetrics(registry)
 	assert.Empty(t, handler.collectorMap)
-	err := handler.AddHistogram(histogramMetric)
+	err := handler.AddHistogram(histogramMetric, nil)
 	assert.Nil(t, err)
 	_, containsMetric := handler.collectorMap[histogramMetric.GetUniqueIdentifier()]
 	assert.True(t, containsMetric)
 	gather, err := registry.Gather()
 	assert.Nil(t, err)
 	assert.Len(t, gather, 1)
-	err = handler.AddHistogram(histogramMetric)
+	err = handler.AddHistogram(histogramMetric, nil)
 	assert.NotNil(t, err)
 	assert.Contains(t, err.Error(), "duplicate metrics collector registration attempted")
 	gather, err = registry.Gather()
@@ -173,11 +173,11 @@ func TestPrometheusCloudgateProxyMetrics_AddHistogram(t *testing.T) {
 
 func TestPrometheusCloudgateProxyMetrics_AddHistogramWithLabels(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	histogramMetric := newTestHistogramWithLabels("test_histogram_with_labels", nil, map[string]string{"label1": "value1"})
+	histogramMetric := newTestMetricWithLabels("test_histogram_with_labels", map[string]string{"label1": "value1"})
 	handler := NewPrometheusCloudgateProxyMetrics(registry)
 	assert.Empty(t, handler.collectorMap)
 
-	err := handler.AddHistogram(histogramMetric)
+	err := handler.AddHistogram(histogramMetric, nil)
 	assert.Nil(t, err)
 	_, containsMetric := handler.collectorMap[histogramMetric.GetUniqueIdentifier()]
 	assert.True(t, containsMetric)
@@ -185,15 +185,15 @@ func TestPrometheusCloudgateProxyMetrics_AddHistogramWithLabels(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Len(t, gather, 1)
 
-	err = handler.AddHistogram(histogramMetric)
+	err = handler.AddHistogram(histogramMetric, nil)
 	require.NotNil(t, err)
 	assert.Contains(t, err.Error(), "duplicate metrics collector registration attempted")
 	gather, err = registry.Gather()
 	assert.Nil(t, err)
 	assert.Len(t, gather, 1)
 
-	histogramMetric = newTestHistogramWithLabels(histogramMetric.GetName(), nil, map[string]string{"label1": "value2"})
-	err = handler.AddHistogram(histogramMetric)
+	histogramMetric = newTestMetricWithLabels(histogramMetric.GetName(), map[string]string{"label1": "value2"})
+	err = handler.AddHistogram(histogramMetric, nil)
 	require.Nil(t, err)
 	gather, err = registry.Gather()
 	assert.Nil(t, err)
@@ -382,8 +382,8 @@ func TestPrometheusCloudgateProxyMetrics_SubtractFromCount_Labels(t *testing.T) 
 
 func TestPrometheusCloudgateProxyMetrics_TrackInHistogram(t *testing.T) {
 	handler := NewPrometheusCloudgateProxyMetrics(prometheus.NewRegistry())
-	histogramMetric := newTestHistogram("test_histogram", nil)
-	err := handler.AddHistogram(histogramMetric)
+	histogramMetric := newTestMetric("test_histogram")
+	err := handler.AddHistogram(histogramMetric, nil)
 	assert.Nil(t, err)
 	begin := time.Now().Add(-time.Millisecond * 500)
 	for i := 0; i < 1000; i++ {
@@ -401,8 +401,8 @@ func TestPrometheusCloudgateProxyMetrics_TrackInHistogram(t *testing.T) {
 }
 func TestPrometheusCloudgateProxyMetrics_TrackInHistogram_WithLabels(t *testing.T) {
 	handler := NewPrometheusCloudgateProxyMetrics(prometheus.NewRegistry())
-	histogramMetric := newTestHistogramWithLabels("test_histogram_with_labels", nil, map[string]string{"l": "v"})
-	err := handler.AddHistogram(histogramMetric)
+	histogramMetric := newTestMetricWithLabels("test_histogram_with_labels", map[string]string{"l": "v"})
+	err := handler.AddHistogram(histogramMetric, nil)
 	assert.Nil(t, err)
 	begin := time.Now().Add(-time.Millisecond * 500)
 	for i := 0; i < 1000; i++ {
@@ -425,9 +425,9 @@ func TestPrometheusCloudgateProxyMetrics_UnregisterAllMetrics(t *testing.T) {
 	counterMetric := newTestMetric("test_counter")
 	counterMetricWithLabels1 := newTestMetricWithLabels("test_counter_with_labels", map[string]string{"counter_type": "counter1"})
 	counterMetricWithLabels2 := newTestMetricWithLabels("test_counter_with_labels", map[string]string{"counter_type": "counter2"})
-	histogramMetric := newTestHistogram("test_histogram", nil)
-	histogramMetricWithLabels1 := newTestHistogramWithLabels("test_histogram_with_labels", nil, map[string]string{"h": "h1"})
-	histogramMetricWithLabels2 := newTestHistogramWithLabels("test_histogram_with_labels", nil, map[string]string{"h": "h2"})
+	histogramMetric := newTestMetric("test_histogram")
+	histogramMetricWithLabels1 := newTestMetricWithLabels("test_histogram_with_labels", map[string]string{"h": "h1"})
+	histogramMetricWithLabels2 := newTestMetricWithLabels("test_histogram_with_labels", map[string]string{"h": "h2"})
 	gaugeMetric := newTestMetric("test_gauge")
 	gaugeFuncMetric := newTestMetric("test_gauge_func")
 	err := handler.AddCounter(counterMetric)
@@ -440,11 +440,11 @@ func TestPrometheusCloudgateProxyMetrics_UnregisterAllMetrics(t *testing.T) {
 	assert.Nil(t, err)
 	err = handler.AddGaugeFunction(gaugeFuncMetric, func() float64 { return 12.34 })
 	assert.Nil(t, err)
-	err = handler.AddHistogram(histogramMetric)
+	err = handler.AddHistogram(histogramMetric, nil)
 	assert.Nil(t, err)
-	err = handler.AddHistogram(histogramMetricWithLabels1)
+	err = handler.AddHistogram(histogramMetricWithLabels1, nil)
 	assert.Nil(t, err)
-	err = handler.AddHistogram(histogramMetricWithLabels2)
+	err = handler.AddHistogram(histogramMetricWithLabels2, nil)
 	assert.Nil(t, err)
 	assert.Len(t, handler.collectorMap, 8)
 	gather, err := registry.Gather()
@@ -489,12 +489,4 @@ func newTestMetric(name string) metrics.Metric {
 
 func newTestMetricWithLabels(name string, labels map[string]string) metrics.Metric {
 	return metrics.NewMetricWithLabels(name, "", labels)
-}
-
-func newTestHistogram(name string, buckets []float64) metrics.HistogramMetric {
-	return metrics.NewHistogramMetric(name, "", buckets)
-}
-
-func newTestHistogramWithLabels(name string, buckets []float64, labels map[string]string) metrics.HistogramMetric {
-	return metrics.NewHistogramMetricWithLabels(name, "", buckets, labels)
 }

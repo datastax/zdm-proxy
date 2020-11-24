@@ -29,29 +29,3 @@ func TestMetric_String(t *testing.T) {
 	stingRepresentation := metricWithLabel.String()
 	require.Equal(t, "testMetric", stingRepresentation)
 }
-
-func TestHistogramMetricWithLabels_String(t *testing.T) {
-	metricWithLabel := metrics.NewHistogramMetricWithLabels(
-		"testHistogram",
-		"Description 1234",
-		[]float64{1, 2},
-		map[string]string{
-			"label_312": "value_321",
-			"label_123": "value_123",
-		},
-	)
-
-	stingRepresentation := metricWithLabel.String()
-	require.Equal(t, "testHistogram{label_123=\"value_123\",label_312=\"value_321\"}", stingRepresentation)
-}
-
-func TestHistogramMetric_String(t *testing.T) {
-	metricWithLabel := metrics.NewHistogramMetric(
-		"testHistogram",
-		"Description 1234",
-		[]float64{1, 2},
-	)
-
-	stingRepresentation := metricWithLabel.String()
-	require.Equal(t, "testHistogram", stingRepresentation)
-}

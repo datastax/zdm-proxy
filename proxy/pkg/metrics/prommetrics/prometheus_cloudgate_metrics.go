@@ -182,7 +182,7 @@ func (pm *PrometheusCloudgateProxyMetrics) AddGaugeFunction(mn metrics.Metric, m
 	return nil
 }
 
-func (pm *PrometheusCloudgateProxyMetrics) AddHistogram(mn metrics.HistogramMetric) error {
+func (pm *PrometheusCloudgateProxyMetrics) AddHistogram(mn metrics.Metric, buckets []float64) error {
 	pm.lock.Lock()
 	defer pm.lock.Unlock()
 
@@ -198,7 +198,7 @@ func (pm *PrometheusCloudgateProxyMetrics) AddHistogram(mn metrics.HistogramMetr
 				Namespace: metricsPrefix,
 				Name:      mn.GetName(),
 				Help:      mn.GetDescription(),
-				Buckets:   mn.GetBuckets(),
+				Buckets:   buckets,
 			},
 			getLabelNames(mn))
 	} else {
@@ -206,7 +206,7 @@ func (pm *PrometheusCloudgateProxyMetrics) AddHistogram(mn metrics.HistogramMetr
 			Namespace:   metricsPrefix,
 			Name:        mn.GetName(),
 			Help:        mn.GetDescription(),
-			Buckets:     mn.GetBuckets(),
+			Buckets:     buckets,
 		})
 	}
 

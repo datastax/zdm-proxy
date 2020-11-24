@@ -23,19 +23,8 @@ type Metric interface {
 	String() string
 }
 
-type histogramMetric struct {
-	*metric
-	buckets []float64
-}
-
-type HistogramMetric interface {
-	Metric
-	GetBuckets() []float64
-}
-
 var (
 	metricIdentifierCounter uint32 = 0
-	defaultHistogramBuckets        = []float64{15, 30, 60, 90, 120, 200} // TODO define latency buckets in some way that makes sense
 )
 
 func incrementMetricIdentifier() uint32 {
@@ -59,24 +48,6 @@ func NewMetric(name string, description string) Metric {
 
 func NewMetricWithLabels(name string, description string, labels map[string]string) Metric {
 	return newMetricBase(name, description, labels)
-}
-
-func NewHistogramMetric(name string, description string, buckets []float64) HistogramMetric {
-	m := newMetricBase(name, description, nil)
-	return &histogramMetric{
-		metric:  m,
-		buckets: buckets,
-	}
-}
-
-func NewHistogramMetricWithLabels(
-	name string, description string, buckets []float64, labels map[string]string) HistogramMetric {
-
-	m := newMetricBase(name, description, labels)
-	return &histogramMetric{
-		metric:  m,
-		buckets: buckets,
-	}
 }
 
 func computeStringRepresentation(mn *metric) string {
@@ -124,8 +95,4 @@ func (mn *metric) GetLabels() map[string]string {
 
 func (mn *metric) GetDescription() string {
 	return mn.description
-}
-
-func (hmn *histogramMetric) GetBuckets() []float64 {
-	return hmn.buckets
 }

@@ -70,26 +70,23 @@ var (
 		"Running total of prepared statement cache misses in the proxy",
 	)
 
-	ProxyRequestDurationOrigin = NewHistogramMetricWithLabels(
+	ProxyRequestDurationOrigin = NewMetricWithLabels(
 		requestDurationName,
 		requestDurationDescription,
-		defaultHistogramBuckets,
 		map[string]string{
 			requestDurationDestinationLabel: destinationOrigin,
 		},
 	)
-	ProxyRequestDurationTarget = NewHistogramMetricWithLabels(
+	ProxyRequestDurationTarget = NewMetricWithLabels(
 		requestDurationName,
 		requestDurationDescription,
-		defaultHistogramBuckets,
 		map[string]string{
 			requestDurationDestinationLabel: destinationTarget,
 		},
 	)
-	ProxyRequestDurationBoth = NewHistogramMetricWithLabels(
+	ProxyRequestDurationBoth = NewMetricWithLabels(
 		requestDurationName,
 		requestDurationDescription,
-		defaultHistogramBuckets,
 		map[string]string{
 			requestDurationDestinationLabel: destinationBoth,
 		},

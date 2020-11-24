@@ -49,6 +49,9 @@ type CloudgateProxy struct {
 
 	targetControlConn *ControlConn
 	originControlConn *ControlConn
+
+	originBuckets []float64
+	targetBuckets []float64
 }
 
 func NewCloudgateProxy(conf *config.Config) *CloudgateProxy {
@@ -126,9 +129,9 @@ func (p *CloudgateProxy) initializeMetricsHandler() {
 	m.AddCounter(metrics.PSCacheMissCount)
 	m.AddGaugeFunction(metrics.PSCacheSize, p.PreparedStatementCache.GetPreparedStatementCacheSize)
 
-	m.AddHistogram(metrics.ProxyRequestDurationBoth)
-	m.AddHistogram(metrics.ProxyRequestDurationOrigin)
-	m.AddHistogram(metrics.ProxyRequestDurationTarget)
+	m.AddHistogram(metrics.ProxyRequestDurationBoth, p.originBuckets)
+	m.AddHistogram(metrics.ProxyRequestDurationOrigin, p.originBuckets)
+	m.AddHistogram(metrics.ProxyRequestDurationTarget, p.targetBuckets)
 
 	m.AddGauge(metrics.InFlightRequestsBoth)
 	m.AddGauge(metrics.InFlightRequestsOrigin)
@@ -138,8 +141,8 @@ func (p *CloudgateProxy) initializeMetricsHandler() {
 
 	// cluster level metrics
 
-	m.AddHistogram(metrics.OriginRequestDuration)
-	m.AddHistogram(metrics.TargetRequestDuration)
+	m.AddHistogram(metrics.OriginRequestDuration, p.originBuckets)
+	m.AddHistogram(metrics.TargetRequestDuration, p.targetBuckets)
 
 	m.AddCounter(metrics.OriginClientTimeouts)
 	m.AddCounter(metrics.OriginReadTimeouts)
@@ -172,6 +175,17 @@ func (p *CloudgateProxy) initializeGlobalStructures() {
 	p.shutdownContext, p.cancelFunc = context.WithCancel(context.Background())
 	p.shutdownWaitGroup = &sync.WaitGroup{}
 	p.shutdownClientListenerChan = make(chan bool)
+
+	var err error
+	p.originBuckets, err = p.Conf.ParseOriginBuckets()
+	if err != nil {
+		log.Errorf("Failed to parse origin buckets, falling back to default buckets: %v", err)
+	}
+
+	p.targetBuckets, err = p.Conf.ParseTargetBuckets()
+	if err != nil {
+		log.Errorf("Failed to parse target buckets, falling back to default buckets: %v", err)
+	}
 
 	p.lock.Unlock()
 }

@@ -28,6 +28,8 @@ proxyConfig:
   debug: false
   proxyMetricsPort: 14001
   proxyQueryPort: 14002
+  originBucketsMs:
+  targetBucketsMs:
 
 serviceAccount:
   # Specifies whether a service account should be created

@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"github.com/kelseyhightower/envconfig"
 	log "github.com/sirupsen/logrus"
+	"strconv"
 	"strings"
 )
 
-// TODO remove unnecessary fields and rename where appropriate
 // Config holds the values of environment variables necessary for proper Proxy function.
 type Config struct {
 	OriginCassandraHostname string `required:"true" split_words:"true"`
@@ -34,6 +34,9 @@ type Config struct {
 	HeartbeatRetryIntervalMaxMs int     `default:"30000" split_words:"true"`
 	HeartbeatRetryBackoffFactor float64 `default:"2" split_words:"true"`
 	HeartbeatFailureThreshold   int     `default:"1" split_words:"true"`
+
+	OriginBucketsMs string `default:"10, 25, 50, 75, 100, 150, 200, 300, 500, 750, 1000, 2500, 5000" split_words:"true"`
+	TargetBucketsMs string `default:"5, 10, 25, 50, 75, 100, 150, 300, 500, 1000, 2000" split_words:"true"`
 
 	Debug bool
 }
@@ -66,7 +69,43 @@ func (c *Config) ParseEnvVars() (*Config, error) {
 		return nil, fmt.Errorf("could not load environment variables: %w", err)
 	}
 
+	originBuckets, err := c.ParseOriginBuckets()
+	if err != nil {
+		return nil, fmt.Errorf("could not parse origin buckets: %v", err)
+	}
+
+	targetBuckets, err := c.ParseTargetBuckets()
+	if err != nil {
+		return nil, fmt.Errorf("could not parse target buckets: %v", err)
+	}
+
 	log.Infof("Parsed configuration: %v", c)
+	log.Infof("Parsed buckets: origin{%v}, target{%v}", originBuckets, targetBuckets)
 
 	return c, nil
+}
+
+func (c *Config) ParseOriginBuckets() ([]float64, error) {
+	return c.parseBuckets(c.OriginBucketsMs)
+}
+
+func (c *Config) ParseTargetBuckets() ([]float64, error) {
+	return c.parseBuckets(c.TargetBucketsMs)
+}
+
+func (c *Config) parseBuckets(bucketsConfigStr string) ([]float64, error) {
+	var bucketsArr []float64
+	bucketsStrArr := strings.Split(bucketsConfigStr, ",")
+	for _, bucketStr := range bucketsStrArr {
+		bucket, err := strconv.ParseFloat(strings.TrimSpace(bucketStr), 64)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"unable to parse buckets from %v: could not convert %v to float",
+				bucketsConfigStr,
+				bucketStr)
+		}
+		bucketsArr = append(bucketsArr, bucket / 1000) // convert ms to seconds
+	}
+
+	return bucketsArr, nil
 }

@@ -36,4 +36,12 @@ data:
   HEARTBEAT_FAILURE_THRESHOLD: "{{ .Values.proxyConfig.heartbeatFailureThreshold }}"
   {{- end }}
 
+  {{- if .Values.proxyConfig.originBucketsMs }}
+  ORIGIN_BUCKETS_MS: "{{ .Values.proxyConfig.originBucketsMs }}"
+  {{- end }}
+
+  {{- if .Values.proxyConfig.targetBucketsMs }}
+  TARGET_BUCKETS_MS: "{{ .Values.proxyConfig.targetBucketsMs }}"
+  {{- end }}
+
   DEBUG: "{{ .Values.proxyConfig.debug }}"

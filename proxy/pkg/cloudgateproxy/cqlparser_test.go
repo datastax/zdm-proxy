@@ -81,7 +81,7 @@ func (h mockMetricsHandler) AddGaugeFunction(mn metrics.Metric, mf func() float6
 }
 
 //goland:noinspection GoUnusedParameter
-func (h mockMetricsHandler) AddHistogram(mn metrics.HistogramMetric) error { return nil }
+func (h mockMetricsHandler) AddHistogram(mn metrics.Metric, buckets []float64) error { return nil }
 
 //goland:noinspection GoUnusedParameter
 func (h mockMetricsHandler) IncrementCountByOne(mn metrics.Metric) error { return nil }
