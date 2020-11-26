@@ -132,8 +132,8 @@ func mockBatch(query string) *frame.RawFrame {
 }
 
 func mockFrame(message message.Message) *frame.RawFrame {
-	frame, _ := frame.NewRequestFrame(primitive.ProtocolVersion4, 1, false, nil, message, false)
-	rawFrame, _ := defaultCodec.ConvertToRawFrame(frame)
+	f := frame.NewFrame(primitive.ProtocolVersion4, 1, message)
+	rawFrame, _ := defaultCodec.ConvertToRawFrame(f)
 	return rawFrame
 }
 

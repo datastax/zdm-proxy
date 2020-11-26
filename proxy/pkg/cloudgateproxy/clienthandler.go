@@ -554,13 +554,10 @@ func createUnpreparedFrame(errVal *UnpreparedExecuteError) (*frame.RawFrame, err
 			"been evicted from the internal cache)", hex.EncodeToString(errVal.preparedId)),
 		Id: errVal.preparedId,
 	}
-	frame, err := frame.NewResponseFrame(
-		errVal.Header.Version, errVal.Header.StreamId, errVal.Body.TracingId, nil, nil, unpreparedMsg, false)
-	if err != nil {
-		return nil, fmt.Errorf("could not create unprepared response frame: %w", err)
-	}
+	f := frame.NewFrame(errVal.Header.Version, errVal.Header.StreamId, unpreparedMsg)
+	f.Body.TracingId = errVal.Body.TracingId
 
-	rawFrame, err := defaultCodec.ConvertToRawFrame(frame)
+	rawFrame, err := defaultCodec.ConvertToRawFrame(f)
 	if err != nil {
 		return nil, fmt.Errorf("could not convert unprepared response frame to rawframe: %w", err)
 	}

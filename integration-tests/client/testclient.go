@@ -307,10 +307,7 @@ func (testClient *TestClient) SendMessage(
 		return nil, streamId, err
 	}
 
-	reqFrame, err := frame.NewRequestFrame(protocolVersion, streamId, false, nil, message, false)
-	if err != nil {
-		return nil, streamId, err
-	}
+	reqFrame := frame.NewFrame(protocolVersion, streamId, message)
 
 	buf := &bytes.Buffer{}
 	err = frame.NewCodec().EncodeFrame(reqFrame, buf)

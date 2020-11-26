@@ -63,22 +63,16 @@ var allMetrics = []metrics.Metric{
 	metrics.OpenTargetConnections,
 }
 
-var insertQuery, _ = frame.NewRequestFrame(
+var insertQuery = frame.NewFrame(
 	primitive.ProtocolVersion4,
 	client.ManagedStreamId,
-	false,
-	nil,
 	&message.Query{Query: "INSERT INTO ks1.t1..."},
-	false,
 )
 
-var selectQuery, _ = frame.NewRequestFrame(
+var selectQuery = frame.NewFrame(
 	primitive.ProtocolVersion4,
 	client.ManagedStreamId,
-	false,
-	nil,
 	&message.Query{Query: "SELECT * FROM ks1.t1..."},
-	false,
 )
 
 func testMetrics(t *testing.T, metricsHandler *httpcloudgate.HandlerWithFallback) {
@@ -97,14 +91,14 @@ func testMetrics(t *testing.T, metricsHandler *httpcloudgate.HandlerWithFallback
 	defer func() { _ = srv.Close() }()
 
 	lines := gatherMetrics(t, conf)
-	checkMetrics(t, lines, 0, 0, 0, 0, 0, 0,true, true)
+	checkMetrics(t, lines, 0, 0, 0, 0, 0, 0, true, true)
 
 	clientConn := startClient(t, origin, target, conf, ctx)
 
 	lines = gatherMetrics(t, conf)
 	// 2 on origin: STARTUP and AUTH_RESPONSE
 	// 2 on target: STARTUP and AUTH_RESPONSE
-	checkMetrics(t, lines, 1, 1, 1, 0, 2, 2,true, true)
+	checkMetrics(t, lines, 1, 1, 1, 0, 2, 2, true, true)
 
 	_, err := clientConn.SendAndReceive(insertQuery)
 	require.Nil(t, err)
@@ -113,7 +107,7 @@ func testMetrics(t *testing.T, metricsHandler *httpcloudgate.HandlerWithFallback
 	// 2 on origin: STARTUP and AUTH_RESPONSE
 	// 2 on target: STARTUP and AUTH_RESPONSE
 	// 1 on both: QUERY INSERT INTO
-	checkMetrics(t, lines, 1, 1, 1, 1, 2, 2,true, true)
+	checkMetrics(t, lines, 1, 1, 1, 1, 2, 2, true, true)
 
 	_, err = clientConn.SendAndReceive(selectQuery)
 	require.Nil(t, err)
@@ -122,7 +116,7 @@ func testMetrics(t *testing.T, metricsHandler *httpcloudgate.HandlerWithFallback
 	// 3 on origin: STARTUP, AUTH_RESPONSE, QUERY SELECT
 	// 2 on target: STARTUP and AUTH_RESPONSE
 	// 1 on both: QUERY INSERT INTO
-	checkMetrics(t, lines, 1, 1, 1, 1, 3, 2,false, true)
+	checkMetrics(t, lines, 1, 1, 1, 1, 3, 2, false, true)
 
 }
 
@@ -338,8 +332,7 @@ func handleReads(request *frame.Frame, _ *client.CqlServerConnection, _ client.R
 				Metadata: &message.RowsMetadata{ColumnCount: 1},
 				Data:     message.RowSet{message.Row{message.Column{0, 0, 0, 4, 1, 2, 3, 4}}},
 			}
-			response, _ = frame.NewResponseFrame(
-				request.Header.Version, request.Header.StreamId, nil, nil, nil, rows, false)
+			response = frame.NewFrame(request.Header.Version, request.Header.StreamId, rows)
 		}
 	}
 	return
@@ -352,8 +345,7 @@ func handleWrites(request *frame.Frame, _ *client.CqlServerConnection, _ client.
 		query := request.Body.Message.(*message.Query)
 		if strings.HasPrefix(query.Query, "INSERT") {
 			void := &message.VoidResult{}
-			response, _ = frame.NewResponseFrame(
-				request.Header.Version, request.Header.StreamId, nil, nil, nil, void, false)
+			response = frame.NewFrame(request.Header.Version, request.Header.StreamId, void)
 		}
 	}
 	return

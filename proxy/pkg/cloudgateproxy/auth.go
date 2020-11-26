@@ -33,11 +33,7 @@ func performHandshakeStep(
 
 	authResponseMsg := &message.AuthResponse{Token: tokenBytes}
 
-	authResponseFrame, err := frame.NewRequestFrame(
-		version, streamId, false, nil, authResponseMsg, false)
-	if err != nil {
-		return nil, fmt.Errorf("could not create auth response request: %w", err)
-	}
+	authResponseFrame := frame.NewFrame(version, streamId, authResponseMsg)
 
 	return authResponseFrame, nil
 }

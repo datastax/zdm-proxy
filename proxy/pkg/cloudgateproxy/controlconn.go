@@ -102,22 +102,17 @@ func (cc *ControlConn) Start(wg *sync.WaitGroup) {
 type heartbeatResultAction int
 
 const (
-	failure         = heartbeatResultAction(2)
-	success         = heartbeatResultAction(3)
-	fatalFailure    = heartbeatResultAction(4)
+	failure      = heartbeatResultAction(2)
+	success      = heartbeatResultAction(3)
+	fatalFailure = heartbeatResultAction(4)
 )
 
 func (cc *ControlConn) sendHeartbeat() (error, heartbeatResultAction) {
 
 	optionsMsg := &message.Options{}
-	heartBeatFrame, err :=
-		frame.NewRequestFrame(
-			ccProtocolVersion, 1, false, nil, optionsMsg, false)
-	if err != nil {
-		return fmt.Errorf("unexpected failure trying to build OPTIONS frame: %w", err), fatalFailure
-	}
+	heartBeatFrame := frame.NewFrame(ccProtocolVersion, 1, optionsMsg)
 
-	err = cc.cqlConn.SendContext(heartBeatFrame, cc.context)
+	err := cc.cqlConn.SendContext(heartBeatFrame, cc.context)
 	if err != nil {
 		action := failure
 		return fmt.Errorf("failed to send heartbeat: %v", err), action
