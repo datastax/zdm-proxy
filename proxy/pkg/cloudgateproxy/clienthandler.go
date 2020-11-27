@@ -143,10 +143,10 @@ func (ch *ClientHandler) listenForClientRequests() {
 
 		handleWaitGroup := &sync.WaitGroup{}
 		for {
-			var frame *frame.RawFrame
+			var f *frame.RawFrame
 			ok := true
 			select {
-			case frame, ok = <-ch.clientConnector.requestChannel:
+			case f, ok = <-ch.clientConnector.requestChannel:
 			case <-ch.clientHandlerContext.Done():
 				ok = false
 			}
@@ -155,11 +155,11 @@ func (ch *ClientHandler) listenForClientRequests() {
 				break
 			}
 
-			log.Debugf("Request received on client handler: %v", frame.Header)
+			log.Debugf("Request received on client handler: %v", f.Header)
 			if !ready {
 				log.Tracef("not ready")
 				// Handle client authentication
-				ready, err = ch.handleHandshakeRequest(frame, handleWaitGroup)
+				ready, err = ch.handleHandshakeRequest(f, handleWaitGroup)
 				if err != nil && !errors.Is(err, ShutdownErr) {
 					log.Error(err)
 				}
@@ -172,7 +172,7 @@ func (ch *ClientHandler) listenForClientRequests() {
 				continue
 			}
 
-			ch.handleRequest(frame, handleWaitGroup)
+			ch.handleRequest(f, handleWaitGroup)
 		}
 
 		log.Infof("Shutting down client requests listener.")
