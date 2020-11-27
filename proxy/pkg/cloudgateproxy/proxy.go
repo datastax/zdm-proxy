@@ -312,10 +312,11 @@ func (p *CloudgateProxy) GetTargetControlConn() *ControlConn {
 func Run(conf *config.Config, ctx context.Context) (*CloudgateProxy, error) {
 	cp := NewCloudgateProxy(conf)
 
-	err2 := cp.Start(ctx)
-	if err2 != nil {
+	err := cp.Start(ctx)
+	if err != nil {
+		log.Errorf("Couldn't start proxy: %v.", err)
 		cp.Shutdown()
-		return nil, err2
+		return nil, err
 	}
 
 	return cp, nil
