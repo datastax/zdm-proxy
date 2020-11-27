@@ -116,11 +116,11 @@ type CcmTestSetup struct {
 func NewSimulacronTestSetupWithSession(createProxy bool, createSession bool) *SimulacronTestSetup {
 	origin, err := simulacron.GetNewCluster(createSession, 1)
 	if err != nil {
-		log.Error("simulacron error: %v", err)
+		log.Panic("simulacron origin startup failed: ", err)
 	}
 	target, err := simulacron.GetNewCluster(createSession, 1)
 	if err != nil {
-		log.Error("simulacron error: %v", err)
+		log.Panic("simulacron target startup failed: ", err)
 	}
 	var proxyInstance *cloudgateproxy.CloudgateProxy
 	if createProxy {
