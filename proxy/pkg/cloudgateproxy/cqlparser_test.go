@@ -34,12 +34,16 @@ func TestInspectFrame(t *testing.T) {
 		{"OpCodeQuery SELECT system.local", args{mockQueryFrame("SELECT * FROM system.local"), psCache, mh, km}, forwardToTarget},
 		{"OpCodeQuery SELECT system.peers", args{mockQueryFrame("SELECT * FROM system.peers"), psCache, mh, km}, forwardToTarget},
 		{"OpCodeQuery SELECT system.peers_v2", args{mockQueryFrame("SELECT * FROM system.peers_v2"), psCache, mh, km}, forwardToTarget},
+		{"OpCodeQuery SELECT system_auth.roles", args{mockQueryFrame("SELECT * FROM system_auth.roles"), psCache, mh, km}, forwardToTarget},
+		{"OpCodeQuery SELECT dse_insights.tokens", args{mockQueryFrame("SELECT * FROM dse_insights.tokens"), psCache, mh, km}, forwardToTarget},
 		{"OpCodeQuery non SELECT", args{mockQueryFrame("INSERT blah"), psCache, mh, km}, forwardToBoth},
 		// PREPARE
 		{"OpCodePrepare SELECT", args{mockPrepareFrame("SELECT blah FROM ks1.t1"), psCache, mh, km}, forwardToOrigin},
 		{"OpCodePrepare SELECT system.local", args{mockPrepareFrame("SELECT * FROM system.local"), psCache, mh, km}, forwardToTarget},
 		{"OpCodePrepare SELECT system.peers", args{mockPrepareFrame("SELECT * FROM system.peers"), psCache, mh, km}, forwardToTarget},
 		{"OpCodePrepare SELECT system.peers_v2", args{mockPrepareFrame("SELECT * FROM system.peers_v2"), psCache, mh, km}, forwardToTarget},
+		{"OpCodePrepare SELECT system_auth.roles", args{mockPrepareFrame("SELECT * FROM system_auth.roles"), psCache, mh, km}, forwardToTarget},
+		{"OpCodePrepare SELECT dse_insights.tokens", args{mockPrepareFrame("SELECT * FROM dse_insights.tokens"), psCache, mh, km}, forwardToTarget},
 		{"OpCodePrepare non SELECT", args{mockPrepareFrame("INSERT blah"), psCache, mh, km}, forwardToBoth},
 		// EXECUTE
 		{"OpCodeExecute origin", args{mockExecuteFrame("ORIGIN"), psCache, mh, km}, forwardToOrigin},

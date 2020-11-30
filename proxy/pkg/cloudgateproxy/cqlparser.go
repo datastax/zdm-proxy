@@ -50,11 +50,11 @@ func inspectFrame(
 		}
 		queryMsg, ok := body.Message.(*message.Query)
 		if !ok {
-			return forwardToNone, fmt.Errorf("expected Query but got %02x instead", body.Message.GetOpCode())
+			return forwardToNone, fmt.Errorf("expected Query but got %v instead", body.Message.GetOpCode())
 		}
 		queryInfo := inspectCqlQuery(queryMsg.Query)
 		if queryInfo.getStatementType() == statementTypeSelect {
-			if isSystemLocalOrSystemPeers(queryInfo, currentKeyspaceName) {
+			if isSystemQuery(queryInfo, currentKeyspaceName) {
 				forwardDecision = forwardToTarget
 			} else {
 				forwardDecision = forwardToOrigin
@@ -69,11 +69,11 @@ func inspectFrame(
 		}
 		prepareMsg, ok := body.Message.(*message.Prepare)
 		if !ok {
-			return forwardToNone, fmt.Errorf("expected Prepare but got %02x instead", body.Message.GetOpCode())
+			return forwardToNone, fmt.Errorf("expected Prepare but got %v instead", body.Message.GetOpCode())
 		}
 		queryInfo := inspectCqlQuery(prepareMsg.Query)
 		if queryInfo.getStatementType() == statementTypeSelect {
-			if isSystemLocalOrSystemPeers(queryInfo, currentKeyspaceName) {
+			if isSystemQuery(queryInfo, currentKeyspaceName) {
 				forwardDecision = forwardToTarget
 			} else {
 				forwardDecision = forwardToOrigin
@@ -89,7 +89,7 @@ func inspectFrame(
 		}
 		executeMsg, ok := body.Message.(*message.Execute)
 		if !ok {
-			return forwardToNone, fmt.Errorf("expected Execute but got %02x instead", body.Message.GetOpCode())
+			return forwardToNone, fmt.Errorf("expected Execute but got %v instead", body.Message.GetOpCode())
 		}
 		log.Debugf("Execute with prepared-id = '%s'", executeMsg.QueryId)
 		if stmtInfo, ok := psCache.retrieveStmtInfoFromCache(executeMsg.QueryId); ok {
@@ -110,7 +110,7 @@ func inspectFrame(
 	}
 }
 
-func isSystemLocalOrSystemPeers(info queryInfo, currentKeyspaceName *atomic.Value) bool {
+func isSystemQuery(info queryInfo, currentKeyspaceName *atomic.Value) bool {
 	keyspaceName := info.getKeyspaceName()
 	if keyspaceName == "" {
 		value := currentKeyspaceName.Load()
@@ -118,15 +118,9 @@ func isSystemLocalOrSystemPeers(info queryInfo, currentKeyspaceName *atomic.Valu
 			keyspaceName = value.(string)
 		}
 	}
-	if keyspaceName == "system" {
-		tableName := info.getTableName()
-		if tableName == "local" ||
-			tableName == "peers" ||
-			tableName == "peers_v2" {
-			return true
-		}
-	}
-	return false
+	return keyspaceName == "system" ||
+		strings.HasPrefix(keyspaceName, "system_") ||
+		strings.HasPrefix(keyspaceName, "dse_")
 }
 
 type statementType string
