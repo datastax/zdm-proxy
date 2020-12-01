@@ -7,9 +7,6 @@ import (
 	"testing"
 )
 
-// BasicBatch tests basic batch statement functionality
-// The test runs a basic batch statement, which includes an insert and update,
-// and then runs an insert and update after to make sure it works
 func TestGoCqlConnect(t *testing.T) {
 	testSetup := setup.NewSimulacronTestSetup()
 	defer testSetup.Cleanup()
