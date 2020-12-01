@@ -502,27 +502,33 @@ func (ch *ClientHandler) executeForwardDecision(f *frame.RawFrame, forwardDecisi
  */
 func (ch *ClientHandler) aggregateAndTrackResponses(responseFromOriginCassandra *frame.RawFrame, responseFromTargetCassandra *frame.RawFrame) *frame.RawFrame {
 
-	log.Debugf("Aggregating responses. OC opcode %d, TargetCassandra opcode %d", responseFromOriginCassandra.Header.OpCode, responseFromTargetCassandra.Header.OpCode)
+	originOpCode := responseFromOriginCassandra.Header.OpCode
+	log.Debugf("Aggregating responses. OC opcode %d, TargetCassandra opcode %d", originOpCode, responseFromTargetCassandra.Header.OpCode)
 
 	// aggregate responses and update relevant aggregate metrics for general failed or successful responses
 	if isResponseSuccessful(responseFromOriginCassandra) && isResponseSuccessful(responseFromTargetCassandra) {
-		log.Debugf("Aggregated response: both successes, sending back OC's response with opcode %d", responseFromOriginCassandra.Header.OpCode)
-		return responseFromOriginCassandra
+		if originOpCode == primitive.OpCodeSupported {
+			log.Debugf("Aggregated response: both successes, sending back TC's response with opcode %d", originOpCode)
+			return responseFromTargetCassandra
+		} else {
+			log.Debugf("Aggregated response: both successes, sending back OC's response with opcode %d", originOpCode)
+			return responseFromOriginCassandra
+		}
 	}
 
 	if !isResponseSuccessful(responseFromOriginCassandra) && !isResponseSuccessful(responseFromTargetCassandra) {
-		log.Debugf("Aggregated response: both failures, sending back OC's response with opcode %d", responseFromOriginCassandra.Header.OpCode)
+		log.Debugf("Aggregated response: both failures, sending back OC's response with opcode %d", originOpCode)
 		ch.metricsHandler.IncrementCountByOne(metrics.FailedRequestsBoth)
 		return responseFromOriginCassandra
 	}
 
 	// if either response is a failure, the failure "wins" --> return the failed response
 	if !isResponseSuccessful(responseFromOriginCassandra) {
-		log.Debugf("Aggregated response: failure only on OC, sending back OC's response with opcode %d", responseFromOriginCassandra.Header.OpCode)
+		log.Debugf("Aggregated response: failure only on OC, sending back OC's response with opcode %d", originOpCode)
 		ch.metricsHandler.IncrementCountByOne(metrics.FailedRequestsBothFailedOnOriginOnly)
 		return responseFromOriginCassandra
 	} else {
-		log.Debugf("Aggregated response: failure only on TargetCassandra, sending back TargetCassandra's response with opcode %d", responseFromOriginCassandra.Header.OpCode)
+		log.Debugf("Aggregated response: failure only on TargetCassandra, sending back TargetCassandra's response with opcode %d", originOpCode)
 		ch.metricsHandler.IncrementCountByOne(metrics.FailedRequestsBothFailedOnTargetOnly)
 		return responseFromTargetCassandra
 	}

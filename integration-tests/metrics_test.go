@@ -81,7 +81,10 @@ func testMetrics(t *testing.T, metricsHandler *httpcloudgate.HandlerWithFallback
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	defer cancelFunc()
 
-	origin, target := startOriginAndTarget(t, conf, ctx)
+	origin, target := createOriginAndTarget(conf)
+	origin.RequestHandlers = []client.RequestHandler{client.HeartbeatHandler, client.HandshakeHandler, handleReads, handleWrites}
+	target.RequestHandlers = []client.RequestHandler{client.HeartbeatHandler, client.HandshakeHandler, handleWrites}
+	startOriginAndTarget(t, origin, target, ctx)
 
 	startProxy(t, origin, target, conf, ctx)
 
@@ -95,12 +98,15 @@ func testMetrics(t *testing.T, metricsHandler *httpcloudgate.HandlerWithFallback
 
 	clientConn := startClient(t, origin, target, conf, ctx)
 
+	err := clientConn.InitiateHandshake(primitive.ProtocolVersion4, client.ManagedStreamId)
+	require.Nil(t, err)
+
 	lines = gatherMetrics(t, conf)
 	// 2 on origin: STARTUP and AUTH_RESPONSE
 	// 2 on target: STARTUP and AUTH_RESPONSE
 	checkMetrics(t, lines, 1, 1, 1, 0, 2, 2, true, true)
 
-	_, err := clientConn.SendAndReceive(insertQuery)
+	_, err = clientConn.SendAndReceive(insertQuery)
 	require.Nil(t, err)
 
 	lines = gatherMetrics(t, conf)
@@ -120,24 +126,30 @@ func testMetrics(t *testing.T, metricsHandler *httpcloudgate.HandlerWithFallback
 
 }
 
-func startOriginAndTarget(t *testing.T, conf *config.Config, ctx context.Context) (*client.CqlServer, *client.CqlServer) {
+func createOriginAndTarget(conf *config.Config) (*client.CqlServer, *client.CqlServer) {
 	originAddr := fmt.Sprintf("%s:%d", conf.OriginCassandraHostname, conf.OriginCassandraPort)
-	targetAddr := fmt.Sprintf("%s:%d", conf.TargetCassandraHostname, conf.TargetCassandraPort)
 	origin := client.NewCqlServer(originAddr, &client.AuthCredentials{
 		Username: conf.OriginCassandraUsername,
 		Password: conf.OriginCassandraPassword,
 	})
+	targetAddr := fmt.Sprintf("%s:%d", conf.TargetCassandraHostname, conf.TargetCassandraPort)
 	target := client.NewCqlServer(targetAddr, &client.AuthCredentials{
 		Username: conf.TargetCassandraUsername,
 		Password: conf.TargetCassandraPassword,
 	})
-	origin.RequestHandlers = []client.RequestHandler{client.HeartbeatHandler, client.HandshakeHandler, handleReads, handleWrites}
-	target.RequestHandlers = []client.RequestHandler{client.HeartbeatHandler, client.HandshakeHandler, handleWrites}
+	return origin, target
+}
+
+func startOriginAndTarget(
+	t *testing.T,
+	origin *client.CqlServer,
+	target *client.CqlServer,
+	ctx context.Context,
+) {
 	err := origin.Start(ctx)
 	require.Nil(t, err)
 	err = target.Start(ctx)
 	require.Nil(t, err)
-	return origin, target
 }
 
 func startProxy(
@@ -193,8 +205,6 @@ func startClient(
 	targetClientConn, _ := target.AcceptAny()
 	require.NotNil(t, originClientConn)
 	require.NotNil(t, targetClientConn)
-	err = clientConn.InitiateHandshake(primitive.ProtocolVersion4, client.ManagedStreamId)
-	require.Nil(t, err)
 	return clientConn
 }
 
