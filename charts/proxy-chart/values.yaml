@@ -30,6 +30,12 @@ proxyConfig:
   proxyQueryPort: 14002
   originBucketsMs:
   targetBucketsMs:
+  writeQueueSizeFrames:
+  writeBufferSizeBytes:
+  readBufferSizeBytes:
+  requestQueueSizeFrames:
+  responseQueueSizeFrames:
+  eventQueueSizeFrames:
 
 serviceAccount:
   # Specifies whether a service account should be created
