@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/jpillora/backoff"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/riptano/cloud-gate/proxy/pkg/cloudgateproxy"
 	"github.com/riptano/cloud-gate/proxy/pkg/config"
 	"github.com/riptano/cloud-gate/proxy/pkg/health"
@@ -47,7 +46,7 @@ func RunMain(
 	cp, err := cloudgateproxy.RunWithRetries(conf, ctx, b)
 
 	if err == nil {
-		metricsHandler.SetHandler(promhttp.Handler())
+		metricsHandler.SetHandler(cp.GetMetricsHandler().Handler())
 		readinessHandler.SetHandler(health.ReadinessHandler(cp))
 		log.Info("Proxy started. Waiting for SIGINT/SIGTERM to shutdown.")
 

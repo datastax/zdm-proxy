@@ -39,7 +39,7 @@ var simulacronPath = os.Getenv("SIMULACRON_PATH")
 
 const (
 	defaultHttpPort = 8188
-	defaultStartIp  = "127.0.0.20"
+	defaultStartIp  = "127.0.0.40"
 )
 
 func NewSimulacronProcess(httpPort int, startIp string) *Process {

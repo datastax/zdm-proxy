@@ -91,8 +91,13 @@ func (cc *ControlConn) Start(wg *sync.WaitGroup) {
 				cc.IncrementFailureCounter()
 				cc.Close()
 			case success:
-				log.Infof("Heartbeat successful on %v, waiting %v until next heartbeat.", cc.cqlConn, cc.heartbeatPeriod)
-				cc.ResetFailureCounter()
+				logMsg := "Heartbeat successful on %v, waiting %v until next heartbeat."
+				if cc.ReadFailureCounter() != 0 {
+					log.Infof(logMsg, cc.cqlConn, cc.heartbeatPeriod)
+					cc.ResetFailureCounter()
+				} else {
+					log.Debugf(logMsg, cc.cqlConn, cc.heartbeatPeriod)
+				}
 				sleepWithContext(cc.heartbeatPeriod, cc.context)
 			}
 		}

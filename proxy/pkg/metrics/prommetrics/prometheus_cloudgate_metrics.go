@@ -4,8 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -18,7 +20,7 @@ type collectorEntry struct {
 	collector prometheus.Collector
 }
 
-type PrometheusCloudgateProxyMetrics struct {
+type prometheusCloudgateProxyMetrics struct {
 	collectorMap map[uint32]*collectorEntry
 	lock         *sync.RWMutex
 	registerer   prometheus.Registerer
@@ -28,8 +30,8 @@ type PrometheusCloudgateProxyMetrics struct {
 	Instantiation and initialization
  ***/
 
-func NewPrometheusCloudgateProxyMetrics(registerer prometheus.Registerer) *PrometheusCloudgateProxyMetrics {
-	m := &PrometheusCloudgateProxyMetrics{
+func NewPrometheusCloudgateProxyMetrics(registerer prometheus.Registerer) *prometheusCloudgateProxyMetrics {
+	m := &prometheusCloudgateProxyMetrics{
 		collectorMap: make(map[uint32]*collectorEntry),
 		lock:         &sync.RWMutex{},
 		registerer:   registerer,
@@ -41,7 +43,7 @@ func NewPrometheusCloudgateProxyMetrics(registerer prometheus.Registerer) *Prome
 	Methods for adding metrics
  ***/
 
-func (pm *PrometheusCloudgateProxyMetrics) AddCounter(mn metrics.Metric) error {
+func (pm *prometheusCloudgateProxyMetrics) AddCounter(mn metrics.Metric) error {
 	pm.lock.Lock()
 	defer pm.lock.Unlock()
 
@@ -93,7 +95,7 @@ func (pm *PrometheusCloudgateProxyMetrics) AddCounter(mn metrics.Metric) error {
 	return nil
 }
 
-func (pm *PrometheusCloudgateProxyMetrics) AddGauge(mn metrics.Metric) error {
+func (pm *prometheusCloudgateProxyMetrics) AddGauge(mn metrics.Metric) error {
 	pm.lock.Lock()
 	defer pm.lock.Unlock()
 
@@ -145,7 +147,7 @@ func (pm *PrometheusCloudgateProxyMetrics) AddGauge(mn metrics.Metric) error {
 	return nil
 }
 
-func (pm *PrometheusCloudgateProxyMetrics) AddGaugeFunction(mn metrics.Metric, mf func() float64) error {
+func (pm *prometheusCloudgateProxyMetrics) AddGaugeFunction(mn metrics.Metric, mf func() float64) error {
 	pm.lock.Lock()
 	defer pm.lock.Unlock()
 
@@ -182,7 +184,7 @@ func (pm *PrometheusCloudgateProxyMetrics) AddGaugeFunction(mn metrics.Metric, m
 	return nil
 }
 
-func (pm *PrometheusCloudgateProxyMetrics) AddHistogram(mn metrics.Metric, buckets []float64) error {
+func (pm *prometheusCloudgateProxyMetrics) AddHistogram(mn metrics.Metric, buckets []float64) error {
 	pm.lock.Lock()
 	defer pm.lock.Unlock()
 
@@ -236,15 +238,15 @@ func (pm *PrometheusCloudgateProxyMetrics) AddHistogram(mn metrics.Metric, bucke
 	return nil
 }
 
-func (pm *PrometheusCloudgateProxyMetrics) IncrementCountByOne(mn metrics.Metric) error {
+func (pm *prometheusCloudgateProxyMetrics) IncrementCountByOne(mn metrics.Metric) error {
 	return pm.AddToCount(mn, 1)
 }
 
-func (pm *PrometheusCloudgateProxyMetrics) DecrementCountByOne(mn metrics.Metric) error {
+func (pm *prometheusCloudgateProxyMetrics) DecrementCountByOne(mn metrics.Metric) error {
 	return pm.SubtractFromCount(mn, 1)
 }
 
-func (pm *PrometheusCloudgateProxyMetrics) AddToCount(mn metrics.Metric, valueToAdd int) error {
+func (pm *prometheusCloudgateProxyMetrics) AddToCount(mn metrics.Metric, valueToAdd int) error {
 	c, err := pm.getMetricFromMap(mn)
 	if err != nil {
 		return err
@@ -262,7 +264,7 @@ func (pm *PrometheusCloudgateProxyMetrics) AddToCount(mn metrics.Metric, valueTo
 	return nil
 }
 
-func (pm *PrometheusCloudgateProxyMetrics) SubtractFromCount(mn metrics.Metric, valueToSubtract int) error {
+func (pm *prometheusCloudgateProxyMetrics) SubtractFromCount(mn metrics.Metric, valueToSubtract int) error {
 	var c prometheus.Collector
 	var err error
 	if c, err = pm.getGaugeFromMap(mn); err == nil {
@@ -271,7 +273,7 @@ func (pm *PrometheusCloudgateProxyMetrics) SubtractFromCount(mn metrics.Metric, 
 	return err
 }
 
-func (pm *PrometheusCloudgateProxyMetrics) TrackInHistogram(mn metrics.Metric, begin time.Time) error {
+func (pm *prometheusCloudgateProxyMetrics) TrackInHistogram(mn metrics.Metric, begin time.Time) error {
 	if h, err := pm.getHistogramFromMap(mn); err == nil {
 		// Use seconds to track time, see https://prometheus.io/docs/practices/naming/#base-units
 		elapsedTimeInSeconds := float64(time.Since(begin)) / float64(time.Second)
@@ -282,7 +284,7 @@ func (pm *PrometheusCloudgateProxyMetrics) TrackInHistogram(mn metrics.Metric, b
 	}
 }
 
-func (pm *PrometheusCloudgateProxyMetrics) UnregisterAllMetrics() error {
+func (pm *prometheusCloudgateProxyMetrics) UnregisterAllMetrics() error {
 
 	pm.lock.Lock()
 	defer pm.lock.Unlock()
@@ -314,11 +316,15 @@ func (pm *PrometheusCloudgateProxyMetrics) UnregisterAllMetrics() error {
 	return nil
 }
 
+func (pm *prometheusCloudgateProxyMetrics) Handler() http.Handler {
+	return promhttp.Handler()
+}
+
 /***
 	Methods for internal use only
  ***/
 
-func (pm *PrometheusCloudgateProxyMetrics) getCounterFromMap(mn metrics.Metric) (prometheus.Counter, error) {
+func (pm *prometheusCloudgateProxyMetrics) getCounterFromMap(mn metrics.Metric) (prometheus.Counter, error) {
 	c, err := pm.getMetricFromMap(mn)
 	if err != nil {
 		return nil, err
@@ -331,7 +337,7 @@ func (pm *PrometheusCloudgateProxyMetrics) getCounterFromMap(mn metrics.Metric) 
 	}
 }
 
-func (pm *PrometheusCloudgateProxyMetrics) getGaugeFromMap(mn metrics.Metric) (prometheus.Gauge, error) {
+func (pm *prometheusCloudgateProxyMetrics) getGaugeFromMap(mn metrics.Metric) (prometheus.Gauge, error) {
 	c, err := pm.getMetricFromMap(mn)
 	if err != nil {
 		return nil, err
@@ -344,7 +350,7 @@ func (pm *PrometheusCloudgateProxyMetrics) getGaugeFromMap(mn metrics.Metric) (p
 	}
 }
 
-func (pm *PrometheusCloudgateProxyMetrics) getHistogramFromMap(mn metrics.Metric) (prometheus.Histogram, error) {
+func (pm *prometheusCloudgateProxyMetrics) getHistogramFromMap(mn metrics.Metric) (prometheus.Histogram, error) {
 	c, err := pm.getMetricFromMap(mn)
 	if err != nil {
 		return nil, err
@@ -357,7 +363,7 @@ func (pm *PrometheusCloudgateProxyMetrics) getHistogramFromMap(mn metrics.Metric
 	}
 }
 
-func (pm *PrometheusCloudgateProxyMetrics) getMetricFromMap(mn metrics.Metric) (prometheus.Collector, error) {
+func (pm *prometheusCloudgateProxyMetrics) getMetricFromMap(mn metrics.Metric) (prometheus.Collector, error) {
 	pm.lock.RLock()
 	defer pm.lock.RUnlock()
 
@@ -402,7 +408,7 @@ func (pm *PrometheusCloudgateProxyMetrics) getMetricFromMap(mn metrics.Metric) (
 // If it is a metric with labels and the registerer
 // returns an AlreadyRegisteredError then the returned collector is the existing one (and no error is returned).
 // If the registerer does not return any error, registerCollector returns c, i.e., the provided collector.
-func (pm *PrometheusCloudgateProxyMetrics) registerCollector(mn metrics.Metric, c prometheus.Collector) (prometheus.Collector, error) {
+func (pm *prometheusCloudgateProxyMetrics) registerCollector(mn metrics.Metric, c prometheus.Collector) (prometheus.Collector, error) {
 
 	if err := pm.registerer.Register(c); err != nil {
 		alreadyRegisteredErr := prometheus.AlreadyRegisteredError{}
@@ -423,7 +429,7 @@ func getLabelNames(mn metrics.Metric) []string {
 	}
 
 	names := make([]string, 0, len(mn.GetLabels()))
-	for name, _ := range mn.GetLabels() {
+	for name := range mn.GetLabels() {
 		names = append(names, name)
 	}
 

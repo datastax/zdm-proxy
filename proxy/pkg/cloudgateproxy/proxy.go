@@ -8,6 +8,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/riptano/cloud-gate/proxy/pkg/config"
 	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
+	"github.com/riptano/cloud-gate/proxy/pkg/metrics/noopmetrics"
 	"github.com/riptano/cloud-gate/proxy/pkg/metrics/prommetrics"
 	log "github.com/sirupsen/logrus"
 	"net"
@@ -60,6 +61,10 @@ func NewCloudgateProxy(conf *config.Config) *CloudgateProxy {
 	}
 	cp.initializeGlobalStructures()
 	return cp
+}
+
+func (p *CloudgateProxy) GetMetricsHandler() metrics.IMetricsHandler {
+	return p.metricsHandler
 }
 
 // Start starts up the proxy and start listening for client connections.
@@ -115,8 +120,14 @@ func (p *CloudgateProxy) initializeMetricsHandler() {
 	// To switch to a different implementation, change the type instantiated here to another one that implements
 	// metrics.IMetricsHandler.
 	// You will also need to change the HTTP handler, see runner.go.
-	m := prommetrics.NewPrometheusCloudgateProxyMetrics(prometheus.DefaultRegisterer)
-	p.metricsHandler = m
+
+	if p.Conf.EnableMetrics {
+		p.metricsHandler = prommetrics.NewPrometheusCloudgateProxyMetrics(prometheus.DefaultRegisterer)
+	} else {
+		p.metricsHandler = noopmetrics.NewNoopMetricsHandler()
+	}
+
+	m := p.metricsHandler
 
 	// proxy level metrics
 
@@ -245,7 +256,7 @@ func (p *CloudgateProxy) handleNewConnection(conn net.Conn) {
 		conn,
 		originCassandraConnInfo,
 		targetCassandraConnInfo,
-		time.Duration(p.Conf.ClusterConnectionTimeoutMs)*time.Millisecond,
+		p.Conf,
 		p.Conf.TargetCassandraUsername,
 		p.Conf.TargetCassandraPassword,
 		p.PreparedStatementCache,

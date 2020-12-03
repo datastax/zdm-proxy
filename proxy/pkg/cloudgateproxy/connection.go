@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/jpillora/backoff"
 	log "github.com/sirupsen/logrus"
+	"io"
 	"net"
 	"time"
 )
@@ -36,8 +37,8 @@ func establishConnection(ip string, ctx context.Context) (net.Conn, error) {
 	}
 }
 
-func writeToConnection(connection net.Conn, message []byte) error {
-	_, err := connection.Write(message)
+func writeToConnection(writer io.Writer, message []byte) error {
+	_, err := writer.Write(message)
 	if err != nil {
 		return err
 	}

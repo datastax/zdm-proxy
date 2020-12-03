@@ -1,11 +1,13 @@
 package cloudgateproxy
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/riptano/cloud-gate/proxy/pkg/config"
 	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
 	"io"
@@ -29,15 +31,17 @@ const (
 
 type ClusterConnector struct {
 	connection              net.Conn
-	clusterResponseChannels map[int16]chan *frame.RawFrame // map of channels, keyed on streamID, on which to send the response to a request
+	conf                    *config.Config
+	clusterResponseChannels *sync.Map // map of channels, keyed on streamID, on which to send the response to a request
 	clusterType             ClusterType
 
 	clusterConnEventsChan   chan *frame.RawFrame
-	lock                    *sync.RWMutex
 	metricsHandler          metrics.IMetricsHandler
 	waitGroup               *sync.WaitGroup
 	clientHandlerContext    context.Context
 	clientHandlerCancelFunc context.CancelFunc
+
+	writeCoalescer          *writeCoalescer
 }
 
 func NewClusterConnectionInfo(ipAddress string, port int, isOriginCassandra bool) *ClusterConnectionInfo {
@@ -50,7 +54,7 @@ func NewClusterConnectionInfo(ipAddress string, port int, isOriginCassandra bool
 
 func NewClusterConnector(
 	connInfo *ClusterConnectionInfo,
-	connectionOpenTimeout time.Duration,
+	conf *config.Config,
 	metricsHandler metrics.IMetricsHandler,
 	waitGroup *sync.WaitGroup,
 	clientHandlerContext context.Context,
@@ -63,6 +67,7 @@ func NewClusterConnector(
 		clusterType = TargetCassandra
 	}
 
+	connectionOpenTimeout := time.Duration(conf.ClusterConnectionTimeoutMs)*time.Millisecond
 	timeoutCtx, _ := context.WithTimeout(clientHandlerContext, connectionOpenTimeout)
 	conn, err := openConnectionToCluster(connInfo, timeoutCtx, metricsHandler)
 	if err != nil {
@@ -81,19 +86,28 @@ func NewClusterConnector(
 
 	return &ClusterConnector{
 		connection:              conn,
-		clusterResponseChannels: make(map[int16]chan *frame.RawFrame),
+		conf:                    conf,
+		clusterResponseChannels: &sync.Map{},
 		clusterType:             clusterType,
-		clusterConnEventsChan:   make(chan *frame.RawFrame),
-		lock:                    &sync.RWMutex{},
+		clusterConnEventsChan:   make(chan *frame.RawFrame, conf.EventQueueSizeFrames),
 		metricsHandler:          metricsHandler,
 		waitGroup:               waitGroup,
 		clientHandlerContext:    clientHandlerContext,
 		clientHandlerCancelFunc: clientHandlerCancelFunc,
+		writeCoalescer:          NewWriteCoalescer(
+			conf,
+			conn,
+			metricsHandler,
+			waitGroup,
+			clientHandlerContext,
+			clientHandlerCancelFunc,
+			"ClusterConnector"),
 	}, nil
 }
 
 func (cc *ClusterConnector) run() {
 	cc.runResponseListeningLoop()
+	cc.writeCoalescer.RunWriteQueueLoop()
 }
 
 func openConnectionToCluster(connInfo *ClusterConnectionInfo, context context.Context, metricsHandler metrics.IMetricsHandler) (net.Conn, error) {
@@ -135,26 +149,19 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 	go func() {
 		defer cc.waitGroup.Done()
 		defer close(cc.clusterConnEventsChan)
+
+		bufferedReader := bufio.NewReaderSize(cc.connection, cc.conf.ReadBufferSizeBytes)
+		connectionAddr := cc.connection.RemoteAddr().String()
 		for {
-			response, err := readRawFrame(cc.connection, cc.clientHandlerContext)
-
+			response, err := readRawFrame(bufferedReader, connectionAddr, cc.clientHandlerContext)
 			if err != nil {
-				if errors.Is(err, ShutdownErr) {
-					break
-				}
-
-				if errors.Is(err, io.EOF) {
-					log.Infof("in runResponseListeningLoop: %v disconnected", cc.connection.RemoteAddr())
-				} else {
-					log.Errorf("in runResponseListeningLoop: error reading: %v", err)
-				}
-
-				cc.clientHandlerCancelFunc()
+				handleConnectionError(
+					err, cc.clientHandlerCancelFunc, fmt.Sprintf("ClusterConnector %v", cc.clusterType), "reading", connectionAddr)
 				break
 			}
 
 			log.Debugf("Received response from %v (%v): %v",
-				cc.clusterType, cc.connection.RemoteAddr(), response.Header)
+				cc.clusterType, connectionAddr, response.Header)
 
 			if response.Header.OpCode == primitive.OpCodeEvent {
 				cc.clusterConnEventsChan <- response
@@ -162,20 +169,34 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 				cc.forwardResponseToChannel(response)
 			}
 		}
-		log.Infof("shutting down response listening loop from %v", cc.connection.RemoteAddr())
+		log.Infof("Shutting down response listening loop from %v", connectionAddr)
 	}()
 }
 
 func (cc *ClusterConnector) forwardResponseToChannel(response *frame.RawFrame) {
-	cc.lock.RLock()
-	defer cc.lock.RUnlock()
-	if responseChannel, ok := cc.clusterResponseChannels[response.Header.StreamId]; !ok {
-		if cc.clientHandlerContext.Err() == nil {
-			log.Errorf("could not find stream id %d in clusterResponseChannels for cluster %v", response.Header.StreamId, cc.clusterType)
-		}
+	responseChan := cc.getResponseChannel(response.Header.StreamId)
+	if responseChan == nil {
+		log.Errorf(
+			"Could not find response channel with stream id %d for cluster %v",
+			response.Header.StreamId, cc.clusterType)
+		return
+	}
+
+	err := responseChan.WriteResponse(response)
+	if err != nil {
+		log.Infof(
+			"Could not write response to response channel with stream id %d for cluster %v: %v. Most likely the request timed out.",
+			response.Header.StreamId, cc.clusterType, err)
+	}
+}
+
+func (cc *ClusterConnector) getResponseChannel(streamId int16) *responseChannel {
+	responseChannelValue, ok := cc.clusterResponseChannels.Load(streamId)
+	if ok {
+		return responseChannelValue.(*responseChannel)
 	} else {
-		// Note: the boolean response is sent on the channel here - this will unblock the forwardToCluster goroutine waiting on this
-		responseChannel <- response
+		channel, _ := cc.clusterResponseChannels.LoadOrStore(streamId, NewResponseChannel())
+		return channel.(*responseChannel)
 	}
 }
 
@@ -202,14 +223,13 @@ func (cc *ClusterConnector) forwardToCluster(rawFrame *frame.RawFrame) chan *fra
 
 		startTime := time.Now()
 
-		err = cc.sendRequestToCluster(cc.clientHandlerContext, rawFrame)
-
-		if errors.Is(err, ShutdownErr) {
-			return
-		} else if err != nil {
-			log.Errorf("Error while sending request to %v: %v", cc.connection.RemoteAddr(), err)
+		ok := cc.sendRequestToCluster(cc.clientHandlerContext, rawFrame)
+		if !ok {
 			return
 		}
+
+		timeoutTimer := time.NewTimer(queryTimeout)
+		defer timeoutTimer.Stop()
 
 		select {
 		case <-cc.clientHandlerContext.Done():
@@ -225,7 +245,7 @@ func (cc *ClusterConnector) forwardToCluster(rawFrame *frame.RawFrame) chan *fra
 			cc.trackClusterErrorMetrics(response)
 
 			responseToCallerChan <- response
-		case <-time.After(queryTimeout):
+		case <-timeoutTimer.C:
 			log.Debugf("Timeout for query %d from %v", streamId, cc.clusterType)
 
 			cc.trackClusterLevelDuration(startTime)
@@ -243,34 +263,38 @@ func (cc *ClusterConnector) forwardToCluster(rawFrame *frame.RawFrame) chan *fra
 /**
  *	Creates channel on which the dequeuer will send the response to the request with this streamId and adds it to the map
  */
-func (cc *ClusterConnector) createChannelForClusterResponse(streamId int16) (chan *frame.RawFrame, error) {
-	cc.lock.Lock()
-	defer cc.lock.Unlock()
-	if _, ok := cc.clusterResponseChannels[streamId]; ok {
-		return nil, fmt.Errorf("streamid collision: %d", streamId)
+func (cc *ClusterConnector) createChannelForClusterResponse(streamId int16) (<-chan *frame.RawFrame, error) {
+	responseChan := cc.getResponseChannel(streamId)
+	if responseChan == nil {
+		return nil, fmt.Errorf("could not find response channel with stream id %d for cluster %v", streamId, cc.clusterType)
 	}
 
-	cc.clusterResponseChannels[streamId] = make(chan *frame.RawFrame, 1)
-	return cc.clusterResponseChannels[streamId], nil
+	newChannel, err := responseChan.Open()
+	if err != nil {
+		return nil, fmt.Errorf("stream id collision (%d) for cluster %v", streamId, cc.clusterType)
+	}
+
+	return newChannel, nil
 }
 
 /**
  *	Removes the response channel for this streamId from the map
  */
 func (cc *ClusterConnector) deleteChannelForClusterResponse(streamId int16) {
-	cc.lock.Lock()
-	defer cc.lock.Unlock()
-	if channel, ok := cc.clusterResponseChannels[streamId]; ok {
-		close(channel)
-		delete(cc.clusterResponseChannels, streamId)
-	} else {
-		log.Warnf("could not find cluster response channel for streamid %d, skipping...", streamId)
+	responseChannelValue := cc.getResponseChannel(streamId)
+	if responseChannelValue == nil {
+		log.Errorf("could not delete response channel because no channel with stream id %d exist for cluster %v", streamId, cc.clusterType)
+		return
+	}
+
+	err := responseChannelValue.Close()
+	if err != nil {
+		log.Errorf("Unexpected error closing response channel: %v", err)
 	}
 }
 
-func (cc *ClusterConnector) sendRequestToCluster(clientHandlerContext context.Context, frame *frame.RawFrame) error {
-	log.Debugf("Executing %v on cluster %v with address %v", frame.Header, cc.clusterType, cc.connection.RemoteAddr())
-	return writeRawFrame(cc.connection, clientHandlerContext, frame)
+func (cc *ClusterConnector) sendRequestToCluster(clientHandlerContext context.Context, frame *frame.RawFrame) bool {
+	return cc.writeCoalescer.Enqueue(clientHandlerContext, frame)
 }
 
 func (cci *ClusterConnectionInfo) getConnectionString() string {
@@ -318,7 +342,6 @@ func (cc *ClusterConnector) trackClusterErrorMetrics(response *frame.RawFrame) {
 }
 
 func (cc *ClusterConnector) trackClusterLevelDuration(startTime time.Time) {
-
 	switch cc.clusterType {
 	case OriginCassandra:
 		cc.metricsHandler.TrackInHistogram(metrics.OriginRequestDuration, startTime)
@@ -327,4 +350,20 @@ func (cc *ClusterConnector) trackClusterLevelDuration(startTime time.Time) {
 	default:
 		log.Errorf("Unknown cluster type %v, will not track this request duration.", cc.clusterType)
 	}
+}
+
+// Checks if the error was due to a shutdown request, triggering the cancellation function if it was not.
+// Also logs the error appropriately.
+func handleConnectionError(err error, cancelFn context.CancelFunc, logPrefix string, operation string, connectionAddr string) {
+	if errors.Is(err, ShutdownErr) {
+		return
+	}
+
+	if errors.Is(err, io.EOF) {
+		log.Infof("[%v] %v disconnected", logPrefix, connectionAddr)
+	} else {
+		log.Errorf("[%v] error %v: %v", logPrefix, operation, err)
+	}
+
+	cancelFn()
 }

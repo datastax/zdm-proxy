@@ -35,6 +35,9 @@ type IMetricsHandler interface {
 	// Unregisters all registered metrics and discards all internal references to them.
 	// An error is returned if at least one metric could not be unregistered.
 	UnregisterAllMetrics() error
+
+	// Returns the http handler implementation for the metrics endpoint.
+	Handler() http.Handler
 }
 
 func DefaultHandler() http.Handler {

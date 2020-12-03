@@ -1,12 +1,12 @@
 package cloudgateproxy
 
 import (
+	"bufio"
 	"context"
-	"errors"
 	"github.com/datastax/go-cassandra-native-protocol/frame"
+	"github.com/riptano/cloud-gate/proxy/pkg/config"
 	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
-	"io"
 	"net"
 	"sync"
 )
@@ -22,6 +22,9 @@ type ClientConnector struct {
 	// connection to the client
 	connection net.Conn
 
+	// configuration object of the proxy
+	conf *config.Config
+
 	// channel on which the ClientConnector sends requests as it receives them from the client
 	requestChannel chan *frame.RawFrame
 	// channel on which the ClientConnector listens for responses to send to the client
@@ -29,32 +32,43 @@ type ClientConnector struct {
 	// channel on which the ClientConnector listens for event messages to send to the client
 	eventsChannel chan *frame.RawFrame
 
-	lock           *sync.RWMutex           // TODO do we need a lock here?
 	metricsHandler metrics.IMetricsHandler // Global metricsHandler object
 
-	waitGroup                *sync.WaitGroup
-	clientConnectorWaitGroup *sync.WaitGroup
-	clientHandlerContext     context.Context
-	clientHandlerCancelFunc  context.CancelFunc
+	waitGroup                 *sync.WaitGroup
+	responseChannelsWaitGroup *sync.WaitGroup
+	clientHandlerContext      context.Context
+	clientHandlerCancelFunc   context.CancelFunc
+
+	writeCoalescer *writeCoalescer
 }
 
-func NewClientConnector(connection net.Conn,
+func NewClientConnector(
+	connection net.Conn,
 	eventsChannel chan *frame.RawFrame,
+	conf *config.Config,
 	metricsHandler metrics.IMetricsHandler,
 	waitGroup *sync.WaitGroup,
 	clientHandlerContext context.Context,
 	clientHandlerCancelFunc context.CancelFunc) *ClientConnector {
 	return &ClientConnector{
-		connection:               connection,
-		requestChannel:           make(chan *frame.RawFrame),
-		responseChannel:          make(chan *frame.RawFrame),
-		eventsChannel:            eventsChannel,
-		lock:                     &sync.RWMutex{},
-		metricsHandler:           metricsHandler,
-		waitGroup:                waitGroup,
-		clientConnectorWaitGroup: &sync.WaitGroup{},
-		clientHandlerContext:     clientHandlerContext,
-		clientHandlerCancelFunc:  clientHandlerCancelFunc,
+		connection:                connection,
+		conf:                      conf,
+		requestChannel:            make(chan *frame.RawFrame, conf.RequestQueueSizeFrames),
+		responseChannel:           make(chan *frame.RawFrame, conf.ResponseQueueSizeFrames),
+		eventsChannel:             eventsChannel,
+		metricsHandler:            metricsHandler,
+		waitGroup:                 waitGroup,
+		responseChannelsWaitGroup: &sync.WaitGroup{},
+		clientHandlerContext:      clientHandlerContext,
+		clientHandlerCancelFunc:   clientHandlerCancelFunc,
+		writeCoalescer:            NewWriteCoalescer(
+			conf,
+			connection,
+			metricsHandler,
+			waitGroup,
+			clientHandlerContext,
+			clientHandlerCancelFunc,
+			"ClientConnector"),
 	}
 }
 
@@ -65,12 +79,15 @@ func (cc *ClientConnector) run() {
 	cc.listenForRequests()
 	cc.listenForResponses()
 	cc.listenForEvents()
+	cc.writeCoalescer.RunWriteQueueLoop()
 	go func() {
-		cc.clientConnectorWaitGroup.Wait()
-		log.Infof("Shutting down client connection to %v", cc.connection.RemoteAddr())
+		cc.responseChannelsWaitGroup.Wait()
+		cc.writeCoalescer.Close()
+
+		log.Infof("[ClientConnector] Shutting down connection to %v", cc.connection.RemoteAddr())
 		err := cc.connection.Close()
 		if err != nil {
-			log.Warnf("error received while closing connection to %v: %v", cc.connection.RemoteAddr(), err)
+			log.Warnf("[ClientConnector] Error received while closing connection to %v: %v", cc.connection.RemoteAddr(), err)
 		}
 		cc.metricsHandler.DecrementCountByOne(metrics.OpenClientConnections)
 	}()
@@ -83,36 +100,43 @@ func (cc *ClientConnector) listenForRequests() {
 	cc.waitGroup.Add(1)
 
 	go func() {
+		lock := &sync.Mutex{}
+		closed := false
+
+		go func() {
+			<-cc.clientHandlerContext.Done()
+			lock.Lock()
+			close(cc.requestChannel)
+			closed = true
+			lock.Unlock()
+		}()
+
 		defer cc.waitGroup.Done()
-		defer close(cc.requestChannel)
-		for {
-			frame, err := readRawFrame(cc.connection, cc.clientHandlerContext)
 
+		bufferedReader := bufio.NewReaderSize(cc.connection, cc.conf.ReadBufferSizeBytes)
+		connectionAddr := cc.connection.RemoteAddr().String()
+		for cc.clientHandlerContext.Err() == nil {
+			f, err := readRawFrame(bufferedReader, connectionAddr, cc.clientHandlerContext)
 			if err != nil {
-				if errors.Is(err, ShutdownErr) {
-					break
-				}
-
-				if errors.Is(err, io.EOF) {
-					log.Infof("[ClientConnector] In listenForRequests: %v disconnected", cc.connection.RemoteAddr())
-				} else {
-					log.Errorf("[ClientConnector] In listenForRequests: error reading: %v", err)
-				}
-
-				cc.clientHandlerCancelFunc()
+				handleConnectionError(
+					err, cc.clientHandlerCancelFunc, "ClientConnector", "reading", connectionAddr)
 				break
 			}
 
-			log.Debugf("Received request on client connector: %v", frame.Header)
-			select {
-			case cc.requestChannel <- frame:
-			case <-cc.clientHandlerContext.Done():
+			log.Debugf("Received request on client connector: %v", f.Header)
+
+			lock.Lock()
+			if closed {
+				lock.Unlock()
 				break
 			}
+			cc.requestChannel <- f
+			lock.Unlock()
 
-			log.Tracef("Request sent to client connector's request channel: %v", frame.Header)
+			log.Tracef("Request sent to client connector's request channel: %v", f.Header)
 		}
-		log.Infof("Shutting down client connector request listener %v", cc.connection.RemoteAddr())
+
+		log.Infof("Shutting down client connector request listener %v", connectionAddr)
 	}()
 }
 
@@ -122,9 +146,9 @@ func (cc *ClientConnector) listenForResponses() {
 	log.Tracef("listenForResponses for client %v", clientAddrStr)
 
 	cc.waitGroup.Add(1)
-	cc.clientConnectorWaitGroup.Add(1)
+	cc.responseChannelsWaitGroup.Add(1)
 	go func() {
-		defer cc.clientConnectorWaitGroup.Done()
+		defer cc.responseChannelsWaitGroup.Done()
 		defer cc.waitGroup.Done()
 		for {
 			log.Tracef("Waiting for next response to dispatch to client %v", clientAddrStr)
@@ -135,14 +159,12 @@ func (cc *ClientConnector) listenForResponses() {
 
 			log.Debugf("Response received (%v), dispatching to client %v", response.Header, clientAddrStr)
 
-			err := writeRawFrame(cc.connection, cc.clientHandlerContext, response)
-			log.Tracef("Response with opcode %d dispatched to client %v", response.Header.OpCode, clientAddrStr)
-			if errors.Is(err, ShutdownErr) {
-				break
-			} else if err != nil {
-				log.Errorf("Error writing response to client connection: %v", err)
+			ok = cc.sendResponseToClient(cc.clientHandlerContext, response)
+			if !ok {
 				break
 			}
+
+			log.Tracef("Response with opcode %d dispatched to client %v", response.Header.OpCode, clientAddrStr)
 		}
 		log.Infof("Shutting down response forwarder to %v", clientAddrStr)
 	}()
@@ -153,28 +175,29 @@ func (cc *ClientConnector) listenForEvents() {
 	log.Tracef("listenForEvents for client %v", cc.connection.RemoteAddr())
 
 	cc.waitGroup.Add(1)
-	cc.clientConnectorWaitGroup.Add(1)
+	cc.responseChannelsWaitGroup.Add(1)
+	connectionAddr := cc.connection.RemoteAddr().String()
 	go func() {
-		defer cc.clientConnectorWaitGroup.Done()
+		defer cc.responseChannelsWaitGroup.Done()
 		defer cc.waitGroup.Done()
 		for {
-			log.Tracef("Waiting for next event to dispatch to client %v", cc.connection.RemoteAddr())
+			log.Tracef("Waiting for next event to dispatch to client %v", connectionAddr)
 			event, ok := <-cc.eventsChannel
 			if !ok {
 				break
 			}
 
-			log.Debugf("Event received (%v), dispatching to client %v", event.Header, cc.connection.RemoteAddr())
-
-			err := writeRawFrame(cc.connection, cc.clientHandlerContext, event)
-			log.Tracef("Event with opcode %d dispatched to client %v", event.Header.OpCode, cc.connection.RemoteAddr())
-			if errors.Is(err, ShutdownErr) {
-				break
-			} else if err != nil {
-				log.Errorf("Error writing event to client connection: %v", err)
+			log.Debugf("Event received (%v), dispatching to client %v", event.Header, connectionAddr)
+			ok = cc.sendResponseToClient(cc.clientHandlerContext, event)
+			if !ok {
 				break
 			}
 		}
-		log.Infof("shutting down event forwarder to %v", cc.connection.RemoteAddr())
+		log.Infof("Shutting down event forwarder to %v", cc.connection.RemoteAddr())
 	}()
+}
+
+
+func (cc *ClientConnector) sendResponseToClient(clientHandlerContext context.Context, frame *frame.RawFrame) bool {
+	return cc.writeCoalescer.Enqueue(clientHandlerContext, frame)
 }

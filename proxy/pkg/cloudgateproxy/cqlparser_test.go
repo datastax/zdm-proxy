@@ -5,6 +5,7 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
 	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
+	"net/http"
 	"reflect"
 	"sync/atomic"
 	"testing"
@@ -106,6 +107,8 @@ func (h mockMetricsHandler) TrackInHistogram(mn metrics.Metric, timeToTrack time
 	return nil
 }
 func (h mockMetricsHandler) UnregisterAllMetrics() error { return nil }
+
+func (h mockMetricsHandler) Handler() http.Handler { return nil }
 
 func mockPrepareFrame(query string) *frame.RawFrame {
 	prepareMsg := &message.Prepare{

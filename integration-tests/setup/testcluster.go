@@ -230,6 +230,8 @@ func NewProxyInstanceWithConfig(config *config.Config) *cloudgateproxy.Cloudgate
 func NewTestConfig(originHost string, targetHost string) *config.Config {
 	conf := config.New()
 	conf.OriginCassandraHostname = originHost
+	conf.OriginCassandraUsername = "cassandra"
+	conf.OriginCassandraPassword = "cassandra"
 	conf.OriginCassandraPort = 9042
 
 	conf.TargetCassandraHostname = targetHost
@@ -242,15 +244,28 @@ func NewTestConfig(originHost string, targetHost string) *config.Config {
 	conf.ProxyQueryPort = 14002
 	conf.ProxyQueryAddress = "localhost"
 
-	conf.Debug = false
-
+	conf.ClusterConnectionTimeoutMs = 30000
 	conf.HeartbeatIntervalMs = 30000
+
 	conf.HeartbeatRetryIntervalMaxMs = 30000
 	conf.HeartbeatRetryIntervalMinMs = 100
 	conf.HeartbeatRetryBackoffFactor = 2
 	conf.HeartbeatFailureThreshold = 1
 
-	conf.ClusterConnectionTimeoutMs = 30000
+	conf.OriginBucketsMs = "10, 25, 50, 75, 100, 150, 200, 300, 500, 750, 1000, 2500, 5000"
+	conf.TargetBucketsMs = "5, 10, 25, 50, 75, 100, 150, 300, 500, 1000, 2000"
+
+	conf.EnableMetrics = true
+
+	conf.WriteQueueSizeFrames = 8192
+	conf.WriteBufferSizeBytes = 65536
+	conf.ReadBufferSizeBytes = 65536
+
+	conf.RequestQueueSizeFrames = 8192
+	conf.ResponseQueueSizeFrames = 8192
+	conf.EventQueueSizeFrames = 64
+
+	conf.Debug = false
 
 	return conf
 }

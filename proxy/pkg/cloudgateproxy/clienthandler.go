@@ -9,6 +9,7 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/riptano/cloud-gate/proxy/pkg/config"
 	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
 	"net"
@@ -54,10 +55,11 @@ type ClientHandler struct {
 	targetPassword string
 }
 
-func NewClientHandler(clientTcpConn net.Conn,
+func NewClientHandler(
+	clientTcpConn net.Conn,
 	originCassandraConnInfo *ClusterConnectionInfo,
 	targetCassandraConnInfo *ClusterConnectionInfo,
-	connectionOpenTimeout time.Duration,
+	conf *config.Config,
 	targetUsername string,
 	targetPassword string,
 	psCache *PreparedStatementCache,
@@ -78,25 +80,26 @@ func NewClientHandler(clientTcpConn net.Conn,
 	}()
 
 	originConnector, err := NewClusterConnector(
-		originCassandraConnInfo, connectionOpenTimeout, metricsHandler, waitGroup, clientHandlerContext, clientHandlerCancelFunc)
+		originCassandraConnInfo, conf, metricsHandler, waitGroup, clientHandlerContext, clientHandlerCancelFunc)
 	if err != nil {
 		clientHandlerCancelFunc()
 		return nil, err
 	}
 
 	targetConnector, err := NewClusterConnector(
-		targetCassandraConnInfo, connectionOpenTimeout, metricsHandler, waitGroup, clientHandlerContext, clientHandlerCancelFunc)
+		targetCassandraConnInfo, conf, metricsHandler, waitGroup, clientHandlerContext, clientHandlerCancelFunc)
 	if err != nil {
 		clientHandlerCancelFunc()
 		return nil, err
 	}
 
-	eventsChannel := make(chan *frame.RawFrame)
+	eventsChannel := make(chan *frame.RawFrame, conf.EventQueueSizeFrames)
 
 	return &ClientHandler{
 		clientConnector: NewClientConnector(
 			clientTcpConn,
 			eventsChannel,
+			conf,
 			metricsHandler,
 			waitGroup,
 			clientHandlerContext,
@@ -140,17 +143,13 @@ func (ch *ClientHandler) listenForClientRequests() {
 	go func() {
 		defer ch.globalWaitGroup.Done()
 		defer close(ch.clientConnector.responseChannel)
+		defer ch.originCassandraConnector.writeCoalescer.Close()
+		defer ch.targetCassandraConnector.writeCoalescer.Close()
 
+		connectionAddr := ch.clientConnector.connection.RemoteAddr().String()
 		handleWaitGroup := &sync.WaitGroup{}
 		for {
-			var f *frame.RawFrame
-			ok := true
-			select {
-			case f, ok = <-ch.clientConnector.requestChannel:
-			case <-ch.clientHandlerContext.Done():
-				ok = false
-			}
-
+			f, ok := <-ch.clientConnector.requestChannel
 			if !ok {
 				break
 			}
@@ -165,8 +164,7 @@ func (ch *ClientHandler) listenForClientRequests() {
 				}
 				if ready {
 					log.Infof(
-						"Handshake successful with client %s",
-						ch.clientConnector.connection.RemoteAddr().String())
+						"Handshake successful with client %s", connectionAddr)
 				}
 				log.Tracef("ready? %t", ready)
 				continue
@@ -175,7 +173,7 @@ func (ch *ClientHandler) listenForClientRequests() {
 			ch.handleRequest(f, handleWaitGroup)
 		}
 
-		log.Infof("Shutting down client requests listener.")
+		log.Infof("Shutting down client handler request listener %v.", connectionAddr)
 
 		handleWaitGroup.Wait()
 	}()

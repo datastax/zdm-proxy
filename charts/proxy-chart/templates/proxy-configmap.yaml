@@ -43,5 +43,29 @@ data:
   {{- if .Values.proxyConfig.targetBucketsMs }}
   TARGET_BUCKETS_MS: "{{ .Values.proxyConfig.targetBucketsMs }}"
   {{- end }}
+  
+  {{- if .Values.proxyConfig.writeQueueSizeFrames }}
+  WRITE_QUEUE_SIZE_FRAMES: "{{ .Values.proxyConfig.writeQueueSizeFrames }}"
+  {{- end }}
+  
+  {{- if .Values.proxyConfig.writeBufferSizeBytes }}
+  WRITE_BUFFER_SIZE_BYTES: "{{ .Values.proxyConfig.writeBufferSizeBytes }}"
+  {{- end }}
+
+  {{- if .Values.proxyConfig.readBufferSizeBytes }}
+  READ_BUFFER_SIZE_BYTES: "{{ .Values.proxyConfig.readBufferSizeBytes }}"
+  {{- end }}
+  
+  {{- if .Values.proxyConfig.requestQueueSizeFrames }}
+  REQUEST_QUEUE_SIZE_FRAMES: "{{ .Values.proxyConfig.requestQueueSizeFrames }}"
+  {{- end }}
+  
+  {{- if .Values.proxyConfig.responseQueueSizeFrames }}
+  RESPONSE_QUEUE_SIZE_FRAMES: "{{ .Values.proxyConfig.responseQueueSizeFrames }}"
+  {{- end }}
+
+  {{- if .Values.proxyConfig.eventQueueSizeFrames }}
+  EVENT_QUEUE_SIZE_FRAMES: "{{ .Values.proxyConfig.eventQueueSizeFrames }}"
+  {{- end }}
 
   DEBUG: "{{ .Values.proxyConfig.debug }}"

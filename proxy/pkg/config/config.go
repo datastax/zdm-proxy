@@ -38,6 +38,16 @@ type Config struct {
 	OriginBucketsMs string `default:"10, 25, 50, 75, 100, 150, 200, 300, 500, 750, 1000, 2500, 5000" split_words:"true"`
 	TargetBucketsMs string `default:"5, 10, 25, 50, 75, 100, 150, 300, 500, 1000, 2000" split_words:"true"`
 
+	EnableMetrics bool `default:"true" split_words:"true"`
+
+	WriteQueueSizeFrames int `default:"8192" split_words:"true"`
+	WriteBufferSizeBytes int `default:"65536" split_words:"true"`
+	ReadBufferSizeBytes int `default:"65536" split_words:"true"`
+
+	RequestQueueSizeFrames int `default:"8192" split_words:"true"`
+	ResponseQueueSizeFrames int `default:"8192" split_words:"true"`
+	EventQueueSizeFrames int `default:"64" split_words:"true"`
+
 	Debug bool
 }
 

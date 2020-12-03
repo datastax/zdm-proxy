@@ -110,10 +110,10 @@ func (c *cqlConn) StartRequestLoop() {
 						log.Errorf("Failed to write/encode frame on cql connection %v: %v", c, err)
 					}
 					c.cancelFn()
-					break
+					return
 				}
 			case <-c.ctx.Done():
-				break
+				return
 			}
 		}
 	}()
