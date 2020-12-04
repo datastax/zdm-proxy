@@ -1,95 +1,219 @@
-## Codebase Migration Service 
+# Proxy Service
 
-This data migration service allows for clients to continue accessing their database throughout the process of migrating data from their original database (client DB) to their new Astra instance (Astra DB). Our service allows for almost all queries to the database including the major reads and writes. Any major exceptions are listed at the bottom of this document. Although the two services work independently, they communicate to ensure consistency through an `Update` struct.
+## Overview
 
-![](https://lh5.googleusercontent.com/ztKN7gzbeskAYy8Km_JyPrwoLOyRRr8yXJw6C9u1JieyL7uNdZc-2_N2clynzpXCO9_NcBNKb_lJyyOOivH13fXIgcXzkbectJNrvrqVlRrHCV_ICL2Yep2qAq7SkrL_aHr-nPR7)
+This is a simple proxy component to enable users to migrate without downtime from a Cassandra cluster to another (which may be an Astra cluster) without requiring code changes in the application client.
 
-## Components
+The only change to the client is pointing it to the proxy rather than directly to the original cluster. In turn, the proxy connects to both origin and target clusters.
 
-The migration service is split into two independent services:
+The proxy will forward read requests only to the origin cluster, while writes will be sent to both clusters concurrently.
 
-- The proxy service- all queries that the client makes to the Astra DB are proxied to the client DB as well. For reads, the response from the client DB is returned. 
-- The migration service- using DSBulk, the client’s data will be loaded into CSV files using S3 buckets and then loaded into the Astra DB table by table.
+An overview of the proxy architecture and logical flow will be added here soon.
 
-## Communication
+## Environment Variables
 
-Because the two services are for the most part independent, they use an `Update` struct to communicate. The migration services sends signals to the proxy service when the migration of the database starts and completes starts and completes. The proxy service sends signals to the migration service when there are changes to the order of table migration or if any table needs to be re-migrated. For more information on how the communication is handled on either side of the service, visit the ‘Communication’ sections of the service’s specific READMEs.
+```shell
+ORIGIN_CASSANDRA_HOSTNAME=localhost
+ORIGIN_CASSANDRA_USERNAME=cassandra
+ORIGIN_CASSANDRA_PASSWORD=cassandra
+ORIGIN_CASSANDRA_PORT=9042
+TARGET_CASSANDRA_HOSTNAME=localhost
+TARGET_CASSANDRA_USERNAME=cassandra
+TARGET_CASSANDRA_PASSWORD=cassandra
+TARGET_CASSANDRA_PORT=9043
+DEBUG=true
+PROXY_METRICS_ADDRESS=localhost
+PROXY_METRICS_PORT=14001
+PROXY_QUERY_PORT=14002
+PROXY_QUERY_ADDRESS=localhost
+```
 
-## Build and Test
+These environment variables must be set and exported for the proxy to work. They are read and processed into a `Config` struct, which is passed into the Proxy Service.
 
-Our testing creates two docker containers to simulate the client DB and Astra DB, and runs the services on these two containers.
+## Running and testing the proxy locally
 
-Spinning up docker containers:
-We assume that the client DB (cassandra-source) lives at port 9042 and Astra DB (cassandra-dest) lives at port 9043.
+Launch two Cassandra single-node clusters as docker containers, one listening on port `9042` and the other on `9043`:
 
+```shell
+docker run --name cassandra-source -p 9042:9042 -d cassandra
+docker run --name cassandra-dest -p 9043:9042 -d cassandra
+```
 
-    docker run --name cassandra-source -p 9042:9042 -d cassandra
-    docker run --name cassandra-dest -p 9043:9042 -d cassandra
+Open cqlsh directly on each of these clusters:
 
-Create test data in source cluster using a small database:
+```shell
+docker exec -it cassandra-source /bin/bash
+cqlsh
+```
 
-1. CQLSH into the source cluster `$ cqlsh localhost 9042`
-2. Create keyspace `test` `cqlsh> CREATE KEYSPACE test WITH REPLICATION = { 'replication_factor': 1, 'class': 'SimpleStrategy' };`
-3. Use keyspace `cqlsh> USE test;`
-4. Create table `cqlsh> CREATE TABLE tasks(id UUID, task text, PRIMARY KEY(id));`
-5. Create dummy data `cqlsh> INSERT INTO tasks(id, task) VALUES (now(), 'dsmafksadkf');`
-6. Verify dummy data exists in source cluster `cqlsh> SELECT * FROM tasks;`
+```shell
+docker exec -it cassandra-dest /bin/bash
+cqlsh
+```
 
-Run our services:
+Create a keyspace + table directly on each cluster, for example:
 
-1. Specify env variables documented in the proxy README. The following are the default values we have used
-    // default set of env vars
-    
-    ```
-    export SOURCE_HOSTNAME="127.0.0.1"
-    export SOURCE_USERNAME=""
-    export SOURCE_PASSWORD=""
-    export SOURCE_PORT=9042
-    export ASTRA_HOSTNAME="127.0.0.1"
-    export ASTRA_USERNAME=""
-    export ASTRA_PASSWORD=""
-    export ASTRA_PORT=9043
-    export MIGRATION_SERVICE_HOSTNAME="127.0.0.1"
-    export MIGRATION_COMMUNICATION_PORT=15000
-    export PROXY_SERVICE_HOSTNAME="127.0.0.1"
-    export PROXY_COMMUNICATION_PORT=14000
-    export MIGRATION_ID=<UUID>
-    export MIGRATION_COMPLETE=false
-    export DEBUG=true
-    export TEST=true
-    export PROXY_METRICS_PORT=14001
-    export PROXY_QUERY_PORT=14002
-    export DSBULK_PATH=/path to dsbulk/
-    ```
-1. Download any necessary packages to run our services
-2. Run `go run proxy/main.go` and `go run migration/main.go` at relatively similar times
-3. Once they establish a connection, the migration will begin.
-4. To query the database, `cqlsh localhost 14002`  and run CQL queries at this port
+```cql
+CREATE KEYSPACE test WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1};
+CREATE TABLE test.keyvalue (key int PRIMARY KEY, value text);
+```
 
-Between manual tests, to “refresh” make sure to…
+You can also use ccm instead of docker:
 
-1. Delete migration.chk: `rm -r migration.chk`
-2. Delete the .csv file from DsBulk
-3. Drop the table from the destination cluster (localhost 9043): `DROP TABLE test.tasks;`
+```shell
+ccm create -v 3.11.7 origin
+ccm add -s --binary-itf="127.0.0.1:9042" --storage-itf="127.0.0.1:7000" --thrift-itf="127.0.0.1:9160" -r 5005 -j 9000 node1
+ccm start --wait-for-binary-proto
 
-## Testing Framework
+ccm create -v 3.11.7 target
+ccm add -s --binary-itf="127.0.0.1:9043" --storage-itf="127.0.0.1:7001" --thrift-itf="127.0.0.1:9161" -r 5006 -j 9001 node1
+ccm start --wait-for-binary-proto
 
-To test larger and more complex edge cases automatically, we have created a basic testing framework that runs individual select statements instead of DsBulk. This framework starts the proxy service as a child process and mocks all portions of the migration service except the actual migration portions. The source and dest clusters are seeded with hardcoded, known data. During the “migration”, the user can simulate the effects of DsBulk by running individual queries. At any time, the user can assert correct behavior using queries.
+# use cqlsh on origin
+ccm switch origin
+ccm node1 cqlsh
 
-The `integration-tests/main.go` contains logic to correctly seed data, start the proxy service, and invoke one or more testing scripts (e.g. `integration-tests/test1/test1.go`). The testing script is used to make individual queries make requests to the proxy service, and make assertions.
+# use cqlsh on target
+ccm switch target
+ccm node1 cqlsh
+```
 
-To run our testing framework:
+Clone this project into the following directory, using the exact same path specified here: `~/go/src/github.com/riptano`
 
-1. Ensure two Cassandra clusters are running on ports 9042 and 9043 (preferably using Docker as specified above)
-2. Ensure that the environment variables are defined(preferably using the variables specified above)
-3. Note that the test will be performed in the `cloudgate_test` keyspace
-4. Include test case logic within a separate go file (see `test1.go` for examples)
-5. Run the testing framework using: `go run integration-tests/main.go`
+If using IntelliJ Goland or the go plugin for IntelliJ Idea Ultimate, create a run configuration as shown here:
 
-## Limitations and Assumptions
-- Currently we are piping our output files from DSBulk into a personal S3 bucket, this process will need to be adjusted as the service is integrated into Datastax
-- We have been able to manually verify correct behaviors and ensure that the client and Astra DBs are consistent, but we have not programmatically reproduced a way to check for consistency
-- We have gotten started on writing some basic config files for integration, but this process also needs to be adjust as the service is integrated into Datastax
-- Schema should not be updated during the migration, this will result in the tables not being properly processed by DSBulk
+![Run configuration](img/cloudgate_proxy_run_config.png)
+  
+In the configuration, use this environment variable list: `ORIGIN_CASSANDRA_HOSTNAME=127.0.0.1;ORIGIN_CASSANDRA_USERNAME=cassandra;ORIGIN_CASSANDRA_PASSWORD=cassandra;ORIGIN_CASSANDRA_PORT=9042;TARGET_CASSANDRA_HOSTNAME=127.0.0.10;TARGET_CASSANDRA_USERNAME=cassandra;TARGET_CASSANDRA_PASSWORD=cassandra;TARGET_CASSANDRA_PORT=9042;DEBUG=true;PROXY_METRICS_PORT=14001;PROXY_QUERY_PORT=14002`
 
-For more information about constraints specific to either service (including specific queries that cannot be supported by our proxy) please visit the limitations and assumptions section of the individual READMEs for both services.
+Start the proxy with the newly created run configuration.
+
+Install a cqlsh standalone client ([download here](https://downloads.datastax.com/#cqlsh)) and connect to the proxy: `./cqlsh localhost 14002`.
+
+Note that:
+
+- If you are debugging you may want to increase the timeouts to have more time to step through the code. The options are: ` --connect-timeout="XXX" --request-timeout="YYY" `
+- For the moment, the keyspace must be specified when accessing a table, even after using `USE <keyspace>`.
+
+Once connected, experiment sending some requests through the proxy. For example:
+
+```cql
+INSERT INTO test.keyvalue (key, value) VALUES (1, 'ABC');
+INSERT INTO test.keyvalue (key, value) VALUES (2, 'DEF');
+SELECT * FROM test.keyvalue
+UPDATE test.keyvalue SET value='GYEKJF' WHERE key = 1;
+DELETE FROM test.keyvalue WHERE key = 2
+```
+
+And verify that the data is in both clusters by querying them directly through their own cqlsh.
+
+To test prepared statements, there is a simple noSQLBench activity under nb-tests that can be launched like this:
+
+`java -jar nb.jar run driver=cql workload=~/go/src/github.com/riptano/cloud-gate/nb-tests/cql-nb-activity.yaml tags=phase:'rampup' cycles=20..30 host=localhost port=14002 cbopts=".withProtocolVersion(ProtocolVersion.V3)"`
+
+## Running the proxy with docker
+
+From the root of the repository, run the following and take note of the id of the generated image.
+
+```shell
+docker build . -f proxy/Dockerfile
+```
+
+To make it easier to provide all of the necessary environment variables, create a simple `test.env` file with the following content:
+
+```shell
+ORIGIN_CASSANDRA_HOSTNAME=localhost
+ORIGIN_CASSANDRA_USERNAME=cassandra
+ORIGIN_CASSANDRA_PASSWORD=cassandra
+ORIGIN_CASSANDRA_PORT=9042
+TARGET_CASSANDRA_HOSTNAME=localhost
+TARGET_CASSANDRA_USERNAME=cassandra
+TARGET_CASSANDRA_PASSWORD=cassandra
+TARGET_CASSANDRA_PORT=9043
+DEBUG=true
+PROXY_METRICS_ADDRESS=0.0.0.0
+PROXY_METRICS_PORT=14001
+PROXY_QUERY_PORT=80
+PROXY_QUERY_ADDRESS=0.0.0.0
+```
+
+On Windows you need to replace both `_HOSTNAME` variables with `host.docker.internal`.
+
+Finally, run:
+
+```shell
+docker run --env-file ./test.env 8d28c24ca2ef
+```
+
+Here `8d28c24ca2ef` is the id of the image that was generated by the previous `docker build` step.
+
+## Integration tests
+
+The `integration-tests` module contains integration tests that use `CCM` and `Simulacron`.
+
+### Tools setup
+
+`Simulacron` is required but `CCM` is optional. By default only `Simulacron` tests run.
+
+#### Simulacron
+
+To run the default suite of integration tests you need [simulacron][simulacronrepo]:
+
+1. Download the latest jar file [here][simulacronreleases].
+2. Set `SIMULACRON_PATH` environment variable to the path of the jar file you downloaded in the previous step.
+
+Simulacron relies on loopback aliases to simulate multiple nodes. On Linux or Windows, you shouldn't have anything to do. On MacOS, run this script:
+
+```bash
+#!/bin/bash
+for sub in {0..4}; do
+    echo "Opening for 127.0.$sub"
+    for i in {0..255}; do sudo ifconfig lo0 alias 127.0.$sub.$i up; done
+done
+```
+
+Note that this is known to cause temporary increased CPU usage in OS X initially while mDNSResponder acclimates itself to the presence of added IP addresses. This lasts several minutes. Also, this does not survive reboots.
+
+#### CCM
+
+The optional integration tests require [ccm][ccmrepo] on your machine so make sure the ccm commands are accessible from the command line. You should be able to run `> cmd.exe /c ccm help` using command line on Windows or `$ /usr/local/bin/ccm help` on Linux / macOS.
+
+Installing CCM on **linux/macOS** it should be as simple as cloning the [ccm][ccmrepo] and running `sudo ./setup.py install`
+
+On **Windows**, however, there are a couple of dependencies and environment variables that you need to set up. This [blog post][ccm-windows-blog] should help you set up those dependencies and environment variables.
+
+### Running the tests
+
+By default only `Simulacron` based tests will run:
+
+```shell
+# from the root of the repository
+go test -v ./integration-tests
+```
+
+To include `CCM` based tests run:
+
+```shell
+# from the root of the repository
+go test -v ./integration-tests -USE_CCM=true
+```
+
+If using IntelliJ Goland or the go plugin for IntelliJ Idea Ultimate, you can create a run configuration as shown here (you can remove the `Program arguments` to exclude `CCM` tests):
+
+![Run configuration](img/integration_tests_run_config.png)
+
+### Advanced
+
+If you want to specify which C*/DSE version is used for `CCM` and `Simulacron`, you can specify the `CASSANDRA_VERSION` and `DSE_VERSION` flags:
+
+```shell
+# from the root of the repository
+go test -v ./integration-tests -USE_CCM=true -CASSANDRA_VERSION=3.11.8
+```
+
+Also note that any of the test flags can also be provided via environment variables instead. If both are present then the test flag is used instead of the environment variable.
+
+[ccmrepo]: https://github.com/riptano/ccm
+[simulacronrepo]: https://github.com/datastax/simulacron
+[simulacronreleases]: https://github.com/datastax/simulacron/releases
+[ccm-windows-blog]: https://www.datastax.com/blog/2015/01/ccm-20-and-windows

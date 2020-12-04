@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: "{{ include "proxy-chart.fullname" . }}-service"
+  labels:
+    {{- include "proxy-chart.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.proxyConfig.proxyMetricsPort }}
+      targetPort: httpproxy
+      protocol: TCP
+      name: httpproxy
+    - port: {{ .Values.proxyConfig.proxyQueryPort }}
+      targetPort: cql
+      protocol: TCP
+      name: cql
+  selector:
+    {{- include "proxy-chart.selectorLabels" . | nindent 4 }}

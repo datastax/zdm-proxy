@@ -1,0 +1,71 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "{{ include "proxy-chart.fullname" . }}-configmap"
+data:
+  ORIGIN_CASSANDRA_HOSTNAME: "{{ .Values.proxyConfig.originCassandraHostname }}"
+  ORIGIN_CASSANDRA_USERNAME: "{{ .Values.proxyConfig.originCassandraUsername }}"
+  ORIGIN_CASSANDRA_PASSWORD: "{{ .Values.proxyConfig.originCassandraPassword }}"
+  ORIGIN_CASSANDRA_PORT: "{{ .Values.proxyConfig.originCassandraPort }}"
+  TARGET_CASSANDRA_HOSTNAME: "{{ .Values.proxyConfig.targetCassandraHostname }}"
+  TARGET_CASSANDRA_USERNAME: "{{ .Values.proxyConfig.targetCassandraUsername }}"
+  TARGET_CASSANDRA_PASSWORD: "{{ .Values.proxyConfig.targetCassandraPassword }}"
+  TARGET_CASSANDRA_PORT: "{{ .Values.proxyConfig.targetCassandraPort }}"
+  
+  {{- if .Values.proxyConfig.clusterConnectionTimeoutMs }}
+  CLUSTER_CONNECTION_TIMEOUT_MS: "{{ .Values.proxyConfig.clusterConnectionTimeoutMs }}"
+  {{- end }}
+
+  {{- if .Values.proxyConfig.heartbeatIntervalMs }}
+  HEARTBEAT_INTERVAL_MS: "{{ .Values.proxyConfig.heartbeatIntervalMs }}"
+  {{- end }}
+
+  {{- if .Values.proxyConfig.heartbeatRetryIntervalMinMs }}
+  HEARTBEAT_RETRY_INTERVAL_MIN_MS: "{{ .Values.proxyConfig.heartbeatRetryIntervalMinMs }}"
+  {{- end }}
+
+  {{- if .Values.proxyConfig.heartbeatRetryIntervalMaxMs }}
+  HEARTBEAT_RETRY_INTERVAL_MAX_MS: "{{ .Values.proxyConfig.heartbeatRetryIntervalMaxMs }}"
+  {{- end }}
+
+  {{- if .Values.proxyConfig.heartbeatRetryBackoffFactor }}
+  HEARTBEAT_RETRY_BACKOFF_FACTOR: "{{ .Values.proxyConfig.heartbeatRetryBackoffFactor }}"
+  {{- end }}
+
+  {{- if .Values.proxyConfig.heartbeatFailureThreshold }}
+  HEARTBEAT_FAILURE_THRESHOLD: "{{ .Values.proxyConfig.heartbeatFailureThreshold }}"
+  {{- end }}
+
+  {{- if .Values.proxyConfig.originBucketsMs }}
+  ORIGIN_BUCKETS_MS: "{{ .Values.proxyConfig.originBucketsMs }}"
+  {{- end }}
+
+  {{- if .Values.proxyConfig.targetBucketsMs }}
+  TARGET_BUCKETS_MS: "{{ .Values.proxyConfig.targetBucketsMs }}"
+  {{- end }}
+  
+  {{- if .Values.proxyConfig.writeQueueSizeFrames }}
+  WRITE_QUEUE_SIZE_FRAMES: "{{ .Values.proxyConfig.writeQueueSizeFrames }}"
+  {{- end }}
+  
+  {{- if .Values.proxyConfig.writeBufferSizeBytes }}
+  WRITE_BUFFER_SIZE_BYTES: "{{ .Values.proxyConfig.writeBufferSizeBytes }}"
+  {{- end }}
+
+  {{- if .Values.proxyConfig.readBufferSizeBytes }}
+  READ_BUFFER_SIZE_BYTES: "{{ .Values.proxyConfig.readBufferSizeBytes }}"
+  {{- end }}
+  
+  {{- if .Values.proxyConfig.requestQueueSizeFrames }}
+  REQUEST_QUEUE_SIZE_FRAMES: "{{ .Values.proxyConfig.requestQueueSizeFrames }}"
+  {{- end }}
+  
+  {{- if .Values.proxyConfig.responseQueueSizeFrames }}
+  RESPONSE_QUEUE_SIZE_FRAMES: "{{ .Values.proxyConfig.responseQueueSizeFrames }}"
+  {{- end }}
+
+  {{- if .Values.proxyConfig.eventQueueSizeFrames }}
+  EVENT_QUEUE_SIZE_FRAMES: "{{ .Values.proxyConfig.eventQueueSizeFrames }}"
+  {{- end }}
+
+  DEBUG: "{{ .Values.proxyConfig.debug }}"
