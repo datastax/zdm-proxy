@@ -80,7 +80,9 @@ func (cc *ClientConnector) run() {
 	cc.listenForResponses()
 	cc.listenForEvents()
 	cc.writeCoalescer.RunWriteQueueLoop()
+	cc.waitGroup.Add(1)
 	go func() {
+		defer cc.waitGroup.Done()
 		cc.responseChannelsWaitGroup.Wait()
 		cc.writeCoalescer.Close()
 

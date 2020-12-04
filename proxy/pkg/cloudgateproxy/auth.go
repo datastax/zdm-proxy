@@ -11,7 +11,7 @@ import (
 // Returns a proper response frame to authenticate using passed in username and password
 // Utilizes the users request frame to maintain the correct version & stream id.
 func performHandshakeStep(
-	authenticator *PlainTextAuthenticator,
+	authenticator *DsePlainTextAuthenticator,
 	version primitive.ProtocolVersion,
 	streamId int16,
 	lastResponse *frame.Frame) (*frame.Frame, error) {
@@ -40,6 +40,7 @@ func performHandshakeStep(
 
 // AuthCredentials encapsulates a username and a password to use with plain-text authenticators.
 type AuthCredentials struct {
+	AuthId   string
 	Username string
 	Password string
 }
@@ -51,7 +52,8 @@ func (c *AuthCredentials) String() string {
 // Marshal serializes the current credentials to an authentication token with the expected format for
 // PasswordAuthenticator.
 func (c *AuthCredentials) Marshal() []byte {
-	token := bytes.NewBuffer(make([]byte, 0, len(c.Username)+len(c.Password)+2))
+	token := bytes.NewBuffer(make([]byte, 0, len(c.AuthId)+len(c.Username)+len(c.Password)+2))
+	token.WriteString(c.AuthId)
 	token.WriteByte(0)
 	token.WriteString(c.Username)
 	token.WriteByte(0)
@@ -64,9 +66,15 @@ func (c *AuthCredentials) Marshal() []byte {
 func (c *AuthCredentials) Unmarshal(token []byte) error {
 	token = append(token, 0)
 	source := bytes.NewBuffer(token)
-	if _, err := source.ReadByte(); err != nil {
+	if authId, err := source.ReadBytes(0); err != nil {
 		return err
-	} else if username, err := source.ReadString(0); err != nil {
+	} else if len(authId) != 1 {
+		c.AuthId = string(authId[:len(authId)-1])
+	} else {
+		c.AuthId = ""
+	}
+
+	if username, err := source.ReadString(0); err != nil {
 		return err
 	} else if password, err := source.ReadString(0); err != nil {
 		return err
@@ -78,7 +86,7 @@ func (c *AuthCredentials) Unmarshal(token []byte) error {
 }
 
 // A simple authenticator to perform plain-text authentications for CQL clients.
-type PlainTextAuthenticator struct {
+type DsePlainTextAuthenticator struct {
 	Credentials *AuthCredentials
 }
 
@@ -87,7 +95,7 @@ var (
 	mechanism         = []byte("PLAIN")
 )
 
-func (a *PlainTextAuthenticator) InitialResponse(authenticator string) ([]byte, error) {
+func (a *DsePlainTextAuthenticator) InitialResponse(authenticator string) ([]byte, error) {
 	switch authenticator {
 	case "com.datastax.bdp.cassandra.auth.DseAuthenticator":
 		return mechanism, nil
@@ -97,9 +105,24 @@ func (a *PlainTextAuthenticator) InitialResponse(authenticator string) ([]byte, 
 	return nil, fmt.Errorf("unknown authenticator: %v", authenticator)
 }
 
-func (a *PlainTextAuthenticator) EvaluateChallenge(challenge []byte) ([]byte, error) {
+func (a *DsePlainTextAuthenticator) EvaluateChallenge(challenge []byte) ([]byte, error) {
 	if challenge == nil || bytes.Compare(challenge, expectedChallenge) != 0 {
 		return nil, fmt.Errorf("incorrect SASL challenge from server, expecting PLAIN-START, got: %v", string(challenge))
 	}
 	return a.Credentials.Marshal(), nil
+}
+
+// This method can return nil in both credsInToken and err in case the request does not contain credentials
+func ParseCredentialsFromRequest(token []byte) (credsInToken *AuthCredentials, err error) {
+	if token == nil || bytes.Compare(token, mechanism) == 0 {
+		return nil, nil
+	}
+
+	authCreds := &AuthCredentials{}
+	unmarshalErr := authCreds.Unmarshal(token)
+	if unmarshalErr != nil {
+		return nil, fmt.Errorf("could not unmarshal auth credentials from token, can not proceed with target handshake: %w", err)
+	}
+
+	return authCreds, nil
 }

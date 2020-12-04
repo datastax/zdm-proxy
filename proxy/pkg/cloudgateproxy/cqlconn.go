@@ -212,7 +212,7 @@ func (c *cqlConn) PerformHandshake(version primitive.ProtocolVersion, streamId i
 	log.Debug("performing handshake")
 	startup := frame.NewFrame(version, streamId, message.NewStartup())
 	var response *frame.Frame
-	authenticator := &PlainTextAuthenticator{c.credentials}
+	authenticator := &DsePlainTextAuthenticator{c.credentials}
 	if response, err = c.SendAndReceiveContext(startup, ctx); err == nil {
 		switch response.Body.Message.(type) {
 		case *message.Ready:

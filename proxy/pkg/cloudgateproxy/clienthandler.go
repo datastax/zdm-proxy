@@ -48,11 +48,12 @@ type ClientHandler struct {
 	currentKeyspaceName *atomic.Value
 
 	startupFrame *frame.RawFrame
+	targetCreds  *AuthCredentials
 
 	eventsChannel chan *frame.RawFrame
 
-	targetUsername string
-	targetPassword string
+	originUsername string
+	originPassword string
 }
 
 func NewClientHandler(
@@ -60,8 +61,8 @@ func NewClientHandler(
 	originCassandraConnInfo *ClusterConnectionInfo,
 	targetCassandraConnInfo *ClusterConnectionInfo,
 	conf *config.Config,
-	targetUsername string,
-	targetPassword string,
+	originUsername string,
+	originPassword string,
 	psCache *PreparedStatementCache,
 	metricsHandler metrics.IMetricsHandler,
 	waitGroup *sync.WaitGroup,
@@ -115,8 +116,8 @@ func NewClientHandler(
 		currentKeyspaceName:      &atomic.Value{},
 		startupFrame:             nil,
 		eventsChannel:            eventsChannel,
-		targetUsername:           targetUsername,
-		targetPassword:           targetPassword,
+		originUsername:           originUsername,
+		originPassword:           originPassword,
 	}, nil
 }
 
@@ -267,6 +268,13 @@ func (ch *ClientHandler) listenForEventMessages() {
 func (ch *ClientHandler) handleHandshakeRequest(f *frame.RawFrame, waitGroup *sync.WaitGroup) (bool, error) {
 	if f.Header.OpCode == primitive.OpCodeStartup {
 		ch.startupFrame = f
+	} else if f.Header.OpCode == primitive.OpCodeAuthResponse {
+		newAuthFrame, err := ch.replaceAuthFrame(f)
+		if err != nil {
+			return false, err
+		}
+
+		f = newAuthFrame
 	}
 
 	response, err := ch.forwardRequest(f)
@@ -531,6 +539,45 @@ func (ch *ClientHandler) aggregateAndTrackResponses(responseFromOriginCassandra 
 		return responseFromTargetCassandra
 	}
 
+}
+
+func (ch *ClientHandler) replaceAuthFrame(f *frame.RawFrame) (*frame.RawFrame, error) {
+	parsedAuthFrame, err := defaultCodec.ConvertFromRawFrame(f)
+	if err != nil {
+		return nil, fmt.Errorf("could not extract auth credentials from frame to start the target handshake: %w", err)
+	}
+
+	authResponse, ok := parsedAuthFrame.Body.Message.(*message.AuthResponse)
+	if !ok {
+		return nil, fmt.Errorf("expected AuthResponse but got %v, can not proceed with target handshake", parsedAuthFrame.Body.Message)
+	}
+
+	authCreds, err := ParseCredentialsFromRequest(authResponse.Token)
+	if err != nil {
+		return nil, err
+	}
+
+	if authCreds == nil {
+		log.Debugf("Found auth response frame without creds: %v", authResponse)
+		return f, nil
+	}
+
+	log.Debugf("Successfuly extracted target credentials from auth frame: %v", authCreds)
+
+	ch.targetCreds = authCreds
+
+	originCreds := &AuthCredentials{
+		Username: ch.originUsername,
+		Password: ch.originPassword,
+	}
+	authResponse.Token = originCreds.Marshal()
+
+	f, err = defaultCodec.ConvertToRawFrame(parsedAuthFrame)
+	if err != nil {
+		return nil, fmt.Errorf("could not convert new auth response to a raw frame, can not proceed with target handshake: %w", err)
+	}
+
+	return f, nil
 }
 
 func decodeErrorResult(frame *frame.RawFrame) (message.Error, error) {

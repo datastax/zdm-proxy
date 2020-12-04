@@ -23,12 +23,12 @@ func (ch *ClientHandler) handleTargetCassandraStartup(startupFrame *frame.RawFra
 	log.Infof("Initiating startup between %v and %v", clientIPAddress, targetCassandraIPAddress)
 	phase := 1
 	attempts := 0
-	authCreds := &AuthCredentials{
-		Username: ch.targetUsername,
-		Password: ch.targetPassword,
-	}
-	authenticator := &PlainTextAuthenticator{
-		Credentials: authCreds,
+
+	var authenticator *DsePlainTextAuthenticator
+	if ch.targetCreds != nil {
+		authenticator = &DsePlainTextAuthenticator{
+			Credentials: ch.targetCreds,
+		}
 	}
 
 	var lastResponse *frame.Frame
@@ -46,6 +46,10 @@ func (ch *ClientHandler) handleTargetCassandraStartup(startupFrame *frame.RawFra
 		case 1:
 			request = startupFrame
 		case 2:
+			if authenticator == nil {
+				return fmt.Errorf("target requested authentication but origin did not, can not proceed with target handshake")
+			}
+
 			var err error
 			var parsedRequest *frame.Frame
 			parsedRequest, err = performHandshakeStep(authenticator, startupFrame.Header.Version, startupFrame.Header.StreamId, lastResponse)
