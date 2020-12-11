@@ -40,12 +40,12 @@ type Config struct {
 
 	EnableMetrics bool `default:"true" split_words:"true"`
 
-	WriteQueueSizeFrames int `default:"3072" split_words:"true"`
-	WriteBufferSizeBytes int `default:"32768" split_words:"true"`
-	ReadBufferSizeBytes int `default:"32768" split_words:"true"`
+	WriteQueueSizeFrames int `default:"6144" split_words:"true"`
+	WriteBufferSizeBytes int `default:"65536" split_words:"true"`
+	ReadBufferSizeBytes int `default:"65536" split_words:"true"`
 
-	RequestQueueSizeFrames int `default:"128" split_words:"true"`
-	ResponseQueueSizeFrames int `default:"128" split_words:"true"`
+	RequestQueueSizeFrames int `default:"32" split_words:"true"`
+	ResponseQueueSizeFrames int `default:"32" split_words:"true"`
 	EventQueueSizeFrames int `default:"64" split_words:"true"`
 
 	Debug bool
