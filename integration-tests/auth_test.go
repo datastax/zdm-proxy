@@ -107,7 +107,20 @@ func testAuth(
 			success:        false,
 			successOrigin:  true,
 			successTarget:  false,
-			authError:      false,
+			authError:      true,
+		},
+		{
+			name:           "InvalidClientCredentials",
+			targetUsername: targetUsername,
+			targetPassword: targetPassword,
+			originUsername: originUsername,
+			originPassword: originPassword,
+			clientUsername: "invalidTargetUsername",
+			clientPassword: "invalidTargetPassword",
+			success:        false,
+			successOrigin:  true,
+			successTarget:  false,
+			authError:      true,
 		},
 		{
 			name:           "InvalidTargetAndOriginCredentials",
@@ -149,8 +162,8 @@ func testAuth(
 					if !tt.success {
 						if tt.authError {
 							require.True(t, err != nil, "expected failure in handshake")
-							require.True(t, strings.Contains(err.Error(), "expected auth success but received "))
-							require.True(t, strings.Contains(err.Error(), "ERROR AUTHENTICATION ERROR"))
+							require.True(t, strings.Contains(err.Error(), "expected auth success but received "), err.Error())
+							require.True(t, strings.Contains(err.Error(), "ERROR AUTHENTICATION ERROR"), err.Error())
 						} else {
 							require.True(t, err != nil, "expected err")
 							require.True(t, strings.Contains(err.Error(), "response channel closed"), "expected channel closed but got %v", err)
@@ -219,6 +232,17 @@ func testHealthCheckWithAuth(
 			clientPassword: originPassword,
 			successOrigin:  true,
 			successTarget:  false,
+		},
+		{
+			name:           "InvalidClientCredentials",
+			targetUsername: targetUsername,
+			targetPassword: targetPassword,
+			originUsername: originUsername,
+			originPassword: originPassword,
+			clientUsername: "invalidTargetUsername",
+			clientPassword: "invalidTargetPassword",
+			successOrigin:  true,
+			successTarget:  true,
 		},
 		{
 			name:           "InvalidTargetAndOriginCredentials",

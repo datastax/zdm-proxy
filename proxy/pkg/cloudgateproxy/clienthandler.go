@@ -47,6 +47,8 @@ type ClientHandler struct {
 
 	currentKeyspaceName *atomic.Value
 
+	authErrorMessage *message.AuthenticationError
+
 	startupFrame *frame.RawFrame
 	targetCreds  *AuthCredentials
 
@@ -114,6 +116,7 @@ func NewClientHandler(
 		clientHandlerContext:     clientHandlerContext,
 		clientHandlerCancelFunc:  clientHandlerCancelFunc,
 		currentKeyspaceName:      &atomic.Value{},
+		authErrorMessage:         nil,
 		startupFrame:             nil,
 		eventsChannel:            eventsChannel,
 		originUsername:           originUsername,
@@ -268,6 +271,10 @@ func (ch *ClientHandler) listenForEventMessages() {
  *	Calls one or two goroutines forwardToCluster(), so the request is executed on each cluster concurrently
  */
 func (ch *ClientHandler) handleHandshakeRequest(f *frame.RawFrame, waitGroup *sync.WaitGroup) (bool, error) {
+	if ch.authErrorMessage != nil {
+		return false, ch.sendAuthErrorToClient(f)
+	}
+
 	if f.Header.OpCode == primitive.OpCodeStartup {
 		ch.startupFrame = f
 	} else if f.Header.OpCode == primitive.OpCodeAuthResponse {
@@ -309,6 +316,12 @@ func (ch *ClientHandler) handleHandshakeRequest(f *frame.RawFrame, waitGroup *sy
 		}
 
 		if err != nil {
+			var authError *AuthError
+			if errors.As(err, &authError) {
+				ch.authErrorMessage = authError.errMsg
+				return false, ch.sendAuthErrorToClient(f)
+			}
+
 			log.Errorf("handshake failed, shutting down the client handler and connectors: %s", err.Error())
 			ch.clientHandlerCancelFunc()
 			return false, fmt.Errorf("handshake failed: %w", ShutdownErr)
@@ -321,6 +334,29 @@ func (ch *ClientHandler) handleHandshakeRequest(f *frame.RawFrame, waitGroup *sy
 	ch.clientConnector.responseChannel <- response
 
 	return authSuccess, nil
+}
+
+// Builds auth error response and sends it to the client.
+func (ch *ClientHandler) sendAuthErrorToClient(requestFrame *frame.RawFrame) error {
+	authErrorResponse, err := ch.buildAuthErrorResponse(requestFrame, ch.authErrorMessage)
+	if err == nil {
+		log.Warnf("Target handshake failed with an auth error, returning %v to client.", ch.authErrorMessage)
+		ch.clientConnector.responseChannel <- authErrorResponse
+		return nil
+	} else {
+		return fmt.Errorf("target handshake failed with an auth error but could not create response frame: %w", err)
+	}
+}
+
+// Build authentication error response to return to client
+func (ch *ClientHandler) buildAuthErrorResponse(
+	requestFrame *frame.RawFrame, authenticationError *message.AuthenticationError) (*frame.RawFrame, error) {
+	f := frame.NewFrame(requestFrame.Header.Version, requestFrame.Header.StreamId, authenticationError)
+	if requestFrame.Header.Flags.Contains(primitive.HeaderFlagCompressed) {
+		f.SetCompress(true)
+	}
+
+	return defaultCodec.ConvertToRawFrame(f)
 }
 
 func (ch *ClientHandler) startTargetHandshake(waitGroup *sync.WaitGroup) (chan error, error) {

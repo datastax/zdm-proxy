@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/datastax/go-cassandra-native-protocol/frame"
+	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
 	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
@@ -13,6 +14,14 @@ import (
 const (
 	maxAuthRetries = 5
 )
+
+type AuthError struct {
+	errMsg *message.AuthenticationError
+}
+
+func (recv *AuthError) Error() string {
+	return fmt.Sprintf("authentication error: %v", recv.errMsg)
+}
 
 func (ch *ClientHandler) handleTargetCassandraStartup(startupFrame *frame.RawFrame) error {
 
@@ -102,6 +111,10 @@ func (ch *ClientHandler) handleTargetCassandraStartup(startupFrame *frame.RawFra
 			log.Debugf("%s successfully authenticated with target (%v)", clientIPAddress, targetCassandraIPAddress)
 			return nil
 		default:
+			authErrorMsg, ok := parsedFrame.Body.Message.(*message.AuthenticationError)
+			if ok {
+				return &AuthError{errMsg: authErrorMsg}
+			}
 			return fmt.Errorf(
 				"received response in target handshake that was not "+
 					"READY, AUTHENTICATE, AUTH_CHALLENGE, or AUTH_SUCCESS: %v", parsedFrame.Body.Message)
