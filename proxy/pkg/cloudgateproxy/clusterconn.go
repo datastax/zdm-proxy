@@ -2,10 +2,12 @@ package cloudgateproxy
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"github.com/datastax/go-cassandra-native-protocol/frame"
+	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
 	"github.com/riptano/cloud-gate/proxy/pkg/config"
 	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
@@ -125,10 +127,10 @@ func openConnectionToCluster(connInfo *ClusterConnectionInfo, context context.Co
 }
 
 func closeConnectionToCluster(conn net.Conn, clusterType ClusterType, metricsHandler metrics.IMetricsHandler) {
-	log.Infof("closing connection to %v", conn.RemoteAddr())
+	log.Infof("[ClusterConnector] Closing connection to %v (%v)", clusterType, conn.RemoteAddr())
 	err := conn.Close()
 	if err != nil {
-		log.Warnf("error closing connection to %v", conn.RemoteAddr())
+		log.Warnf("[ClusterConnector] Error closing connection to %v (%v)", clusterType, conn.RemoteAddr())
 	}
 
 	if clusterType == OriginCassandra {
@@ -166,20 +168,37 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 			if response.Header.OpCode == primitive.OpCodeEvent {
 				cc.clusterConnEventsChan <- response
 			} else {
-				cc.forwardResponseToChannel(response)
+				sent := false
+				if response.Header.StreamId == 0 && response.Header.OpCode == primitive.OpCodeError {
+					body, err := defaultCodec.DecodeBody(response.Header, bytes.NewReader(response.Body))
+					if err != nil {
+						log.Errorf("could not parse error with stream id 0 on origin: %v", response.Header)
+					} else {
+						protocolError, ok := body.Message.(*message.ProtocolError)
+						if ok {
+							log.Debugf("protocol error detected (%v), returning to client connection directly", protocolError)
+							cc.clusterConnEventsChan <- response
+							sent = true
+						}
+					}
+				}
+
+				if !sent {
+					cc.forwardResponseToChannel(response)
+				}
 			}
 		}
-		log.Infof("Shutting down response listening loop from %v", connectionAddr)
+		log.Debugf("Shutting down response listening loop from %v", connectionAddr)
 	}()
 }
 
-func (cc *ClusterConnector) forwardResponseToChannel(response *frame.RawFrame) {
+func (cc *ClusterConnector) forwardResponseToChannel(response *frame.RawFrame) bool {
 	responseChan := cc.getResponseChannel(response.Header.StreamId)
 	if responseChan == nil {
 		log.Errorf(
 			"Could not find response channel with stream id %d for cluster %v",
 			response.Header.StreamId, cc.clusterType)
-		return
+		return false
 	}
 
 	err := responseChan.WriteResponse(response)
@@ -187,7 +206,10 @@ func (cc *ClusterConnector) forwardResponseToChannel(response *frame.RawFrame) {
 		log.Infof(
 			"Could not write response to response channel with stream id %d for cluster %v: %v. Most likely the request timed out.",
 			response.Header.StreamId, cc.clusterType, err)
+		return false
 	}
+
+	return true
 }
 
 func (cc *ClusterConnector) getResponseChannel(streamId int16) *responseChannel {
@@ -359,7 +381,7 @@ func handleConnectionError(err error, cancelFn context.CancelFunc, logPrefix str
 		return
 	}
 
-	if errors.Is(err, io.EOF) {
+	if errors.Is(err, io.EOF) || IsClosingErr(err) {
 		log.Infof("[%v] %v disconnected", logPrefix, connectionAddr)
 	} else {
 		log.Errorf("[%v] error %v: %v", logPrefix, operation, err)

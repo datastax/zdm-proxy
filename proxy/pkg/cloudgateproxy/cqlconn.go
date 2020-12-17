@@ -10,6 +10,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"time"
 )
@@ -78,11 +79,11 @@ func (c *cqlConn) StartResponseLoop() {
 	go func() {
 		defer c.wg.Done()
 		defer close(c.incomingCh)
-		defer log.Infof("Shutting down response loop on %v.", c)
+		defer log.Debugf("Shutting down response loop on %v.", c)
 		for c.ctx.Err() == nil {
 			f, err := defaultCodec.DecodeFrame(c.conn)
 			if err != nil {
-				if !errors.Is(err, io.EOF) || c.ctx.Err() == nil {
+				if (!errors.Is(err, io.EOF) && !IsClosingErr(err)) || c.ctx.Err() == nil {
 					log.Errorf("Failed to read/decode frame on cql connection %v: %v", c, err)
 				}
 				c.cancelFn()
@@ -100,13 +101,13 @@ func (c *cqlConn) StartRequestLoop() {
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
-		defer log.Infof("Shutting down request loop on %v.", c)
+		defer log.Debug("Shutting down request loop on %v.", c)
 		for c.ctx.Err() == nil {
 			select {
 			case f := <-c.outgoingCh:
 				err := defaultCodec.EncodeFrame(f, c.conn)
 				if err != nil {
-					if !errors.Is(err, io.EOF) || c.ctx.Err() == nil {
+					if (!errors.Is(err, io.EOF) && !IsClosingErr(err)) || c.ctx.Err() == nil {
 						log.Errorf("Failed to write/encode frame on cql connection %v: %v", c, err)
 					}
 					c.cancelFn()
@@ -240,10 +241,16 @@ func (c *cqlConn) PerformHandshake(version primitive.ProtocolVersion, streamId i
 		}
 	}
 	if err == nil {
-		log.Infof("%v: handshake successful", c)
+		log.Debugf("%v: handshake successful", c)
 		c.initialized = true
 	} else {
 		log.Errorf("%v: handshake failed: %v", c, err)
 	}
 	return err
+}
+
+// https://github.com/golang/go/issues/4373#issuecomment-671142941
+// go 1.16 should fix this
+func IsClosingErr(err error) bool {
+	return strings.Contains(err.Error(), "use of closed network connection")
 }

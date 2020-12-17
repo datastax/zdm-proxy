@@ -138,7 +138,7 @@ func (cc *ClientConnector) listenForRequests() {
 			log.Tracef("Request sent to client connector's request channel: %v", f.Header)
 		}
 
-		log.Infof("Shutting down client connector request listener %v", connectionAddr)
+		log.Debugf("Shutting down client connector request listener %v", connectionAddr)
 	}()
 }
 
@@ -168,7 +168,7 @@ func (cc *ClientConnector) listenForResponses() {
 
 			log.Tracef("Response with opcode %d dispatched to client %v", response.Header.OpCode, clientAddrStr)
 		}
-		log.Infof("Shutting down response forwarder to %v", clientAddrStr)
+		log.Debugf("Shutting down response forwarder to %v", clientAddrStr)
 	}()
 }
 
@@ -195,7 +195,7 @@ func (cc *ClientConnector) listenForEvents() {
 				break
 			}
 		}
-		log.Infof("Shutting down event forwarder to %v", cc.connection.RemoteAddr())
+		log.Debugf("Shutting down event forwarder to %v", cc.connection.RemoteAddr())
 	}()
 }
 

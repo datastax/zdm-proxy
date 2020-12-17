@@ -174,7 +174,7 @@ func (ch *ClientHandler) listenForClientRequests() {
 			ch.handleRequest(f, handleWaitGroup)
 		}
 
-		log.Infof("Shutting down client handler request listener %v.", connectionAddr)
+		log.Debugf("Shutting down client handler request listener %v.", connectionAddr)
 
 		handleWaitGroup.Wait()
 	}()
@@ -207,7 +207,7 @@ func (ch *ClientHandler) listenForEventMessages() {
 			select {
 			case frame, ok = <-targetChannel:
 				if !ok {
-					log.Info("Target event channel closed")
+					log.Debugf("Target event channel closed")
 					shutDownChannels++
 					targetChannel = nil
 					continue
@@ -215,7 +215,7 @@ func (ch *ClientHandler) listenForEventMessages() {
 				fromTarget = true
 			case frame, ok = <-originChannel:
 				if !ok {
-					log.Info("Origin event channel closed")
+					log.Debugf("Origin event channel closed")
 					shutDownChannels++
 					originChannel = nil
 					continue
@@ -223,7 +223,7 @@ func (ch *ClientHandler) listenForEventMessages() {
 				fromTarget = false
 			}
 
-			log.Debugf("Event received (fromTarget: %v) on client handler: %v", fromTarget, frame.Header)
+			log.Debugf("Message received (fromTarget: %v) on event listener of the client handler: %v", fromTarget, frame.Header)
 
 			body, err := defaultCodec.DecodeBody(frame.Header, bytes.NewReader(frame.Body))
 			if err != nil {
@@ -231,31 +231,33 @@ func (ch *ClientHandler) listenForEventMessages() {
 				continue
 			}
 
-			switch eventMsg := body.Message.(type) {
+			switch msgType := body.Message.(type) {
+			case *message.ProtocolError:
+				log.Debug("Received protocol error on event message listener, forwarding to client: %v", body.Message)
 			case *message.SchemaChangeEvent:
 				if fromTarget {
-					log.Infof("Received schema change event from target, skipping: %v", eventMsg)
+					log.Infof("Received schema change event from target, skipping: %v", msgType)
 					continue
 				}
 			case *message.StatusChangeEvent:
 				if !fromTarget {
-					log.Infof("Received status change event from origin, skipping: %v", eventMsg)
+					log.Infof("Received status change event from origin, skipping: %v", msgType)
 					continue
 				}
 			case *message.TopologyChangeEvent:
 				if !fromTarget {
-					log.Infof("Received topology change event from origin, skipping: %v", eventMsg)
+					log.Infof("Received topology change event from origin, skipping: %v", msgType)
 					continue
 				}
 			default:
-				log.Infof("Expected event message (fromTarget: %v) but got: %v", fromTarget, eventMsg)
+				log.Infof("Expected event message (fromTarget: %v) but got: %v", fromTarget, msgType)
 				continue
 			}
 
 			ch.eventsChannel <- frame
 		}
 
-		log.Infof("Shutting down client event messages listener.")
+		log.Debugf("Shutting down client event messages listener.")
 	}()
 }
 
@@ -483,7 +485,7 @@ func (ch *ClientHandler) executeForwardDecision(f *frame.RawFrame, forwardDecisi
 			select {
 			case originResponse, ok = <-originChan:
 				if !ok {
-					return nil, fmt.Errorf("did not receive response from original cassandra channel, stream: %d", f.Header.StreamId)
+					return nil, fmt.Errorf("did not receive response from origin cassandra channel, stream: %d", f.Header.StreamId)
 				}
 				originChan = nil // ignore further channel operations
 			case targetResponse, ok = <-targetChan:
