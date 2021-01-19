@@ -236,7 +236,7 @@ func (ch *ClientHandler) listenForEventMessages() {
 
 			switch msgType := body.Message.(type) {
 			case *message.ProtocolError:
-				log.Debug("Received protocol error on event message listener, forwarding to client: %v", body.Message)
+				log.Debug("Received protocol error on event message listener, forwarding to client: ", body.Message)
 			case *message.SchemaChangeEvent:
 				if fromTarget {
 					log.Infof("Received schema change event from target, skipping: %v", msgType)

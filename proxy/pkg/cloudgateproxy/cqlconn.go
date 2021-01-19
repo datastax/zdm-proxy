@@ -101,7 +101,7 @@ func (c *cqlConn) StartRequestLoop() {
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
-		defer log.Debug("Shutting down request loop on %v.", c)
+		defer log.Debug("Shutting down request loop on ", c)
 		for c.ctx.Err() == nil {
 			select {
 			case f := <-c.outgoingCh:
