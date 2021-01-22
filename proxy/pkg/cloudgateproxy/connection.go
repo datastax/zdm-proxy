@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/jpillora/backoff"
 	log "github.com/sirupsen/logrus"
-	"io"
 	"net"
 	"time"
 )
@@ -19,7 +18,7 @@ func establishConnection(ip string, ctx context.Context) (net.Conn, error) {
 		Jitter: false,
 	}
 
-	log.Infof("Attempting to connect to %v...", ip)
+	log.Infof("[ClusterConnector] Attempting to connect to %v...", ip)
 	dialer := net.Dialer{}
 	for {
 		conn, err := dialer.DialContext(ctx, "tcp", ip)
@@ -28,21 +27,13 @@ func establishConnection(ip string, ctx context.Context) (net.Conn, error) {
 				return nil, ShutdownErr
 			}
 			nextDuration := b.Duration()
-			log.Errorf("Couldn't connect to %v, retrying in %v...", ip, nextDuration)
+			log.Errorf("[ClusterConnector] Couldn't connect to %v, retrying in %v...", ip, nextDuration)
 			time.Sleep(nextDuration)
 			continue
 		}
-		log.Infof("Successfully established connection with %v", conn.RemoteAddr())
+		log.Infof("[ClusterConnector] Successfully established connection with %v", conn.RemoteAddr())
 		return conn, nil
 	}
-}
-
-func writeToConnection(writer io.Writer, message []byte) error {
-	_, err := writer.Write(message)
-	if err != nil {
-		return err
-	}
-	return nil
 }
 
 func openConnection(addr string, ctx context.Context) (net.Conn, error) {

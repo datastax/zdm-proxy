@@ -44,8 +44,7 @@ type Config struct {
 	WriteBufferSizeBytes int `default:"65536" split_words:"true"`
 	ReadBufferSizeBytes int `default:"65536" split_words:"true"`
 
-	RequestQueueSizeFrames int `default:"32" split_words:"true"`
-	ResponseQueueSizeFrames int `default:"32" split_words:"true"`
+	MaxWorkers int `default:"-1" split_words:"true"`
 	EventQueueSizeFrames int `default:"64" split_words:"true"`
 
 	Debug bool

@@ -9,7 +9,6 @@ import (
 	"github.com/riptano/cloud-gate/proxy/pkg/cloudgateproxy"
 	"github.com/riptano/cloud-gate/proxy/pkg/config"
 	log "github.com/sirupsen/logrus"
-
 	"math"
 	"sync"
 )
@@ -261,8 +260,7 @@ func NewTestConfig(originHost string, targetHost string) *config.Config {
 	conf.WriteBufferSizeBytes = 65536
 	conf.ReadBufferSizeBytes = 65536
 
-	conf.RequestQueueSizeFrames = 8192
-	conf.ResponseQueueSizeFrames = 8192
+	conf.MaxWorkers = -1
 	conf.EventQueueSizeFrames = 64
 
 	conf.Debug = false

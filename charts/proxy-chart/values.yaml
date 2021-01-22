@@ -33,8 +33,7 @@ proxyConfig:
   writeQueueSizeFrames:
   writeBufferSizeBytes:
   readBufferSizeBytes:
-  requestQueueSizeFrames:
-  responseQueueSizeFrames:
+  maxWorkers:
   eventQueueSizeFrames:
 
 serviceAccount:

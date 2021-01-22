@@ -12,6 +12,7 @@ import (
 	"github.com/riptano/cloud-gate/proxy/pkg/metrics/prommetrics"
 	log "github.com/sirupsen/logrus"
 	"net"
+	"runtime"
 	"sync"
 	"time"
 )
@@ -53,6 +54,9 @@ type CloudgateProxy struct {
 
 	originBuckets []float64
 	targetBuckets []float64
+
+	numWorkers int
+	scheduler  *Scheduler
 }
 
 func NewCloudgateProxy(conf *config.Config) *CloudgateProxy {
@@ -175,6 +179,16 @@ func (p *CloudgateProxy) initializeGlobalStructures() {
 	p.lock = &sync.RWMutex{}
 	p.listenerLock = &sync.Mutex{}
 	p.listenerClosed = false
+	p.numWorkers = p.Conf.MaxWorkers
+	maxProcs := runtime.GOMAXPROCS(0)
+	if p.numWorkers == -1 {
+		p.numWorkers = maxProcs // default
+	} else if p.numWorkers <= 0 {
+		log.Warn("Invalid number of workers %d, using GOMAXPROCS (%d).", p.numWorkers, maxProcs)
+		p.numWorkers = maxProcs
+	}
+	log.Infof("Using %d workers.", p.numWorkers)
+	p.scheduler = NewScheduler(p.numWorkers)
 
 	p.lock.Lock()
 
@@ -262,7 +276,9 @@ func (p *CloudgateProxy) handleNewConnection(conn net.Conn) {
 		p.PreparedStatementCache,
 		p.metricsHandler,
 		p.shutdownWaitGroup,
-		p.shutdownContext)
+		p.shutdownContext,
+		p.scheduler,
+		p.numWorkers)
 
 	if err != nil {
 		log.Errorf("Client Handler could not be created: %v", err)
@@ -281,12 +297,6 @@ func (p *CloudgateProxy) Shutdown() {
 	var shutdownWaitGroup *sync.WaitGroup
 
 	p.lock.Lock()
-	if p.metricsHandler != nil {
-		err := p.metricsHandler.UnregisterAllMetrics()
-		if err != nil {
-			log.Warnf("Failed to unregister metrics: %v.", err.Error())
-		}
-	}
 	p.cancelFunc()
 	p.originControlConn = nil
 	p.targetControlConn = nil
@@ -303,6 +313,17 @@ func (p *CloudgateProxy) Shutdown() {
 	p.listenerLock.Unlock()
 
 	shutdownWaitGroup.Wait()
+
+	p.lock.Lock()
+	p.scheduler.Shutdown()
+	if p.metricsHandler != nil {
+		err := p.metricsHandler.UnregisterAllMetrics()
+		if err != nil {
+			log.Warnf("Failed to unregister metrics: %v.", err)
+		}
+	}
+	p.lock.Unlock()
+
 	log.Info("Proxy shutdown.")
 }
 

@@ -73,7 +73,7 @@ func (recv *writeCoalescer) RunWriteQueueLoop() {
 					return
 				}
 			default:
-				if bufferedWriter.Buffered() > 0 {
+				if bufferedWriter.Buffered() > 0 && !draining {
 					err := bufferedWriter.Flush()
 					if err != nil {
 						draining = true
@@ -104,15 +104,10 @@ func (recv *writeCoalescer) RunWriteQueueLoop() {
 	}()
 }
 
-func (recv *writeCoalescer) Enqueue(context context.Context, frame *frame.RawFrame) bool {
+func (recv *writeCoalescer) Enqueue(frame *frame.RawFrame) {
 	log.Tracef("[%v] Sending %v to write queue on %v", recv.logPrefix, frame.Header, recv.connection.RemoteAddr())
-	select {
-	case recv.writeQueue <- frame:
-		log.Tracef("[%v] Sent %v to write queue on %v", recv.logPrefix, frame.Header, recv.connection.RemoteAddr())
-		return true
-	case <-context.Done():
-		return false
-	}
+	recv.writeQueue <- frame
+	log.Tracef("[%v] Sent %v to write queue on %v", recv.logPrefix, frame.Header, recv.connection.RemoteAddr())
 }
 
 func (recv *writeCoalescer) Close() {

@@ -6,7 +6,6 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
 	"time"
 )
@@ -48,7 +47,6 @@ func (ch *ClientHandler) handleTargetCassandraStartup(startupFrame *frame.RawFra
 
 		attempts++
 
-		var channel chan *frame.RawFrame
 		var request *frame.RawFrame
 
 		switch phase {
@@ -73,51 +71,52 @@ func (ch *ClientHandler) handleTargetCassandraStartup(startupFrame *frame.RawFra
 		}
 
 		overallRequestStartTime := time.Now()
-		ch.metricsHandler.IncrementCountByOne(metrics.InFlightRequestsTarget)
-		channel = ch.targetCassandraConnector.forwardToCluster(request)
-
-		f, ok := <-channel
-		ch.metricsHandler.DecrementCountByOne(metrics.InFlightRequestsTarget)
-		ch.metricsHandler.TrackInHistogram(metrics.ProxyRequestDurationTarget, overallRequestStartTime)
-		if !ok {
-			if ch.clientHandlerContext.Err() != nil {
-				return ShutdownErr
-			}
-
-			return fmt.Errorf("unable to send startup frame from clientConnection %v to %v",
-				clientIPAddress, targetCassandraIPAddress)
-		}
-
-		if !isResponseSuccessful(f) {
-			ch.metricsHandler.IncrementCountByOne(metrics.FailedRequestsTarget)
-		}
-
-		parsedFrame, err := defaultCodec.ConvertFromRawFrame(f)
+		channel := make(chan *frame.RawFrame, 1)
+		err := ch.executeForwardDecision(request, forwardToTarget, overallRequestStartTime, channel)
 		if err != nil {
-			return fmt.Errorf("could not decode frame from %v: %w", targetCassandraIPAddress, err)
+			return fmt.Errorf("unable to send target handshake frame to %v: %w", targetCassandraIPAddress, err)
 		}
-		lastResponse = parsedFrame
 
-		switch f.Header.OpCode {
-		case primitive.OpCodeAuthenticate:
-			phase = 2
-			log.Debugf("Received AUTHENTICATE for target handshake")
-		case primitive.OpCodeAuthChallenge:
-			log.Debugf("Received AUTH_CHALLENGE for target handshake")
-		case primitive.OpCodeReady:
-			log.Debugf("Target cluster did not request authorization for client %v", clientIPAddress)
-			return nil
-		case primitive.OpCodeAuthSuccess:
-			log.Debugf("%s successfully authenticated with target (%v)", clientIPAddress, targetCassandraIPAddress)
-			return nil
-		default:
-			authErrorMsg, ok := parsedFrame.Body.Message.(*message.AuthenticationError)
-			if ok {
-				return &AuthError{errMsg: authErrorMsg}
+		select {
+		case f, ok := <-channel:
+			if !ok {
+				if ch.clientHandlerContext.Err() != nil {
+					return ShutdownErr
+				}
+
+				return fmt.Errorf("unable to send startup frame from clientConnection %v to %v",
+					clientIPAddress, targetCassandraIPAddress)
 			}
-			return fmt.Errorf(
-				"received response in target handshake that was not "+
-					"READY, AUTHENTICATE, AUTH_CHALLENGE, or AUTH_SUCCESS: %v", parsedFrame.Body.Message)
+
+			parsedFrame, err := defaultCodec.ConvertFromRawFrame(f)
+			if err != nil {
+				return fmt.Errorf("could not decode frame from %v: %w", targetCassandraIPAddress, err)
+			}
+			lastResponse = parsedFrame
+
+			switch f.Header.OpCode {
+			case primitive.OpCodeAuthenticate:
+				phase = 2
+				log.Debugf("Received AUTHENTICATE for target handshake")
+			case primitive.OpCodeAuthChallenge:
+				log.Debugf("Received AUTH_CHALLENGE for target handshake")
+			case primitive.OpCodeReady:
+				log.Debugf("Target cluster did not request authorization for client %v", clientIPAddress)
+				return nil
+			case primitive.OpCodeAuthSuccess:
+				log.Debugf("%s successfully authenticated with target (%v)", clientIPAddress, targetCassandraIPAddress)
+				return nil
+			default:
+				authErrorMsg, ok := parsedFrame.Body.Message.(*message.AuthenticationError)
+				if ok {
+					return &AuthError{errMsg: authErrorMsg}
+				}
+				return fmt.Errorf(
+					"received response in target handshake that was not "+
+						"READY, AUTHENTICATE, AUTH_CHALLENGE, or AUTH_SUCCESS: %v", parsedFrame.Body.Message)
+			}
+		case <-ch.clientHandlerContext.Done():
+			return ShutdownErr
 		}
 	}
 }

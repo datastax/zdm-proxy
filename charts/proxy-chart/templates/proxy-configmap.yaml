@@ -56,12 +56,8 @@ data:
   READ_BUFFER_SIZE_BYTES: "{{ .Values.proxyConfig.readBufferSizeBytes }}"
   {{- end }}
   
-  {{- if .Values.proxyConfig.requestQueueSizeFrames }}
-  REQUEST_QUEUE_SIZE_FRAMES: "{{ .Values.proxyConfig.requestQueueSizeFrames }}"
-  {{- end }}
-  
-  {{- if .Values.proxyConfig.responseQueueSizeFrames }}
-  RESPONSE_QUEUE_SIZE_FRAMES: "{{ .Values.proxyConfig.responseQueueSizeFrames }}"
+  {{- if .Values.proxyConfig.maxWorkers }}
+  REQUEST_QUEUE_SIZE_FRAMES: "{{ .Values.proxyConfig.maxWorkers }}"
   {{- end }}
 
   {{- if .Values.proxyConfig.eventQueueSizeFrames }}

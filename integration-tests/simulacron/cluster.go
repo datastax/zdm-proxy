@@ -45,7 +45,8 @@ func (process *Process) newCluster(startSession bool, data *ClusterData) (*Clust
 	} else {
 		contactPoint = strings.Split(dcs[0].nodes[0].address, ":")[0]
 		if startSession {
-			session, err = gocql.NewCluster(contactPoint).CreateSession()
+			cl := gocql.NewCluster(contactPoint)
+			session, err = cl.CreateSession()
 			if err != nil {
 				return nil, err
 			}

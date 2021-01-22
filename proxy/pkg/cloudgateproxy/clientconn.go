@@ -26,39 +26,36 @@ type ClientConnector struct {
 	conf *config.Config
 
 	// channel on which the ClientConnector sends requests as it receives them from the client
-	requestChannel chan *frame.RawFrame
-	// channel on which the ClientConnector listens for responses to send to the client
-	responseChannel chan *frame.RawFrame
-	// channel on which the ClientConnector listens for event messages to send to the client
-	eventsChannel chan *frame.RawFrame
+	requestChannel chan<- *frame.RawFrame
 
 	metricsHandler metrics.IMetricsHandler // Global metricsHandler object
 
 	waitGroup                 *sync.WaitGroup
-	responseChannelsWaitGroup *sync.WaitGroup
 	clientHandlerContext      context.Context
 	clientHandlerCancelFunc   context.CancelFunc
 
 	writeCoalescer *writeCoalescer
+
+	responsesDoneChan <-chan bool
+	eventsDoneChan    <-chan bool
 }
 
 func NewClientConnector(
 	connection net.Conn,
-	eventsChannel chan *frame.RawFrame,
 	conf *config.Config,
 	metricsHandler metrics.IMetricsHandler,
 	waitGroup *sync.WaitGroup,
+	requestsChan chan<- *frame.RawFrame,
 	clientHandlerContext context.Context,
-	clientHandlerCancelFunc context.CancelFunc) *ClientConnector {
+	clientHandlerCancelFunc context.CancelFunc,
+	responsesDoneChan <-chan bool,
+	eventsDoneChan <-chan bool) *ClientConnector {
 	return &ClientConnector{
 		connection:                connection,
 		conf:                      conf,
-		requestChannel:            make(chan *frame.RawFrame, conf.RequestQueueSizeFrames),
-		responseChannel:           make(chan *frame.RawFrame, conf.ResponseQueueSizeFrames),
-		eventsChannel:             eventsChannel,
+		requestChannel:            requestsChan,
 		metricsHandler:            metricsHandler,
 		waitGroup:                 waitGroup,
-		responseChannelsWaitGroup: &sync.WaitGroup{},
 		clientHandlerContext:      clientHandlerContext,
 		clientHandlerCancelFunc:   clientHandlerCancelFunc,
 		writeCoalescer:            NewWriteCoalescer(
@@ -69,6 +66,8 @@ func NewClientConnector(
 			clientHandlerContext,
 			clientHandlerCancelFunc,
 			"ClientConnector"),
+		responsesDoneChan:         responsesDoneChan,
+		eventsDoneChan:            eventsDoneChan,
 	}
 }
 
@@ -77,13 +76,12 @@ func NewClientConnector(
  */
 func (cc *ClientConnector) run() {
 	cc.listenForRequests()
-	cc.listenForResponses()
-	cc.listenForEvents()
 	cc.writeCoalescer.RunWriteQueueLoop()
 	cc.waitGroup.Add(1)
 	go func() {
 		defer cc.waitGroup.Done()
-		cc.responseChannelsWaitGroup.Wait()
+		<- cc.responsesDoneChan
+		<- cc.eventsDoneChan
 		cc.writeCoalescer.Close()
 
 		log.Infof("[ClientConnector] Shutting down connection to %v", cc.connection.RemoteAddr())
@@ -142,64 +140,6 @@ func (cc *ClientConnector) listenForRequests() {
 	}()
 }
 
-// listens on responseChannel, dequeues any responses and sends them to the client
-func (cc *ClientConnector) listenForResponses() {
-	clientAddrStr := cc.connection.RemoteAddr().String()
-	log.Tracef("listenForResponses for client %v", clientAddrStr)
-
-	cc.waitGroup.Add(1)
-	cc.responseChannelsWaitGroup.Add(1)
-	go func() {
-		defer cc.responseChannelsWaitGroup.Done()
-		defer cc.waitGroup.Done()
-		for {
-			log.Tracef("Waiting for next response to dispatch to client %v", clientAddrStr)
-			response, ok := <-cc.responseChannel
-			if !ok {
-				break
-			}
-
-			log.Debugf("Response received (%v), dispatching to client %v", response.Header, clientAddrStr)
-
-			ok = cc.sendResponseToClient(cc.clientHandlerContext, response)
-			if !ok {
-				break
-			}
-
-			log.Tracef("Response with opcode %d dispatched to client %v", response.Header.OpCode, clientAddrStr)
-		}
-		log.Debugf("Shutting down response forwarder to %v", clientAddrStr)
-	}()
-}
-
-// listens on eventsChannel, dequeues any events and sends them to the client
-func (cc *ClientConnector) listenForEvents() {
-	log.Tracef("listenForEvents for client %v", cc.connection.RemoteAddr())
-
-	cc.waitGroup.Add(1)
-	cc.responseChannelsWaitGroup.Add(1)
-	connectionAddr := cc.connection.RemoteAddr().String()
-	go func() {
-		defer cc.responseChannelsWaitGroup.Done()
-		defer cc.waitGroup.Done()
-		for {
-			log.Tracef("Waiting for next event to dispatch to client %v", connectionAddr)
-			event, ok := <-cc.eventsChannel
-			if !ok {
-				break
-			}
-
-			log.Debugf("Event received (%v), dispatching to client %v", event.Header, connectionAddr)
-			ok = cc.sendResponseToClient(cc.clientHandlerContext, event)
-			if !ok {
-				break
-			}
-		}
-		log.Debugf("Shutting down event forwarder to %v", cc.connection.RemoteAddr())
-	}()
-}
-
-
-func (cc *ClientConnector) sendResponseToClient(clientHandlerContext context.Context, frame *frame.RawFrame) bool {
-	return cc.writeCoalescer.Enqueue(clientHandlerContext, frame)
+func (cc *ClientConnector) sendResponseToClient(frame *frame.RawFrame) {
+	cc.writeCoalescer.Enqueue(frame)
 }
