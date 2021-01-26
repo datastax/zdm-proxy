@@ -8,6 +8,7 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
 	parser "github.com/riptano/cloud-gate/antlr"
+	"github.com/riptano/cloud-gate/proxy/pkg/config"
 	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
 	"strings"
@@ -37,7 +38,8 @@ func inspectFrame(
 	f *frame.RawFrame,
 	psCache *PreparedStatementCache,
 	mh metrics.IMetricsHandler,
-	currentKeyspaceName *atomic.Value) (forwardDecision, error) {
+	currentKeyspaceName *atomic.Value,
+	conf *config.Config) (forwardDecision, error) {
 
 	forwardDecision := forwardToBoth
 
@@ -54,7 +56,7 @@ func inspectFrame(
 		}
 		queryInfo := inspectCqlQuery(queryMsg.Query)
 		if queryInfo.getStatementType() == statementTypeSelect {
-			if isSystemQuery(queryInfo, currentKeyspaceName) {
+			if isSystemQuery(queryInfo, currentKeyspaceName) || conf.ForwardReadsToTarget {
 				forwardDecision = forwardToTarget
 			} else {
 				forwardDecision = forwardToOrigin
@@ -73,7 +75,7 @@ func inspectFrame(
 		}
 		queryInfo := inspectCqlQuery(prepareMsg.Query)
 		if queryInfo.getStatementType() == statementTypeSelect {
-			if isSystemQuery(queryInfo, currentKeyspaceName) {
+			if isSystemQuery(queryInfo, currentKeyspaceName) || conf.ForwardReadsToTarget {
 				forwardDecision = forwardToTarget
 			} else {
 				forwardDecision = forwardToOrigin

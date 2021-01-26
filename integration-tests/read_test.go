@@ -79,12 +79,35 @@ func TestForwardDecisionsForReads(t *testing.T) {
 }
 
 func TestForwardDecisionsForReadsWithUseStatement(t *testing.T) {
-	testSetup := setup.NewSimulacronTestSetup()
+	testSetup := setup.NewSimulacronTestSetupWithSession(false, false)
 	defer testSetup.Cleanup()
+
+	t.Run("ForwardToOrigin", func(tt *testing.T) {
+		testForwardDecisionsForReadsWithUseStatement(tt, testSetup, false)
+	})
+
+	t.Run("ForwardToTarget", func(tt *testing.T) {
+		testForwardDecisionsForReadsWithUseStatement(tt, testSetup, true)
+	})
+}
+
+func testForwardDecisionsForReadsWithUseStatement(
+	t *testing.T, testSetup *setup.SimulacronTestSetup, forwardReadsToTarget bool) {
+
+	config := setup.NewTestConfig(testSetup.Origin.GetInitialContactPoint(), testSetup.Target.GetInitialContactPoint())
+	config.ForwardReadsToTarget = forwardReadsToTarget
+	proxy := setup.NewProxyInstanceWithConfig(config)
+	defer proxy.Shutdown()
 
 	cluster := utils.NewCluster("127.0.0.1", "", "", 14002)
 	cluster.NumConns = 1 // required to test USE behavior reliably
 
+	var expectedCluster *simulacron.Cluster
+	if forwardReadsToTarget {
+		expectedCluster = testSetup.Target
+	} else {
+		expectedCluster = testSetup.Origin
+	}
 	tests := []struct {
 		name     string
 		keyspace string
@@ -102,9 +125,9 @@ func TestForwardDecisionsForReadsWithUseStatement(t *testing.T) {
 		{"system_auth.roles quoted", "system_auth", " /* trick to skip prepare */ SELECT \"foo\" AS f FROM \"system_auth\" . \"roles\"", testSetup.Target},
 		{"dse_insights.tokens", "dse_insights", " /* trick to skip prepare */ SELECT foo FROM dse_insights.tokens", testSetup.Target},
 		{"dse_insights.tokens quoted", "dse_insights", " /* trick to skip prepare */ SELECT \"foo\" AS f FROM \"dse_insights\" . \"tokens\"", testSetup.Target},
-		// all other SELECT queries routed to Origin
-		{"generic read", "foo", " /* trick to skip prepare */ SELECT rpc_address FROM local2", testSetup.Origin},
-		{"generic read quoted", "foo", " /* trick to skip prepare */ SELECT \"rpc_address\" AS addr FROM \"peers_v3\"", testSetup.Origin},
+		// all other SELECT queries routed to Origin or Target according to configuration
+		{"generic read", "foo", " /* trick to skip prepare */ SELECT rpc_address FROM local2", expectedCluster},
+		{"generic read quoted", "foo", " /* trick to skip prepare */ SELECT \"rpc_address\" AS addr FROM \"peers_v3\"", expectedCluster},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -141,5 +164,4 @@ func TestForwardDecisionsForReadsWithUseStatement(t *testing.T) {
 
 		})
 	}
-
 }

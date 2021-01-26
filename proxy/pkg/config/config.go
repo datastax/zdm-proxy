@@ -47,6 +47,8 @@ type Config struct {
 	MaxWorkers int `default:"-1" split_words:"true"`
 	EventQueueSizeFrames int `default:"64" split_words:"true"`
 
+	ForwardReadsToTarget bool `default:"false" split_words:"true"`
+
 	Debug bool
 }
 

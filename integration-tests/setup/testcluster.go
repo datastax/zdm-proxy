@@ -263,6 +263,8 @@ func NewTestConfig(originHost string, targetHost string) *config.Config {
 	conf.MaxWorkers = -1
 	conf.EventQueueSizeFrames = 64
 
+	conf.ForwardReadsToTarget = false
+
 	conf.Debug = false
 
 	return conf

@@ -70,6 +70,8 @@ type ClientHandler struct {
 	eventsDoneChan    chan<- bool
 
 	scheduler *Scheduler
+
+	conf *config.Config
 }
 
 func NewClientHandler(
@@ -151,6 +153,7 @@ func NewClientHandler(
 		responsesDoneChan:       responsesDoneChan,
 		eventsDoneChan:          eventsDoneChan,
 		scheduler:               scheduler,
+		conf:                    conf,
 	}, nil
 }
 
@@ -644,7 +647,8 @@ func (ch *ClientHandler) handleRequest(f *frame.RawFrame) {
 func (ch *ClientHandler) forwardRequest(request *frame.RawFrame, customResponseChannel chan *frame.RawFrame) error {
 	overallRequestStartTime := time.Now()
 
-	forwardDecision, err := inspectFrame(request, ch.preparedStatementCache, ch.metricsHandler, ch.currentKeyspaceName)
+	forwardDecision, err := inspectFrame(
+		request, ch.preparedStatementCache, ch.metricsHandler, ch.currentKeyspaceName, ch.conf)
 	if err != nil {
 		if errVal, ok := err.(*UnpreparedExecuteError); ok {
 			unpreparedFrame, err := createUnpreparedFrame(errVal)
