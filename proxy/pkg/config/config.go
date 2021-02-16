@@ -59,6 +59,8 @@ type Config struct {
 
 	ForwardReadsToTarget bool `default:"false" split_words:"true"`
 
+	RequestTimeoutMs int `default:"10000" split_words:"true"`
+
 	Debug bool
 }
 

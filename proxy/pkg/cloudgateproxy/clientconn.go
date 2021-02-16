@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"github.com/datastax/go-cassandra-native-protocol/frame"
+	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/riptano/cloud-gate/proxy/pkg/config"
 	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
@@ -42,6 +43,8 @@ type ClientConnector struct {
 	eventsDoneChan    <-chan bool
 
 	readScheduler *Scheduler
+
+	shutdownRequestCtx context.Context
 }
 
 func NewClientConnector(
@@ -56,7 +59,8 @@ func NewClientConnector(
 	requestsDoneChan <-chan bool,
 	eventsDoneChan <-chan bool,
 	readScheduler *Scheduler,
-	writeScheduler *Scheduler) *ClientConnector {
+	writeScheduler *Scheduler,
+	shutdownRequestCtx context.Context) *ClientConnector {
 	return &ClientConnector{
 		connection:              connection,
 		conf:                    conf,
@@ -75,10 +79,11 @@ func NewClientConnector(
 			"ClientConnector",
 			false,
 			writeScheduler),
-		responsesDoneChan: responsesDoneChan,
-		requestsDoneChan:  requestsDoneChan,
-		eventsDoneChan:    eventsDoneChan,
-		readScheduler:     readScheduler,
+		responsesDoneChan:  responsesDoneChan,
+		requestsDoneChan:   requestsDoneChan,
+		eventsDoneChan:     eventsDoneChan,
+		readScheduler:      readScheduler,
+		shutdownRequestCtx: shutdownRequestCtx,
 	}
 }
 
@@ -116,7 +121,11 @@ func (cc *ClientConnector) listenForRequests() {
 		closed := false
 
 		go func() {
-			<-cc.clientHandlerContext.Done()
+			select {
+			case <-cc.clientHandlerContext.Done():
+			case <-cc.shutdownRequestCtx.Done():
+			}
+
 			lock.Lock()
 			close(cc.requestChannel)
 			closed = true
@@ -142,9 +151,20 @@ func (cc *ClientConnector) listenForRequests() {
 				defer wg.Done()
 				log.Debugf("Received request on client connector: %v", f.Header)
 				lock.Lock()
-				if !closed {
-					cc.requestChannel <- f
+				if closed {
+					lock.Unlock()
+					msg := &message.Overloaded{
+						ErrorMessage: "Shutting down, please retry on next host.",
+					}
+					response := frame.NewFrame(f.Header.Version, f.Header.StreamId, msg)
+					rawResponse, err := defaultCodec.ConvertToRawFrame(response)
+					if err != nil {
+						log.Errorf("Could not convert frame (%v) to raw frame: %v", response, err)
+					}
+					cc.sendResponseToClient(rawResponse)
+					return
 				}
+				cc.requestChannel <- f
 				lock.Unlock()
 				log.Tracef("Request sent to client connector's request channel: %v", f.Header)
 			})

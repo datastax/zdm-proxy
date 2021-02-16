@@ -21,7 +21,6 @@ import (
 const (
 	// TODO: Make these configurable
 	maxQueryRetries = 5
-	queryTimeout    = 10 * time.Second
 
 	cassMaxLen = 256 * 1024 * 1024 // 268435456 // 256 MB, per spec		// TODO is this an actual limit??
 
@@ -69,6 +68,10 @@ type CloudgateProxy struct {
 	writeScheduler           *Scheduler
 	readScheduler            *Scheduler
 	listenerScheduler        *Scheduler
+
+	shutdownRequestCtx      context.Context
+	shutdownRequestCancelFn context.CancelFunc
+	requestLoopWaitGroup    *sync.WaitGroup
 }
 
 func NewCloudgateProxy(conf *config.Config) *CloudgateProxy {
@@ -239,6 +242,9 @@ func (p *CloudgateProxy) initializeGlobalStructures() {
 
 	p.lock.Lock()
 
+	p.requestLoopWaitGroup = &sync.WaitGroup{}
+	p.shutdownRequestCtx, p.shutdownRequestCancelFn = context.WithCancel(context.Background())
+
 	p.originCassandraIP = fmt.Sprintf("%s:%d", p.Conf.OriginCassandraHostname, p.Conf.OriginCassandraPort)
 	p.targetCassandraIP = fmt.Sprintf("%s:%d", p.Conf.TargetCassandraHostname, p.Conf.TargetCassandraPort)
 
@@ -291,7 +297,7 @@ func (p *CloudgateProxy) acceptConnectionsFromClients(address string, port int) 
 		for {
 			conn, err := l.Accept()
 			if err != nil {
-				if p.shutdownContext.Err() != nil {
+				if p.shutdownContext.Err() != nil || p.shutdownRequestCtx.Err() != nil {
 					log.Debugf("Shutting down client listener on port %d", port)
 					return
 				}
@@ -344,7 +350,9 @@ func (p *CloudgateProxy) handleNewConnection(conn net.Conn) {
 		p.requestResponseScheduler,
 		p.readScheduler,
 		p.writeScheduler,
-		p.requestResponseNumWorkers)
+		p.requestResponseNumWorkers,
+		p.shutdownRequestCtx,
+		p.requestLoopWaitGroup)
 
 	if err != nil {
 		log.Errorf("Client Handler could not be created: %v", err)
@@ -358,17 +366,9 @@ func (p *CloudgateProxy) handleNewConnection(conn net.Conn) {
 }
 
 func (p *CloudgateProxy) Shutdown() {
-	log.Info("Shutting down proxy...")
+	log.Info("Initiating proxy shutdown...")
 
-	var shutdownWaitGroup *sync.WaitGroup
-
-	p.lock.Lock()
-	p.cancelFunc()
-	p.originControlConn = nil
-	p.targetControlConn = nil
-	shutdownWaitGroup = p.shutdownWaitGroup
-	p.lock.Unlock()
-
+	log.Debug("Requesting shutdown of the client listener...")
 	p.listenerLock.Lock()
 	if !p.listenerClosed {
 		p.listenerClosed = true
@@ -378,7 +378,23 @@ func (p *CloudgateProxy) Shutdown() {
 	}
 	p.listenerLock.Unlock()
 
-	shutdownWaitGroup.Wait()
+	log.Debug("Requesting shutdown of the request loop...")
+	p.shutdownRequestCancelFn()
+
+	log.Debug("Waiting until all in flight requests are done...")
+	p.requestLoopWaitGroup.Wait()
+
+	log.Debug("Requesting shutdown of the cluster connectors (which will trigger a complete shutdown)...")
+	p.lock.Lock()
+	p.cancelFunc()
+	p.originControlConn = nil
+	p.targetControlConn = nil
+	p.lock.Unlock()
+
+	log.Debug("Waiting until all loops are done...")
+	p.shutdownWaitGroup.Wait()
+
+	log.Debug("Shutting down the scheduler and metrics handler...")
 
 	p.requestResponseScheduler.Shutdown()
 	p.writeScheduler.Shutdown()
@@ -394,7 +410,7 @@ func (p *CloudgateProxy) Shutdown() {
 	}
 	p.lock.Unlock()
 
-	log.Info("Proxy shutdown.")
+	log.Info("Proxy shutdown complete.")
 }
 
 func (p *CloudgateProxy) GetOriginControlConn() *ControlConn {

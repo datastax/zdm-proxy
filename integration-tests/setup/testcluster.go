@@ -275,6 +275,8 @@ func NewTestConfig(originHost string, targetHost string) *config.Config {
 
 	conf.ForwardReadsToTarget = false
 
+	conf.RequestTimeoutMs = 10000
+
 	conf.Debug = false
 
 	return conf

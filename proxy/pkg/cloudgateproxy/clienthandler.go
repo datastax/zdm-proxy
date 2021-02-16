@@ -75,6 +75,9 @@ type ClientHandler struct {
 	clusterConnectorScheduler *Scheduler
 
 	conf *config.Config
+
+	shutdownRequestCtx   context.Context
+	requestLoopWaitGroup *sync.WaitGroup
 }
 
 func NewClientHandler(
@@ -91,7 +94,9 @@ func NewClientHandler(
 	requestResponseScheduler *Scheduler,
 	readScheduler *Scheduler,
 	writeScheduler *Scheduler,
-	numWorkers int) (*ClientHandler, error) {
+	numWorkers int,
+	shutdownRequestCtx context.Context,
+	requestLoopWaitGroup *sync.WaitGroup) (*ClientHandler, error) {
 
 	clientHandlerContext, clientHandlerCancelFunc := context.WithCancel(context.Background())
 
@@ -141,7 +146,8 @@ func NewClientHandler(
 			requestsDoneChan,
 			eventsDoneChan,
 			readScheduler,
-			writeScheduler),
+			writeScheduler,
+			shutdownRequestCtx),
 
 		originCassandraConnector: originConnector,
 		targetCassandraConnector: targetConnector,
@@ -166,6 +172,8 @@ func NewClientHandler(
 		eventsDoneChan:           eventsDoneChan,
 		requestResponseScheduler: requestResponseScheduler,
 		conf:                     conf,
+		shutdownRequestCtx:       shutdownRequestCtx,
+		requestLoopWaitGroup:     requestLoopWaitGroup,
 	}, nil
 }
 
@@ -194,9 +202,11 @@ func (ch *ClientHandler) requestLoop() {
 	ready := false
 	var err error
 	ch.globalWaitGroup.Add(1)
+	ch.requestLoopWaitGroup.Add(1)
 	log.Debugf("requestLoop starting now")
 	go func() {
 		defer ch.globalWaitGroup.Done()
+		defer ch.requestLoopWaitGroup.Done()
 		defer close(ch.requestsDoneChan)
 		defer ch.originCassandraConnector.writeCoalescer.Close()
 		defer ch.targetCassandraConnector.writeCoalescer.Close()
@@ -401,11 +411,11 @@ func (ch *ClientHandler) tryProcessProtocolError(response *Response) bool {
 
 // should only be called after SetTimeout or SetResponse returns true
 func (ch *ClientHandler) finishRequest(holder *requestContextHolder, reqCtx *RequestContext) {
+	defer ch.requestWaitGroup.Done()
 	err := holder.Clear(reqCtx)
 	if err != nil {
 		log.Debugf("Could not free stream id: %v", err)
 	}
-	ch.requestWaitGroup.Done()
 
 	switch reqCtx.decision {
 	case forwardToBoth:
@@ -648,6 +658,7 @@ func (ch *ClientHandler) handleHandshakeRequest(f *frame.RawFrame, wg *sync.Wait
 
 			// send overall response back to client
 			ch.clientConnector.sendResponseToClient(response)
+			scheduledTaskChannel <- tempResult
 		})
 
 		result, ok = <- scheduledTaskChannel
@@ -774,7 +785,7 @@ func (ch *ClientHandler) executeForwardDecision(f *frame.RawFrame, forwardDecisi
 	}
 
 	ch.requestWaitGroup.Add(1)
-	timer := time.AfterFunc(queryTimeout, func() {
+	timer := time.AfterFunc(time.Duration(ch.conf.RequestTimeoutMs) * time.Millisecond, func() {
 		ch.closedRespChannelLock.RLock()
 		defer ch.closedRespChannelLock.RUnlock()
 		if ch.closedRespChannel {
