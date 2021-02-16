@@ -32,3 +32,35 @@ func TestGoCqlConnect(t *testing.T) {
 	// simulacron generates fake response metadata when queries aren't primed
 	require.Equal(t, "fake", iter.Columns()[0].Name)
 }
+
+func TestMaxClientsThreshold(t *testing.T) {
+	maxClients := 10
+	goCqlConnectionsPerHost := 1
+	maxSessions := 5 // each session spawns 2 connections (1 control connection)
+
+	testSetup := setup.NewSimulacronTestSetupWithSession(false, false)
+	defer testSetup.Cleanup()
+
+	config := setup.NewTestConfig(testSetup.Origin.GetInitialContactPoint(), testSetup.Target.GetInitialContactPoint())
+	config.MaxClientsThreshold = maxClients
+	proxyInstance := setup.NewProxyInstanceWithConfig(config)
+	defer proxyInstance.Shutdown()
+
+	for i := 0; i < maxSessions + 1; i++ {
+		// Connect to proxy as a "client"
+		cluster := utils.NewCluster("127.0.0.1", "", "", 14002)
+		cluster.NumConns = goCqlConnectionsPerHost
+		session, err := cluster.CreateSession()
+
+		if err != nil {
+			if i == maxSessions {
+				return
+			}
+			t.Log("Unable to connect to proxy.")
+			t.Fatal(err)
+		}
+		defer session.Close()
+	}
+
+	t.Fatal("Expected failure in last session connection but it was successful.")
+}

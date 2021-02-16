@@ -40,12 +40,22 @@ type Config struct {
 
 	EnableMetrics bool `default:"true" split_words:"true"`
 
-	WriteQueueSizeFrames int `default:"6144" split_words:"true"`
-	WriteBufferSizeBytes int `default:"65536" split_words:"true"`
-	ReadBufferSizeBytes int `default:"65536" split_words:"true"`
+	RequestWriteQueueSizeFrames int `default:"128" split_words:"true"`
+	RequestWriteBufferSizeBytes int `default:"4096" split_words:"true"`
+	RequestReadBufferSizeBytes int `default:"32768" split_words:"true"`
 
-	MaxWorkers int `default:"-1" split_words:"true"`
-	EventQueueSizeFrames int `default:"64" split_words:"true"`
+	ResponseWriteQueueSizeFrames int `default:"128" split_words:"true"`
+	ResponseWriteBufferSizeBytes int `default:"8192" split_words:"true"`
+	ResponseReadBufferSizeBytes int `default:"32768" split_words:"true"`
+
+	MaxClientsThreshold int `default:"500" split_words:"true"`
+
+	RequestResponseMaxWorkers int `default:"-1" split_words:"true"`
+	WriteMaxWorkers           int `default:"-1" split_words:"true"`
+	ReadMaxWorkers            int `default:"-1" split_words:"true"`
+	ListenerMaxWorkers        int `default:"-1" split_words:"true"`
+
+	EventQueueSizeFrames int `default:"12" split_words:"true"`
 
 	ForwardReadsToTarget bool `default:"false" split_words:"true"`
 

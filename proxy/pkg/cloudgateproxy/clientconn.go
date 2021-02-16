@@ -9,6 +9,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"net"
 	"sync"
+	"sync/atomic"
 )
 
 /*
@@ -37,7 +38,10 @@ type ClientConnector struct {
 	writeCoalescer *writeCoalescer
 
 	responsesDoneChan <-chan bool
+	requestsDoneChan <-chan bool
 	eventsDoneChan    <-chan bool
+
+	readScheduler *Scheduler
 }
 
 func NewClientConnector(
@@ -49,38 +53,46 @@ func NewClientConnector(
 	clientHandlerContext context.Context,
 	clientHandlerCancelFunc context.CancelFunc,
 	responsesDoneChan <-chan bool,
-	eventsDoneChan <-chan bool) *ClientConnector {
+	requestsDoneChan <-chan bool,
+	eventsDoneChan <-chan bool,
+	readScheduler *Scheduler,
+	writeScheduler *Scheduler) *ClientConnector {
 	return &ClientConnector{
-		connection:                connection,
-		conf:                      conf,
-		requestChannel:            requestsChan,
-		metricsHandler:            metricsHandler,
-		waitGroup:                 waitGroup,
-		clientHandlerContext:      clientHandlerContext,
-		clientHandlerCancelFunc:   clientHandlerCancelFunc,
-		writeCoalescer:            NewWriteCoalescer(
+		connection:              connection,
+		conf:                    conf,
+		requestChannel:          requestsChan,
+		metricsHandler:          metricsHandler,
+		waitGroup:               waitGroup,
+		clientHandlerContext:    clientHandlerContext,
+		clientHandlerCancelFunc: clientHandlerCancelFunc,
+		writeCoalescer: NewWriteCoalescer(
 			conf,
 			connection,
 			metricsHandler,
 			waitGroup,
 			clientHandlerContext,
 			clientHandlerCancelFunc,
-			"ClientConnector"),
-		responsesDoneChan:         responsesDoneChan,
-		eventsDoneChan:            eventsDoneChan,
+			"ClientConnector",
+			false,
+			writeScheduler),
+		responsesDoneChan: responsesDoneChan,
+		requestsDoneChan:  requestsDoneChan,
+		eventsDoneChan:    eventsDoneChan,
+		readScheduler:     readScheduler,
 	}
 }
 
 /**
  *	Starts two listening loops: one for receiving requests from the client, one for the responses that must be sent to the client
  */
-func (cc *ClientConnector) run() {
+func (cc *ClientConnector) run(activeClients *int32) {
 	cc.listenForRequests()
 	cc.writeCoalescer.RunWriteQueueLoop()
 	cc.waitGroup.Add(1)
 	go func() {
 		defer cc.waitGroup.Done()
 		<- cc.responsesDoneChan
+		<- cc.requestsDoneChan
 		<- cc.eventsDoneChan
 		cc.writeCoalescer.Close()
 
@@ -89,7 +101,7 @@ func (cc *ClientConnector) run() {
 		if err != nil {
 			log.Warnf("[ClientConnector] Error received while closing connection to %v: %v", cc.connection.RemoteAddr(), err)
 		}
-		cc.metricsHandler.DecrementCountByOne(metrics.OpenClientConnections)
+		atomic.AddInt32(activeClients, -1)
 	}()
 }
 
@@ -113,8 +125,10 @@ func (cc *ClientConnector) listenForRequests() {
 
 		defer cc.waitGroup.Done()
 
-		bufferedReader := bufio.NewReaderSize(cc.connection, cc.conf.ReadBufferSizeBytes)
+		bufferedReader := bufio.NewReaderSize(cc.connection, cc.conf.RequestWriteBufferSizeBytes)
 		connectionAddr := cc.connection.RemoteAddr().String()
+		wg := &sync.WaitGroup{}
+		defer wg.Wait()
 		for cc.clientHandlerContext.Err() == nil {
 			f, err := readRawFrame(bufferedReader, connectionAddr, cc.clientHandlerContext)
 			if err != nil {
@@ -123,17 +137,17 @@ func (cc *ClientConnector) listenForRequests() {
 				break
 			}
 
-			log.Debugf("Received request on client connector: %v", f.Header)
-
-			lock.Lock()
-			if closed {
+			wg.Add(1)
+			cc.readScheduler.Schedule(func() {
+				defer wg.Done()
+				log.Debugf("Received request on client connector: %v", f.Header)
+				lock.Lock()
+				if !closed {
+					cc.requestChannel <- f
+				}
 				lock.Unlock()
-				break
-			}
-			cc.requestChannel <- f
-			lock.Unlock()
-
-			log.Tracef("Request sent to client connector's request channel: %v", f.Header)
+				log.Tracef("Request sent to client connector's request channel: %v", f.Header)
+			})
 		}
 
 		log.Debugf("Shutting down client connector request listener %v", connectionAddr)

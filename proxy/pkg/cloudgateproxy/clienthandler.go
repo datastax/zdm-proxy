@@ -67,9 +67,12 @@ type ClientHandler struct {
 	closedRespChannelLock *sync.RWMutex
 
 	responsesDoneChan chan<- bool
+	requestsDoneChan  chan<- bool
 	eventsDoneChan    chan<- bool
 
-	scheduler *Scheduler
+	requestResponseScheduler  *Scheduler
+	clientConnectorScheduler  *Scheduler
+	clusterConnectorScheduler *Scheduler
 
 	conf *config.Config
 }
@@ -85,7 +88,9 @@ func NewClientHandler(
 	metricsHandler metrics.IMetricsHandler,
 	waitGroup *sync.WaitGroup,
 	globalContext context.Context,
-	scheduler *Scheduler,
+	requestResponseScheduler *Scheduler,
+	readScheduler *Scheduler,
+	writeScheduler *Scheduler,
 	numWorkers int) (*ClientHandler, error) {
 
 	clientHandlerContext, clientHandlerCancelFunc := context.WithCancel(context.Background())
@@ -103,21 +108,24 @@ func NewClientHandler(
 	respChannel := make(chan *Response, numWorkers)
 
 	originConnector, err := NewClusterConnector(
-		originCassandraConnInfo, conf, metricsHandler, waitGroup, clientHandlerContext, clientHandlerCancelFunc, respChannel)
+		originCassandraConnInfo, conf, metricsHandler, waitGroup,
+		clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler)
 	if err != nil {
 		clientHandlerCancelFunc()
 		return nil, err
 	}
 
 	targetConnector, err := NewClusterConnector(
-		targetCassandraConnInfo, conf, metricsHandler, waitGroup, clientHandlerContext, clientHandlerCancelFunc, respChannel)
+		targetCassandraConnInfo, conf, metricsHandler, waitGroup,
+		clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler)
 	if err != nil {
 		clientHandlerCancelFunc()
 		return nil, err
 	}
 
-	responsesDoneChan := make(chan bool)
-	eventsDoneChan := make(chan bool)
+	responsesDoneChan := make(chan bool, 1)
+	requestsDoneChan := make(chan bool, 1)
+	eventsDoneChan := make(chan bool, 1)
 	requestsChannel := make(chan *frame.RawFrame, numWorkers)
 
 	return &ClientHandler{
@@ -130,38 +138,42 @@ func NewClientHandler(
 			clientHandlerContext,
 			clientHandlerCancelFunc,
 			responsesDoneChan,
-			eventsDoneChan),
+			requestsDoneChan,
+			eventsDoneChan,
+			readScheduler,
+			writeScheduler),
 
 		originCassandraConnector: originConnector,
 		targetCassandraConnector: targetConnector,
-		preparedStatementCache:  psCache,
-		metricsHandler:          metricsHandler,
-		globalWaitGroup:         waitGroup,
-		clientHandlerContext:    clientHandlerContext,
-		clientHandlerCancelFunc: clientHandlerCancelFunc,
-		currentKeyspaceName:     &atomic.Value{},
-		authErrorMessage:        nil,
-		startupFrame:            nil,
-		originUsername:          originUsername,
-		originPassword:          originPassword,
-		requestContextHolders:   &sync.Map{},
-		reqChannel:              requestsChannel,
-		respChannel:             respChannel,
-		requestWaitGroup:        &sync.WaitGroup{},
-		closedRespChannel:       false,
-		closedRespChannelLock:   &sync.RWMutex{},
-		responsesDoneChan:       responsesDoneChan,
-		eventsDoneChan:          eventsDoneChan,
-		scheduler:               scheduler,
-		conf:                    conf,
+		preparedStatementCache:   psCache,
+		metricsHandler:           metricsHandler,
+		globalWaitGroup:          waitGroup,
+		clientHandlerContext:     clientHandlerContext,
+		clientHandlerCancelFunc:  clientHandlerCancelFunc,
+		currentKeyspaceName:      &atomic.Value{},
+		authErrorMessage:         nil,
+		startupFrame:             nil,
+		originUsername:           originUsername,
+		originPassword:           originPassword,
+		requestContextHolders:    &sync.Map{},
+		reqChannel:               requestsChannel,
+		respChannel:              respChannel,
+		requestWaitGroup:         &sync.WaitGroup{},
+		closedRespChannel:        false,
+		closedRespChannelLock:    &sync.RWMutex{},
+		requestsDoneChan:         requestsDoneChan,
+		responsesDoneChan:        responsesDoneChan,
+		eventsDoneChan:           eventsDoneChan,
+		requestResponseScheduler: requestResponseScheduler,
+		conf:                     conf,
 	}, nil
 }
 
 /**
  *	Initialises all components and launches all listening loops that they have.
  */
-func (ch *ClientHandler) run() {
-	ch.clientConnector.run()
+func (ch *ClientHandler) run(activeClients *int32) {
+	ch.clientConnector.run(activeClients)
 	ch.originCassandraConnector.run()
 	ch.targetCassandraConnector.run()
 	go func() {
@@ -185,7 +197,7 @@ func (ch *ClientHandler) requestLoop() {
 	log.Debugf("requestLoop starting now")
 	go func() {
 		defer ch.globalWaitGroup.Done()
-		defer close(ch.responsesDoneChan)
+		defer close(ch.requestsDoneChan)
 		defer ch.originCassandraConnector.writeCoalescer.Close()
 		defer ch.targetCassandraConnector.writeCoalescer.Close()
 
@@ -204,7 +216,7 @@ func (ch *ClientHandler) requestLoop() {
 			if !ready {
 				log.Tracef("not ready")
 				// Handle client authentication
-				ready, err = ch.handleHandshakeRequest(f)
+				ready, err = ch.handleHandshakeRequest(f, wg)
 				if err != nil && !errors.Is(err, ShutdownErr) {
 					log.Error(err)
 				}
@@ -215,7 +227,7 @@ func (ch *ClientHandler) requestLoop() {
 				log.Tracef("ready? %t", ready)
 			} else {
 				wg.Add(1)
-				ch.scheduler.Schedule(func() {
+				ch.requestResponseScheduler.Schedule(func() {
 					defer wg.Done()
 					ch.handleRequest(f)
 				})
@@ -315,6 +327,7 @@ func (ch *ClientHandler) responseLoop() {
 	log.Debugf("responseLoop starting now")
 	go func() {
 		defer ch.globalWaitGroup.Done()
+		defer close(ch.responsesDoneChan)
 
 		wg := &sync.WaitGroup{}
 		defer wg.Wait()
@@ -326,7 +339,7 @@ func (ch *ClientHandler) responseLoop() {
 			}
 
 			wg.Add(1)
-			ch.scheduler.Schedule(func() {
+			ch.requestResponseScheduler.Schedule(func() {
 				defer wg.Done()
 
 				if ch.tryProcessProtocolError(response) {
@@ -506,33 +519,74 @@ func (ch *ClientHandler) processAggregatedResponse(response *frame.RawFrame) err
 	return nil
 }
 
+type handshakeRequestResult struct {
+	authSuccess  bool
+	err          error
+	responseChan chan *frame.RawFrame
+}
+
 // Handles requests while the handshake has not been finalized.
 //
 // Forwards certain requests that are part of the handshake to Origin only.
 //
 // When the Origin handshake ends, this function blocks, waiting until Target handshake is done.
 // This ensures that the client connection is Ready only when both Cluster Connector connections are ready.
-func (ch *ClientHandler) handleHandshakeRequest(f *frame.RawFrame) (bool, error) {
-	if ch.authErrorMessage != nil {
-		return false, ch.sendAuthErrorToClient(f)
-	}
-
-	if f.Header.OpCode == primitive.OpCodeStartup {
-		ch.startupFrame = f
-	} else if f.Header.OpCode == primitive.OpCodeAuthResponse {
-		newAuthFrame, err := ch.replaceAuthFrame(f)
-		if err != nil {
-			return false, err
+func (ch *ClientHandler) handleHandshakeRequest(f *frame.RawFrame, wg *sync.WaitGroup) (bool, error) {
+	scheduledTaskChannel := make(chan *handshakeRequestResult, 1)
+	wg.Add(1)
+	ch.requestResponseScheduler.Schedule(func() {
+		defer wg.Done()
+		defer close(scheduledTaskChannel)
+		if ch.authErrorMessage != nil {
+			scheduledTaskChannel <- &handshakeRequestResult{
+				authSuccess: false,
+				err:         ch.sendAuthErrorToClient(f),
+			}
+			return
 		}
 
-		f = newAuthFrame
+		if f.Header.OpCode == primitive.OpCodeStartup {
+			ch.startupFrame = f
+		} else if f.Header.OpCode == primitive.OpCodeAuthResponse {
+			newAuthFrame, err := ch.replaceAuthFrame(f)
+			if err != nil {
+				scheduledTaskChannel <- &handshakeRequestResult{
+					authSuccess: false,
+					err:         err,
+				}
+				return
+			}
+
+			f = newAuthFrame
+		}
+
+		responseChan := make(chan *frame.RawFrame, 1)
+		err := ch.forwardRequest(f, responseChan)
+		if err != nil {
+			scheduledTaskChannel <- &handshakeRequestResult{
+				authSuccess: false,
+				err:         err,
+			}
+			return
+		}
+
+		scheduledTaskChannel <- &handshakeRequestResult{
+			authSuccess:  false,
+			err:          err,
+			responseChan: responseChan,
+		}
+	})
+
+	result, ok := <-scheduledTaskChannel
+	if !ok {
+		return false, errors.New("unexpected scheduledTaskChannel closure in handle handshake request")
 	}
 
-	responseChan := make(chan *frame.RawFrame, 1)
-	err := ch.forwardRequest(f, responseChan)
-	if err != nil {
-		return false, err
+	if result.responseChan == nil {
+		return result.authSuccess, result.err
 	}
+
+	responseChan := result.responseChan
 
 	select {
 	case response, ok := <-responseChan:
@@ -540,44 +594,67 @@ func (ch *ClientHandler) handleHandshakeRequest(f *frame.RawFrame) (bool, error)
 			return false, nil
 		}
 
-		authSuccess := false
-		if response.Header.OpCode == primitive.OpCodeReady || response.Header.OpCode == primitive.OpCodeAuthSuccess {
-			// target handshake must happen within a single client request lifetime
-			// to guarantee that no other request with the same
-			// stream id goes to target in the meantime
+		scheduledTaskChannel = make(chan *handshakeRequestResult, 1)
+		wg.Add(1)
+		ch.requestResponseScheduler.Schedule(func() {
+			defer wg.Done()
+			defer close(scheduledTaskChannel)
+			tempResult := &handshakeRequestResult{
+				authSuccess:  false,
+				err:          nil,
+				responseChan: nil,
+			}
+			if response.Header.OpCode == primitive.OpCodeReady || response.Header.OpCode == primitive.OpCodeAuthSuccess {
+				// target handshake must happen within a single client request lifetime
+				// to guarantee that no other request with the same
+				// stream id goes to target in the meantime
 
-			// if we add stream id mapping logic in the future, then
-			// we can start the target handshake earlier and wait for it to end here
+				// if we add stream id mapping logic in the future, then
+				// we can start the target handshake earlier and wait for it to end here
 
-			targetAuthChannel, err := ch.startTargetHandshake()
-			if err != nil {
-				return false, err
+				targetAuthChannel, err := ch.startTargetHandshake()
+				if err != nil {
+					tempResult.err = err
+					scheduledTaskChannel <- tempResult
+					return
+				}
+
+				err, ok := <-targetAuthChannel
+				if !ok {
+					tempResult.err = errors.New("target handshake failed (scheduledTaskChannel closed)")
+					scheduledTaskChannel <- tempResult
+					return
+				}
+
+				if err != nil {
+					var authError *AuthError
+					if errors.As(err, &authError) {
+						ch.authErrorMessage = authError.errMsg
+						tempResult.err = ch.sendAuthErrorToClient(f)
+						scheduledTaskChannel <- tempResult
+						return
+					}
+
+					log.Errorf("handshake failed, shutting down the client handler and connectors: %s", err.Error())
+					ch.clientHandlerCancelFunc()
+					tempResult.err = fmt.Errorf("handshake failed: %w", ShutdownErr)
+					scheduledTaskChannel <- tempResult
+					return
+				}
+
+				tempResult.authSuccess = true
+				scheduledTaskChannel <- tempResult
 			}
 
-			err, ok := <-targetAuthChannel
-			if !ok {
-				return false, errors.New("target handshake failed (channel closed)")
-			}
+			// send overall response back to client
+			ch.clientConnector.sendResponseToClient(response)
+		})
 
-		if err != nil {
-			var authError *AuthError
-			if errors.As(err, &authError) {
-				ch.authErrorMessage = authError.errMsg
-				return false, ch.sendAuthErrorToClient(f)
-			}
-
-			log.Errorf("handshake failed, shutting down the client handler and connectors: %s", err.Error())
-			ch.clientHandlerCancelFunc()
-			return false, fmt.Errorf("handshake failed: %w", ShutdownErr)
+		result, ok = <- scheduledTaskChannel
+		if !ok {
+			return false, errors.New("unexpected scheduledTaskChannel closure in handle handshake request")
 		}
-
-			authSuccess = true
-		}
-
-		// send overall response back to client
-		ch.clientConnector.sendResponseToClient(response)
-
-		return authSuccess, nil
+		return result.authSuccess, result.err
 	case <-ch.clientHandlerContext.Done():
 		return false, ShutdownErr
 	}

@@ -14,6 +14,7 @@ import (
 	"net"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -23,6 +24,8 @@ const (
 	queryTimeout    = 10 * time.Second
 
 	cassMaxLen = 256 * 1024 * 1024 // 268435456 // 256 MB, per spec		// TODO is this an actual limit??
+
+	listenerDefaultWorkers = 20
 )
 
 type CloudgateProxy struct {
@@ -55,8 +58,17 @@ type CloudgateProxy struct {
 	originBuckets []float64
 	targetBuckets []float64
 
-	numWorkers int
-	scheduler  *Scheduler
+	activeClients int32
+
+	requestResponseNumWorkers int
+	readNumWorkers            int
+	writeNumWorkers           int
+	listenerNumWorkers        int
+
+	requestResponseScheduler *Scheduler
+	writeScheduler           *Scheduler
+	readScheduler            *Scheduler
+	listenerScheduler        *Scheduler
 }
 
 func NewCloudgateProxy(conf *config.Config) *CloudgateProxy {
@@ -152,7 +164,9 @@ func (p *CloudgateProxy) initializeMetricsHandler() {
 	m.AddGauge(metrics.InFlightRequestsOrigin)
 	m.AddGauge(metrics.InFlightRequestsTarget)
 
-	m.AddGauge(metrics.OpenClientConnections)
+	m.AddGaugeFunction(metrics.OpenClientConnections, func() float64 {
+		return float64(atomic.LoadInt32(&p.activeClients))
+	})
 
 	// cluster level metrics
 
@@ -179,16 +193,49 @@ func (p *CloudgateProxy) initializeGlobalStructures() {
 	p.lock = &sync.RWMutex{}
 	p.listenerLock = &sync.Mutex{}
 	p.listenerClosed = false
-	p.numWorkers = p.Conf.MaxWorkers
+
 	maxProcs := runtime.GOMAXPROCS(0)
-	if p.numWorkers == -1 {
-		p.numWorkers = maxProcs // default
-	} else if p.numWorkers <= 0 {
-		log.Warn("Invalid number of workers %d, using GOMAXPROCS (%d).", p.numWorkers, maxProcs)
-		p.numWorkers = maxProcs
+
+	p.requestResponseNumWorkers = p.Conf.RequestResponseMaxWorkers
+	if p.requestResponseNumWorkers == -1 {
+		p.requestResponseNumWorkers = maxProcs * 4 // default
+	} else if p.requestResponseNumWorkers <= 0 {
+		log.Warn("Invalid number of request / response workers %d, using GOMAXPROCS * 4 (%d).", p.requestResponseNumWorkers, maxProcs * 4)
+		p.requestResponseNumWorkers = maxProcs * 4
 	}
-	log.Infof("Using %d workers.", p.numWorkers)
-	p.scheduler = NewScheduler(p.numWorkers)
+	log.Infof("Using %d request / response workers.", p.requestResponseNumWorkers)
+
+	p.writeNumWorkers = p.Conf.WriteMaxWorkers
+	if p.writeNumWorkers == -1 {
+		p.writeNumWorkers = maxProcs * 4 // default
+	} else if p.writeNumWorkers <= 0 {
+		log.Warn("Invalid number of write workers %d, using GOMAXPROCS * 4 (%d).", p.writeNumWorkers, maxProcs * 4)
+		p.writeNumWorkers = maxProcs * 4
+	}
+	log.Infof("Using %d write workers.", p.writeNumWorkers)
+
+	p.readNumWorkers = p.Conf.ReadMaxWorkers
+	if p.readNumWorkers == -1 {
+		p.readNumWorkers = maxProcs * 8 // default
+	} else if p.readNumWorkers <= 0 {
+		log.Warn("Invalid number of read workers %d, using GOMAXPROCS * 8 (%d).", p.readNumWorkers, maxProcs * 8)
+		p.readNumWorkers = maxProcs * 8
+	}
+	log.Infof("Using %d read workers.", p.readNumWorkers)
+
+	p.listenerNumWorkers = p.Conf.ListenerMaxWorkers
+	if p.listenerNumWorkers == -1 {
+		p.listenerNumWorkers = maxProcs // default
+	} else if p.listenerNumWorkers <= 0 {
+		log.Warn("Invalid number of cluster connector workers %d, using GOMAXPROCS (%d).", p.listenerNumWorkers, maxProcs)
+		p.listenerNumWorkers = maxProcs
+	}
+	log.Infof("Using %d listener workers.", p.listenerNumWorkers)
+
+	p.requestResponseScheduler = NewScheduler(p.requestResponseNumWorkers)
+	p.writeScheduler = NewScheduler(p.writeNumWorkers)
+	p.readScheduler = NewScheduler(p.readNumWorkers)
+	p.listenerScheduler = NewScheduler(p.listenerNumWorkers)
 
 	p.lock.Lock()
 
@@ -211,6 +258,8 @@ func (p *CloudgateProxy) initializeGlobalStructures() {
 	if err != nil {
 		log.Errorf("Failed to parse target buckets, falling back to default buckets: %v", err)
 	}
+
+	p.activeClients = 0
 
 	p.lock.Unlock()
 }
@@ -251,7 +300,24 @@ func (p *CloudgateProxy) acceptConnectionsFromClients(address string, port int) 
 				continue
 			}
 
-			go p.handleNewConnection(conn)
+			currentClients := atomic.LoadInt32(&p.activeClients)
+			if int(currentClients) >= p.Conf.MaxClientsThreshold {
+				log.Warnf(
+					"Refusing client connection from %v because max clients threshold has been hit (%v).",
+					conn.RemoteAddr(), p.Conf.MaxClientsThreshold)
+				err = conn.Close()
+				if err != nil {
+					log.Warnf("Error closing client connection from %v: %v", conn.RemoteAddr(), err)
+				}
+				continue
+			}
+
+			atomic.AddInt32(&p.activeClients, 1)
+			log.Infof("Accepted connection from %v", conn.RemoteAddr())
+
+			p.listenerScheduler.Schedule(func() {
+				p.handleNewConnection(conn)
+			})
 		}
 	}()
 
@@ -260,8 +326,6 @@ func (p *CloudgateProxy) acceptConnectionsFromClients(address string, port int) 
 
 // handleNewConnection creates the client handler and connectors for the new client connection
 func (p *CloudgateProxy) handleNewConnection(conn net.Conn) {
-	p.metricsHandler.IncrementCountByOne(metrics.OpenClientConnections)
-	log.Infof("Accepted connection from %v", conn.RemoteAddr())
 
 	// there is a ClientHandler for each connection made by a client
 	originCassandraConnInfo := NewClusterConnectionInfo(p.Conf.OriginCassandraHostname, p.Conf.OriginCassandraPort, true)
@@ -277,18 +341,20 @@ func (p *CloudgateProxy) handleNewConnection(conn net.Conn) {
 		p.metricsHandler,
 		p.shutdownWaitGroup,
 		p.shutdownContext,
-		p.scheduler,
-		p.numWorkers)
+		p.requestResponseScheduler,
+		p.readScheduler,
+		p.writeScheduler,
+		p.requestResponseNumWorkers)
 
 	if err != nil {
 		log.Errorf("Client Handler could not be created: %v", err)
 		conn.Close()
-		p.metricsHandler.DecrementCountByOne(metrics.OpenClientConnections)
+		atomic.AddInt32(&p.activeClients, -1)
 		return
 	}
 
 	log.Tracef("ClientHandler created")
-	clientHandler.run()
+	clientHandler.run(&p.activeClients)
 }
 
 func (p *CloudgateProxy) Shutdown() {
@@ -314,8 +380,12 @@ func (p *CloudgateProxy) Shutdown() {
 
 	shutdownWaitGroup.Wait()
 
+	p.requestResponseScheduler.Shutdown()
+	p.writeScheduler.Shutdown()
+	p.readScheduler.Shutdown()
+	p.listenerScheduler.Shutdown()
+
 	p.lock.Lock()
-	p.scheduler.Shutdown()
 	if p.metricsHandler != nil {
 		err := p.metricsHandler.UnregisterAllMetrics()
 		if err != nil {

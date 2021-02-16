@@ -1,7 +1,7 @@
 package cloudgateproxy
 
 import (
-	"bufio"
+	"bytes"
 	"context"
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/riptano/cloud-gate/proxy/pkg/config"
@@ -9,6 +9,10 @@ import (
 	log "github.com/sirupsen/logrus"
 	"net"
 	"sync"
+)
+
+const(
+	initialBufferSize = 1024
 )
 
 // Coalesces writes using a write buffer
@@ -26,6 +30,10 @@ type writeCoalescer struct {
 	logPrefix string
 
 	waitGroup *sync.WaitGroup
+
+	writeBufferSizeBytes int
+
+	scheduler *Scheduler
 }
 
 func NewWriteCoalescer(
@@ -35,8 +43,19 @@ func NewWriteCoalescer(
 	clientHandlerWaitGroup *sync.WaitGroup,
 	clientHandlerContext context.Context,
 	clientHandlerCancelFunc context.CancelFunc,
-	logPrefix string) *writeCoalescer {
+	logPrefix string,
+	isRequest bool,
+	scheduler *Scheduler) *writeCoalescer {
 
+	writeQueueSizeFrames := conf.RequestWriteQueueSizeFrames
+	if !isRequest {
+		writeQueueSizeFrames = conf.ResponseWriteQueueSizeFrames
+	}
+
+	writeBufferSizeBytes := conf.RequestWriteBufferSizeBytes
+	if !isRequest {
+		writeBufferSizeBytes = conf.ResponseWriteBufferSizeBytes
+	}
 	return &writeCoalescer{
 		connection:              conn,
 		conf:                    conf,
@@ -44,9 +63,11 @@ func NewWriteCoalescer(
 		clientHandlerWaitGroup:  clientHandlerWaitGroup,
 		clientHandlerContext:    clientHandlerContext,
 		clientHandlerCancelFunc: clientHandlerCancelFunc,
-		writeQueue:              make(chan *frame.RawFrame, conf.WriteQueueSizeFrames),
+		writeQueue:              make(chan *frame.RawFrame, writeQueueSizeFrames),
 		logPrefix:               logPrefix,
 		waitGroup:               &sync.WaitGroup{},
+		writeBufferSizeBytes:    writeBufferSizeBytes,
+		scheduler:               scheduler,
 	}
 }
 
@@ -60,45 +81,87 @@ func (recv *writeCoalescer) RunWriteQueueLoop() {
 		defer recv.clientHandlerWaitGroup.Done()
 		defer recv.waitGroup.Done()
 
-		bufferedWriter := bufio.NewWriterSize(recv.connection, recv.conf.WriteBufferSizeBytes)
 		draining := false
+		bufferedWriter := bytes.NewBuffer(make([]byte, 0, initialBufferSize))
 
 		for {
-			var f *frame.RawFrame
-			var ok bool
+			var resultOk bool
+			var result *coalescerIterationResult
 
-			select {
-			case f, ok = <-recv.writeQueue:
-				if !ok {
-					return
-				}
-			default:
-				if bufferedWriter.Buffered() > 0 && !draining {
-					err := bufferedWriter.Flush()
+			firstFrame, firstFrameOk := <-recv.writeQueue
+			if !firstFrameOk {
+				break
+			}
+
+			resultChannel := make(chan *coalescerIterationResult, 1)
+			tempDraining := draining
+			tempBuffer := bufferedWriter
+			recv.scheduler.Schedule(func() {
+				firstFrameRead := false
+				for {
+					var f *frame.RawFrame
+					var ok bool
+					if firstFrameRead {
+						select {
+						case f, ok = <-recv.writeQueue:
+							if !ok {
+								close(resultChannel)
+								return
+							}
+						default:
+							t := &coalescerIterationResult{
+								buffer:   tempBuffer,
+								draining: tempDraining,
+							}
+							resultChannel <- t
+							close(resultChannel)
+							return
+						}
+
+						if tempDraining {
+							// continue draining the write queue without writing on connection until it is closed
+							log.Tracef("[%v] Discarding frame from write queue because shutdown was requested: %v", recv.logPrefix, f.Header)
+							continue
+						}
+					} else {
+						firstFrameRead = true
+						f = firstFrame
+						ok = true
+					}
+
+					log.Debugf("[%v] Writing %v on %v", recv.logPrefix, f.Header, connectionAddr)
+					err := writeRawFrame(tempBuffer, connectionAddr, recv.clientHandlerContext, f)
 					if err != nil {
-						draining = true
+						tempDraining = true
 						handleConnectionError(err, recv.clientHandlerCancelFunc, recv.logPrefix, "writing", connectionAddr)
-					}
-					continue
-				} else {
-					f, ok = <-recv.writeQueue
-					if !ok {
-						return
+					} else {
+						if tempBuffer.Len() >= recv.writeBufferSizeBytes {
+							t := &coalescerIterationResult{
+								buffer:   tempBuffer,
+								draining: tempDraining,
+							}
+							resultChannel <- t
+							close(resultChannel)
+							return
+						}
 					}
 				}
+			})
+
+			result, resultOk = <-resultChannel
+			if !resultOk {
+				break
 			}
 
-			if draining {
-				// continue draining the write queue without writing on connection until it is closed
-				log.Tracef("[%v] Discarding frame from write queue because shutdown was requested: %v", recv.logPrefix, f.Header)
-				continue
-			}
-
-			log.Debugf("[%v] Writing %v on %v", recv.logPrefix, f.Header, connectionAddr)
-			err := writeRawFrame(bufferedWriter, connectionAddr, recv.clientHandlerContext, f)
-			if err != nil {
-				draining = true
-				handleConnectionError(err, recv.clientHandlerCancelFunc, recv.logPrefix, "writing", connectionAddr)
+			draining = result.draining
+			bufferedWriter = result.buffer
+			if bufferedWriter.Len() > 0 && !draining {
+				_, err := recv.connection.Write(bufferedWriter.Bytes())
+				bufferedWriter.Reset()
+				if err != nil {
+					handleConnectionError(err, recv.clientHandlerCancelFunc, recv.logPrefix, "writing", connectionAddr)
+					draining = true
+				}
 			}
 		}
 	}()
@@ -113,4 +176,9 @@ func (recv *writeCoalescer) Enqueue(frame *frame.RawFrame) {
 func (recv *writeCoalescer) Close() {
 	close(recv.writeQueue)
 	recv.waitGroup.Wait()
+}
+
+type coalescerIterationResult struct {
+	buffer *bytes.Buffer
+	draining bool
 }

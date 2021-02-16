@@ -256,12 +256,22 @@ func NewTestConfig(originHost string, targetHost string) *config.Config {
 
 	conf.EnableMetrics = true
 
-	conf.WriteQueueSizeFrames = 8192
-	conf.WriteBufferSizeBytes = 65536
-	conf.ReadBufferSizeBytes = 65536
+	conf.RequestWriteQueueSizeFrames = 128
+	conf.RequestWriteBufferSizeBytes = 4096
+	conf.RequestReadBufferSizeBytes = 32768
 
-	conf.MaxWorkers = -1
-	conf.EventQueueSizeFrames = 64
+	conf.ResponseWriteQueueSizeFrames = 128
+	conf.ResponseWriteBufferSizeBytes = 8192
+	conf.ResponseReadBufferSizeBytes = 32768
+
+	conf.MaxClientsThreshold = 500
+
+	conf.RequestResponseMaxWorkers = -1
+	conf.WriteMaxWorkers = -1
+	conf.ReadMaxWorkers = -1
+	conf.ListenerMaxWorkers = -1
+
+	conf.EventQueueSizeFrames = 12
 
 	conf.ForwardReadsToTarget = false
 

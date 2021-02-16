@@ -43,6 +43,8 @@ type ClusterConnector struct {
 
 	writeCoalescer          *writeCoalescer
 	doneChan                chan bool
+
+	readScheduler *Scheduler
 }
 
 func NewClusterConnectionInfo(ipAddress string, port int, isOriginCassandra bool) *ClusterConnectionInfo {
@@ -60,7 +62,9 @@ func NewClusterConnector(
 	waitGroup *sync.WaitGroup,
 	clientHandlerContext context.Context,
 	clientHandlerCancelFunc context.CancelFunc,
-	responseChan chan<- *Response) (*ClusterConnector, error) {
+	responseChan chan<- *Response,
+	readScheduler *Scheduler,
+	writeScheduler *Scheduler) (*ClusterConnector, error) {
 
 	var clusterType ClusterType
 	if connInfo.isOriginCassandra {
@@ -95,16 +99,19 @@ func NewClusterConnector(
 		waitGroup:               waitGroup,
 		clientHandlerContext:    clientHandlerContext,
 		clientHandlerCancelFunc: clientHandlerCancelFunc,
-		writeCoalescer:          NewWriteCoalescer(
+		writeCoalescer: NewWriteCoalescer(
 			conf,
 			conn,
 			metricsHandler,
 			waitGroup,
 			clientHandlerContext,
 			clientHandlerCancelFunc,
-			"ClusterConnector"),
-		responseChan: responseChan,
-		doneChan: make(chan bool),
+			"ClusterConnector",
+			true,
+			writeScheduler),
+		responseChan:  responseChan,
+		doneChan:      make(chan bool),
+		readScheduler: readScheduler,
 	}, nil
 }
 
@@ -154,8 +161,10 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 		defer close(cc.clusterConnEventsChan)
 		defer close(cc.doneChan)
 
-		bufferedReader := bufio.NewReaderSize(cc.connection, cc.conf.ReadBufferSizeBytes)
+		bufferedReader := bufio.NewReaderSize(cc.connection, cc.conf.ResponseReadBufferSizeBytes)
 		connectionAddr := cc.connection.RemoteAddr().String()
+		wg := &sync.WaitGroup{}
+		defer wg.Wait()
 		for {
 			response, err := readRawFrame(bufferedReader, connectionAddr, cc.clientHandlerContext)
 			if err != nil {
@@ -164,14 +173,19 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 				break
 			}
 
-			log.Debugf("Received response from %v (%v): %v",
-				cc.clusterType, connectionAddr, response.Header)
+			wg.Add(1)
+			cc.readScheduler.Schedule(func() {
+				defer wg.Done()
+				log.Debugf("Received response from %v (%v): %v",
+					cc.clusterType, connectionAddr, response.Header)
 
-			if response.Header.OpCode == primitive.OpCodeEvent {
-				cc.clusterConnEventsChan <- response
-			} else {
-				cc.responseChan <- NewResponse(response, cc.clusterType)
-			}
+				if response.Header.OpCode == primitive.OpCodeEvent {
+					cc.clusterConnEventsChan <- response
+				} else {
+					cc.responseChan <- NewResponse(response, cc.clusterType)
+				}
+				log.Tracef("Response sent to response channel: %v", response.Header)
+			})
 		}
 		log.Debugf("Shutting down response listening loop from %v", connectionAddr)
 	}()
