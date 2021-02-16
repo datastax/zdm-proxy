@@ -417,7 +417,7 @@ func (ch *ClientHandler) finishRequest(holder *requestContextHolder, reqCtx *Req
 		log.Debugf("Could not free stream id: %v", err)
 	}
 
-	switch reqCtx.decision {
+	switch reqCtx.stmtInfo.GetForwardDecision() {
 	case forwardToBoth:
 		ch.metricsHandler.TrackInHistogram(metrics.ProxyRequestDurationBoth, reqCtx.startTime)
 		ch.metricsHandler.DecrementCountByOne(metrics.InFlightRequestsBoth)
@@ -428,12 +428,12 @@ func (ch *ClientHandler) finishRequest(holder *requestContextHolder, reqCtx *Req
 		ch.metricsHandler.TrackInHistogram(metrics.ProxyRequestDurationTarget, reqCtx.startTime)
 		ch.metricsHandler.DecrementCountByOne(metrics.InFlightRequestsTarget)
 	default:
-		log.Errorf("unexpected forwardDecision %v, unable to track proxy level metrics", reqCtx.decision)
+		log.Errorf("unexpected forwardDecision %v, unable to track proxy level metrics", reqCtx.stmtInfo.GetForwardDecision())
 	}
 
 	aggregatedResponse, err := ch.computeAggregatedResponse(reqCtx)
 	if err == nil {
-		err = ch.processAggregatedResponse(aggregatedResponse)
+		err = ch.processAggregatedResponse(aggregatedResponse, reqCtx)
 	}
 
 	if err != nil {
@@ -457,7 +457,7 @@ func (ch *ClientHandler) finishRequest(holder *requestContextHolder, reqCtx *Req
 
 // Computes the response to be sent to the client based on the forward decision of the request.
 func (ch *ClientHandler) computeAggregatedResponse(requestContext *RequestContext) (*frame.RawFrame, error) {
-	forwardDecision := requestContext.decision
+	forwardDecision := requestContext.stmtInfo.GetForwardDecision()
 	if forwardDecision == forwardToOrigin {
 		if requestContext.originResponse == nil {
 			return nil, fmt.Errorf("did not receive response from origin cassandra channel, stream: %d", requestContext.request.Header.StreamId)
@@ -493,7 +493,7 @@ func (ch *ClientHandler) computeAggregatedResponse(requestContext *RequestContex
 }
 
 // Modifies internal state based on the provided aggregated response (e.g. storing prepared IDs)
-func (ch *ClientHandler) processAggregatedResponse(response *frame.RawFrame) error {
+func (ch *ClientHandler) processAggregatedResponse(response *frame.RawFrame, reqCtx *RequestContext) error {
 	switch response.Header.OpCode {
 	case primitive.OpCodeResult:
 		body, err := defaultCodec.DecodeBody(response.Header, bytes.NewReader(response.Body))
@@ -511,9 +511,13 @@ func (ch *ClientHandler) processAggregatedResponse(response *frame.RawFrame) err
 			switch bodyMsg := body.Message.(type) {
 			case *message.PreparedResult:
 				if bodyMsg.PreparedQueryId == nil {
-					log.Warnf("unexpected prepared query id nil")
+					log.Error("unexpected prepared query id nil")
+				} else if reqCtx.stmtInfo == nil {
+					log.Error("unexpected statement info nil on request context")
+				} else if preparedStmtInfo, ok := reqCtx.stmtInfo.(*PreparedStatementInfo); !ok {
+					log.Error("unexpected request context statement info is not prepared statement info")
 				} else {
-					ch.preparedStatementCache.cachePreparedId(response.Header.StreamId, bodyMsg.PreparedQueryId)
+					ch.preparedStatementCache.cachePreparedId(bodyMsg.PreparedQueryId, preparedStmtInfo)
 				}
 			case *message.SetKeyspaceResult:
 				if bodyMsg.Keyspace == "" {
@@ -735,8 +739,8 @@ func (ch *ClientHandler) handleRequest(f *frame.RawFrame) {
 func (ch *ClientHandler) forwardRequest(request *frame.RawFrame, customResponseChannel chan *frame.RawFrame) error {
 	overallRequestStartTime := time.Now()
 
-	forwardDecision, err := inspectFrame(
-		request, ch.preparedStatementCache, ch.metricsHandler, ch.currentKeyspaceName, ch.conf)
+	stmtInfo, err := inspectFrame(
+		request, ch.preparedStatementCache, ch.metricsHandler, ch.currentKeyspaceName, ch.conf.ForwardReadsToTarget)
 	if err != nil {
 		if errVal, ok := err.(*UnpreparedExecuteError); ok {
 			unpreparedFrame, err := createUnpreparedFrame(errVal)
@@ -755,7 +759,7 @@ func (ch *ClientHandler) forwardRequest(request *frame.RawFrame, customResponseC
 		return err
 	}
 
-	err = ch.executeForwardDecision(request, forwardDecision, overallRequestStartTime, customResponseChannel)
+	err = ch.executeForwardDecision(request, stmtInfo, overallRequestStartTime, customResponseChannel)
 	if err != nil {
 		return err
 	}
@@ -764,10 +768,11 @@ func (ch *ClientHandler) forwardRequest(request *frame.RawFrame, customResponseC
 
 // executeForwardDecision executes the forward decision and waits for one or two responses, then returns the response
 // that should be sent back to the client.
-func (ch *ClientHandler) executeForwardDecision(f *frame.RawFrame, forwardDecision forwardDecision, overallRequestStartTime time.Time, customResponseChannel chan *frame.RawFrame) error {
+func (ch *ClientHandler) executeForwardDecision(f *frame.RawFrame, stmtInfo StatementInfo, overallRequestStartTime time.Time, customResponseChannel chan *frame.RawFrame) error {
+	forwardDecision := stmtInfo.GetForwardDecision()
 	log.Tracef("Opcode: %v, Forward decision: %v", f.Header.OpCode, forwardDecision)
 
-	reqCtx := NewRequestContext(f, forwardDecision, overallRequestStartTime, customResponseChannel)
+	reqCtx := NewRequestContext(f, stmtInfo, overallRequestStartTime, customResponseChannel)
 	holder, err := ch.storeRequestContext(reqCtx)
 	if err != nil {
 		return err

@@ -80,7 +80,7 @@ const (
 
 type RequestContext struct {
 	request        *frame.RawFrame
-	decision       forwardDecision
+	stmtInfo       StatementInfo
 	originResponse *frame.RawFrame
 	targetResponse *frame.RawFrame
 	state          int
@@ -90,10 +90,10 @@ type RequestContext struct {
 	customResponseChannel chan *frame.RawFrame
 }
 
-func NewRequestContext(req *frame.RawFrame, decision forwardDecision, starTime time.Time, customResponseChannel chan *frame.RawFrame) *RequestContext {
+func NewRequestContext(req *frame.RawFrame, stmtInfo StatementInfo, starTime time.Time, customResponseChannel chan *frame.RawFrame) *RequestContext {
 	return &RequestContext{
 		request:        req,
-		decision:       decision,
+		stmtInfo:       stmtInfo,
 		originResponse: nil,
 		targetResponse: nil,
 		state:          RequestPending,
@@ -122,7 +122,7 @@ func (recv *RequestContext) SetTimeout(metricsHandler metrics.IMetricsHandler, r
 		recv.state = RequestTimedOut
 		sentOrigin := false
 		sentTarget := false
-		switch recv.decision {
+		switch recv.stmtInfo.GetForwardDecision() {
 		case forwardToBoth:
 			sentOrigin = true
 			sentTarget = true
@@ -187,7 +187,7 @@ func (recv *RequestContext) updateInternalState(f *frame.RawFrame, cluster Clust
 	}
 
 	done := false
-	switch recv.decision {
+	switch recv.stmtInfo.GetForwardDecision() {
 	case forwardToTarget:
 		done = recv.targetResponse != nil
 	case forwardToOrigin:
@@ -197,7 +197,7 @@ func (recv *RequestContext) updateInternalState(f *frame.RawFrame, cluster Clust
 	case forwardToNone:
 		done = true
 	default:
-		log.Errorf("unrecognized decision %v", recv.decision)
+		log.Errorf("unrecognized decision %v", recv.stmtInfo.GetForwardDecision())
 	}
 
 	if done {

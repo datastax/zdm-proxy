@@ -8,7 +8,6 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
 	parser "github.com/riptano/cloud-gate/antlr"
-	"github.com/riptano/cloud-gate/proxy/pkg/config"
 	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
 	"strings"
@@ -39,7 +38,7 @@ func inspectFrame(
 	psCache *PreparedStatementCache,
 	mh metrics.IMetricsHandler,
 	currentKeyspaceName *atomic.Value,
-	conf *config.Config) (forwardDecision, error) {
+	forwardReadsToTarget bool) (StatementInfo, error) {
 
 	forwardDecision := forwardToBoth
 
@@ -48,67 +47,66 @@ func inspectFrame(
 	case primitive.OpCodeQuery:
 		body, err := defaultCodec.DecodeBody(f.Header, bytes.NewReader(f.Body))
 		if err != nil {
-			return forwardToNone, fmt.Errorf("could not decode body of query message: %w", err)
+			return nil, fmt.Errorf("could not decode body of query message: %w", err)
 		}
 		queryMsg, ok := body.Message.(*message.Query)
 		if !ok {
-			return forwardToNone, fmt.Errorf("expected Query but got %v instead", body.Message.GetOpCode())
+			return nil, fmt.Errorf("expected Query but got %v instead", body.Message.GetOpCode())
 		}
 		queryInfo := inspectCqlQuery(queryMsg.Query)
 		if queryInfo.getStatementType() == statementTypeSelect {
-			if isSystemQuery(queryInfo, currentKeyspaceName) || conf.ForwardReadsToTarget {
+			if isSystemQuery(queryInfo, currentKeyspaceName) || forwardReadsToTarget {
 				forwardDecision = forwardToTarget
 			} else {
 				forwardDecision = forwardToOrigin
 			}
 		}
-		return forwardDecision, nil
+		return NewGenericStatementInfo(forwardDecision), nil
 
 	case primitive.OpCodePrepare:
 		body, err := defaultCodec.DecodeBody(f.Header, bytes.NewReader(f.Body))
 		if err != nil {
-			return forwardToNone, fmt.Errorf("could not decode body of prepare message: %w", err)
+			return nil, fmt.Errorf("could not decode body of prepare message: %w", err)
 		}
 		prepareMsg, ok := body.Message.(*message.Prepare)
 		if !ok {
-			return forwardToNone, fmt.Errorf("expected Prepare but got %v instead", body.Message.GetOpCode())
+			return nil, fmt.Errorf("expected Prepare but got %v instead", body.Message.GetOpCode())
 		}
 		queryInfo := inspectCqlQuery(prepareMsg.Query)
 		if queryInfo.getStatementType() == statementTypeSelect {
-			if isSystemQuery(queryInfo, currentKeyspaceName) || conf.ForwardReadsToTarget {
+			if isSystemQuery(queryInfo, currentKeyspaceName) || forwardReadsToTarget {
 				forwardDecision = forwardToTarget
 			} else {
 				forwardDecision = forwardToOrigin
 			}
 		}
-		psCache.trackStatementToBePrepared(f.Header.StreamId, forwardDecision)
-		return forwardDecision, nil
+		return NewPreparedStatementInfo(forwardDecision), nil
 
 	case primitive.OpCodeExecute:
 		body, err := defaultCodec.DecodeBody(f.Header, bytes.NewReader(f.Body))
 		if err != nil {
-			return forwardToNone, fmt.Errorf("could not decode body of execute message: %w", err)
+			return nil, fmt.Errorf("could not decode body of execute message: %w", err)
 		}
 		executeMsg, ok := body.Message.(*message.Execute)
 		if !ok {
-			return forwardToNone, fmt.Errorf("expected Execute but got %v instead", body.Message.GetOpCode())
+			return nil, fmt.Errorf("expected Execute but got %v instead", body.Message.GetOpCode())
 		}
 		log.Debugf("Execute with prepared-id = '%s'", executeMsg.QueryId)
 		if stmtInfo, ok := psCache.retrieveStmtInfoFromCache(executeMsg.QueryId); ok {
 			// The forward decision was set in the cache when handling the corresponding PREPARE request
-			return stmtInfo.forwardDecision, nil
+			return NewGenericStatementInfo(stmtInfo.forwardDecision), nil
 		} else {
 			log.Warnf("No cached entry for prepared-id = '%s'", executeMsg.QueryId)
 			_ = mh.IncrementCountByOne(metrics.PSCacheMissCount)
 			// return meaningful error to caller so it can generate an unprepared response
-			return forwardToNone, &UnpreparedExecuteError{Header: f.Header, Body: body, preparedId: executeMsg.QueryId}
+			return nil, &UnpreparedExecuteError{Header: f.Header, Body: body, preparedId: executeMsg.QueryId}
 		}
 
 	case primitive.OpCodeStartup, primitive.OpCodeAuthResponse:
-		return forwardToOrigin, nil
+		return NewGenericStatementInfo(forwardToOrigin), nil
 
 	default:
-		return forwardToBoth, nil
+		return NewGenericStatementInfo(forwardToBoth), nil
 	}
 }
 

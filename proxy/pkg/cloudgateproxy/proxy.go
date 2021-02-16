@@ -203,7 +203,7 @@ func (p *CloudgateProxy) initializeGlobalStructures() {
 	if p.requestResponseNumWorkers == -1 {
 		p.requestResponseNumWorkers = maxProcs * 4 // default
 	} else if p.requestResponseNumWorkers <= 0 {
-		log.Warn("Invalid number of request / response workers %d, using GOMAXPROCS * 4 (%d).", p.requestResponseNumWorkers, maxProcs * 4)
+		log.Warnf("Invalid number of request / response workers %d, using GOMAXPROCS * 4 (%d).", p.requestResponseNumWorkers, maxProcs * 4)
 		p.requestResponseNumWorkers = maxProcs * 4
 	}
 	log.Infof("Using %d request / response workers.", p.requestResponseNumWorkers)
@@ -212,7 +212,7 @@ func (p *CloudgateProxy) initializeGlobalStructures() {
 	if p.writeNumWorkers == -1 {
 		p.writeNumWorkers = maxProcs * 4 // default
 	} else if p.writeNumWorkers <= 0 {
-		log.Warn("Invalid number of write workers %d, using GOMAXPROCS * 4 (%d).", p.writeNumWorkers, maxProcs * 4)
+		log.Warnf("Invalid number of write workers %d, using GOMAXPROCS * 4 (%d).", p.writeNumWorkers, maxProcs * 4)
 		p.writeNumWorkers = maxProcs * 4
 	}
 	log.Infof("Using %d write workers.", p.writeNumWorkers)
@@ -221,7 +221,7 @@ func (p *CloudgateProxy) initializeGlobalStructures() {
 	if p.readNumWorkers == -1 {
 		p.readNumWorkers = maxProcs * 8 // default
 	} else if p.readNumWorkers <= 0 {
-		log.Warn("Invalid number of read workers %d, using GOMAXPROCS * 8 (%d).", p.readNumWorkers, maxProcs * 8)
+		log.Warnf("Invalid number of read workers %d, using GOMAXPROCS * 8 (%d).", p.readNumWorkers, maxProcs * 8)
 		p.readNumWorkers = maxProcs * 8
 	}
 	log.Infof("Using %d read workers.", p.readNumWorkers)
@@ -230,7 +230,7 @@ func (p *CloudgateProxy) initializeGlobalStructures() {
 	if p.listenerNumWorkers == -1 {
 		p.listenerNumWorkers = maxProcs // default
 	} else if p.listenerNumWorkers <= 0 {
-		log.Warn("Invalid number of cluster connector workers %d, using GOMAXPROCS (%d).", p.listenerNumWorkers, maxProcs)
+		log.Warnf("Invalid number of cluster connector workers %d, using GOMAXPROCS (%d).", p.listenerNumWorkers, maxProcs)
 		p.listenerNumWorkers = maxProcs
 	}
 	log.Infof("Using %d listener workers.", p.listenerNumWorkers)
