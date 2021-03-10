@@ -5,6 +5,7 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
 	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
+	"github.com/stretchr/testify/require"
 	"net/http"
 	"reflect"
 	"sync/atomic"
@@ -65,7 +66,7 @@ func TestInspectFrame(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			actual, err := inspectFrame(tt.args.f, tt.args.psCache, tt.args.mh, tt.args.km, tt.args.forwardReadsToTarget)
+			actual, err := inspectFrame(&frameDecodeContext{frame: tt.args.f}, tt.args.psCache, tt.args.mh, tt.args.km, tt.args.forwardReadsToTarget)
 			if err != nil {
 				if !reflect.DeepEqual(err.Error(), tt.expected) {
 					t.Errorf("inspectFrame() actual = %v, expected %v", err, tt.expected)
@@ -75,6 +76,98 @@ func TestInspectFrame(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestModifyFrame(t *testing.T) {
+	type args struct {
+		f                    *frame.RawFrame
+	}
+	tests := []struct {
+		name              string
+		args              args
+		positionsReplaced []int
+		statementType     statementType
+	}{
+		// QUERY
+		{"OpCodeQuery SELECT", args{mockQueryFrame("SELECT blah FROM ks1.t2")}, []int{}, statementTypeSelect},
+		{"OpCodeQuery INSERT", args{mockQueryFrame("INSERT INTO blah (a, b) VALUES (now(), 1)")}, []int{0}, statementTypeInsert},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			context := &frameDecodeContext{frame: test.args.f}
+			queryInfo, err := context.GetOrInspectQuery()
+			require.Nil(t, err)
+			newContext, err := modifyFrame(context)
+			require.Nil(t, err)
+
+			require.Equal(t, test.statementType, queryInfo.getStatementType())
+			require.Equal(t, test.statementType, newContext.queryInfo.getStatementType())
+
+			if len(test.positionsReplaced) != 0 {
+				require.NotEqual(t, context.frame, newContext.frame)
+				require.Equal(t, context.frame.Header.OpCode, newContext.frame.Header.OpCode)
+				require.Equal(t, context.frame.Header.StreamId, newContext.frame.Header.StreamId)
+				require.Equal(t, context.frame.Header.Flags, newContext.frame.Header.Flags)
+				require.Equal(t, context.frame.Header.Version, newContext.frame.Header.Version)
+				require.NotEqual(t, context.frame.Body, newContext.frame.Body)
+				require.NotEqual(t, queryInfo, newContext.queryInfo)
+			} else {
+				require.Equal(t, context.frame, newContext.frame)
+				require.Equal(t, context.frame.Body, newContext.frame.Body)
+				require.Equal(t, context.frame.Header, newContext.frame.Header)
+				require.Equal(t, queryInfo, newContext.queryInfo)
+			}
+
+			if len(queryInfo.getAssignmentsGroups()) == 0 {
+				require.Equal(t, 0, len(test.positionsReplaced))
+				return
+			}
+
+			assignmentGroup := queryInfo.getAssignmentsGroups()[0]
+			assignmentsByColumn := getAssignmentsByColumn(assignmentGroup)
+			newAssignmentGroup := newContext.queryInfo.getAssignmentsGroups()[0]
+			newAssignmentsByColumn := getAssignmentsByColumn(newAssignmentGroup)
+
+			require.Equal(t, len(assignmentGroup.assignments), len(newAssignmentGroup.assignments))
+			for name, assignmentAndIndex := range assignmentsByColumn {
+				if contains(test.positionsReplaced, assignmentAndIndex.index) {
+					require.NotEqual(t, assignmentsByColumn[name], newAssignmentsByColumn[name])
+
+					require.True(t, assignmentsByColumn[name].assignment.isFunctionCall())
+					require.False(t, newAssignmentsByColumn[name].assignment.isFunctionCall())
+
+					require.False(t, assignmentsByColumn[name].assignment.isLiteral())
+					require.True(t, newAssignmentsByColumn[name].assignment.isLiteral())
+				} else {
+					require.Equal(t, assignmentsByColumn[name], newAssignmentsByColumn[name])
+				}
+			}
+		})
+	}
+
+}
+
+func contains(s []int, e int) bool {
+	for _, a := range s {
+		if a == e {
+			return true
+		}
+	}
+	return false
+}
+
+type assignmentAndIndex struct {
+	assignment *assignment
+	index      int
+}
+
+func getAssignmentsByColumn(group *assignmentsGroup) map[string]*assignmentAndIndex {
+	m := make(map[string]*assignmentAndIndex)
+	for idx, assignment := range group.assignments {
+		m[assignment.columnName] = &assignmentAndIndex{assignment: assignment, index: idx}
+	}
+
+	return m
 }
 
 type mockMetricsHandler struct{}

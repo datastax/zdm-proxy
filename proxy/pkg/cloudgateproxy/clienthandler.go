@@ -302,7 +302,7 @@ func (ch *ClientHandler) listenForEventMessages() {
 
 			switch msgType := body.Message.(type) {
 			case *message.ProtocolError:
-				log.Debug("Received protocol error on event message listener, forwarding to client: ", body.Message)
+				log.Debug("Received protocol error on event body listener, forwarding to client: ", body.Message)
 			case *message.SchemaChangeEvent:
 				if fromTarget {
 					log.Infof("Received schema change event from target, skipping: %v", msgType)
@@ -319,7 +319,7 @@ func (ch *ClientHandler) listenForEventMessages() {
 					continue
 				}
 			default:
-				log.Infof("Expected event message (fromTarget: %v) but got: %v", fromTarget, msgType)
+				log.Infof("Expected event body (fromTarget: %v) but got: %v", fromTarget, msgType)
 				continue
 			}
 
@@ -503,7 +503,7 @@ func (ch *ClientHandler) processAggregatedResponse(response *frame.RawFrame, req
 
 		resultMsg, ok := body.Message.(message.Result)
 		if !ok {
-			return fmt.Errorf("expected RESULT message but got %T", body.Message)
+			return fmt.Errorf("expected RESULT body but got %T", body.Message)
 		}
 
 		resultType := resultMsg.GetResultType()
@@ -710,7 +710,7 @@ func (ch *ClientHandler) buildAuthErrorResponse(
 func (ch *ClientHandler) startTargetHandshake() (chan error, error) {
 	startupFrame := ch.startupFrame
 	if startupFrame == nil {
-		return nil, errors.New("can not start target handshake before a Startup message was received")
+		return nil, errors.New("can not start target handshake before a Startup body was received")
 	}
 
 	channel := make(chan error)
@@ -738,9 +738,13 @@ func (ch *ClientHandler) handleRequest(f *frame.RawFrame) {
 // Forwards the request, parsing it and enqueuing it to the appropriate cluster connector(s)' write queue(s).
 func (ch *ClientHandler) forwardRequest(request *frame.RawFrame, customResponseChannel chan *frame.RawFrame) error {
 	overallRequestStartTime := time.Now()
-
+	context := &frameDecodeContext{
+		frame: request,
+	}
+	context, err := modifyFrame(context)
+	request = context.frame
 	stmtInfo, err := inspectFrame(
-		request, ch.preparedStatementCache, ch.metricsHandler, ch.currentKeyspaceName, ch.conf.ForwardReadsToTarget)
+		context, ch.preparedStatementCache, ch.metricsHandler, ch.currentKeyspaceName, ch.conf.ForwardReadsToTarget)
 	if err != nil {
 		if errVal, ok := err.(*UnpreparedExecuteError); ok {
 			unpreparedFrame, err := createUnpreparedFrame(errVal)
@@ -913,7 +917,7 @@ func decodeErrorResult(frame *frame.RawFrame) (message.Error, error) {
 
 	errorResult, ok := body.Message.(message.Error)
 	if !ok {
-		return nil, fmt.Errorf("expected error message but got %T", body.Message)
+		return nil, fmt.Errorf("expected error body but got %T", body.Message)
 	}
 
 	return errorResult, nil
