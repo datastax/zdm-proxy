@@ -403,6 +403,40 @@ func TestNowFunctionCalls(t *testing.T) {
 				"APPLY BATCH",
 		},
 		{
+			"BATCH with INSERTs, UPDATEs and DELETEs",
+			"BEGIN BATCH " +
+				"INSERT INTO ks1.table1 (c1, c2) VALUES (42, now()) " +
+				"DELETE FROM ks1.table1 WHERE c1 = now() " +
+				"UPDATE ks1.table1 SET c2 = now() WHERE c1 = now() " +
+				"INSERT INTO ks1.table1 (c1, c2) VALUES (42, now()) " +
+				"INSERT INTO ks1.table1 (c1, c2) VALUES (42, now()) " +
+				"APPLY BATCH",
+			statementTypeBatch,
+			uid,
+			true,
+			"BEGIN BATCH " +
+				"INSERT INTO ks1.table1 (c1, c2) VALUES (42, 7872e70a-5a68-11eb-ae93-0242ac130002) " +
+				"DELETE FROM ks1.table1 WHERE c1 = 7872e70a-5a68-11eb-ae93-0242ac130002 " +
+				"UPDATE ks1.table1 SET c2 = 7872e70a-5a68-11eb-ae93-0242ac130002 WHERE c1 = 7872e70a-5a68-11eb-ae93-0242ac130002 " +
+				"INSERT INTO ks1.table1 (c1, c2) VALUES (42, 7872e70a-5a68-11eb-ae93-0242ac130002) " +
+				"INSERT INTO ks1.table1 (c1, c2) VALUES (42, 7872e70a-5a68-11eb-ae93-0242ac130002) " +
+				"APPLY BATCH",
+			"BEGIN BATCH " +
+				"INSERT INTO ks1.table1 (c1, c2) VALUES (42, ?) " +
+				"DELETE FROM ks1.table1 WHERE c1 = ? " +
+				"UPDATE ks1.table1 SET c2 = ? WHERE c1 = ? " +
+				"INSERT INTO ks1.table1 (c1, c2) VALUES (42, ?) " +
+				"INSERT INTO ks1.table1 (c1, c2) VALUES (42, ?) " +
+				"APPLY BATCH",
+			"BEGIN BATCH " +
+				"INSERT INTO ks1.table1 (c1, c2) VALUES (42, :cloudgate__now__0) " +
+				"DELETE FROM ks1.table1 WHERE c1 = :cloudgate__now__1 " +
+				"UPDATE ks1.table1 SET c2 = :cloudgate__now__2 WHERE c1 = :cloudgate__now__3 " +
+				"INSERT INTO ks1.table1 (c1, c2) VALUES (42, :cloudgate__now__4) " +
+				"INSERT INTO ks1.table1 (c1, c2) VALUES (42, :cloudgate__now__5) " +
+				"APPLY BATCH",
+		},
+		{
 			"no occurrences",
 			"INSERT INTO ks1.table1 (foo) VALUES ('bar')",
 			statementTypeInsert,
@@ -413,14 +447,24 @@ func TestNowFunctionCalls(t *testing.T) {
 			"INSERT INTO ks1.table1 (foo) VALUES ('bar')",
 		},
 		{
-			"not an INSERT",
+			"update",
 			"UPDATE ks1.table1 SET foo = 'bar' WHERE col = now()",
 			statementTypeUpdate,
 			uid,
-			false,
-			"UPDATE ks1.table1 SET foo = 'bar' WHERE col = now()",
-			"UPDATE ks1.table1 SET foo = 'bar' WHERE col = now()",
-			"UPDATE ks1.table1 SET foo = 'bar' WHERE col = now()",
+			true,
+			"UPDATE ks1.table1 SET foo = 'bar' WHERE col = 7872e70a-5a68-11eb-ae93-0242ac130002",
+			"UPDATE ks1.table1 SET foo = 'bar' WHERE col = ?",
+			"UPDATE ks1.table1 SET foo = 'bar' WHERE col = :cloudgate__now__0",
+		},
+		{
+			"delete",
+			"DELETE FROM ks1.table1 WHERE col = now()",
+			statementTypeDelete,
+			uid,
+			true,
+			"DELETE FROM ks1.table1 WHERE col = 7872e70a-5a68-11eb-ae93-0242ac130002",
+			"DELETE FROM ks1.table1 WHERE col = ?",
+			"DELETE FROM ks1.table1 WHERE col = :cloudgate__now__0",
 		},
 		{
 			"unknown statement",

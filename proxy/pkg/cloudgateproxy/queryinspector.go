@@ -29,10 +29,10 @@ type queryInfo interface {
 	// Below methods are only relevant for INSERT statements,
 	// or BATCH statements containing INSERT statements.
 
-	// Returns a slice of assignmentsGroup for each statement in the query.
-	// For a single INSERT, the slice contains only one element. For BATCH statements,
+	// Returns a slice of parsedStatement. There is one parsedStatement per statement in the query.
+	// For a single INSERT/UPDATE/DELETE, the slice contains only one element. For BATCH statements,
 	// the slice will contain as many elements as there are child statements.
-	getAssignmentsGroups() []*assignmentsGroup
+	getParsedStatements() []*parsedStatement
 
 	// Whether the query contains positional bind markers. Only one of hasPositionalBindMarkers and hasNamedBindMarkers
 	// can return true for a given query, never both.
@@ -75,52 +75,50 @@ func (f *functionCall) isNow() bool {
 	return (f.keyspace == "" || f.keyspace == "system") && f.name == "now" && f.arity == 0
 }
 
-// A group of assignments belonging to the same statement.
-type assignmentsGroup struct {
-	// The zero-based index of the statement. For single INSERT statements, this will be zero. For BATCH child
+// parsedStatement contains all the information stored by the cqlListener while processing a particular statement.
+type parsedStatement struct {
+	// The zero-based index of the statement. For single INSERT/UPDATE/DELETE statements, this will be zero. For BATCH child
 	// statements, this will be the child index.
 	statementIndex int
 	statementType  statementType
-	assignments    []*assignment
+	terms          []*term
 }
 
-// An assignment in a CQL INSERT query referencing the column being updated, and the updated value.
-// The updated value can be either a literal term, a function call, or a bind marker.
-type assignment struct {
-
-	// The name of the column being assigned; never empty.
-	columnName string
-
-	// The function call details in this assignment,
-	// or nil if this assignment does not contain a function call.
+// A term can be one of the following:
+// - a literal,
+// - a function call
+// - a bind marker.
+type term struct {
+	// The function call details in this term,
+	// or nil if this term does not contain a function call.
 	functionCall *functionCall
 
-	// The zero-based index of the positional bind marker in this assignment
-	// (-1 if this assignment does not contain a positional bind marker).
+	// The zero-based index of the positional bind marker in this term
+	// (-1 if this term does not contain a positional bind marker).
 	positionalIndex int
 
-	// The variable name of the named bind marker in this assignment
-	// (empty if this assignment does not contain a named bind marker).
+	// The variable name of the named bind marker in this term
+	// (empty if this term does not contain a named bind marker).
 	bindMarkerName string
 
-	// The literal expression in this assignment, or empty if this assignment does not contain a literal.
+	// The literal expression in this term, or empty if this term does not contain a literal.
 	literal string
 }
 
-func (a *assignment) isFunctionCall() bool {
-	return a.functionCall != nil
+func (t *term) isFunctionCall() bool {
+	return t.functionCall != nil
 }
 
-func (a *assignment) isPositionalBindMarker() bool {
-	return a.positionalIndex != -1
+func (t *term) isPositionalBindMarker() bool {
+	return t.positionalIndex != -1
 }
 
-func (a *assignment) isNamedBindMarker() bool {
-	return a.bindMarkerName != ""
+func (t *term) isNamedBindMarker() bool {
+	return t.bindMarkerName != ""
 }
 
-func (a *assignment) isLiteral() bool {
-	return a.literal != ""
+func (t *term) isLiteral() bool {
+	return t.literal != ""
 }
 
 type cqlListener struct {
@@ -130,8 +128,8 @@ type cqlListener struct {
 	keyspaceName  string
 	tableName     string
 
-	// Only filled in for INSERT and BATCH statements
-	assignmentsGroups     []*assignmentsGroup
+	// Only filled in for INSERT, DELETE, UPDATE and BATCH statements
+	parsedStatements      []*parsedStatement
 	positionalBindMarkers bool
 	namedBindMarkers      bool
 	nowFunctionCalls      bool
@@ -157,8 +155,8 @@ func (l *cqlListener) getTableName() string {
 	return l.tableName
 }
 
-func (l *cqlListener) getAssignmentsGroups() []*assignmentsGroup {
-	return l.assignmentsGroups
+func (l *cqlListener) getParsedStatements() []*parsedStatement {
+	return l.parsedStatements
 }
 
 func (l *cqlListener) hasPositionalBindMarkers() bool {
@@ -190,35 +188,63 @@ func (l *cqlListener) EnterCqlStatement(ctx *parser.CqlStatementContext) {
 }
 
 func (l *cqlListener) EnterInsertStatement(ctx *parser.InsertStatementContext) {
-	assignmentsGroup := &assignmentsGroup{statementIndex: l.currentBatchChildIndex, statementType: statementTypeInsert}
-	columns := ctx.Identifiers().(*parser.IdentifiersContext)
+	parsedStatement := &parsedStatement{statementIndex: l.currentBatchChildIndex, statementType: statementTypeInsert}
 	values := ctx.Terms().(*parser.TermsContext)
-	// if the lengths do not match, the statement will be rejected by the server
-	if len(columns.AllIdentifier()) == len(values.AllTerm()) {
-		for i, identifierCtx := range columns.AllIdentifier() {
-			termCtx := values.AllTerm()[i]
-			assignment := l.extractAssignment(identifierCtx.(*parser.IdentifierContext), termCtx.(*parser.TermContext))
-			assignmentsGroup.assignments = append(assignmentsGroup.assignments, assignment)
-		}
+	for _, termCtx := range values.AllTerm() {
+		parsedStatement.terms = append(parsedStatement.terms, l.extractTerm(termCtx.(*parser.TermContext)))
 	}
-	l.assignmentsGroups = append(l.assignmentsGroups, assignmentsGroup)
+
+	l.parsedStatements = append(l.parsedStatements, parsedStatement)
 	l.currentBatchChildIndex++
 }
 
 func (l *cqlListener) EnterUpdateStatement(ctx *parser.UpdateStatementContext) {
-	if _, batchChild := ctx.GetParent().(*parser.BatchChildStatementContext); batchChild {
-		assignmentsGroup := &assignmentsGroup{statementIndex: l.currentBatchChildIndex, statementType: statementTypeUpdate}
-		l.assignmentsGroups = append(l.assignmentsGroups, assignmentsGroup)
-		l.currentBatchChildIndex++
+	parsedStatement := &parsedStatement{statementIndex: l.currentBatchChildIndex, statementType: statementTypeUpdate}
+
+	updateOperations := ctx.UpdateOperations().(*parser.UpdateOperationsContext).AllUpdateOperation()
+	for _, updateOperation := range updateOperations {
+		updateOperationTyped := updateOperation.(*parser.UpdateOperationContext)
+		for _, termCtx := range updateOperationTyped.AllTerm() {
+			parsedStatement.terms = append(parsedStatement.terms, l.extractTerm(termCtx.(*parser.TermContext)))
+		}
 	}
+
+	whereClauseTerms := l.extractWhereClauseTerms(ctx.WhereClause().(*parser.WhereClauseContext))
+	parsedStatement.terms = append(parsedStatement.terms, whereClauseTerms...)
+
+	if conditionsCtx := ctx.Conditions(); conditionsCtx != nil {
+		conditionTerms := l.extractConditionsTerms(conditionsCtx.(*parser.ConditionsContext))
+		parsedStatement.terms = append(parsedStatement.terms, conditionTerms...)
+	}
+
+	l.parsedStatements = append(l.parsedStatements, parsedStatement)
+	l.currentBatchChildIndex++
 }
 
 func (l *cqlListener) EnterDeleteStatement(ctx *parser.DeleteStatementContext) {
-	if _, batchChild := ctx.GetParent().(*parser.BatchChildStatementContext); batchChild {
-		assignmentsGroup := &assignmentsGroup{statementIndex: l.currentBatchChildIndex, statementType: statementTypeDelete}
-		l.assignmentsGroups = append(l.assignmentsGroups, assignmentsGroup)
-		l.currentBatchChildIndex++
+	parsedStatement := &parsedStatement{statementIndex: l.currentBatchChildIndex, statementType: statementTypeDelete}
+
+	if deleteOperationsCtx := ctx.DeleteOperations(); deleteOperationsCtx != nil {
+		deleteOperations := deleteOperationsCtx.(*parser.DeleteOperationsContext).AllDeleteOperation()
+		for _, deleteOperation := range deleteOperations {
+			deleteOperationTyped := deleteOperation.(*parser.DeleteOperationContext)
+			t := deleteOperationTyped.Term()
+			if t != nil {
+				parsedStatement.terms = append(parsedStatement.terms, l.extractTerm(t.(*parser.TermContext)))
+			}
+		}
 	}
+
+	whereClauseTerms := l.extractWhereClauseTerms(ctx.WhereClause().(*parser.WhereClauseContext))
+	parsedStatement.terms = append(parsedStatement.terms, whereClauseTerms...)
+
+	if conditionsCtx := ctx.Conditions(); conditionsCtx != nil {
+		conditionTerms := l.extractConditionsTerms(conditionsCtx.(*parser.ConditionsContext))
+		parsedStatement.terms = append(parsedStatement.terms, conditionTerms...)
+	}
+
+	l.parsedStatements = append(l.parsedStatements, parsedStatement)
+	l.currentBatchChildIndex++
 }
 
 func (l *cqlListener) EnterUseStatement(ctx *parser.UseStatementContext) {
@@ -239,25 +265,25 @@ func (l *cqlListener) EnterTableName(ctx *parser.TableNameContext) {
 	}
 }
 
-func (l *cqlListener) extractAssignment(identifierCtx *parser.IdentifierContext, termCtx *parser.TermContext) *assignment {
-	var a *assignment
+func (l *cqlListener) extractTerm(termCtx *parser.TermContext) *term {
+	var t *term
 	if typeCastCtx := termCtx.TypeCast(); typeCastCtx != nil {
 		// extract the term being cast and ignore the target type of the cast expression
-		a = l.extractAssignment(identifierCtx, typeCastCtx.(*parser.TypeCastContext).Term().(*parser.TermContext))
+		t = l.extractTerm(typeCastCtx.(*parser.TypeCastContext).Term().(*parser.TermContext))
 	} else {
-		a = &assignment{columnName: extractIdentifier(identifierCtx), positionalIndex: -1}
+		t = &term{positionalIndex: -1}
 		if literalCtx := termCtx.Literal(); literalCtx != nil {
-			a.literal = literalCtx.GetText()
+			t.literal = literalCtx.GetText()
 		} else if functionCallCtx := termCtx.FunctionCall(); functionCallCtx != nil {
-			a.functionCall = extractFunctionCall(functionCallCtx.(*parser.FunctionCallContext))
-			if a.functionCall.isNow() {
+			t.functionCall = extractFunctionCall(functionCallCtx.(*parser.FunctionCallContext))
+			if t.functionCall.isNow() {
 				l.nowFunctionCalls = true
 			}
 		} else if bindMarkerCtx := termCtx.BindMarker(); bindMarkerCtx != nil {
 			positionalBindMarkerCtx := bindMarkerCtx.(*parser.BindMarkerContext).PositionalBindMarker()
 			if positionalBindMarkerCtx != nil {
 				l.positionalBindMarkers = true
-				a.positionalIndex = l.currentPositionalIndex
+				t.positionalIndex = l.currentPositionalIndex
 				l.currentPositionalIndex++
 			} else {
 				namedBindMarkerCtx := bindMarkerCtx.(*parser.BindMarkerContext).NamedBindMarker()
@@ -266,12 +292,40 @@ func (l *cqlListener) extractAssignment(identifierCtx *parser.IdentifierContext,
 					bindMarkerName := extractIdentifier(
 						namedBindMarkerCtx.(*parser.NamedBindMarkerContext).
 							Identifier().(*parser.IdentifierContext))
-					a.bindMarkerName = bindMarkerName
+					t.bindMarkerName = bindMarkerName
 				}
 			}
 		}
 	}
-	return a
+	return t
+}
+
+func (l *cqlListener) extractWhereClauseTerms(ctx *parser.WhereClauseContext) []*term {
+	var terms []*term
+
+	relations := ctx.AllRelation()
+	for _, relation := range relations {
+		relationTyped := relation.(*parser.RelationContext)
+		for _, termCtx := range relationTyped.AllTerm() {
+			terms = append(terms, l.extractTerm(termCtx.(*parser.TermContext)))
+		}
+	}
+
+	return terms
+}
+
+func (l *cqlListener) extractConditionsTerms(ctx *parser.ConditionsContext) []*term {
+	var terms []*term
+
+	conditions := ctx.AllCondition()
+	for _, condition := range conditions {
+		conditionTyped := condition.(*parser.ConditionContext)
+		for _, termCtx := range conditionTyped.AllTerm() {
+			terms = append(terms, l.extractTerm(termCtx.(*parser.TermContext)))
+		}
+	}
+
+	return terms
 }
 
 func extractFunctionCall(ctx *parser.FunctionCallContext) *functionCall {
@@ -325,13 +379,13 @@ func (l *cqlListener) replaceFunctionCalls(replacementFunc func(query string, fu
 	}
 	var result string
 	i := 0
-	for _, assignments := range l.assignmentsGroups {
-		for _, assignment := range assignments.assignments {
-			if assignment.isFunctionCall() {
-				replacement := replacementFunc(l.query, assignment.functionCall)
+	for _, parsedStatement := range l.parsedStatements {
+		for _, term := range parsedStatement.terms {
+			if term.isFunctionCall() {
+				replacement := replacementFunc(l.query, term.functionCall)
 				if replacement != nil {
-					result = result + l.query[i:assignment.functionCall.startIndex] + *replacement
-					i = assignment.functionCall.stopIndex + 1
+					result = result + l.query[i:term.functionCall.startIndex] + *replacement
+					i = term.functionCall.stopIndex + 1
 				}
 			}
 		}

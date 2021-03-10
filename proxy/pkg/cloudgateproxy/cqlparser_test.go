@@ -90,7 +90,17 @@ func TestModifyFrame(t *testing.T) {
 	}{
 		// QUERY
 		{"OpCodeQuery SELECT", args{mockQueryFrame("SELECT blah FROM ks1.t2")}, []int{}, statementTypeSelect},
+
 		{"OpCodeQuery INSERT", args{mockQueryFrame("INSERT INTO blah (a, b) VALUES (now(), 1)")}, []int{0}, statementTypeInsert},
+
+		{"OpCodeQuery UPDATE", args{mockQueryFrame("UPDATE blah SET a = ?, b = now() WHERE a = now()")}, []int{1,2}, statementTypeUpdate},
+		{"OpCodeQuery UPDATE Conditional", args{mockQueryFrame("UPDATE blah SET a = ?, b = 123 WHERE a = now() IF b = now()")}, []int{2,3}, statementTypeUpdate},
+		{"OpCodeQuery UPDATE Complex", args{mockQueryFrame("UPDATE blah SET a[?] = ?, b[now()] = 123, c[1] = now() WHERE a = 123")}, []int{2,5}, statementTypeUpdate},
+
+		{"OpCodeQuery DELETE No Operation", args{mockQueryFrame("DELETE FROM blah WHERE b = 123 AND a = now()")}, []int{1}, statementTypeDelete},
+		{"OpCodeQuery DELETE", args{mockQueryFrame("DELETE a FROM blah WHERE b = 123 AND a = now()")}, []int{1}, statementTypeDelete},
+		{"OpCodeQuery DELETE Conditional", args{mockQueryFrame("DELETE a FROM blah WHERE a = now() IF b = now()")}, []int{0, 1}, statementTypeDelete},
+		{"OpCodeQuery DELETE Complex", args{mockQueryFrame("DELETE c[1], a[?], b[now()] FROM blah WHERE b = 123 AND a = now()")}, []int{2,4}, statementTypeDelete},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -118,28 +128,29 @@ func TestModifyFrame(t *testing.T) {
 				require.Equal(t, queryInfo, newContext.queryInfo)
 			}
 
-			if len(queryInfo.getAssignmentsGroups()) == 0 {
+			if len(queryInfo.getParsedStatements()) == 0 {
 				require.Equal(t, 0, len(test.positionsReplaced))
 				return
 			}
 
-			assignmentGroup := queryInfo.getAssignmentsGroups()[0]
-			assignmentsByColumn := getAssignmentsByColumn(assignmentGroup)
-			newAssignmentGroup := newContext.queryInfo.getAssignmentsGroups()[0]
-			newAssignmentsByColumn := getAssignmentsByColumn(newAssignmentGroup)
+			parsedStatement := queryInfo.getParsedStatements()[0]
+			oldTerms := parsedStatement.terms
+			newParsedStatement := newContext.queryInfo.getParsedStatements()[0]
+			newTerms := newParsedStatement.terms
 
-			require.Equal(t, len(assignmentGroup.assignments), len(newAssignmentGroup.assignments))
-			for name, assignmentAndIndex := range assignmentsByColumn {
-				if contains(test.positionsReplaced, assignmentAndIndex.index) {
-					require.NotEqual(t, assignmentsByColumn[name], newAssignmentsByColumn[name])
+			require.Equal(t, len(oldTerms), len(newTerms))
+			for idx, oldTerm := range oldTerms {
+				newTerm := newTerms[idx]
+				if contains(test.positionsReplaced, idx) {
+					require.NotEqual(t, oldTerm, newTerm)
 
-					require.True(t, assignmentsByColumn[name].assignment.isFunctionCall())
-					require.False(t, newAssignmentsByColumn[name].assignment.isFunctionCall())
+					require.True(t, oldTerm.isFunctionCall())
+					require.False(t, newTerm.isFunctionCall())
 
-					require.False(t, assignmentsByColumn[name].assignment.isLiteral())
-					require.True(t, newAssignmentsByColumn[name].assignment.isLiteral())
+					require.False(t, oldTerm.isLiteral())
+					require.True(t, newTerm.isLiteral())
 				} else {
-					require.Equal(t, assignmentsByColumn[name], newAssignmentsByColumn[name])
+					require.Equal(t, oldTerm, newTerm)
 				}
 			}
 		})
@@ -154,20 +165,6 @@ func contains(s []int, e int) bool {
 		}
 	}
 	return false
-}
-
-type assignmentAndIndex struct {
-	assignment *assignment
-	index      int
-}
-
-func getAssignmentsByColumn(group *assignmentsGroup) map[string]*assignmentAndIndex {
-	m := make(map[string]*assignmentAndIndex)
-	for idx, assignment := range group.assignments {
-		m[assignment.columnName] = &assignmentAndIndex{assignment: assignment, index: idx}
-	}
-
-	return m
 }
 
 type mockMetricsHandler struct{}
