@@ -11,14 +11,41 @@ type SimplifiedCqlListener interface {
 	// EnterCqlStatement is called when entering the cqlStatement production.
 	EnterCqlStatement(c *CqlStatementContext)
 
+	// EnterInsertStatement is called when entering the insertStatement production.
+	EnterInsertStatement(c *InsertStatementContext)
+
+	// EnterUpdateStatement is called when entering the updateStatement production.
+	EnterUpdateStatement(c *UpdateStatementContext)
+
+	// EnterUpdateOperations is called when entering the updateOperations production.
+	EnterUpdateOperations(c *UpdateOperationsContext)
+
+	// EnterUpdateOperation is called when entering the updateOperation production.
+	EnterUpdateOperation(c *UpdateOperationContext)
+
+	// EnterDeleteStatement is called when entering the deleteStatement production.
+	EnterDeleteStatement(c *DeleteStatementContext)
+
+	// EnterDeleteOperations is called when entering the deleteOperations production.
+	EnterDeleteOperations(c *DeleteOperationsContext)
+
+	// EnterDeleteOperation is called when entering the deleteOperation production.
+	EnterDeleteOperation(c *DeleteOperationContext)
+
+	// EnterBatchStatement is called when entering the batchStatement production.
+	EnterBatchStatement(c *BatchStatementContext)
+
+	// EnterBatchChildStatement is called when entering the batchChildStatement production.
+	EnterBatchChildStatement(c *BatchChildStatementContext)
+
 	// EnterSelectStatement is called when entering the selectStatement production.
 	EnterSelectStatement(c *SelectStatementContext)
 
-	// EnterOtherStatement is called when entering the otherStatement production.
-	EnterOtherStatement(c *OtherStatementContext)
-
 	// EnterSelectClause is called when entering the selectClause production.
 	EnterSelectClause(c *SelectClauseContext)
+
+	// EnterSelectors is called when entering the selectors production.
+	EnterSelectors(c *SelectorsContext)
 
 	// EnterSelector is called when entering the selector production.
 	EnterSelector(c *SelectorContext)
@@ -26,8 +53,50 @@ type SimplifiedCqlListener interface {
 	// EnterUnaliasedSelector is called when entering the unaliasedSelector production.
 	EnterUnaliasedSelector(c *UnaliasedSelectorContext)
 
-	// EnterTerm is called when entering the term production.
-	EnterTerm(c *TermContext)
+	// EnterUseStatement is called when entering the useStatement production.
+	EnterUseStatement(c *UseStatementContext)
+
+	// EnterOrderByClause is called when entering the orderByClause production.
+	EnterOrderByClause(c *OrderByClauseContext)
+
+	// EnterOrderings is called when entering the orderings production.
+	EnterOrderings(c *OrderingsContext)
+
+	// EnterOrdering is called when entering the ordering production.
+	EnterOrdering(c *OrderingContext)
+
+	// EnterGroupByClause is called when entering the groupByClause production.
+	EnterGroupByClause(c *GroupByClauseContext)
+
+	// EnterPerPartitionLimitClause is called when entering the perPartitionLimitClause production.
+	EnterPerPartitionLimitClause(c *PerPartitionLimitClauseContext)
+
+	// EnterLimitClause is called when entering the limitClause production.
+	EnterLimitClause(c *LimitClauseContext)
+
+	// EnterUsingClause is called when entering the usingClause production.
+	EnterUsingClause(c *UsingClauseContext)
+
+	// EnterTimestamp is called when entering the timestamp production.
+	EnterTimestamp(c *TimestampContext)
+
+	// EnterTtl is called when entering the ttl production.
+	EnterTtl(c *TtlContext)
+
+	// EnterConditions is called when entering the conditions production.
+	EnterConditions(c *ConditionsContext)
+
+	// EnterCondition is called when entering the condition production.
+	EnterCondition(c *ConditionContext)
+
+	// EnterWhereClause is called when entering the whereClause production.
+	EnterWhereClause(c *WhereClauseContext)
+
+	// EnterRelation is called when entering the relation production.
+	EnterRelation(c *RelationContext)
+
+	// EnterOperator is called when entering the operator production.
+	EnterOperator(c *OperatorContext)
 
 	// EnterLiteral is called when entering the literal production.
 	EnterLiteral(c *LiteralContext)
@@ -47,6 +116,57 @@ type SimplifiedCqlListener interface {
 	// EnterMapLiteral is called when entering the mapLiteral production.
 	EnterMapLiteral(c *MapLiteralContext)
 
+	// EnterMapEntries is called when entering the mapEntries production.
+	EnterMapEntries(c *MapEntriesContext)
+
+	// EnterMapEntry is called when entering the mapEntry production.
+	EnterMapEntry(c *MapEntryContext)
+
+	// EnterTupleLiterals is called when entering the tupleLiterals production.
+	EnterTupleLiterals(c *TupleLiteralsContext)
+
+	// EnterTupleLiteral is called when entering the tupleLiteral production.
+	EnterTupleLiteral(c *TupleLiteralContext)
+
+	// EnterUdtLiteral is called when entering the udtLiteral production.
+	EnterUdtLiteral(c *UdtLiteralContext)
+
+	// EnterFieldLiterals is called when entering the fieldLiterals production.
+	EnterFieldLiterals(c *FieldLiteralsContext)
+
+	// EnterFieldLiteral is called when entering the fieldLiteral production.
+	EnterFieldLiteral(c *FieldLiteralContext)
+
+	// EnterFunctionCall is called when entering the functionCall production.
+	EnterFunctionCall(c *FunctionCallContext)
+
+	// EnterFunctionArgs is called when entering the functionArgs production.
+	EnterFunctionArgs(c *FunctionArgsContext)
+
+	// EnterFunctionArg is called when entering the functionArg production.
+	EnterFunctionArg(c *FunctionArgContext)
+
+	// EnterBindMarkers is called when entering the bindMarkers production.
+	EnterBindMarkers(c *BindMarkersContext)
+
+	// EnterBindMarker is called when entering the bindMarker production.
+	EnterBindMarker(c *BindMarkerContext)
+
+	// EnterPositionalBindMarker is called when entering the positionalBindMarker production.
+	EnterPositionalBindMarker(c *PositionalBindMarkerContext)
+
+	// EnterNamedBindMarker is called when entering the namedBindMarker production.
+	EnterNamedBindMarker(c *NamedBindMarkerContext)
+
+	// EnterTerms is called when entering the terms production.
+	EnterTerms(c *TermsContext)
+
+	// EnterTerm is called when entering the term production.
+	EnterTerm(c *TermContext)
+
+	// EnterTypeCast is called when entering the typeCast production.
+	EnterTypeCast(c *TypeCastContext)
+
 	// EnterCqlType is called when entering the cqlType production.
 	EnterCqlType(c *CqlTypeContext)
 
@@ -58,12 +178,6 @@ type SimplifiedCqlListener interface {
 
 	// EnterTupleType is called when entering the tupleType production.
 	EnterTupleType(c *TupleTypeContext)
-
-	// EnterFunctionCall is called when entering the functionCall production.
-	EnterFunctionCall(c *FunctionCallContext)
-
-	// EnterFunctionArgs is called when entering the functionArgs production.
-	EnterFunctionArgs(c *FunctionArgsContext)
 
 	// EnterTableName is called when entering the tableName production.
 	EnterTableName(c *TableNameContext)
@@ -80,26 +194,59 @@ type SimplifiedCqlListener interface {
 	// EnterQualifiedIdentifier is called when entering the qualifiedIdentifier production.
 	EnterQualifiedIdentifier(c *QualifiedIdentifierContext)
 
+	// EnterIdentifiers is called when entering the identifiers production.
+	EnterIdentifiers(c *IdentifiersContext)
+
 	// EnterIdentifier is called when entering the identifier production.
 	EnterIdentifier(c *IdentifierContext)
 
-	// EnterDiscardedContent is called when entering the discardedContent production.
-	EnterDiscardedContent(c *DiscardedContentContext)
+	// EnterUnreservedKeyword is called when entering the unreservedKeyword production.
+	EnterUnreservedKeyword(c *UnreservedKeywordContext)
 
-	// EnterUnknown is called when entering the unknown production.
-	EnterUnknown(c *UnknownContext)
+	// EnterUnrecognizedStatement is called when entering the unrecognizedStatement production.
+	EnterUnrecognizedStatement(c *UnrecognizedStatementContext)
+
+	// EnterUnrecognizedToken is called when entering the unrecognizedToken production.
+	EnterUnrecognizedToken(c *UnrecognizedTokenContext)
 
 	// ExitCqlStatement is called when exiting the cqlStatement production.
 	ExitCqlStatement(c *CqlStatementContext)
 
+	// ExitInsertStatement is called when exiting the insertStatement production.
+	ExitInsertStatement(c *InsertStatementContext)
+
+	// ExitUpdateStatement is called when exiting the updateStatement production.
+	ExitUpdateStatement(c *UpdateStatementContext)
+
+	// ExitUpdateOperations is called when exiting the updateOperations production.
+	ExitUpdateOperations(c *UpdateOperationsContext)
+
+	// ExitUpdateOperation is called when exiting the updateOperation production.
+	ExitUpdateOperation(c *UpdateOperationContext)
+
+	// ExitDeleteStatement is called when exiting the deleteStatement production.
+	ExitDeleteStatement(c *DeleteStatementContext)
+
+	// ExitDeleteOperations is called when exiting the deleteOperations production.
+	ExitDeleteOperations(c *DeleteOperationsContext)
+
+	// ExitDeleteOperation is called when exiting the deleteOperation production.
+	ExitDeleteOperation(c *DeleteOperationContext)
+
+	// ExitBatchStatement is called when exiting the batchStatement production.
+	ExitBatchStatement(c *BatchStatementContext)
+
+	// ExitBatchChildStatement is called when exiting the batchChildStatement production.
+	ExitBatchChildStatement(c *BatchChildStatementContext)
+
 	// ExitSelectStatement is called when exiting the selectStatement production.
 	ExitSelectStatement(c *SelectStatementContext)
 
-	// ExitOtherStatement is called when exiting the otherStatement production.
-	ExitOtherStatement(c *OtherStatementContext)
-
 	// ExitSelectClause is called when exiting the selectClause production.
 	ExitSelectClause(c *SelectClauseContext)
+
+	// ExitSelectors is called when exiting the selectors production.
+	ExitSelectors(c *SelectorsContext)
 
 	// ExitSelector is called when exiting the selector production.
 	ExitSelector(c *SelectorContext)
@@ -107,8 +254,50 @@ type SimplifiedCqlListener interface {
 	// ExitUnaliasedSelector is called when exiting the unaliasedSelector production.
 	ExitUnaliasedSelector(c *UnaliasedSelectorContext)
 
-	// ExitTerm is called when exiting the term production.
-	ExitTerm(c *TermContext)
+	// ExitUseStatement is called when exiting the useStatement production.
+	ExitUseStatement(c *UseStatementContext)
+
+	// ExitOrderByClause is called when exiting the orderByClause production.
+	ExitOrderByClause(c *OrderByClauseContext)
+
+	// ExitOrderings is called when exiting the orderings production.
+	ExitOrderings(c *OrderingsContext)
+
+	// ExitOrdering is called when exiting the ordering production.
+	ExitOrdering(c *OrderingContext)
+
+	// ExitGroupByClause is called when exiting the groupByClause production.
+	ExitGroupByClause(c *GroupByClauseContext)
+
+	// ExitPerPartitionLimitClause is called when exiting the perPartitionLimitClause production.
+	ExitPerPartitionLimitClause(c *PerPartitionLimitClauseContext)
+
+	// ExitLimitClause is called when exiting the limitClause production.
+	ExitLimitClause(c *LimitClauseContext)
+
+	// ExitUsingClause is called when exiting the usingClause production.
+	ExitUsingClause(c *UsingClauseContext)
+
+	// ExitTimestamp is called when exiting the timestamp production.
+	ExitTimestamp(c *TimestampContext)
+
+	// ExitTtl is called when exiting the ttl production.
+	ExitTtl(c *TtlContext)
+
+	// ExitConditions is called when exiting the conditions production.
+	ExitConditions(c *ConditionsContext)
+
+	// ExitCondition is called when exiting the condition production.
+	ExitCondition(c *ConditionContext)
+
+	// ExitWhereClause is called when exiting the whereClause production.
+	ExitWhereClause(c *WhereClauseContext)
+
+	// ExitRelation is called when exiting the relation production.
+	ExitRelation(c *RelationContext)
+
+	// ExitOperator is called when exiting the operator production.
+	ExitOperator(c *OperatorContext)
 
 	// ExitLiteral is called when exiting the literal production.
 	ExitLiteral(c *LiteralContext)
@@ -128,6 +317,57 @@ type SimplifiedCqlListener interface {
 	// ExitMapLiteral is called when exiting the mapLiteral production.
 	ExitMapLiteral(c *MapLiteralContext)
 
+	// ExitMapEntries is called when exiting the mapEntries production.
+	ExitMapEntries(c *MapEntriesContext)
+
+	// ExitMapEntry is called when exiting the mapEntry production.
+	ExitMapEntry(c *MapEntryContext)
+
+	// ExitTupleLiterals is called when exiting the tupleLiterals production.
+	ExitTupleLiterals(c *TupleLiteralsContext)
+
+	// ExitTupleLiteral is called when exiting the tupleLiteral production.
+	ExitTupleLiteral(c *TupleLiteralContext)
+
+	// ExitUdtLiteral is called when exiting the udtLiteral production.
+	ExitUdtLiteral(c *UdtLiteralContext)
+
+	// ExitFieldLiterals is called when exiting the fieldLiterals production.
+	ExitFieldLiterals(c *FieldLiteralsContext)
+
+	// ExitFieldLiteral is called when exiting the fieldLiteral production.
+	ExitFieldLiteral(c *FieldLiteralContext)
+
+	// ExitFunctionCall is called when exiting the functionCall production.
+	ExitFunctionCall(c *FunctionCallContext)
+
+	// ExitFunctionArgs is called when exiting the functionArgs production.
+	ExitFunctionArgs(c *FunctionArgsContext)
+
+	// ExitFunctionArg is called when exiting the functionArg production.
+	ExitFunctionArg(c *FunctionArgContext)
+
+	// ExitBindMarkers is called when exiting the bindMarkers production.
+	ExitBindMarkers(c *BindMarkersContext)
+
+	// ExitBindMarker is called when exiting the bindMarker production.
+	ExitBindMarker(c *BindMarkerContext)
+
+	// ExitPositionalBindMarker is called when exiting the positionalBindMarker production.
+	ExitPositionalBindMarker(c *PositionalBindMarkerContext)
+
+	// ExitNamedBindMarker is called when exiting the namedBindMarker production.
+	ExitNamedBindMarker(c *NamedBindMarkerContext)
+
+	// ExitTerms is called when exiting the terms production.
+	ExitTerms(c *TermsContext)
+
+	// ExitTerm is called when exiting the term production.
+	ExitTerm(c *TermContext)
+
+	// ExitTypeCast is called when exiting the typeCast production.
+	ExitTypeCast(c *TypeCastContext)
+
 	// ExitCqlType is called when exiting the cqlType production.
 	ExitCqlType(c *CqlTypeContext)
 
@@ -139,12 +379,6 @@ type SimplifiedCqlListener interface {
 
 	// ExitTupleType is called when exiting the tupleType production.
 	ExitTupleType(c *TupleTypeContext)
-
-	// ExitFunctionCall is called when exiting the functionCall production.
-	ExitFunctionCall(c *FunctionCallContext)
-
-	// ExitFunctionArgs is called when exiting the functionArgs production.
-	ExitFunctionArgs(c *FunctionArgsContext)
 
 	// ExitTableName is called when exiting the tableName production.
 	ExitTableName(c *TableNameContext)
@@ -161,12 +395,18 @@ type SimplifiedCqlListener interface {
 	// ExitQualifiedIdentifier is called when exiting the qualifiedIdentifier production.
 	ExitQualifiedIdentifier(c *QualifiedIdentifierContext)
 
+	// ExitIdentifiers is called when exiting the identifiers production.
+	ExitIdentifiers(c *IdentifiersContext)
+
 	// ExitIdentifier is called when exiting the identifier production.
 	ExitIdentifier(c *IdentifierContext)
 
-	// ExitDiscardedContent is called when exiting the discardedContent production.
-	ExitDiscardedContent(c *DiscardedContentContext)
+	// ExitUnreservedKeyword is called when exiting the unreservedKeyword production.
+	ExitUnreservedKeyword(c *UnreservedKeywordContext)
 
-	// ExitUnknown is called when exiting the unknown production.
-	ExitUnknown(c *UnknownContext)
+	// ExitUnrecognizedStatement is called when exiting the unrecognizedStatement production.
+	ExitUnrecognizedStatement(c *UnrecognizedStatementContext)
+
+	// ExitUnrecognizedToken is called when exiting the unrecognizedToken production.
+	ExitUnrecognizedToken(c *UnrecognizedTokenContext)
 }

@@ -66,13 +66,13 @@ var allMetrics = []metrics.Metric{
 var insertQuery = frame.NewFrame(
 	primitive.ProtocolVersion4,
 	client.ManagedStreamId,
-	&message.Query{Query: "INSERT INTO ks1.t1..."},
+	&message.Query{Query: "INSERT INTO ks1.t1"},
 )
 
 var selectQuery = frame.NewFrame(
 	primitive.ProtocolVersion4,
 	client.ManagedStreamId,
-	&message.Query{Query: "SELECT * FROM ks1.t1..."},
+	&message.Query{Query: "SELECT * FROM ks1.t1"},
 )
 
 func testMetrics(t *testing.T, metricsHandler *httpcloudgate.HandlerWithFallback) {
