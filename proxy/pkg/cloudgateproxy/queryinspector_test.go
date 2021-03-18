@@ -320,7 +320,7 @@ func TestNowFunctionCalls(t *testing.T) {
 			true,
 			"INSERT INTO ks1.table1 (foo) VALUES (7872e70a-5a68-11eb-ae93-0242ac130002)",
 			"INSERT INTO ks1.table1 (foo) VALUES (?)",
-			"INSERT INTO ks1.table1 (foo) VALUES (:cloudgate__now__0)",
+			"INSERT INTO ks1.table1 (foo) VALUES (:cloudgate__now)",
 		},
 		{
 			"qualified call INSERT",
@@ -330,7 +330,7 @@ func TestNowFunctionCalls(t *testing.T) {
 			true,
 			"INSERT INTO ks1.table1 (foo) VALUES (7872e70a-5a68-11eb-ae93-0242ac130002)",
 			"INSERT INTO ks1.table1 (foo) VALUES (?)",
-			"INSERT INTO ks1.table1 (foo) VALUES (:cloudgate__now__0)",
+			"INSERT INTO ks1.table1 (foo) VALUES (:cloudgate__now)",
 		},
 		{
 			"qualified call with whitespace and quoted identifiers",
@@ -340,7 +340,7 @@ func TestNowFunctionCalls(t *testing.T) {
 			true,
 			"INSERT INTO ks1.table1 (foo) VALUES ( 7872e70a-5a68-11eb-ae93-0242ac130002 )",
 			"INSERT INTO ks1.table1 (foo) VALUES ( ? )",
-			"INSERT INTO ks1.table1 (foo) VALUES ( :cloudgate__now__0 )",
+			"INSERT INTO ks1.table1 (foo) VALUES ( :cloudgate__now )",
 		},
 		{
 			"cast INSERT",
@@ -350,7 +350,7 @@ func TestNowFunctionCalls(t *testing.T) {
 			true,
 			"INSERT INTO ks1.table1 (foo) VALUES ( ( uuid ) 7872e70a-5a68-11eb-ae93-0242ac130002)",
 			"INSERT INTO ks1.table1 (foo) VALUES ( ( uuid ) ?)",
-			"INSERT INTO ks1.table1 (foo) VALUES ( ( uuid ) :cloudgate__now__0)",
+			"INSERT INTO ks1.table1 (foo) VALUES ( ( uuid ) :cloudgate__now)",
 		},
 		{
 			"other functions INSERT",
@@ -360,7 +360,7 @@ func TestNowFunctionCalls(t *testing.T) {
 			true,
 			"INSERT INTO ks1.table1 (foo, bar, qix) VALUES (7872e70a-5a68-11eb-ae93-0242ac130002, yesterday(), tomorrow())",
 			"INSERT INTO ks1.table1 (foo, bar, qix) VALUES (?, yesterday(), tomorrow())",
-			"INSERT INTO ks1.table1 (foo, bar, qix) VALUES (:cloudgate__now__0, yesterday(), tomorrow())",
+			"INSERT INTO ks1.table1 (foo, bar, qix) VALUES (:cloudgate__now, yesterday(), tomorrow())",
 		},
 		{
 			"multiple occurrences INSERT",
@@ -370,7 +370,7 @@ func TestNowFunctionCalls(t *testing.T) {
 			true,
 			"INSERT INTO ks1.table1 (c1, c2, c3, c4) VALUES ( 7872e70a-5a68-11eb-ae93-0242ac130002, 7872e70a-5a68-11eb-ae93-0242ac130002, 7872e70a-5a68-11eb-ae93-0242ac130002, 7872e70a-5a68-11eb-ae93-0242ac130002)",
 			"INSERT INTO ks1.table1 (c1, c2, c3, c4) VALUES ( ?, ?, ?, ?)",
-			"INSERT INTO ks1.table1 (c1, c2, c3, c4) VALUES ( :cloudgate__now__0, :cloudgate__now__1, :cloudgate__now__2, :cloudgate__now__3)",
+			"INSERT INTO ks1.table1 (c1, c2, c3, c4) VALUES ( :cloudgate__now, :cloudgate__now, :cloudgate__now, :cloudgate__now)",
 		},
 		{
 			"INSERT inside BATCH",
@@ -396,10 +396,10 @@ func TestNowFunctionCalls(t *testing.T) {
 				"INSERT INTO ks1.table1 (c1, c2) VALUES (42, ?) " +
 				"APPLY BATCH",
 			"BEGIN BATCH " +
-				"INSERT INTO ks1.table1 (c1, c2) VALUES (42, :cloudgate__now__0) " +
+				"INSERT INTO ks1.table1 (c1, c2) VALUES (42, :cloudgate__now) " +
 				"DELETE FROM ks1.table1 WHERE c1 = 42 " +
-				"INSERT INTO ks1.table1 (c1, c2) VALUES (42, :cloudgate__now__1) " +
-				"INSERT INTO ks1.table1 (c1, c2) VALUES (42, :cloudgate__now__2) " +
+				"INSERT INTO ks1.table1 (c1, c2) VALUES (42, :cloudgate__now) " +
+				"INSERT INTO ks1.table1 (c1, c2) VALUES (42, :cloudgate__now) " +
 				"APPLY BATCH",
 		},
 		{
@@ -429,11 +429,11 @@ func TestNowFunctionCalls(t *testing.T) {
 				"INSERT INTO ks1.table1 (c1, c2) VALUES (42, ?) " +
 				"APPLY BATCH",
 			"BEGIN BATCH " +
-				"INSERT INTO ks1.table1 (c1, c2) VALUES (42, :cloudgate__now__0) " +
-				"DELETE FROM ks1.table1 WHERE c1 = :cloudgate__now__1 " +
-				"UPDATE ks1.table1 SET c2 = :cloudgate__now__2 WHERE c1 = :cloudgate__now__3 " +
-				"INSERT INTO ks1.table1 (c1, c2) VALUES (42, :cloudgate__now__4) " +
-				"INSERT INTO ks1.table1 (c1, c2) VALUES (42, :cloudgate__now__5) " +
+				"INSERT INTO ks1.table1 (c1, c2) VALUES (42, :cloudgate__now) " +
+				"DELETE FROM ks1.table1 WHERE c1 = :cloudgate__now " +
+				"UPDATE ks1.table1 SET c2 = :cloudgate__now WHERE c1 = :cloudgate__now " +
+				"INSERT INTO ks1.table1 (c1, c2) VALUES (42, :cloudgate__now) " +
+				"INSERT INTO ks1.table1 (c1, c2) VALUES (42, :cloudgate__now) " +
 				"APPLY BATCH",
 		},
 		{
@@ -454,7 +454,7 @@ func TestNowFunctionCalls(t *testing.T) {
 			true,
 			"UPDATE ks1.table1 SET foo = 'bar' WHERE col = 7872e70a-5a68-11eb-ae93-0242ac130002",
 			"UPDATE ks1.table1 SET foo = 'bar' WHERE col = ?",
-			"UPDATE ks1.table1 SET foo = 'bar' WHERE col = :cloudgate__now__0",
+			"UPDATE ks1.table1 SET foo = 'bar' WHERE col = :cloudgate__now",
 		},
 		{
 			"delete",
@@ -464,7 +464,7 @@ func TestNowFunctionCalls(t *testing.T) {
 			true,
 			"DELETE FROM ks1.table1 WHERE col = 7872e70a-5a68-11eb-ae93-0242ac130002",
 			"DELETE FROM ks1.table1 WHERE col = ?",
-			"DELETE FROM ks1.table1 WHERE col = :cloudgate__now__0",
+			"DELETE FROM ks1.table1 WHERE col = :cloudgate__now",
 		},
 		{
 			"unknown statement",

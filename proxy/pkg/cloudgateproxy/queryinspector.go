@@ -1,7 +1,6 @@
 package cloudgateproxy
 
 import (
-	"fmt"
 	"github.com/antlr/antlr4/runtime/Go/antlr"
 	"github.com/google/uuid"
 	parser "github.com/riptano/cloud-gate/antlr"
@@ -417,11 +416,9 @@ func (l *cqlListener) replaceNowFunctionCallsWithPositionalBindMarkers() queryIn
 }
 
 func (l *cqlListener) replaceNowFunctionCallsWithNamedBindMarkers() queryInfo {
-	counter := 0
 	return l.replaceFunctionCalls(func(query string, functionCall *functionCall) *string {
 		if functionCall.isNow() {
-			name := fmt.Sprint(":cloudgate__now__", counter)
-			counter++
+			name := ":cloudgate__now"
 			return &name
 		} else {
 			return nil
