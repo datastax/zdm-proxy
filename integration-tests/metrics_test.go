@@ -82,8 +82,8 @@ func testMetrics(t *testing.T, metricsHandler *httpcloudgate.HandlerWithFallback
 	defer cancelFunc()
 
 	origin, target := createOriginAndTarget(conf)
-	origin.RequestHandlers = []client.RequestHandler{client.HeartbeatHandler, client.HandshakeHandler, handleReads, handleWrites}
-	target.RequestHandlers = []client.RequestHandler{client.HeartbeatHandler, client.HandshakeHandler, handleWrites}
+	origin.RequestHandlers = []client.RequestHandler{client.HeartbeatHandler, client.HandshakeHandler, client.NewSystemTablesHandler("cluster1", "dc1"), handleReads, handleWrites}
+	target.RequestHandlers = []client.RequestHandler{client.HeartbeatHandler, client.HandshakeHandler, client.NewSystemTablesHandler("cluster2", "dc2"), handleWrites}
 	startOriginAndTarget(t, origin, target, ctx)
 
 	startProxy(t, origin, target, conf, ctx)

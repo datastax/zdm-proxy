@@ -16,7 +16,8 @@ import (
 
 func TestNowFunctionReplacement(t *testing.T) {
 
-	simulacronSetup := setup.NewSimulacronTestSetup()
+	simulacronSetup, err := setup.NewSimulacronTestSetup()
+	require.Nil(t, err)
 	defer simulacronSetup.Cleanup()
 
 	testClient := client.NewCqlClient("127.0.0.1:14002", nil)

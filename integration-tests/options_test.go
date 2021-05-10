@@ -18,8 +18,8 @@ func TestOptionsShouldComeFromTarget(t *testing.T) {
 	defer cancelFunc()
 
 	origin, target := createOriginAndTarget(conf)
-	origin.RequestHandlers = []client.RequestHandler{newOptionsHandler("origin")}
-	target.RequestHandlers = []client.RequestHandler{newOptionsHandler("target")}
+	origin.RequestHandlers = []client.RequestHandler{newOptionsHandler("origin"), client.HandshakeHandler, client.NewSystemTablesHandler("cluster2", "dc2")}
+	target.RequestHandlers = []client.RequestHandler{newOptionsHandler("target"), client.HandshakeHandler, client.NewSystemTablesHandler("cluster1", "dc1")}
 
 	startOriginAndTarget(t, origin, target, ctx)
 	startProxy(t, origin, target, conf, ctx)

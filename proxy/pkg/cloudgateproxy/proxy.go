@@ -105,7 +105,28 @@ func (p *CloudgateProxy) Start(ctx context.Context) error {
 	}
 	log.Debugf("target connection check passed (to %v)", p.targetCassandraIP)
 
-	p.initializeControlConnections(originConn, targetConn)
+	initializeControlConnectionTimeoutCtx, _ := context.WithTimeout(ctx, timeout)
+	err = p.initializeControlConnections(originConn, targetConn, initializeControlConnectionTimeoutCtx)
+	if err != nil {
+		return err
+	}
+
+	originHosts, err := p.originControlConn.GetHosts()
+	if err != nil {
+		return fmt.Errorf("failed to initialize proxy, could not get origin hosts: %w", err)
+	}
+
+	log.Infof("Initialized origin control connection. Cluster Name: %v, Hosts: %v",
+		p.originControlConn.GetClusterName(), originHosts)
+
+	targetHosts, err := p.targetControlConn.GetHosts()
+	if err != nil {
+		return fmt.Errorf("failed to initialize proxy, could not get target hosts: %w", err)
+	}
+
+	log.Infof("Initialized target control connection. Cluster Name: %v, Hosts: %v",
+		p.targetControlConn.GetClusterName(), targetHosts)
+
 	p.initializeMetricsHandler()
 
 	err = p.acceptConnectionsFromClients(p.Conf.ProxyQueryAddress, p.Conf.ProxyQueryPort)
@@ -117,18 +138,25 @@ func (p *CloudgateProxy) Start(ctx context.Context) error {
 	return nil
 }
 
-func (p *CloudgateProxy) initializeControlConnections(origin net.Conn, target net.Conn) {
+func (p *CloudgateProxy) initializeControlConnections(origin net.Conn, target net.Conn, ctx context.Context) error {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
 	p.originControlConn =
 		NewControlConn(
-			origin, p.shutdownContext, p.originCassandraIP, p.Conf.OriginCassandraUsername, p.Conf.OriginCassandraPassword, p.Conf)
-	p.originControlConn.Start(p.shutdownWaitGroup)
+			origin, p.shutdownContext, p.originCassandraIP, p.Conf.OriginCassandraPort, p.Conf.OriginCassandraUsername, p.Conf.OriginCassandraPassword, p.Conf)
+	if err := p.originControlConn.Start(p.shutdownWaitGroup, ctx); err != nil {
+		return fmt.Errorf("failed to initialize origin control connection: %w", err)
+	}
+
 	p.targetControlConn =
 		NewControlConn(
-			target, p.shutdownContext, p.targetCassandraIP, p.Conf.TargetCassandraUsername, p.Conf.TargetCassandraPassword, p.Conf)
-	p.targetControlConn.Start(p.shutdownWaitGroup)
+			target, p.shutdownContext, p.targetCassandraIP, p.Conf.TargetCassandraPort, p.Conf.TargetCassandraUsername, p.Conf.TargetCassandraPassword, p.Conf)
+	if err := p.targetControlConn.Start(p.shutdownWaitGroup, ctx); err != nil {
+		return fmt.Errorf("failed to initialize target control connection: %w", err)
+	}
+
+	return nil
 }
 
 func (p *CloudgateProxy) initializeMetricsHandler() {

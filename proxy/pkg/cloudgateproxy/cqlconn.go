@@ -15,33 +15,44 @@ import (
 	"time"
 )
 
-const maxIncomingPending = 2048
-const maxOutgoingPending = 2048
+const (
+	numberOfStreamIds  = int16(2048)
+	eventQueueLength   = 2048
 
+	maxIncomingPending = 2048
+	maxOutgoingPending = 2048
+
+	timeOutsThreshold  = 1024
+)
 type CqlConnection interface {
 	IsInitialized() bool
 	Initialize(version primitive.ProtocolVersion, streamId int16) error
 	InitializeContext(version primitive.ProtocolVersion, streamId int16, ctx context.Context) error
-	Send(request *frame.Frame) error
-	Receive() (*frame.Frame, error)
-	SendContext(request *frame.Frame, ctx context.Context) error
-	ReceiveContext(ctx context.Context) (*frame.Frame, error)
 	SendAndReceive(request *frame.Frame) (*frame.Frame, error)
+	SendAndReceiveContext(request *frame.Frame, ctx context.Context) (*frame.Frame, error)
 	Close() error
+	Query(cql string, genericTypeCodec *GenericTypeCodec) (*ParsedRowSet, error)
+	SendHeartbeat(ctx context.Context) error
 }
 
 // Not thread safe
 type cqlConn struct {
-	readTimeout  time.Duration
-	writeTimeout time.Duration
-	conn         net.Conn
-	credentials  *AuthCredentials
-	initialized  bool
-	cancelFn     context.CancelFunc
-	ctx          context.Context
-	wg           *sync.WaitGroup
-	incomingCh   chan *frame.Frame
-	outgoingCh   chan *frame.Frame
+	readTimeout           time.Duration
+	writeTimeout          time.Duration
+	conn                  net.Conn
+	credentials           *AuthCredentials
+	initialized           bool
+	cancelFn              context.CancelFunc
+	ctx                   context.Context
+	wg                    *sync.WaitGroup
+	incomingCh            chan *frame.Frame
+	outgoingCh            chan *frame.Frame
+	streamIdQueue         chan int16
+	eventsQueue           chan *frame.Frame
+	pendingOperations     map[int16]chan *frame.Frame
+	pendingOperationsLock *sync.RWMutex
+	timedOutOperations    int
+	closed                bool
 }
 
 var (
@@ -54,6 +65,10 @@ func (c *cqlConn) String() string {
 
 func NewCqlConnection(conn net.Conn, username string, password string, readTimeout time.Duration, writeTimeout time.Duration) CqlConnection {
 	ctx, cFn := context.WithCancel(context.Background())
+	streamIdsQueue := make(chan int16, numberOfStreamIds)
+	for i := int16(0); i < numberOfStreamIds; i++ {
+		streamIdsQueue <- i
+	}
 	cqlConn := &cqlConn{
 		readTimeout:  readTimeout,
 		writeTimeout: writeTimeout,
@@ -62,12 +77,18 @@ func NewCqlConnection(conn net.Conn, username string, password string, readTimeo
 			Username: username,
 			Password: password,
 		},
-		initialized: false,
-		ctx:         ctx,
-		cancelFn:    cFn,
-		wg:          &sync.WaitGroup{},
-		incomingCh:  make(chan *frame.Frame, maxIncomingPending),
-		outgoingCh:  make(chan *frame.Frame, maxOutgoingPending),
+		initialized:           false,
+		ctx:                   ctx,
+		cancelFn:              cFn,
+		wg:                    &sync.WaitGroup{},
+		incomingCh:            make(chan *frame.Frame, maxIncomingPending),
+		outgoingCh:            make(chan *frame.Frame, maxOutgoingPending),
+		streamIdQueue:         streamIdsQueue,
+		eventsQueue:           make(chan *frame.Frame, eventQueueLength),
+		pendingOperations:     make(map[int16]chan *frame.Frame),
+		pendingOperationsLock: &sync.RWMutex{},
+		timedOutOperations:    0,
+		closed:                false,
 	}
 	cqlConn.StartRequestLoop()
 	cqlConn.StartResponseLoop()
@@ -89,11 +110,42 @@ func (c *cqlConn) StartResponseLoop() {
 				c.cancelFn()
 				break
 			}
-			select {
-			case c.incomingCh <- f:
-			case <-c.ctx.Done():
+
+			if f.Body.Message.GetOpCode() == primitive.OpCodeEvent {
+				select {
+				case c.eventsQueue <- f:
+				default:
+					log.Warnf("[CqlConnection] events queue is full, blocking response loop until event queue is not full...")
+					select {
+					case c.eventsQueue <- f:
+					case <-c.ctx.Done():
+					}
+				}
+				continue
 			}
+
+			c.pendingOperationsLock.Lock()
+			respChan, ok := c.pendingOperations[f.Header.StreamId]
+			if !ok {
+				log.Warnf("[CqlConnection] could not find response channel for streamid %d, skipping", f.Header.StreamId)
+				c.pendingOperationsLock.Unlock()
+				continue
+			}
+
+			delete(c.pendingOperations, f.Header.StreamId)
+			c.streamIdQueue <- f.Header.StreamId
+			c.pendingOperationsLock.Unlock()
+
+			respChan <- f
+			close(respChan)
 		}
+		c.pendingOperationsLock.Lock()
+		for streamId, respChan := range c.pendingOperations {
+			close(respChan)
+			delete(c.pendingOperations, streamId)
+			c.streamIdQueue <- streamId
+		}
+		c.pendingOperationsLock.Unlock()
 	}()
 }
 
@@ -148,62 +200,77 @@ func (c *cqlConn) Close() error {
 	return nil
 }
 
-func (c *cqlConn) Send(request *frame.Frame) error {
-	return c.SendContext(request, context.Background())
-}
-
-func (c *cqlConn) SendContext(request *frame.Frame, ctx context.Context) error {
+func (c *cqlConn) sendContext(request *frame.Frame, ctx context.Context) (chan *frame.Frame, error) {
 	if c.ctx.Err() != nil {
-		return fmt.Errorf("cql connection was closed: %w", io.EOF)
+		return nil, fmt.Errorf("cql connection was closed: %w", io.EOF)
 	}
 
 	timeoutCtx, _ := context.WithTimeout(ctx, c.writeTimeout)
+
+	var respChan chan *frame.Frame
+	var streamId int16
+	select {
+	case streamId = <-c.streamIdQueue:
+		respChan = make(chan *frame.Frame, 1)
+	default:
+		return nil, fmt.Errorf("no available stream ids for request")
+	}
+	c.pendingOperationsLock.Lock()
+	if c.closed {
+		c.pendingOperationsLock.Unlock()
+		return nil, errors.New("response channel closed")
+	}
+
+	c.pendingOperations[streamId] = respChan
+	c.pendingOperationsLock.Unlock()
+
+	request.Header.StreamId = streamId
+
+	var err error
 	select {
 	case c.outgoingCh <- request:
-		return nil
+		return respChan, nil
 	case <-c.ctx.Done():
-		return fmt.Errorf("cql connection was closed: %w", io.EOF)
+		err = fmt.Errorf("cql connection was closed: %w", io.EOF)
 	case <-timeoutCtx.Done():
-		return fmt.Errorf("context finished before completing sending of frame on %v: %w", c, ctx.Err())
+		err = fmt.Errorf("context finished before completing sending of frame on %v: %w", c, ctx.Err())
 	}
-}
 
-func (c *cqlConn) Receive() (*frame.Frame, error) {
-	return c.ReceiveContext(context.Background())
-}
-
-func (c *cqlConn) ReceiveContext(ctx context.Context) (*frame.Frame, error) {
-	timeoutCtx, _ := context.WithTimeout(ctx, c.readTimeout)
-	select {
-	case response, ok := <-c.incomingCh:
-		if !ok {
-			return nil, fmt.Errorf("failed to receive because connection closed: %w", io.EOF)
-		}
-		return response, nil
-	case <-timeoutCtx.Done():
-		return nil, fmt.Errorf("context finished before completing receiving frame on %v: %w", c, ctx.Err())
+	c.pendingOperationsLock.Lock()
+	if c.closed {
+		c.pendingOperationsLock.Unlock()
+		return nil, err
 	}
+	close(c.pendingOperations[streamId])
+	delete(c.pendingOperations, streamId)
+	c.streamIdQueue <- streamId
+	c.pendingOperationsLock.Unlock()
+	return nil, err
 }
 
 func (c *cqlConn) SendAndReceiveContext(request *frame.Frame, ctx context.Context) (*frame.Frame, error) {
-	writeTimeoutCtx, _ := context.WithTimeout(ctx, c.writeTimeout)
-	err := c.SendContext(request, writeTimeoutCtx)
+	respChan, err := c.sendContext(request, ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request frame: %w", err)
 	}
 
 	readTimeoutCtx, _ := context.WithTimeout(ctx, c.readTimeout)
-	response, err := c.ReceiveContext(readTimeoutCtx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to receive response frame: %w", err)
+	select {
+	case response, ok := <-respChan:
+		if !ok {
+			return nil, fmt.Errorf("failed to receive response frame")
+		}
+		return response, nil
+	case <-readTimeoutCtx.Done():
+		c.pendingOperationsLock.Lock()
+		c.timedOutOperations++
+		timedOutOps := c.timedOutOperations
+		c.pendingOperationsLock.Unlock()
+		if timedOutOps > timeOutsThreshold {
+			c.Close()
+		}
+		return nil, fmt.Errorf("context finished before completing receiving frame on %v: %w", c, readTimeoutCtx.Err())
 	}
-
-	if response.Header.StreamId != request.Header.StreamId {
-		return response, fmt.Errorf(
-			"stream id mismatch; %d (request) vs %d (response): %w",
-			request.Header.StreamId, response.Header.StreamId, StreamIdMismatchErr)
-	}
-	return response, nil
 }
 func (c *cqlConn) SendAndReceive(request *frame.Frame) (*frame.Frame, error) {
 	return c.SendAndReceiveContext(request, context.Background())
@@ -247,6 +314,86 @@ func (c *cqlConn) PerformHandshake(version primitive.ProtocolVersion, streamId i
 		log.Errorf("%v: handshake failed: %v", c, err)
 	}
 	return err
+}
+
+
+func (c *cqlConn) Query(cql string, genericTypeCodec *GenericTypeCodec) (*ParsedRowSet, error) {
+	queryMsg := &message.Query{
+		Query:   cql,
+		Options: &message.QueryOptions{
+			Consistency: primitive.ConsistencyLevelLocalQuorum,
+		},
+	}
+
+	queryFrame := frame.NewFrame(ccProtocolVersion, 2, queryMsg)
+	var rowSet *ParsedRowSet
+	for {
+		localResponse, err := c.SendAndReceiveContext(queryFrame, context.Background())
+		if err != nil {
+			return nil, err
+		}
+
+		switch m := localResponse.Body.Message.(type) {
+		case *message.RowsResult:
+			var newRowSet *ParsedRowSet
+			var columns []*message.ColumnMetadata
+			var columnsIndexes map[string]int
+			if rowSet != nil {
+				columns = rowSet.Columns
+				columnsIndexes = rowSet.ColumnIndexes
+			} else {
+				columns = nil
+				columnsIndexes = nil
+			}
+
+			newRowSet, err = ParseRowsResult(genericTypeCodec, m, columns, columnsIndexes)
+			if err != nil {
+				return nil, fmt.Errorf("could not parse rows result: %w", err)
+			}
+
+			var oldRows []*ParsedRow
+			oldRows = nil
+			if rowSet != nil {
+				oldRows = rowSet.Rows
+			}
+
+			rowSet = &ParsedRowSet{
+				ColumnIndexes: newRowSet.ColumnIndexes,
+				Columns:       newRowSet.Columns,
+				PagingState:   newRowSet.PagingState,
+				Rows:          append(oldRows, newRowSet.Rows...),
+			}
+
+			if rowSet.PagingState == nil {
+				return rowSet, nil
+			}
+		case *message.VoidResult:
+			if rowSet == nil {
+				return nil, fmt.Errorf("server returned void result instead of rows result for query %v", cql)
+			}
+			return rowSet, nil
+		case message.Error:
+			return nil, fmt.Errorf("server returned error %v for query %v", m, cql)
+		}
+	}
+}
+
+
+func (c *cqlConn) SendHeartbeat(ctx context.Context) error {
+	optionsMsg := &message.Options{}
+	heartBeatFrame := frame.NewFrame(ccProtocolVersion, 1, optionsMsg)
+
+	response, err := c.SendAndReceiveContext(heartBeatFrame, ctx)
+	if err != nil {
+		return fmt.Errorf("failed to send heartbeat: %v", err)
+	}
+
+	_, ok := response.Body.Message.(*message.Supported)
+	if !ok {
+		log.Warnf("Expected SUPPORTED but got %v. Considering this a successful heartbeat regardless.", response.Body.Message)
+	}
+
+	return nil
 }
 
 // https://github.com/golang/go/issues/4373#issuecomment-671142941

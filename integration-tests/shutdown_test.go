@@ -14,12 +14,13 @@ import (
 )
 
 func TestShutdownInFlightRequests(t *testing.T) {
-	testSetup := setup.NewSimulacronTestSetupWithSession(false, false)
+	testSetup, err := setup.NewSimulacronTestSetupWithSession(false, false)
 	defer testSetup.Cleanup()
 
 	config := setup.NewTestConfig(testSetup.Origin.GetInitialContactPoint(), testSetup.Target.GetInitialContactPoint())
 	config.RequestTimeoutMs = 30000
-	proxy := setup.NewProxyInstance(testSetup.Origin, testSetup.Target)
+	proxy, err := setup.NewProxyInstance(testSetup.Origin, testSetup.Target)
+	require.Nil(t, err)
 	shutdownProxyTriggered := false
 	defer func() {
 		if !shutdownProxyTriggered {

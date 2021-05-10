@@ -18,7 +18,8 @@ func TestUnavailableNode(t *testing.T) {
 
 		t.Run(clusterNotResponding, func(t *testing.T) {
 
-			simulacronSetup := setup.NewSimulacronTestSetup()
+			simulacronSetup, err := setup.NewSimulacronTestSetup()
+			require.Nil(t, err)
 			defer simulacronSetup.Cleanup()
 
 			testClient, err := client.NewTestClient("127.0.0.1:14002")

@@ -8,7 +8,8 @@ import (
 )
 
 func TestGoCqlConnect(t *testing.T) {
-	testSetup := setup.NewSimulacronTestSetup()
+	testSetup, err := setup.NewSimulacronTestSetup()
+	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
 	// Connect to proxy as a "client"
@@ -38,12 +39,14 @@ func TestMaxClientsThreshold(t *testing.T) {
 	goCqlConnectionsPerHost := 1
 	maxSessions := 5 // each session spawns 2 connections (1 control connection)
 
-	testSetup := setup.NewSimulacronTestSetupWithSession(false, false)
+	testSetup, err := setup.NewSimulacronTestSetupWithSession(false, false)
+	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
 	config := setup.NewTestConfig(testSetup.Origin.GetInitialContactPoint(), testSetup.Target.GetInitialContactPoint())
 	config.MaxClientsThreshold = maxClients
-	proxyInstance := setup.NewProxyInstanceWithConfig(config)
+	proxyInstance, err := setup.NewProxyInstanceWithConfig(config)
+	require.Nil(t, err)
 	defer proxyInstance.Shutdown()
 
 	for i := 0; i < maxSessions + 1; i++ {

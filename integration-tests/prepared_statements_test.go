@@ -13,7 +13,8 @@ import (
 
 func TestPreparedIdProxyCacheMiss(t *testing.T) {
 
-	simulacronSetup := setup.NewSimulacronTestSetup()
+	simulacronSetup, err := setup.NewSimulacronTestSetup()
+	require.Nil(t, err)
 	defer simulacronSetup.Cleanup()
 
 	testClient, err := client.NewTestClient("127.0.0.1:14002")
@@ -53,7 +54,8 @@ func TestPreparedIdProxyCacheMiss(t *testing.T) {
 
 func TestPreparedIdPreparationMismatch(t *testing.T) {
 
-	simulacronSetup := setup.NewSimulacronTestSetup()
+	simulacronSetup, err := setup.NewSimulacronTestSetup()
+	require.Nil(t, err)
 	defer simulacronSetup.Cleanup()
 
 	testClient, err := client.NewTestClient("127.0.0.1:14002")
