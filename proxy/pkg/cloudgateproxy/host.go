@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
 	"net"
 )
@@ -11,7 +12,7 @@ import (
 type Host struct {
 	Address        net.IP
 	Port           int
-	HostId         primitive.UUID
+	HostId         uuid.UUID
 	Datacenter     string
 	Rack           string
 	ReleaseVersion string
@@ -22,7 +23,7 @@ type Host struct {
 func NewHost(
 	address net.IP,
 	port int,
-	hostId primitive.UUID,
+	hostId uuid.UUID,
 	datacenter string,
 	rack string,
 	releaseVersion string,
@@ -152,21 +153,28 @@ func parseHost(addr net.IP, port int, row *ParsedRow) (*Host, error) {
 		dseVersion = val.(string)
 	}
 
+	var parsedHostId uuid.UUID
 	var hostId primitive.UUID
 	val, ok = row.GetByColumn("host_id")
 	if !ok || val == nil {
-		log.Warnf("could not parse host_id of host %v", addr)
+		return nil, fmt.Errorf("could not parse host_id of host %v", addr)
 	} else {
 		hostId, ok = val.(primitive.UUID)
 		if !ok {
-			log.Warnf("could not convert host id %v to UUID for host %v", val, addr)
+			return nil, fmt.Errorf("could not convert host id %v to primitive.UUID for host %v", val, addr)
+		}
+
+		var err error
+		parsedHostId, err = uuid.FromBytes(hostId[:])
+		if err != nil {
+			return nil, fmt.Errorf("could not convert host id %v from primitive.UUID to uuid.UUID for host %v", val, addr)
 		}
 	}
 
 	return NewHost(
 		addr,
 		port,
-		hostId,
+		parsedHostId,
 		datacenter,
 		rack,
 		releaseVersion,

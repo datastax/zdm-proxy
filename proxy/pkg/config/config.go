@@ -12,6 +12,12 @@ import (
 
 // Config holds the values of environment variables necessary for proper Proxy function.
 type Config struct {
+	ProxyIndex         int `default:"0" split_words:"true"`
+	ProxyInstanceCount int `default:"1" split_words:"true"`
+
+	OriginEnableHostAssignment bool `default:"false" split_words:"true"`
+	TargetEnableHostAssignment bool `default:"true" split_words:"true"`
+
 	OriginCassandraHostname string `required:"true" split_words:"true"`
 	OriginCassandraUsername string `required:"true" split_words:"true"`
 	OriginCassandraPassword string `required:"true" split_words:"true"`
@@ -100,6 +106,11 @@ func (c *Config) ParseEnvVars() (*Config, error) {
 	targetBuckets, err := c.ParseTargetBuckets()
 	if err != nil {
 		return nil, fmt.Errorf("could not parse target buckets: %v", err)
+	}
+
+	if c.ProxyIndex < 0 || c.ProxyIndex >= c.ProxyInstanceCount {
+		return nil, fmt.Errorf("invalid ProxyIndex and ProxyInstanceCount values; " +
+			"proxy index must be less than instance count and non negative")
 	}
 
 	log.Infof("Parsed configuration: %v", c)

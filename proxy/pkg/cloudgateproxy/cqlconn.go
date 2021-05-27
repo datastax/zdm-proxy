@@ -33,6 +33,7 @@ type CqlConnection interface {
 	Close() error
 	Query(cql string, genericTypeCodec *GenericTypeCodec) (*ParsedRowSet, error)
 	SendHeartbeat(ctx context.Context) error
+	SetEventHandler(eventHandler func(f *frame.Frame))
 }
 
 // Not thread safe
@@ -45,7 +46,6 @@ type cqlConn struct {
 	cancelFn              context.CancelFunc
 	ctx                   context.Context
 	wg                    *sync.WaitGroup
-	incomingCh            chan *frame.Frame
 	outgoingCh            chan *frame.Frame
 	streamIdQueue         chan int16
 	eventsQueue           chan *frame.Frame
@@ -53,6 +53,8 @@ type cqlConn struct {
 	pendingOperationsLock *sync.RWMutex
 	timedOutOperations    int
 	closed                bool
+	eventHandler          func(f *frame.Frame)
+	eventHandlerLock      *sync.Mutex
 }
 
 var (
@@ -63,7 +65,10 @@ func (c *cqlConn) String() string {
 	return fmt.Sprintf("cqlConn{conn: %v}", c.conn.RemoteAddr().String())
 }
 
-func NewCqlConnection(conn net.Conn, username string, password string, readTimeout time.Duration, writeTimeout time.Duration) CqlConnection {
+func NewCqlConnection(
+	conn net.Conn,
+	username string, password string,
+	readTimeout time.Duration, writeTimeout time.Duration) CqlConnection {
 	ctx, cFn := context.WithCancel(context.Background())
 	streamIdsQueue := make(chan int16, numberOfStreamIds)
 	for i := int16(0); i < numberOfStreamIds; i++ {
@@ -81,7 +86,6 @@ func NewCqlConnection(conn net.Conn, username string, password string, readTimeo
 		ctx:                   ctx,
 		cancelFn:              cFn,
 		wg:                    &sync.WaitGroup{},
-		incomingCh:            make(chan *frame.Frame, maxIncomingPending),
 		outgoingCh:            make(chan *frame.Frame, maxOutgoingPending),
 		streamIdQueue:         streamIdsQueue,
 		eventsQueue:           make(chan *frame.Frame, eventQueueLength),
@@ -89,17 +93,25 @@ func NewCqlConnection(conn net.Conn, username string, password string, readTimeo
 		pendingOperationsLock: &sync.RWMutex{},
 		timedOutOperations:    0,
 		closed:                false,
+		eventHandlerLock:      &sync.Mutex{},
 	}
 	cqlConn.StartRequestLoop()
 	cqlConn.StartResponseLoop()
+	cqlConn.StartEventLoop()
 	return cqlConn
+}
+
+func (c *cqlConn) SetEventHandler(eventHandler func(f *frame.Frame)) {
+	c.eventHandlerLock.Lock()
+	defer c.eventHandlerLock.Unlock()
+	c.eventHandler = eventHandler
 }
 
 func (c *cqlConn) StartResponseLoop() {
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
-		defer close(c.incomingCh)
+		defer close(c.eventsQueue)
 		defer log.Debugf("Shutting down response loop on %v.", c)
 		for c.ctx.Err() == nil {
 			f, err := defaultCodec.DecodeFrame(c.conn)
@@ -168,6 +180,23 @@ func (c *cqlConn) StartRequestLoop() {
 			case <-c.ctx.Done():
 				return
 			}
+		}
+	}()
+}
+
+func (c *cqlConn) StartEventLoop() {
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		defer log.Debugf("Shutting down event loop on %v.", c)
+
+		event, ok := <- c.eventsQueue
+		for ; ok; event, ok = <- c.eventsQueue {
+			c.eventHandlerLock.Lock()
+			if c.eventHandler != nil {
+				c.eventHandler(event)
+			}
+			c.eventHandlerLock.Unlock()
 		}
 	}()
 }

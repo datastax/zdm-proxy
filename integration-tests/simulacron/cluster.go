@@ -30,13 +30,13 @@ type Node struct {
 
 type baseSimulacron struct {
 	process *Process
-	id      int
+	id      string
 }
 
 func (process *Process) newCluster(startSession bool, data *ClusterData, name string) (*Cluster, error) {
 	dcs := make([]*Datacenter, len(data.Datacenters))
 	for i := 0; i < len(dcs); i++ {
-		dcs[i] = newDatacenter(process, data.Datacenters[i])
+		dcs[i] = newDatacenter(process, data.Datacenters[i], data.Id)
 	}
 	var contactPoint string
 	var session *gocql.Session
@@ -57,30 +57,30 @@ func (process *Process) newCluster(startSession bool, data *ClusterData, name st
 	return &Cluster{
 		InitialContactPoint: contactPoint,
 		Version:             env.ServerVersion,
-		baseSimulacron:      &baseSimulacron{id: data.Id, process: process},
+		baseSimulacron:      &baseSimulacron{id: fmt.Sprintf("%d", data.Id), process: process},
 		Session:             session,
 		Datacenters:         dcs,
 		Name:                name,
 	}, nil
 }
 
-func newNode(process *Process, data *NodeData) *Node {
-	return &Node{baseSimulacron: &baseSimulacron{id: data.Id, process: process}, Address: data.Address}
+func newNode(process *Process, data *NodeData, dcId int, clusterId int) *Node {
+	return &Node{baseSimulacron: &baseSimulacron{id: fmt.Sprintf("%d/%d/%d", clusterId, dcId, data.Id), process: process}, Address: data.Address}
 }
 
-func newDatacenter(process *Process, data *DatacenterData) *Datacenter {
+func newDatacenter(process *Process, data *DatacenterData, clusterId int) *Datacenter {
 	nodes := make([]*Node, len(data.Nodes))
 	for i := 0; i < len(nodes); i++ {
-		nodes[i] = newNode(process, data.Nodes[i])
+		nodes[i] = newNode(process, data.Nodes[i], data.Id, clusterId)
 	}
 	return &Datacenter{
-		baseSimulacron: &baseSimulacron{id: data.Id, process: process},
+		baseSimulacron: &baseSimulacron{id: fmt.Sprintf("%d/%d", clusterId, data.Id), process: process},
 		Nodes:          nodes,
 	}
 }
 
 func (baseSimulacron *baseSimulacron) GetId() string {
-	return fmt.Sprintf("%d", baseSimulacron.id)
+	return baseSimulacron.id
 }
 
 func GetNewCluster(startSession bool, numberOfNodes int) (*Cluster, error) {

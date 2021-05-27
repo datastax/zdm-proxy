@@ -70,6 +70,12 @@ func (baseSimulacron *baseSimulacron) GetLogs() (*ClusterLogs, error) {
 }
 
 func (baseSimulacron *baseSimulacron) GetLogsByType(queryType QueryType) (*ClusterLogs, error) {
+	return baseSimulacron.GetLogsWithFilter(func(entry *RequestLogEntry) bool {
+		return entry.QueryType == queryType
+	})
+}
+
+func (baseSimulacron *baseSimulacron) GetLogsWithFilter(filterFunc func(*RequestLogEntry) bool) (*ClusterLogs, error) {
 	logs, err := baseSimulacron.GetLogs()
 	if err != nil {
 		return nil, err
@@ -79,7 +85,7 @@ func (baseSimulacron *baseSimulacron) GetLogsByType(queryType QueryType) (*Clust
 		for _, node := range dc.Nodes {
 			var queries []*RequestLogEntry
 			for _, query := range node.Queries {
-				if query.QueryType == queryType {
+				if filterFunc(query) {
 					queries = append(queries, query)
 				}
 			}

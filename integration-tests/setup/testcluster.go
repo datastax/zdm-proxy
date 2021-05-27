@@ -238,6 +238,13 @@ func NewProxyInstanceWithConfig(config *config.Config) (*cloudgateproxy.Cloudgat
 
 func NewTestConfig(originHost string, targetHost string) *config.Config {
 	conf := config.New()
+
+	conf.ProxyIndex = 0
+	conf.ProxyInstanceCount = 1
+
+	conf.OriginEnableHostAssignment = false
+	conf.TargetEnableHostAssignment = true
+
 	conf.OriginCassandraHostname = originHost
 	conf.OriginCassandraUsername = "cassandra"
 	conf.OriginCassandraPassword = "cassandra"

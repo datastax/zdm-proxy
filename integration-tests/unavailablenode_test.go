@@ -49,10 +49,16 @@ func TestUnavailableNode(t *testing.T) {
 			}
 			response, _, err := testClient.SendMessage(primitive.ProtocolVersion4, query)
 
-			require.True(t, response == nil, "a response has been received")
-			require.True(t, err != nil, "no error has been received, but the request should have failed")
-			require.True(t, strings.Contains(err.Error(), "response channel closed"),
-				"the connection should have been closed at client level, but it didn't, got: %v", err)
+			if response != nil {
+				responseError, ok := response.Body.Message.(*message.Overloaded)
+				require.True(t, ok, "response should be nil or OVERLOADED (shutdown)")
+				require.NotNil(t, responseError, "response should be nil or OVERLOADED (shutdown)")
+				require.Equal(t, "Shutting down, please retry on next host.", responseError.ErrorMessage)
+			} else {
+				require.NotNil(t, err, "no error has been received, but the request should have failed")
+				require.True(t, strings.Contains(err.Error(), "response channel closed"),
+					"the connection should have been closed at client level, but it didn't, got: %v", err)
+			}
 
 			// open new connection to verify that the same proxy instance continues working normally
 			newTestClient, err := client.NewTestClient("127.0.0.1:14002")

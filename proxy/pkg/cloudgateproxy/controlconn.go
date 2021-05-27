@@ -3,13 +3,17 @@ package cloudgateproxy
 import (
 	"context"
 	"fmt"
+	"github.com/datastax/go-cassandra-native-protocol/frame"
+	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
 	"github.com/jpillora/backoff"
 	"github.com/riptano/cloud-gate/proxy/pkg/config"
 	log "github.com/sirupsen/logrus"
 	"math"
 	"net"
+	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -27,9 +31,14 @@ type ControlConn struct {
 	OpenConnectionTimeout time.Duration
 	cqlConnLock           *sync.Mutex
 	genericTypeCodec      *GenericTypeCodec
-	topologyLock          *sync.Mutex
+	topologyLock          *sync.RWMutex
 	hosts                 []*Host
+	assignedHosts         []*Host
 	clusterName           string
+	proxyIndex            int
+	proxyInstancesCount   int
+	currentAssignment     int64
+	refreshHostsDebouncer chan bool
 }
 
 const ccProtocolVersion = primitive.ProtocolVersion3
@@ -56,8 +65,12 @@ func NewControlConn(conn net.Conn, ctx context.Context, endpoint string, port in
 		OpenConnectionTimeout: time.Duration(conf.ClusterConnectionTimeoutMs) * time.Millisecond,
 		cqlConnLock:           &sync.Mutex{},
 		genericTypeCodec:      NewDefaultGenericTypeCodec(ccProtocolVersion),
-		topologyLock:          &sync.Mutex{},
+		topologyLock:          &sync.RWMutex{},
 		hosts:                 nil,
+		proxyIndex:            conf.ProxyIndex,
+		proxyInstancesCount:   conf.ProxyInstanceCount,
+		currentAssignment:     0,
+		refreshHostsDebouncer: make(chan bool, 1),
 	}
 }
 
@@ -71,6 +84,30 @@ func (cc *ControlConn) Start(wg *sync.WaitGroup, ctx context.Context) error {
 	} else {
 		cc.setConn(conn, newConn)
 	}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer log.Infof("Shutting down refresh topology debouncer of control connection %v.", cc.GetAddr())
+		for ; cc.context.Err() == nil; {
+			select {
+			case <-cc.context.Done():
+				return
+			case <-cc.refreshHostsDebouncer:
+			}
+
+			conn := cc.getConn()
+			if conn == nil {
+				log.Debugf("Topology refresh scheduled but no connection available.")
+				continue
+			}
+
+			_, err := cc.RefreshHosts(conn)
+			if err != nil {
+				log.Warnf("Error refreshing topology (triggered by event): %v", err)
+			}
+		}
+	}()
 
 	wg.Add(1)
 	go func() {
@@ -185,6 +222,19 @@ func (cc *ControlConn) Open(conn CqlConnection, ctx context.Context) (CqlConnect
 		_, err = cc.RefreshHosts(conn)
 	}
 
+	conn.SetEventHandler(func(f *frame.Frame) {
+		switch f.Body.Message.(type) {
+		case *message.TopologyChangeEvent:
+			select {
+			case cc.refreshHostsDebouncer <- true:
+			default:
+				log.Debugf("Discarding event %v because a topology refresh is already scheduled.", f.Body.Message)
+			}
+		default:
+			return
+		}
+	})
+
 	if err != nil {
 		log.Infof("Error while opening control connection, triggering shutdown of connection: %v", err)
 		err2 := conn.Close()
@@ -232,21 +282,31 @@ func (cc *ControlConn) RefreshHosts(conn CqlConnection) ([]*Host, error) {
 		return nil, fmt.Errorf("could not fetch information from system.peers table: %w", err)
 	}
 
-	hosts := ParseSystemPeersResult(peersQuery, cc.port, false)
+	orderedHosts := ParseSystemPeersResult(peersQuery, cc.port, false)
 
-	hosts = append([]*Host{localHost}, hosts...)
+	orderedHosts = append([]*Host{localHost}, orderedHosts...)
+	sort.Slice(orderedHosts, func(i, j int) bool {
+		if orderedHosts[i].Rack == orderedHosts[j].Rack {
+			return orderedHosts[i].HostId.String() < orderedHosts[j].HostId.String()
+		}
+
+		return orderedHosts[i].Rack < orderedHosts[j].Rack
+	})
+
+	assignedHosts := computeAssignedHosts(cc.proxyIndex, cc.proxyInstancesCount, orderedHosts)
 
 	cc.topologyLock.Lock()
 	cc.clusterName = clusterName
-	cc.hosts = hosts
+	cc.hosts = orderedHosts
+	cc.assignedHosts = assignedHosts
 	cc.topologyLock.Unlock()
 
-	return hosts, nil
+	return orderedHosts, nil
 }
 
 func (cc *ControlConn) GetHosts() ([]*Host, error) {
-	cc.topologyLock.Lock()
-	defer cc.topologyLock.Unlock()
+	cc.topologyLock.RLock()
+	defer cc.topologyLock.RUnlock()
 
 	if cc.hosts == nil {
 		return nil, fmt.Errorf("could not get hosts because topology information has not been retrieved yet")
@@ -255,9 +315,33 @@ func (cc *ControlConn) GetHosts() ([]*Host, error) {
 	return cc.hosts, nil
 }
 
+func (cc *ControlConn) GetAssignedHosts() ([]*Host, error) {
+	cc.topologyLock.RLock()
+	defer cc.topologyLock.RUnlock()
+
+	if cc.assignedHosts == nil {
+		return nil, fmt.Errorf("could not get assigned hosts because topology information has not been retrieved yet")
+	}
+
+	return cc.assignedHosts, nil
+}
+
+func (cc *ControlConn) NextAssignedHost() (*Host, error) {
+	cc.topologyLock.RLock()
+	defer cc.topologyLock.RUnlock()
+
+	if cc.assignedHosts == nil {
+		return nil, fmt.Errorf("could not get assigned hosts because topology information has not been retrieved yet")
+	}
+
+	assignment := cc.incCurrentAssignmentCounter(len(cc.assignedHosts))
+
+	return cc.assignedHosts[assignment], nil
+}
+
 func (cc *ControlConn) GetClusterName() string {
-	cc.topologyLock.Lock()
-	defer cc.topologyLock.Unlock()
+	cc.topologyLock.RLock()
+	defer cc.topologyLock.RUnlock()
 
 	return cc.clusterName
 }
@@ -278,4 +362,33 @@ func (cc *ControlConn) getConn() CqlConnection {
 	conn := cc.cqlConn
 	defer cc.cqlConnLock.Unlock()
 	return conn
+}
+
+// should be called with a read or write lock on topologyLock
+func (cc *ControlConn) getCurrentAssignmentCounter(assignedHostsLength int) int64 {
+	return atomic.LoadInt64(&cc.currentAssignment) % int64(assignedHostsLength)
+}
+
+// should be called with a read or write lock on topologyLock
+func (cc *ControlConn) incCurrentAssignmentCounter(assignedHostsLength int) int64 {
+	value := atomic.AddInt64(&cc.currentAssignment, 1) % int64(assignedHostsLength)
+	if value == 0 {
+		atomic.AddInt64(&cc.currentAssignment, int64(-assignedHostsLength))
+	}
+	return value
+}
+
+func computeAssignedHosts(index int, count int, orderedHosts []*Host) []*Host {
+	i := 0
+	assignedHosts := make([]*Host, 0)
+	hostsCount := len(orderedHosts)
+	for _, h := range orderedHosts {
+		if i == (index % hostsCount) {
+			assignedHosts = append(assignedHosts, h)
+		}
+
+		i = (i + 1) % count
+	}
+
+	return assignedHosts
 }
