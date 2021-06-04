@@ -44,7 +44,7 @@ func (process *Process) Create(startSession bool, numberOfNodes int) (*Cluster, 
 
 	var clusterData ClusterData
 	json.Unmarshal(resp, &clusterData)
-	return process.newCluster(startSession, &clusterData)
+	return process.newCluster(startSession, &clusterData, name)
 }
 
 func (process *Process) Remove(id string) error {

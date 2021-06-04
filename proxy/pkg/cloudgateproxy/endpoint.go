@@ -1,58 +1,110 @@
 package cloudgateproxy
 
 import (
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
 	"fmt"
+	"time"
 )
 
-type EndpointConfig interface {
-	getEndpoint() string
-	isSNI()	bool
+type Endpoint interface {
+	GetSocketEndpoint() string
+	GetTlsConfig() *tls.Config
+	GetEndpointIdentifier()   string
 }
 
-type SniEndpointConfig struct {
-	hostId	string		//this is the host ID and is only populated when SNI is being used
-	port 	int
+type DefaultEndpoint struct {
+	socketEndpoint string
 }
 
-type DirectEndpointConfig struct {
-	host	string	// can be a hostname or an IP address (no need to distinguish at this time, as hostnames are resolved automatically)
-	port		int
-}
-
-func (sec SniEndpointConfig) getEndpoint() string {
-	return sec.hostId
-}
-
-func (sec SniEndpointConfig) isSNI() bool{
-	return true
-}
-
-func (dec DirectEndpointConfig) getEndpoint() string {
-	return fmt.Sprintf("%s:%d", dec.host, dec.port)
-}
-
-func (dec DirectEndpointConfig) isSNI() bool{
-	return false
-}
-
-/* For SNI:
-    - address is going to be ConnectionConfig.SniProxyAddress
-    - port is going to be ConnectionConfig.cqlPort
-   For direct connection:
-    - address is going to be p.Conf.OriginCassandraHost (or target)
-    - port is going to be p.Conf.OriginCassandraPort (or target)
-*/
-func NewEndpointConfig(host string, isSni bool, port int) EndpointConfig {
-	if isSni {
-		return SniEndpointConfig{
-			hostId: host,
-			port:   port,
-		}
-	} else {
-		return DirectEndpointConfig{
-			host: host,
-			port: port,
-		}
+func NewDefaultEndpoint(addr string, port int) *DefaultEndpoint {
+	return &DefaultEndpoint{
+		socketEndpoint: fmt.Sprintf("%s:%d", addr, port),
 	}
 }
 
+func (recv *DefaultEndpoint) GetSocketEndpoint() string {
+	 return recv.socketEndpoint
+}
+
+func (recv *DefaultEndpoint) GetTlsConfig() *tls.Config {
+	// tls not supported for non sni/astra yet
+	return nil
+}
+
+func (recv *DefaultEndpoint) GetEndpointIdentifier() string {
+	return recv.socketEndpoint
+}
+
+func (recv *DefaultEndpoint) String() string {
+	return recv.GetEndpointIdentifier()
+}
+
+type AstraEndpoint struct {
+	proxyEndpoint string
+	proxyAddr     string
+	baseTlsConfig *tls.Config
+	hostId        string
+	endpointId    string
+}
+
+func NewAstraEndpoint(proxyEndpoint string, proxyAddr string, hostId string, baseTlsConfig *tls.Config) *AstraEndpoint {
+	return &AstraEndpoint{
+		proxyEndpoint: proxyEndpoint,
+		proxyAddr:     proxyAddr,
+		baseTlsConfig: baseTlsConfig,
+		hostId:        hostId,
+		endpointId:    fmt.Sprintf("%s-%s", proxyEndpoint, hostId),
+	}
+}
+
+func (recv *AstraEndpoint) GetSocketEndpoint() string {
+	return recv.proxyEndpoint
+}
+
+func (recv *AstraEndpoint) GetTlsConfig() *tls.Config {
+	return &tls.Config{
+		RootCAs:               recv.baseTlsConfig.RootCAs,
+		Certificates:          recv.baseTlsConfig.Certificates,
+		ServerName:            recv.hostId,
+		InsecureSkipVerify:    true,
+		VerifyPeerCertificate: recv.verifyCerts,
+	}
+}
+
+func (recv *AstraEndpoint) GetEndpointIdentifier() string {
+	return recv.endpointId
+}
+
+func (recv *AstraEndpoint) String() string {
+	return recv.GetEndpointIdentifier()
+}
+
+func (recv *AstraEndpoint) verifyCerts(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+	certs := make([]*x509.Certificate, len(rawCerts))
+	for i, asn1Data := range rawCerts {
+		cert, err := x509.ParseCertificate(asn1Data)
+		if err != nil {
+			//c.sendAlert(alertBadCertificate)
+			return errors.New("tls: failed to parse certificate from server: " + err.Error())
+		}
+		certs[i] = cert
+	}
+
+	opts := x509.VerifyOptions{
+		Roots:         recv.baseTlsConfig.RootCAs,
+		CurrentTime:   time.Now(),
+		DNSName:       recv.proxyAddr,
+		Intermediates: x509.NewCertPool(),
+	}
+	for _, cert := range certs[1:] {
+		opts.Intermediates.AddCert(cert)
+	}
+	var err error
+	verifiedChains, err = certs[0].Verify(opts)
+	//if err != nil {
+	//	c.sendAlert(alertBadCertificate)
+	return err
+	//}
+}

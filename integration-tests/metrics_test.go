@@ -78,18 +78,20 @@ var selectQuery = frame.NewFrame(
 func testMetrics(t *testing.T, metricsHandler *httpcloudgate.HandlerWithFallback) {
 
 	conf := setup.NewTestConfig("127.0.1.1", "127.0.1.2")
-	ctx, cancelFunc := context.WithCancel(context.Background())
-	defer cancelFunc()
 
 	origin, target := createOriginAndTarget(conf)
-	origin.RequestHandlers = []client.RequestHandler{client.HeartbeatHandler, client.HandshakeHandler, handleReads, handleWrites}
-	target.RequestHandlers = []client.RequestHandler{client.HeartbeatHandler, client.HandshakeHandler, handleWrites}
-	startOriginAndTarget(t, origin, target, ctx)
-
-	startProxy(t, origin, target, conf, ctx)
+	defer origin.Close()
+	defer target.Close()
+	origin.RequestHandlers = []client.RequestHandler{client.HeartbeatHandler, client.HandshakeHandler, client.NewSystemTablesHandler("cluster1", "dc1"), handleReads, handleWrites}
+	target.RequestHandlers = []client.RequestHandler{client.HeartbeatHandler, client.HandshakeHandler, client.NewSystemTablesHandler("cluster2", "dc2"), handleWrites}
 
 	wg := &sync.WaitGroup{}
 	defer wg.Wait()
+	ctx, cancelFunc := context.WithCancel(context.Background())
+	defer cancelFunc()
+	startOriginAndTarget(t, origin, target, ctx)
+	startProxy(t, origin, target, conf, ctx, wg)
+
 	srv := startMetricsHandler(t, conf, wg, metricsHandler)
 	defer func() { _ = srv.Close() }()
 
@@ -158,11 +160,14 @@ func startProxy(
 	target *client.CqlServer,
 	conf *config.Config,
 	ctx context.Context,
+	wg *sync.WaitGroup,
 ) *cloudgateproxy.CloudgateProxy {
 	proxy, err := cloudgateproxy.Run(conf, ctx)
 	require.Nil(t, err)
 	require.NotNil(t, proxy)
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		<-ctx.Done()
 		proxy.Shutdown()
 	}()

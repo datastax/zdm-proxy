@@ -16,8 +16,8 @@ import (
 )
 
 type ClusterConnectionInfo struct {
-	connConfig		*ConnectionConfig
-	endpointConfig	EndpointConfig
+	connConfig        *ConnectionConfig
+	endpoint          Endpoint
 	isOriginCassandra bool
 }
 
@@ -46,11 +46,11 @@ type ClusterConnector struct {
 	readScheduler *Scheduler
 }
 
-func NewClusterConnectionInfo(connConfig *ConnectionConfig, endpointConfig EndpointConfig, isOriginCassandra bool) *ClusterConnectionInfo {
+func NewClusterConnectionInfo(connConfig *ConnectionConfig, endpointConfig Endpoint, isOriginCassandra bool) *ClusterConnectionInfo {
 	return &ClusterConnectionInfo{
-		connConfig:			connConfig,
-		endpointConfig:		endpointConfig,
-		isOriginCassandra:	isOriginCassandra,
+		connConfig:        connConfig,
+		endpoint:          endpointConfig,
+		isOriginCassandra: isOriginCassandra,
 	}
 }
 
@@ -125,8 +125,8 @@ func (cc *ClusterConnector) run() {
 }
 
 func openConnectionToCluster(connInfo *ClusterConnectionInfo, context context.Context, metricsHandler metrics.IMetricsHandler) (net.Conn, context.Context, error) {
-	log.Infof("[ClusterConnector] Opening request connection to %v", connInfo.endpointConfig.getEndpoint())
-	conn, timeoutCtx, err := openConnection(connInfo.connConfig, connInfo.endpointConfig, context, true)
+	log.Infof("[ClusterConnector] Opening request connection to %v", connInfo.endpoint.GetEndpointIdentifier())
+	conn, timeoutCtx, err := openConnection(connInfo.connConfig, connInfo.endpoint, context, true)
 	if err != nil {
 		return nil, timeoutCtx, err
 	}

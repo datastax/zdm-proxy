@@ -47,10 +47,11 @@ func TestWithHttpHandlers(t *testing.T) {
 func testHttpEndpointsWithProxyNotInitialized(
 	t *testing.T, metricsHandler *httpcloudgate.HandlerWithFallback, healthHandler *httpcloudgate.HandlerWithFallback) {
 
-	simulacronSetup := setup.NewSimulacronTestSetupWithSession(false, false)
+	simulacronSetup, err := setup.NewSimulacronTestSetupWithSession(false, false)
+	require.Nil(t, err)
 	defer simulacronSetup.Cleanup()
 
-	err := simulacronSetup.Origin.DisableConnectionListener()
+	err = simulacronSetup.Origin.DisableConnectionListener()
 	require.Nil(t, err, "origin disable listener failed: %v", err)
 	err = simulacronSetup.Target.DisableConnectionListener()
 	require.Nil(t, err, "target disable listener failed: %v", err)
@@ -86,7 +87,8 @@ func testHttpEndpointsWithProxyNotInitialized(
 func testHttpEndpointsWithProxyInitialized(
 	t *testing.T, metricsHandler *httpcloudgate.HandlerWithFallback, healthHandler *httpcloudgate.HandlerWithFallback) {
 
-	simulacronSetup := setup.NewSimulacronTestSetupWithSession(false, false)
+	simulacronSetup, err := setup.NewSimulacronTestSetupWithSession(false, false)
+	require.Nil(t, err)
 	defer simulacronSetup.Cleanup()
 
 	conf := setup.NewTestConfig(simulacronSetup.Origin.GetInitialContactPoint(), simulacronSetup.Target.GetInitialContactPoint())
@@ -132,7 +134,8 @@ func testHttpEndpointsWithProxyInitialized(
 func testHttpEndpointsWithUnavailableNode(
 	t *testing.T, metricsHandler *httpcloudgate.HandlerWithFallback, healthHandler *httpcloudgate.HandlerWithFallback) {
 
-	simulacronSetup := setup.NewSimulacronTestSetupWithSession(false, false)
+	simulacronSetup, err := setup.NewSimulacronTestSetupWithSession(false, false)
+	require.Nil(t, err)
 	defer simulacronSetup.Cleanup()
 
 	conf := setup.NewTestConfig(simulacronSetup.Origin.GetInitialContactPoint(), simulacronSetup.Target.GetInitialContactPoint())

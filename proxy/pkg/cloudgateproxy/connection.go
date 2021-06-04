@@ -3,40 +3,39 @@ package cloudgateproxy
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
-	"errors"
 	"fmt"
 	"github.com/jpillora/backoff"
 	log "github.com/sirupsen/logrus"
+	"math/rand"
 	"net"
 	"time"
 )
 
 type ConnectionConfig struct {
-	metadataServiceHostName string
-	metadataServicePort     string
-	tlsConfig               *tls.Config
-	connectionTimeoutMs     int
-	sniProxyAddress         string
-	cqlPort                 int
+	tlsConfig           *tls.Config
+	connectionTimeoutMs int
+	sniProxyEndpoint    string
+	sniProxyAddr        string
+	clusterType         ClusterType
+	endpointFactory     func(*Host) Endpoint
 }
 
-func NewConnectionConfig(tlsConfig *tls.Config, connectionTimeoutMs int, metadataServiceHostname string,
-	metadataServicePort string, sniProxyAddress string, roundRobinPort int) *ConnectionConfig {
+func NewConnectionConfig(tlsConfig *tls.Config, connectionTimeoutMs int, sniProxyEndpoint string, sniProxyAddr string,
+	clusterType ClusterType, endpointFactory func(*Host) Endpoint) *ConnectionConfig {
 	return &ConnectionConfig{
-		metadataServiceHostName: metadataServiceHostname,
-		metadataServicePort:     metadataServicePort,
-		tlsConfig:               tlsConfig,
-		connectionTimeoutMs:     connectionTimeoutMs,
-		sniProxyAddress:         sniProxyAddress,
-		cqlPort:                 roundRobinPort,
+		tlsConfig:           tlsConfig,
+		connectionTimeoutMs: connectionTimeoutMs,
+		sniProxyEndpoint:    sniProxyEndpoint,
+		sniProxyAddr:        sniProxyAddr,
+		clusterType:         clusterType,
+		endpointFactory:     endpointFactory,
 	}
 }
 
 // version from zipped bundle
-func initializeConnectionAndControlEndpointConfig(secureConnectBundlePath string, hostName string, port int, connTimeoutInMs int) (*ConnectionConfig, []EndpointConfig, error){
+func initializeConnectionConfig(secureConnectBundlePath string, hostName string, port int, connTimeoutInMs int, clusterType ClusterType) (*ConnectionConfig, []Endpoint, error){
 	var connConfig *ConnectionConfig
-	controlConnEndpointConfigs := make([]EndpointConfig, 0)
+	controlConnEndpointConfigs := make([]Endpoint, 0)
 
 	if secureConnectBundlePath != "" {
 
@@ -65,101 +64,92 @@ func initializeConnectionAndControlEndpointConfig(secureConnectBundlePath string
 		}
 		log.Debugf("Astra metadata parsed to: %v", metadata)
 
-		connConfig = NewConnectionConfig(tlsConfig, connTimeoutInMs, metadataServiceHostName, metadataServicePort,
-										metadata.ContactInfo.SniProxyAddress, metadata.ContactInfo.RoundRobinPort)
+		sniProxyHostname, _, err := net.SplitHostPort(metadata.ContactInfo.SniProxyAddress)
+		if err != nil {
+			return nil, nil, fmt.Errorf("could not split sni proxy hostname and port: %w", err)
+		}
+
+		endpointFactory := func(h *Host) Endpoint {
+			return NewAstraEndpoint(metadata.ContactInfo.SniProxyAddress, sniProxyHostname, h.HostId.String(), tlsConfig)
+		}
+
+		connConfig = NewConnectionConfig(tlsConfig, connTimeoutInMs, metadata.ContactInfo.SniProxyAddress, sniProxyHostname, clusterType, endpointFactory)
 		if err != nil {
 			return nil, nil, err
 		}
 
 		// save all contact points as potential control connection endpoints so that if connecting to one fails it is possible to retry with the next one
-		for _, contactPoint := range metadata.ContactInfo.ContactPoints {
-			controlConnEndpointConfigs = append(controlConnEndpointConfigs, NewEndpointConfig(contactPoint, true, connConfig.cqlPort))
+		for _, hostIdContactPoint := range metadata.ContactInfo.ContactPoints {
+			controlConnEndpointConfigs = append(controlConnEndpointConfigs, NewAstraEndpoint(connConfig.sniProxyEndpoint, connConfig.sniProxyAddr, hostIdContactPoint, connConfig.tlsConfig))
 		}
 
 	} else {
-		connConfig = NewConnectionConfig(nil, connTimeoutInMs, "", "", "", port)
-		controlConnEndpointConfigs = append(controlConnEndpointConfigs, NewEndpointConfig(hostName, false, port))
+		endpointFactory := func(h *Host) Endpoint {
+			return NewDefaultEndpoint(h.Address.String(), h.Port)
+		}
+
+		connConfig = NewConnectionConfig(nil, connTimeoutInMs, "", "", clusterType, endpointFactory)
+		controlConnEndpointConfigs = append(controlConnEndpointConfigs, NewDefaultEndpoint(hostName, port))
 	}
 	return connConfig, controlConnEndpointConfigs, nil
 }
 
 func (cc *ConnectionConfig) usesSNI() bool {
-	return cc.sniProxyAddress != ""
+	return cc.sniProxyEndpoint != ""
 }
 
-func (cc *ConnectionConfig) getSNIConfig() *SNIConfig{
-	if cc.tlsConfig == nil || cc.sniProxyAddress == "" {
-		return nil
-	}
-
-	return &SNIConfig{
-		SNIProxyAddress: cc.sniProxyAddress,
-		tlsConfig:       cc.tlsConfig,
-	}
-}
-
-func connectToFirstAvailableEndpoint(connectionConfig *ConnectionConfig, endpointConfigs []EndpointConfig, ctx context.Context, useBackoff bool) (net.Conn, EndpointConfig, error) {
+func connectToFirstAvailableEndpoint(connectionConfig *ConnectionConfig, endpoints []Endpoint, ctx context.Context, useBackoff bool, r *rand.Rand) (net.Conn, int, error) {
 	var conn net.Conn
-	var connectedEndpointConfig EndpointConfig
+	var connectedEndpointIndex int
 	var err error
 	connectionEstablished := false
-	for _, endpointConfig := range endpointConfigs {
+	firstContactPointIndex := r.Intn(len(endpoints))
+	for i := 0; i < len(endpoints); i++ {
+		currentIndex := (firstContactPointIndex + i) % len(endpoints)
+		endpoint := endpoints[currentIndex]
 		err = nil
-		conn, _, err = openConnection(connectionConfig, endpointConfig, ctx, useBackoff)
+		conn, _, err = openConnection(connectionConfig, endpoint, ctx, useBackoff)
 		if err != nil || conn == nil {
 			// could not establish connection using this endpoint, try the next one
-			log.Warnf("Could not establish a connection to endpoint %v due to %v, trying the next endpoint if available", endpointConfig.getEndpoint(), err)
+			log.Warnf("Could not establish a connection to endpoint %v due to %v, trying the next endpoint if available", endpoint.GetEndpointIdentifier(), err)
 			continue
 		} else {
 			// connection established, no need to try any remaining endpoints
 			connectionEstablished = true
-			connectedEndpointConfig = endpointConfig
+			connectedEndpointIndex = currentIndex
 			break
 		}
 	}
 
 	if !connectionEstablished {
-		return nil, nil, fmt.Errorf("could not connect to any of the endpoints provided")
+		return nil, -1, fmt.Errorf("could not connect to any of the endpoints provided")
 	}
 
-	return conn, connectedEndpointConfig, nil
+	return conn, connectedEndpointIndex, nil
 
 }
 
-func openConnection(cc *ConnectionConfig, ec EndpointConfig, ctx context.Context, useBackoff bool) (net.Conn, context.Context, error){
+func openConnection(cc *ConnectionConfig, ec Endpoint, ctx context.Context, useBackoff bool) (net.Conn, context.Context, error){
 	var connection net.Conn
 	var err error
 
 	timeout := time.Duration(cc.connectionTimeoutMs) * time.Millisecond
 	openConnectionTimeoutCtx, _ := context.WithTimeout(ctx, timeout)
 
-	if cc.getSNIConfig() != nil {
-		if ! ec.isSNI() {
-			return nil, openConnectionTimeoutCtx, fmt.Errorf("Non-SNI endpoint specified with SNI connection configuration")
-		}
-		// open connection using SNI
-		connection, err = openTLSConnectionWithSNI(ec.getEndpoint(), cc.getSNIConfig(), openConnectionTimeoutCtx, useBackoff)
-		if err != nil {
-			return nil, openConnectionTimeoutCtx, err
-		}
-		return connection, openConnectionTimeoutCtx, nil
-	}
-
 	if cc.tlsConfig != nil {
 		// open connection using TLS
-		connection, err = openTLSConnection(ec.getEndpoint(), cc.tlsConfig, openConnectionTimeoutCtx, useBackoff)
+		connection, err = openTLSConnection(ec, openConnectionTimeoutCtx, useBackoff)
 		if err != nil {
 			return nil, openConnectionTimeoutCtx, err
 		}
 		return connection, openConnectionTimeoutCtx, nil
-
 	}
 
 	// open plain TCP connection using contact points
 	if useBackoff {
-		connection, err = openTCPConnectionWithBackoff(ec.getEndpoint(), openConnectionTimeoutCtx)
+		connection, err = openTCPConnectionWithBackoff(ec.GetSocketEndpoint(), openConnectionTimeoutCtx)
 	} else {
-		connection, err = openTCPConnection(ec.getEndpoint(), openConnectionTimeoutCtx)
+		connection, err = openTCPConnection(ec.GetSocketEndpoint(), openConnectionTimeoutCtx)
 	}
 
 	return connection, openConnectionTimeoutCtx, err
@@ -203,99 +193,31 @@ func openTCPConnection(addr string, ctx context.Context) (net.Conn, error) {
 		}
 		return nil, err
 	}
+	log.Infof("[openTCPConnection] Successfully established connection with %v", conn.RemoteAddr())
 
 	return conn, nil
 }
 
-func openTLSConnection(addr string, tlsConfig *tls.Config, ctx context.Context, useBackoff bool) (*tls.Conn, error) {
+func openTLSConnection(endpoint Endpoint, ctx context.Context, useBackoff bool) (*tls.Conn, error) {
 
 	var tcpConn net.Conn
 	var err error
 	if useBackoff {
-		tcpConn, err = openTCPConnectionWithBackoff(addr, ctx)
+		tcpConn, err = openTCPConnectionWithBackoff(endpoint.GetSocketEndpoint(), ctx)
 	} else {
-		tcpConn, err = openTCPConnection(addr, ctx)
+		tcpConn, err = openTCPConnection(endpoint.GetSocketEndpoint(), ctx)
 	}
 	if err != nil {
 		return nil, err
 	}
 
-	log.Infof("[openTLSConnection] Opening TLS connection to %v using underlying TCP connection", addr)
-	tlsConn := tls.Client(tcpConn, tlsConfig)
+	log.Infof("[openTLSConnection] Opening TLS connection to %v using underlying TCP connection", endpoint.GetEndpointIdentifier())
+	tlsConn := tls.Client(tcpConn, endpoint.GetTlsConfig())
 	if err := tlsConn.Handshake(); err != nil {
 		tlsConn.Close()
 		return nil, err
 	}
-	return tlsConn, nil
-}
-
-func openTLSConnectionWithSNI(hostId string, sniConfig *SNIConfig, ctx context.Context, useBackoff bool) (*tls.Conn, error) {
-
-	sniProxyHostname, _, err := net.SplitHostPort(sniConfig.SNIProxyAddress)
-	if err != nil {
-		return nil, err
-	}
-
-	tlsConfig := sniConfig.tlsConfig.Clone()
-
-	//customVerify := func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
-	//
-	//	opts := x509.VerifyOptions{
-	//		Roots:         tlsConfig.RootCAs,
-	//		DNSName:       sniProxyHostname,
-	//		Intermediates: x509.NewCertPool(),
-	//	}
-	//
-	//	roots := x509.NewCertPool()
-	//	for _, rawCert := range rawCerts {
-	//		c, _ := x509.ParseCertificate(rawCert)
-	//		certItem, _ := x509.ParseCertificate(rawCert)
-	//		opts.Intermediates.AddCert(certItem)
-	//		_, err := certItem.Verify(opts)
-	//		if err != nil {
-	//			return err
-	//		}
-	//		roots.AddCert(c)
-	//	}
-	//	return nil
-	//}
-
-	customVerify := func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
-		certs := make([]*x509.Certificate, len(rawCerts))
-		for i, asn1Data := range rawCerts {
-			cert, err := x509.ParseCertificate(asn1Data)
-			if err != nil {
-				//c.sendAlert(alertBadCertificate)
-				return errors.New("tls: failed to parse certificate from server: " + err.Error())
-			}
-			certs[i] = cert
-		}
-
-		opts := x509.VerifyOptions{
-			Roots:         tlsConfig.RootCAs,
-			CurrentTime:   time.Now(),
-			DNSName:       sniProxyHostname,
-			Intermediates: x509.NewCertPool(),
-		}
-		for _, cert := range certs[1:] {
-			opts.Intermediates.AddCert(cert)
-		}
-		var err error
-		verifiedChains, err = certs[0].Verify(opts)
-		//if err != nil {
-		//	c.sendAlert(alertBadCertificate)
-			return err
-		//}
-	}
-
-	tlsConfig.ServerName = hostId
-	tlsConfig.InsecureSkipVerify = true	//This is required to evaluate our custom cert validation logic, otherwise it will not consider VerifyPeerCertificate and just run the standard cert logic, which fails as expected
-	tlsConfig.VerifyPeerCertificate = customVerify
-	log.Infof("[openTLSConnectionWithSNI] Opening TLS connection using SNI to %v using underlying TCP connection", hostId)
-	tlsConn, err := openTLSConnection(sniConfig.SNIProxyAddress, tlsConfig, ctx, useBackoff)
-	if err != nil {
-		return nil, err
-	}
+	log.Infof("[openTLSConnection] Successfully established connection with %v", endpoint.GetEndpointIdentifier())
 
 	return tlsConn, nil
 }

@@ -13,7 +13,6 @@ type ContactInfo struct {
 	TypeName string `json:"type"`
 	LocalDc string `json:"local_dc"`
 	SniProxyAddress string `json:"sni_proxy_address"`
-	RoundRobinPort int `json:"round_robin_port"`
 	ContactPoints []string `json:"contact_points"`
 }
 

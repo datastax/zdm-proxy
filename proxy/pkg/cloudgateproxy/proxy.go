@@ -11,6 +11,7 @@ import (
 	"github.com/riptano/cloud-gate/proxy/pkg/metrics/noopmetrics"
 	"github.com/riptano/cloud-gate/proxy/pkg/metrics/prommetrics"
 	log "github.com/sirupsen/logrus"
+	"math/rand"
 	"net"
 	"runtime"
 	"sync"
@@ -18,25 +19,14 @@ import (
 	"time"
 )
 
-const (
-	// TODO: Make these configurable
-	maxQueryRetries = 5
-	cassMaxLen = 256 * 1024 * 1024 // 268435456 // 256 MB, per spec		// TODO is this an actual limit??
-	listenerDefaultWorkers = 20
-)
-
-
-
 type CloudgateProxy struct {
 	Conf *config.Config
 
-	originConnectionConfig				*ConnectionConfig
-	originControlConnEndpointConfigs 	[]EndpointConfig
-	originRequestEndpointConfigs		[]EndpointConfig
+	originConnectionConfig *ConnectionConfig
+	originContactPoints    []Endpoint
 
-	targetConnectionConfig 				*ConnectionConfig
-	targetControlConnEndpointConfigs 	[]EndpointConfig
-	targetRequestEndpointConfigs		[]EndpointConfig
+	targetConnectionConfig *ConnectionConfig
+	targetContactPoints    []Endpoint
 
 	lock *sync.RWMutex
 
@@ -95,15 +85,36 @@ func (p *CloudgateProxy) GetMetricsHandler() metrics.IMetricsHandler {
 func (p *CloudgateProxy) Start(ctx context.Context) error {
 	log.Infof("Starting proxy...")
 
-
 	err := p.initializeControlConnections(ctx)
 	if err != nil {
 		return err
 	}
 
-	// TODO temporarily initializing the request endpoints here using the same endpoint used for the control connection - this will be moved and changed when the second epic is integrated
-	p.originRequestEndpointConfigs = append(p.originRequestEndpointConfigs, p.originControlConn.endpointConfig)
-	p.targetRequestEndpointConfigs = append(p.targetRequestEndpointConfigs, p.targetControlConn.endpointConfig)
+	originHosts, err := p.originControlConn.GetHosts()
+	if err != nil {
+		return fmt.Errorf("failed to initialize proxy, could not get origin hosts: %w", err)
+	}
+
+	originAssignedHosts, err := p.originControlConn.GetAssignedHosts()
+	if err != nil {
+		return fmt.Errorf("failed to initialize proxy, could not get assigned origin hosts: %w", err)
+	}
+
+	log.Infof("Initialized origin control connection. Cluster Name: %v, Hosts: %v, Assigned Hosts: %v.",
+		p.originControlConn.GetClusterName(), originHosts, originAssignedHosts)
+
+	targetHosts, err := p.targetControlConn.GetHosts()
+	if err != nil {
+		return fmt.Errorf("failed to initialize proxy, could not get target hosts: %w", err)
+	}
+
+	targetAssignedHosts, err := p.targetControlConn.GetAssignedHosts()
+	if err != nil {
+		return fmt.Errorf("failed to initialize proxy, could not get assigned target hosts: %w", err)
+	}
+
+	log.Infof("Initialized target control connection. Cluster Name: %v, Hosts: %v, Assigned Hosts: %v.",
+		p.targetControlConn.GetClusterName(), targetHosts, targetAssignedHosts)
 
 	p.initializeMetricsHandler()
 
@@ -119,30 +130,43 @@ func (p *CloudgateProxy) Start(ctx context.Context) error {
 
 func (p *CloudgateProxy) initializeControlConnections(ctx context.Context) error {
 
-	originControlConn, originControlConnEndpointConfig, err := connectToFirstAvailableEndpoint(p.originConnectionConfig, p.originControlConnEndpointConfigs, ctx, false)
+	r := rand.New(rand.NewSource(time.Now().UTC().UnixNano()))
+	originControlConn, originContactPointIndex, err := connectToFirstAvailableEndpoint(p.originConnectionConfig, p.originContactPoints, ctx, false, r)
 	if err != nil {
 		return err
 	}
-	log.Debugf("Origin connection successfully established to %v (endpoint %v)", originControlConn.RemoteAddr(), originControlConnEndpointConfig.getEndpoint())
+
+	originContactPoint := p.originContactPoints[originContactPointIndex]
+	log.Debugf("Origin connection successfully established to %v", originContactPoint.GetEndpointIdentifier())
 
 
-	targetControlConn, targetControlConnEndpointConfig, err := connectToFirstAvailableEndpoint(p.targetConnectionConfig, p.targetControlConnEndpointConfigs, ctx, false)
+	targetControlConn, targetContactPointIndex, err := connectToFirstAvailableEndpoint(p.targetConnectionConfig, p.targetContactPoints, ctx, false, r)
 	if err != nil {
 		return err
 	}
-	log.Debugf("Target control connection successfully established to %v (endpoint %v)", targetControlConn.RemoteAddr(), targetControlConnEndpointConfig.getEndpoint())
+
+	targetContactPoint := p.targetContactPoints[targetContactPointIndex]
+	log.Debugf("Target control connection successfully established to %v", targetContactPoint.GetEndpointIdentifier())
 
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
 	p.originControlConn =
 		NewControlConn(
-			originControlConn, p.shutdownContext, p.originConnectionConfig, originControlConnEndpointConfig, p.Conf.OriginCassandraUsername, p.Conf.OriginCassandraPassword, p.Conf)
-	p.originControlConn.Start(p.shutdownWaitGroup)
+			originControlConn, p.shutdownContext, p.Conf.OriginCassandraPort, p.originConnectionConfig, p.originContactPoints,
+			originContactPointIndex, p.Conf.OriginCassandraUsername, p.Conf.OriginCassandraPassword, p.Conf)
+	if err := p.originControlConn.Start(p.shutdownWaitGroup, ctx); err != nil {
+		return fmt.Errorf("failed to initialize origin control connection: %w", err)
+	}
+
 	p.targetControlConn =
 		NewControlConn(
-			targetControlConn, p.shutdownContext, p.targetConnectionConfig, targetControlConnEndpointConfig, p.Conf.TargetCassandraUsername, p.Conf.TargetCassandraPassword, p.Conf)
-	p.targetControlConn.Start(p.shutdownWaitGroup)
+			targetControlConn, p.shutdownContext, p.Conf.TargetCassandraPort, p.targetConnectionConfig, p.targetContactPoints,
+			targetContactPointIndex, p.Conf.TargetCassandraUsername, p.Conf.TargetCassandraPassword, p.Conf)
+	if err := p.targetControlConn.Start(p.shutdownWaitGroup, ctx); err != nil {
+		return fmt.Errorf("failed to initialize target control connection: %w", err)
+	}
+
 	return nil
 }
 
@@ -263,30 +287,28 @@ func (p *CloudgateProxy) initializeGlobalStructures() {
 	var err error
 
 	// Initialize origin connection configuration and control connection endpoint configuration
-	originConnectionConfig, originControlConnEndpointConfigs, err := initializeConnectionAndControlEndpointConfig(p.Conf.OriginCassandraSecureConnectBundlePath,
+	originConnectionConfig, originContactPoints, err := initializeConnectionConfig(p.Conf.OriginCassandraSecureConnectBundlePath,
 																p.Conf.OriginCassandraHostname,
 																p.Conf.OriginCassandraPort,
-																p.Conf.ClusterConnectionTimeoutMs)
+																p.Conf.ClusterConnectionTimeoutMs,
+																OriginCassandra)
 	if err != nil {
 		log.Errorf("Error initializing the connection configuration or control connection for Origin: %v", err)
 	}
 	p.originConnectionConfig = originConnectionConfig
-	p.originControlConnEndpointConfigs = originControlConnEndpointConfigs
-
-	p.originRequestEndpointConfigs = make([]EndpointConfig, 0)
+	p.originContactPoints = originContactPoints
 
 	// Initialize target connection configuration and control connection endpoint configuration
-	targetConnectionConfig, targetControlConnEndpointConfigs, err := initializeConnectionAndControlEndpointConfig(p.Conf.TargetCassandraSecureConnectBundlePath,
+	targetConnectionConfig, targetContactPoints, err := initializeConnectionConfig(p.Conf.TargetCassandraSecureConnectBundlePath,
 																p.Conf.TargetCassandraHostname,
 																p.Conf.TargetCassandraPort,
-																p.Conf.ClusterConnectionTimeoutMs)
+																p.Conf.ClusterConnectionTimeoutMs,
+																TargetCassandra)
 	if err != nil {
 		log.Errorf("Error initializing the connection configuration or control connection for Target: %v", err)
 	}
 	p.targetConnectionConfig = targetConnectionConfig
-	p.targetControlConnEndpointConfigs = targetControlConnEndpointConfigs
-
-	p.targetRequestEndpointConfigs = make([]EndpointConfig, 0)
+	p.targetContactPoints = targetContactPoints
 
 	p.PreparedStatementCache = NewPreparedStatementCache()
 
@@ -374,10 +396,40 @@ func (p *CloudgateProxy) acceptConnectionsFromClients(address string, port int) 
 // handleNewConnection creates the client handler and connectors for the new client connection
 func (p *CloudgateProxy) handleNewConnection(clientConn net.Conn) {
 
+	errFunc := func(e error) {
+		log.Errorf("Client Handler could not be created: %v", e)
+		clientConn.Close()
+		atomic.AddInt32(&p.activeClients, -1)
+	}
+
 	// there is a ClientHandler for each connection made by a client
-	// TODO temporarily using the first endpoint for each cluster for its request connections - this will have to be changed
-	originCassandraConnInfo := NewClusterConnectionInfo(p.originConnectionConfig, p.originRequestEndpointConfigs[0], true)
-	targetCassandraConnInfo := NewClusterConnectionInfo(p.targetConnectionConfig, p.targetRequestEndpointConfigs[0],false)
+
+	var originEndpoint Endpoint
+	if p.Conf.OriginEnableHostAssignment {
+		originHost, err := p.originControlConn.NextAssignedHost()
+		if err != nil {
+			errFunc(err)
+			return
+		}
+		originEndpoint = p.originConnectionConfig.endpointFactory(originHost)
+	} else {
+		originEndpoint = p.originContactPoints[0]
+	}
+
+	var targetEndpoint Endpoint
+	if p.Conf.TargetEnableHostAssignment {
+		targetHost, err := p.targetControlConn.NextAssignedHost()
+		if err != nil {
+			errFunc(err)
+			return
+		}
+		targetEndpoint = p.targetConnectionConfig.endpointFactory(targetHost)
+	} else {
+		targetEndpoint = p.targetContactPoints[0]
+	}
+
+	originCassandraConnInfo := NewClusterConnectionInfo(p.originConnectionConfig, originEndpoint, true)
+	targetCassandraConnInfo := NewClusterConnectionInfo(p.targetConnectionConfig, targetEndpoint,false)
 	clientHandler, err := NewClientHandler(
 		clientConn,
 		originCassandraConnInfo,
@@ -397,9 +449,7 @@ func (p *CloudgateProxy) handleNewConnection(clientConn net.Conn) {
 		p.requestLoopWaitGroup)
 
 	if err != nil {
-		log.Errorf("Client Handler could not be created: %v", err)
-		clientConn.Close()
-		atomic.AddInt32(&p.activeClients, -1)
+		errFunc(err)
 		return
 	}
 

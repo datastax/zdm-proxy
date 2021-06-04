@@ -8,7 +8,6 @@ import (
 	"github.com/riptano/cloud-gate/integration-tests/client"
 	"github.com/riptano/cloud-gate/integration-tests/env"
 	"github.com/riptano/cloud-gate/integration-tests/setup"
-	"github.com/riptano/cloud-gate/integration-tests/utils"
 	"github.com/riptano/cloud-gate/proxy/pkg/health"
 	"github.com/stretchr/testify/require"
 	"strings"
@@ -66,9 +65,7 @@ func testAuth(
 		clientUsername string
 		clientPassword string
 		success        bool
-		successOrigin  bool
-		successTarget  bool
-		authError      bool
+		initError      bool
 	}{
 		{
 			name:           "CorrectCredentials",
@@ -79,9 +76,7 @@ func testAuth(
 			clientUsername: targetUsername,
 			clientPassword: targetPassword,
 			success:        true,
-			successOrigin:  true,
-			successTarget:  true,
-			authError:      true,
+			initError:      false,
 		},
 		{
 			name:           "InvalidOriginCredentials",
@@ -92,9 +87,7 @@ func testAuth(
 			clientUsername: targetUsername,
 			clientPassword: targetPassword,
 			success:        false,
-			successOrigin:  false,
-			successTarget:  true,
-			authError:      true,
+			initError:      true,
 		},
 		{
 			name:           "InvalidTargetCredentials",
@@ -105,9 +98,7 @@ func testAuth(
 			clientUsername: "invalidTargetUsername",
 			clientPassword: "invalidTargetPassword",
 			success:        false,
-			successOrigin:  true,
-			successTarget:  false,
-			authError:      true,
+			initError:      true,
 		},
 		{
 			name:           "InvalidClientCredentials",
@@ -118,9 +109,7 @@ func testAuth(
 			clientUsername: "invalidTargetUsername",
 			clientPassword: "invalidTargetPassword",
 			success:        false,
-			successOrigin:  true,
-			successTarget:  false,
-			authError:      true,
+			initError:      false,
 		},
 		{
 			name:           "InvalidTargetAndOriginCredentials",
@@ -131,9 +120,7 @@ func testAuth(
 			clientUsername: "invalidTargetUsername",
 			clientPassword: "invalidTargetPassword",
 			success:        false,
-			successOrigin:  false,
-			successTarget:  false,
-			authError:      true,
+			initError:      true,
 		},
 	}
 
@@ -149,7 +136,15 @@ func testAuth(
 					conf.TargetCassandraPassword = tt.targetPassword
 					conf.OriginCassandraUsername = tt.originUsername
 					conf.OriginCassandraPassword = tt.originPassword
-					proxy := setup.NewProxyInstanceWithConfig(conf)
+					proxy, err := setup.NewProxyInstanceWithConfig(conf)
+					if tt.initError {
+						require.NotNil(t, err)
+						require.Nil(t, proxy)
+						return
+					}
+
+					require.Nil(t, err)
+
 					defer proxy.Shutdown()
 
 					testClient, err := client.NewTestClient("127.0.0.1:14002")
@@ -160,14 +155,9 @@ func testAuth(
 					err = testClient.PerformHandshake(version, true, tt.clientUsername, tt.clientPassword)
 
 					if !tt.success {
-						if tt.authError {
-							require.True(t, err != nil, "expected failure in handshake")
-							require.True(t, strings.Contains(err.Error(), "expected auth success but received "), err.Error())
-							require.True(t, strings.Contains(err.Error(), "ERROR AUTHENTICATION ERROR"), err.Error())
-						} else {
-							require.True(t, err != nil, "expected err")
-							require.True(t, strings.Contains(err.Error(), "response channel closed"), "expected channel closed but got %v", err)
-						}
+						require.True(t, err != nil, "expected failure in handshake")
+						require.True(t, strings.Contains(err.Error(), "expected auth success but received "), err.Error())
+						require.True(t, strings.Contains(err.Error(), "ERROR AUTHENTICATION ERROR"), err.Error())
 					} else {
 						require.True(t, err == nil, "handshake failed: %v", err)
 
@@ -195,10 +185,7 @@ func testHealthCheckWithAuth(
 		targetPassword string
 		originUsername string
 		originPassword string
-		clientUsername string
-		clientPassword string
-		successOrigin  bool
-		successTarget  bool
+		success  bool
 	}{
 		{
 			name:           "CorrectCredentials",
@@ -206,10 +193,7 @@ func testHealthCheckWithAuth(
 			targetPassword: targetPassword,
 			originUsername: originUsername,
 			originPassword: originPassword,
-			clientUsername: originUsername,
-			clientPassword: originPassword,
-			successOrigin:  true,
-			successTarget:  true,
+			success:  true,
 		},
 		{
 			name:           "InvalidOriginCredentials",
@@ -217,10 +201,7 @@ func testHealthCheckWithAuth(
 			targetPassword: targetPassword,
 			originUsername: "invalidOriginUsername",
 			originPassword: "invalidOriginPassword",
-			clientUsername: "invalidOriginUsername",
-			clientPassword: "invalidOriginPassword",
-			successOrigin:  false,
-			successTarget:  true,
+			success:        false,
 		},
 		{
 			name:           "InvalidTargetCredentials",
@@ -228,21 +209,7 @@ func testHealthCheckWithAuth(
 			targetPassword: "invalidTargetPassword",
 			originUsername: originUsername,
 			originPassword: originPassword,
-			clientUsername: originUsername,
-			clientPassword: originPassword,
-			successOrigin:  true,
-			successTarget:  false,
-		},
-		{
-			name:           "InvalidClientCredentials",
-			targetUsername: targetUsername,
-			targetPassword: targetPassword,
-			originUsername: originUsername,
-			originPassword: originPassword,
-			clientUsername: "invalidTargetUsername",
-			clientPassword: "invalidTargetPassword",
-			successOrigin:  true,
-			successTarget:  true,
+			success:        false,
 		},
 		{
 			name:           "InvalidTargetAndOriginCredentials",
@@ -250,10 +217,7 @@ func testHealthCheckWithAuth(
 			targetPassword: "invalidTargetPassword",
 			originUsername: "invalidOriginUsername",
 			originPassword: "invalidOriginPassword",
-			clientUsername: "invalidOriginUsername",
-			clientPassword: "invalidOriginPassword",
-			successOrigin:  false,
-			successTarget:  false,
+			success:        false,
 		},
 	}
 
@@ -268,49 +232,24 @@ func testHealthCheckWithAuth(
 			conf.TargetCassandraPassword = tt.targetPassword
 			conf.OriginCassandraUsername = tt.originUsername
 			conf.OriginCassandraPassword = tt.originPassword
-			proxy := setup.NewProxyInstanceWithConfig(conf)
-			defer proxy.Shutdown()
-
-			if tt.successOrigin || tt.successTarget {
-				time.Sleep(time.Duration(conf.HeartbeatIntervalMs) * time.Millisecond * 5)
-				r := health.PerformHealthCheck(proxy)
-				if tt.successOrigin && tt.successTarget {
-					require.Equal(t, health.UP, r.Status)
-				}
-				if tt.successOrigin {
-					require.Equal(t, health.UP, r.OriginStatus.Status)
-					require.Equal(t, 0, r.OriginStatus.CurrentFailureCount)
-				}
-				if tt.successTarget {
-					require.Equal(t, health.UP, r.TargetStatus.Status)
-					require.Equal(t, 0, r.TargetStatus.CurrentFailureCount)
-				}
+			proxy, err := setup.NewProxyInstanceWithConfig(conf)
+			if !tt.success {
+				require.NotNil(t, err)
+				require.Nil(t, proxy)
+				return
 			}
 
-			if !tt.successOrigin || !tt.successTarget {
-				utils.RequireWithRetries(t, func() (error, bool) {
-					r := health.PerformHealthCheck(proxy)
+			require.Nil(t, err)
+			defer proxy.Shutdown()
 
-					if !tt.successOrigin {
-						if r.OriginStatus.CurrentFailureCount < r.OriginStatus.FailureCountThreshold {
-							return fmt.Errorf(
-								"expected current failure count on origin greater or equal than threshold but got %v",
-								r.OriginStatus.CurrentFailureCount), false
-						}
-						require.Equal(t, health.DOWN, r.Status)
-						require.Equal(t, health.DOWN, r.OriginStatus.Status)
-					}
-					if !tt.successTarget {
-						if r.TargetStatus.CurrentFailureCount < r.TargetStatus.FailureCountThreshold {
-							return fmt.Errorf(
-								"expected current failure count on target greater or equal than threshold but got %v",
-								r.TargetStatus.CurrentFailureCount), false
-						}
-						require.Equal(t, health.DOWN, r.Status)
-						require.Equal(t, health.DOWN, r.TargetStatus.Status)
-					}
-					return nil, false
-				}, 30, 100*time.Millisecond)
+			if tt.success {
+				time.Sleep(time.Duration(conf.HeartbeatIntervalMs) * time.Millisecond * 5)
+				r := health.PerformHealthCheck(proxy)
+				require.Equal(t, health.UP, r.Status)
+				require.Equal(t, health.UP, r.OriginStatus.Status)
+				require.Equal(t, 0, r.OriginStatus.CurrentFailureCount)
+				require.Equal(t, health.UP, r.TargetStatus.Status)
+				require.Equal(t, 0, r.TargetStatus.CurrentFailureCount)
 			}
 		})
 	}
