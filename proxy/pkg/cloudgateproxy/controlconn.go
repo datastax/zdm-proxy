@@ -20,7 +20,8 @@ type ControlConn struct {
 	retryBackoffPolicy    *backoff.Backoff
 	heartbeatPeriod       time.Duration
 	context               context.Context
-	addr                  string
+	connConfig            *ConnectionConfig
+	endpointConfig		  EndpointConfig
 	username              string
 	password              string
 	counterLock           *sync.RWMutex
@@ -32,7 +33,7 @@ const ccProtocolVersion = primitive.ProtocolVersion3
 const ccWriteTimeout = 5 * time.Second
 const ccReadTimeout = 10 * time.Second
 
-func NewControlConn(conn net.Conn, ctx context.Context, addr string, username string, password string, conf *config.Config) *ControlConn {
+func NewControlConn(conn net.Conn, ctx context.Context, connConfig *ConnectionConfig, endpointConfig EndpointConfig, username string, password string, conf *config.Config) *ControlConn {
 	return &ControlConn{
 		cqlConn: NewCqlConnection(conn, username, password, ccReadTimeout, ccWriteTimeout),
 		retryBackoffPolicy: &backoff.Backoff{
@@ -43,7 +44,8 @@ func NewControlConn(conn net.Conn, ctx context.Context, addr string, username st
 		},
 		heartbeatPeriod:       time.Duration(conf.HeartbeatIntervalMs) * time.Millisecond,
 		context:               ctx,
-		addr:                  addr,
+		connConfig:            connConfig,
+		endpointConfig: 	   endpointConfig,
 		username:              username,
 		password:              password,
 		counterLock:           &sync.RWMutex{},
@@ -57,19 +59,19 @@ func (cc *ControlConn) Start(wg *sync.WaitGroup) {
 	go func() {
 		defer wg.Done()
 		defer cc.Close()
-		defer log.Infof("Shutting down control connection to %v,", cc.addr)
+		defer log.Infof("Shutting down control connection to %v,", cc.GetAddr())
 		for cc.context.Err() == nil {
 			if cc.cqlConn == nil || !cc.cqlConn.IsInitialized() {
-				log.Infof("Opening control connection to %v.", cc.addr)
+				log.Infof("Opening control connection to %v.", cc.GetAddr())
 				err := cc.Open()
 				if err != nil {
 					timeUntilRetry := cc.retryBackoffPolicy.Duration()
-					log.Warnf("Failed to open control connection to %v, retrying in %v: %v", cc.addr, timeUntilRetry, err)
+					log.Warnf("Failed to open control connection to %v, retrying in %v: %v", cc.GetAddr(), timeUntilRetry, err)
 					cc.IncrementFailureCounter()
 					sleepWithContext(timeUntilRetry, cc.context)
 					continue
 				} else {
-					log.Infof("Control connection (%v) opened successfully", cc.addr)
+					log.Infof("Control connection (%v) opened successfully", cc.GetAddr())
 					cc.ResetFailureCounter()
 					cc.retryBackoffPolicy.Reset()
 				}
@@ -83,7 +85,7 @@ func (cc *ControlConn) Start(wg *sync.WaitGroup) {
 
 			switch action {
 			case fatalFailure:
-				log.Errorf("Closing control connection to %v and will NOT attempt to re-open it due to a fatal failure: %v", cc.addr, err)
+				log.Errorf("Closing control connection to %v and will NOT attempt to re-open it due to a fatal failure: %v", cc.GetAddr(), err)
 				cc.Close()
 				return
 			case failure:
@@ -161,11 +163,9 @@ func (cc *ControlConn) ReadFailureCounter() int {
 
 func (cc *ControlConn) Open() error {
 	if cc.cqlConn == nil {
-		dialer := net.Dialer{}
-		openConnectionTimeoutCtx, _ := context.WithTimeout(cc.context, cc.OpenConnectionTimeout)
-		conn, err := dialer.DialContext(openConnectionTimeoutCtx, "tcp", cc.addr)
+		conn, _, err := openConnection(cc.connConfig, cc.endpointConfig, cc.context, false)
 		if err != nil {
-			return fmt.Errorf("failed to open connection to %v: %w", cc.addr, err)
+			return err
 		}
 		cc.cqlConn = NewCqlConnection(conn, cc.username, cc.password, ccReadTimeout, ccWriteTimeout)
 	}
@@ -195,5 +195,5 @@ func (cc *ControlConn) Close() {
 }
 
 func (cc *ControlConn) GetAddr() string {
-	return cc.addr
+	return cc.endpointConfig.getEndpoint()
 }

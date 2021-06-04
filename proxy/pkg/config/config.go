@@ -12,15 +12,19 @@ import (
 
 // Config holds the values of environment variables necessary for proper Proxy function.
 type Config struct {
-	OriginCassandraHostname string `required:"true" split_words:"true"`
 	OriginCassandraUsername string `required:"true" split_words:"true"`
 	OriginCassandraPassword string `required:"true" split_words:"true"`
-	OriginCassandraPort     int    `required:"true" split_words:"true"`
 
-	TargetCassandraHostname string `required:"true" split_words:"true"`
+	OriginCassandraHostname string `split_words:"true"`
+	OriginCassandraPort     int    `split_words:"true"`
+	OriginCassandraSecureConnectBundlePath string `split_words:"true"`
+
 	TargetCassandraUsername string `required:"true" split_words:"true"`
 	TargetCassandraPassword string `required:"true" split_words:"true"`
-	TargetCassandraPort     int    `required:"true" split_words:"true"`
+
+	TargetCassandraHostname string `split_words:"true"`
+	TargetCassandraPort     int    `split_words:"true"`
+	TargetCassandraSecureConnectBundlePath string `split_words:"true"`
 
 	ProxyMetricsAddress string `default:"localhost" split_words:"true"`
 	ProxyMetricsPort    int    `required:"true" split_words:"true"`
@@ -92,6 +96,11 @@ func (c *Config) ParseEnvVars() (*Config, error) {
 		return nil, fmt.Errorf("could not load environment variables: %w", err)
 	}
 
+	err = c.validateTargetConfiguration()
+	if err != nil {
+		return nil, fmt.Errorf("Invalid target configuration: %w", err)
+	}
+
 	originBuckets, err := c.ParseOriginBuckets()
 	if err != nil {
 		return nil, fmt.Errorf("could not parse origin buckets: %v", err)
@@ -131,4 +140,39 @@ func (c *Config) parseBuckets(bucketsConfigStr string) ([]float64, error) {
 	}
 
 	return bucketsArr, nil
+}
+
+// TODO unify these two validation methods
+func (c *Config) validateTargetConfiguration() error {
+
+	if c.TargetCassandraSecureConnectBundlePath != "" && c.TargetCassandraHostname != "" {
+		return fmt.Errorf("TargetCassandraSecureConnectBundlePath and TargetCassandraHostname are mutually exclusive. Please specify only one of them.")
+	}
+
+	if c.TargetCassandraSecureConnectBundlePath == "" && c.TargetCassandraHostname == "" {
+		return fmt.Errorf("Both TargetCassandraSecureConnectBundlePath and TargetCassandraHostname are empty. Please specify either one of them.")
+	}
+
+	if (c.TargetCassandraHostname != "") && (c.TargetCassandraPort == 0) {
+		return fmt.Errorf("TargetCassandraHostname was specified but the port is missing. Please provide TargetCassandraPort")
+	}
+
+	return nil
+}
+
+func (c *Config) validateOriginConfiguration() error {
+
+	if c.OriginCassandraSecureConnectBundlePath != "" && c.OriginCassandraHostname != "" {
+		return fmt.Errorf("OriginCassandraSecureConnectBundlePath and OriginCassandraHostname are mutually exclusive. Please specify only one of them.")
+	}
+
+	if c.OriginCassandraSecureConnectBundlePath == "" && c.OriginCassandraHostname == "" {
+		return fmt.Errorf("Both OriginCassandraSecureConnectBundlePath and OriginCassandraHostname are empty. Please specify either one of them.")
+	}
+
+	if (c.OriginCassandraHostname != "") && (c.OriginCassandraPort == 0) {
+		return fmt.Errorf("OriginCassandraHostname was specified but the port is missing. Please provide OriginCassandraPort")
+	}
+
+	return nil
 }
