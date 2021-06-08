@@ -76,7 +76,6 @@ type ClientHandler struct {
 
 	conf *config.Config
 
-	shutdownRequestCtx   context.Context
 	requestLoopWaitGroup *sync.WaitGroup
 }
 
@@ -172,7 +171,6 @@ func NewClientHandler(
 		eventsDoneChan:           eventsDoneChan,
 		requestResponseScheduler: requestResponseScheduler,
 		conf:                     conf,
-		shutdownRequestCtx:       shutdownRequestCtx,
 		requestLoopWaitGroup:     requestLoopWaitGroup,
 	}, nil
 }

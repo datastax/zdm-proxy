@@ -10,7 +10,6 @@ import (
 	"syscall"
 )
 
-// Method mainly to test the proxy service for now
 func main() {
 	conf, err := config.New().ParseEnvVars()
 	if err != nil {

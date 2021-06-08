@@ -10,7 +10,8 @@ import (
 )
 
 func TestBatchBothWriteTimeout(t *testing.T) {
-	testSetup := setup.NewSimulacronTestSetup()
+	testSetup, err := setup.NewSimulacronTestSetup()
+	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
 	// Connect to proxy as a "client"
@@ -49,7 +50,8 @@ func TestBatchBothWriteTimeout(t *testing.T) {
 }
 
 func TestBatchOriginWriteTimeout(t *testing.T) {
-	testSetup := setup.NewSimulacronTestSetup()
+	testSetup, err := setup.NewSimulacronTestSetup()
+	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
 	// Connect to proxy as a "client"
@@ -87,7 +89,8 @@ func TestBatchOriginWriteTimeout(t *testing.T) {
 }
 
 func TestBatchTargetWriteTimeout(t *testing.T) {
-	testSetup := setup.NewSimulacronTestSetup()
+	testSetup, err := setup.NewSimulacronTestSetup()
+	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
 	// Connect to proxy as a "client"
@@ -125,7 +128,8 @@ func TestBatchTargetWriteTimeout(t *testing.T) {
 }
 
 func TestBatchWriteSuccessful(t *testing.T) {
-	testSetup := setup.NewSimulacronTestSetup()
+	testSetup, err := setup.NewSimulacronTestSetup()
+	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
 	// Connect to proxy as a "client"

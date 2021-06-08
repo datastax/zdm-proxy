@@ -92,6 +92,7 @@ func inspectFrame(
 		}
 		if queryInfo.getStatementType() == statementTypeSelect {
 			if isSystemQuery(queryInfo, currentKeyspaceName) || forwardReadsToTarget {
+				log.Debugf("Detected system query: %v with stream id: %v",  queryInfo.getQuery(), f.Header.StreamId)
 				forwardDecision = forwardToTarget
 			} else {
 				forwardDecision = forwardToOrigin
@@ -106,6 +107,7 @@ func inspectFrame(
 		}
 		if queryInfo.getStatementType() == statementTypeSelect {
 			if isSystemQuery(queryInfo, currentKeyspaceName) || forwardReadsToTarget {
+				log.Debugf("Detected system query: %v with stream id: %v",  queryInfo.getQuery(), f.Header.StreamId)
 				forwardDecision = forwardToTarget
 			} else {
 				forwardDecision = forwardToOrigin
@@ -149,6 +151,7 @@ func isSystemQuery(info queryInfo, currentKeyspaceName *atomic.Value) bool {
 			keyspaceName = value.(string)
 		}
 	}
+
 	return keyspaceName == "system" ||
 		strings.HasPrefix(keyspaceName, "system_") ||
 		strings.HasPrefix(keyspaceName, "dse_")

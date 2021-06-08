@@ -13,12 +13,11 @@ import (
 	"io"
 	"net"
 	"sync"
-	"time"
 )
 
 type ClusterConnectionInfo struct {
-	ipAddress         string
-	port              int
+	connConfig        *ConnectionConfig
+	endpoint          Endpoint
 	isOriginCassandra bool
 }
 
@@ -30,27 +29,27 @@ const (
 )
 
 type ClusterConnector struct {
-	connection              net.Conn
-	conf                    *config.Config
-	clusterType             ClusterType
+	connection              	net.Conn
+	clusterType             	ClusterType
 
-	clusterConnEventsChan   chan *frame.RawFrame
-	metricsHandler          metrics.IMetricsHandler
-	waitGroup               *sync.WaitGroup
-	clientHandlerContext    context.Context
-	clientHandlerCancelFunc context.CancelFunc
-	responseChan            chan<- *Response
+	clusterConnEventsChan   	chan *frame.RawFrame
+	metricsHandler          	metrics.IMetricsHandler
+	waitGroup               	*sync.WaitGroup
+	clientHandlerContext    	context.Context
+	clientHandlerCancelFunc 	context.CancelFunc
+	responseChan            	chan<- *Response
 
-	writeCoalescer          *writeCoalescer
-	doneChan                chan bool
+	responseReadBufferSizeBytes	int
+	writeCoalescer          	*writeCoalescer
+	doneChan                	chan bool
 
 	readScheduler *Scheduler
 }
 
-func NewClusterConnectionInfo(ipAddress string, port int, isOriginCassandra bool) *ClusterConnectionInfo {
+func NewClusterConnectionInfo(connConfig *ConnectionConfig, endpointConfig Endpoint, isOriginCassandra bool) *ClusterConnectionInfo {
 	return &ClusterConnectionInfo{
-		ipAddress:         ipAddress,
-		port:              port,
+		connConfig:        connConfig,
+		endpoint:          endpointConfig,
 		isOriginCassandra: isOriginCassandra,
 	}
 }
@@ -73,9 +72,14 @@ func NewClusterConnector(
 		clusterType = TargetCassandra
 	}
 
-	connectionOpenTimeout := time.Duration(conf.ClusterConnectionTimeoutMs)*time.Millisecond
-	timeoutCtx, _ := context.WithTimeout(clientHandlerContext, connectionOpenTimeout)
-	conn, err := openConnectionToCluster(connInfo, timeoutCtx, metricsHandler)
+	/*
+		timeout := time.Duration(cc.connectionTimeoutMs) * time.Millisecond
+		openConnectionTimeoutCtx, _ := context.WithTimeout(ctx, timeout)
+
+	*/
+	//connectionOpenTimeout := time.Duration(conf.ClusterConnectionTimeoutMs)*time.Millisecond
+	//timeoutCtx, _ := context.WithTimeout(clientHandlerContext, connectionOpenTimeout)
+	conn, timeoutCtx, err := openConnectionToCluster(connInfo, clientHandlerContext, metricsHandler)
 	if err != nil {
 		if errors.Is(err, ShutdownErr) {
 			if timeoutCtx.Err() != nil {
@@ -91,27 +95,27 @@ func NewClusterConnector(
 	}()
 
 	return &ClusterConnector{
-		connection:              conn,
-		conf:                    conf,
-		clusterType:             clusterType,
-		clusterConnEventsChan:   make(chan *frame.RawFrame, conf.EventQueueSizeFrames),
-		metricsHandler:          metricsHandler,
-		waitGroup:               waitGroup,
-		clientHandlerContext:    clientHandlerContext,
-		clientHandlerCancelFunc: clientHandlerCancelFunc,
-		writeCoalescer: NewWriteCoalescer(
-			conf,
-			conn,
-			metricsHandler,
-			waitGroup,
-			clientHandlerContext,
-			clientHandlerCancelFunc,
-			"ClusterConnector",
-			true,
-			writeScheduler),
-		responseChan:  responseChan,
-		doneChan:      make(chan bool),
-		readScheduler: readScheduler,
+		connection:              		conn,
+		clusterType:             		clusterType,
+		clusterConnEventsChan:   		make(chan *frame.RawFrame, conf.EventQueueSizeFrames),
+		metricsHandler:          		metricsHandler,
+		waitGroup:               		waitGroup,
+		clientHandlerContext:    		clientHandlerContext,
+		clientHandlerCancelFunc: 		clientHandlerCancelFunc,
+		writeCoalescer: 				NewWriteCoalescer(
+											conf,
+											conn,
+											metricsHandler,
+											waitGroup,
+											clientHandlerContext,
+											clientHandlerCancelFunc,
+											"ClusterConnector",
+											true,
+											writeScheduler),
+		responseChan:  					responseChan,
+		responseReadBufferSizeBytes:    conf.ResponseReadBufferSizeBytes,
+		doneChan:      					make(chan bool),
+		readScheduler: 					readScheduler,
 	}, nil
 }
 
@@ -120,10 +124,11 @@ func (cc *ClusterConnector) run() {
 	cc.writeCoalescer.RunWriteQueueLoop()
 }
 
-func openConnectionToCluster(connInfo *ClusterConnectionInfo, context context.Context, metricsHandler metrics.IMetricsHandler) (net.Conn, error) {
-	conn, err := establishConnection(connInfo.getConnectionString(), context)
+func openConnectionToCluster(connInfo *ClusterConnectionInfo, context context.Context, metricsHandler metrics.IMetricsHandler) (net.Conn, context.Context, error) {
+	log.Infof("[ClusterConnector] Opening request connection to %v", connInfo.endpoint.GetEndpointIdentifier())
+	conn, timeoutCtx, err := openConnection(connInfo.connConfig, connInfo.endpoint, context, true)
 	if err != nil {
-		return nil, err
+		return nil, timeoutCtx, err
 	}
 
 	if connInfo.isOriginCassandra {
@@ -131,11 +136,13 @@ func openConnectionToCluster(connInfo *ClusterConnectionInfo, context context.Co
 	} else {
 		metricsHandler.IncrementCountByOne(metrics.OpenTargetConnections)
 	}
-	return conn, nil
+
+	log.Infof("[ClusterConnector] Request connection to %v has been opened", conn.RemoteAddr())
+	return conn, timeoutCtx, nil
 }
 
 func closeConnectionToCluster(conn net.Conn, clusterType ClusterType, metricsHandler metrics.IMetricsHandler) {
-	log.Infof("[ClusterConnector] Closing connection to %v (%v)", clusterType, conn.RemoteAddr())
+	log.Infof("[ClusterConnector] Closing request connection to %v (%v)", clusterType, conn.RemoteAddr())
 	err := conn.Close()
 	if err != nil {
 		log.Warnf("[ClusterConnector] Error closing connection to %v (%v)", clusterType, conn.RemoteAddr())
@@ -146,7 +153,7 @@ func closeConnectionToCluster(conn net.Conn, clusterType ClusterType, metricsHan
 	} else {
 		metricsHandler.DecrementCountByOne(metrics.OpenTargetConnections)
 	}
-
+	log.Infof("[ClusterConnector] Request connection to %v (%v) has been closed", clusterType, conn.RemoteAddr())
 }
 
 /**
@@ -161,7 +168,7 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 		defer close(cc.clusterConnEventsChan)
 		defer close(cc.doneChan)
 
-		bufferedReader := bufio.NewReaderSize(cc.connection, cc.conf.ResponseReadBufferSizeBytes)
+		bufferedReader := bufio.NewReaderSize(cc.connection, cc.responseReadBufferSizeBytes)
 		connectionAddr := cc.connection.RemoteAddr().String()
 		wg := &sync.WaitGroup{}
 		defer wg.Wait()
@@ -193,10 +200,6 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 
 func (cc *ClusterConnector) sendRequestToCluster(frame *frame.RawFrame) {
 	cc.writeCoalescer.Enqueue(frame)
-}
-
-func (cci *ClusterConnectionInfo) getConnectionString() string {
-	return fmt.Sprintf("%s:%d", cci.ipAddress, cci.port)
 }
 
 // Checks if the error was due to a shutdown request, triggering the cancellation function if it was not.

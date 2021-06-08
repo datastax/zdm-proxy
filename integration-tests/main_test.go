@@ -65,6 +65,6 @@ func RunTests(m *testing.M) int {
 	return m.Run()
 }
 
-func NewProxyInstanceForGlobalCcmClusters() *cloudgateproxy.CloudgateProxy {
+func NewProxyInstanceForGlobalCcmClusters() (*cloudgateproxy.CloudgateProxy, error) {
 	return setup.NewProxyInstance(originCluster, targetCluster)
 }

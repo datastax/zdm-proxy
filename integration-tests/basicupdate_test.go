@@ -18,7 +18,8 @@ func TestBasicUpdate(t *testing.T) {
 		t.Skip("Test requires CCM, set USE_CCM env variable to TRUE")
 	}
 
-	proxyInstance := NewProxyInstanceForGlobalCcmClusters()
+	proxyInstance, err := NewProxyInstanceForGlobalCcmClusters()
+	require.Nil(t, err)
 	defer proxyInstance.Shutdown()
 
 	// Initialize test data

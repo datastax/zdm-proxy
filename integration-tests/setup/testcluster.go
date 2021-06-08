@@ -112,18 +112,25 @@ type CcmTestSetup struct {
 	Proxy  *cloudgateproxy.CloudgateProxy
 }
 
-func NewSimulacronTestSetupWithSession(createProxy bool, createSession bool) *SimulacronTestSetup {
-	origin, err := simulacron.GetNewCluster(createSession, 1)
+func NewSimulacronTestSetupWithSession(createProxy bool, createSession bool) (*SimulacronTestSetup, error) {
+	return NewSimulacronTestSetupWithSessionAndNodes(createProxy, createSession, 1)
+}
+
+func NewSimulacronTestSetupWithSessionAndNodes(createProxy bool, createSession bool, nodes int) (*SimulacronTestSetup, error) {
+	origin, err := simulacron.GetNewCluster(createSession, nodes)
 	if err != nil {
 		log.Panic("simulacron origin startup failed: ", err)
 	}
-	target, err := simulacron.GetNewCluster(createSession, 1)
+	target, err := simulacron.GetNewCluster(createSession, nodes)
 	if err != nil {
 		log.Panic("simulacron target startup failed: ", err)
 	}
 	var proxyInstance *cloudgateproxy.CloudgateProxy
 	if createProxy {
-		proxyInstance = NewProxyInstance(origin, target)
+		proxyInstance, err = NewProxyInstance(origin, target)
+		if err != nil {
+			return nil, err
+		}
 	} else {
 		proxyInstance = nil
 	}
@@ -131,10 +138,10 @@ func NewSimulacronTestSetupWithSession(createProxy bool, createSession bool) *Si
 		Origin: origin,
 		Target: target,
 		Proxy:  proxyInstance,
-	}
+	}, nil
 }
 
-func NewSimulacronTestSetup() *SimulacronTestSetup {
+func NewSimulacronTestSetup() (*SimulacronTestSetup, error) {
 	return NewSimulacronTestSetupWithSession(true, false)
 }
 
@@ -170,7 +177,10 @@ func NewTemporaryCcmTestSetup(start bool) (*CcmTestSetup, error) {
 
 	var proxyInstance *cloudgateproxy.CloudgateProxy
 	if start {
-		proxyInstance = NewProxyInstance(origin, target)
+		proxyInstance, err = NewProxyInstance(origin, target)
+		if err != nil {
+			return nil, err
+		}
 	} else {
 		proxyInstance = nil
 	}
@@ -193,7 +203,11 @@ func (setup *CcmTestSetup) Start(config *config.Config, jvmArgs ...string) error
 		return err
 	}
 	if config != nil {
-		setup.Proxy = NewProxyInstanceWithConfig(config)
+		proxy, err := NewProxyInstanceWithConfig(config)
+		if err != nil {
+			return err
+		}
+		setup.Proxy = proxy
 	}
 	return nil
 }
@@ -214,20 +228,23 @@ func (setup *CcmTestSetup) Cleanup() {
 	}
 }
 
-func NewProxyInstance(origin TestCluster, target TestCluster) *cloudgateproxy.CloudgateProxy {
+func NewProxyInstance(origin TestCluster, target TestCluster) (*cloudgateproxy.CloudgateProxy, error) {
 	return NewProxyInstanceWithConfig(NewTestConfig(origin.GetInitialContactPoint(), target.GetInitialContactPoint()))
 }
 
-func NewProxyInstanceWithConfig(config *config.Config) *cloudgateproxy.CloudgateProxy {
-	proxy, err := cloudgateproxy.Run(config, context.Background())
-	if err != nil {
-		panic(err)
-	}
-	return proxy
+func NewProxyInstanceWithConfig(config *config.Config) (*cloudgateproxy.CloudgateProxy, error) {
+	return cloudgateproxy.Run(config, context.Background())
 }
 
 func NewTestConfig(originHost string, targetHost string) *config.Config {
 	conf := config.New()
+
+	conf.ProxyIndex = 0
+	conf.ProxyInstanceCount = 1
+
+	conf.OriginEnableHostAssignment = false
+	conf.TargetEnableHostAssignment = true
+
 	conf.OriginCassandraHostname = originHost
 	conf.OriginCassandraUsername = "cassandra"
 	conf.OriginCassandraPassword = "cassandra"

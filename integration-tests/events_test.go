@@ -37,7 +37,8 @@ func TestSchemaEvents(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			proxyInstance := NewProxyInstanceForGlobalCcmClusters()
+			proxyInstance, err := NewProxyInstanceForGlobalCcmClusters()
+			require.Nil(t, err)
 			defer proxyInstance.Shutdown()
 
 			// test client that connects to the proxy
@@ -124,7 +125,8 @@ func TestTopologyStatusEvents(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			proxyInstance := NewProxyInstanceForGlobalCcmClusters()
+			proxyInstance, err := NewProxyInstanceForGlobalCcmClusters()
+			require.Nil(t, err)
 			defer proxyInstance.Shutdown()
 
 			testClientForEvents, err := client.NewTestClient("127.0.0.1:14002")

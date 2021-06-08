@@ -16,10 +16,11 @@ import (
 // TestRunWithRetries tests that the proxy is able to accept client connections even if the cluster nodes are unavailable
 // at startup but they come back online afterwards
 func TestRunWithRetries(t *testing.T) {
-	testSetup := setup.NewSimulacronTestSetupWithSession(false, false)
+	testSetup, err := setup.NewSimulacronTestSetupWithSession(false, false)
+	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
-	err := testSetup.Origin.DisableConnectionListener()
+	err = testSetup.Origin.DisableConnectionListener()
 	require.True(t, err == nil, "failed to disable origin connection listener: %v", err)
 
 	err = testSetup.Target.DisableConnectionListener()

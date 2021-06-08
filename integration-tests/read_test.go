@@ -19,7 +19,8 @@ var rows = simulacron.NewRowsResult(
 })
 
 func TestForwardDecisionsForReads(t *testing.T) {
-	testSetup := setup.NewSimulacronTestSetup()
+	testSetup, err := setup.NewSimulacronTestSetup()
+	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
 	proxy, err := utils.ConnectToCluster("127.0.0.1", "", "", 14002)
@@ -79,7 +80,8 @@ func TestForwardDecisionsForReads(t *testing.T) {
 }
 
 func TestForwardDecisionsForReadsWithUseStatement(t *testing.T) {
-	testSetup := setup.NewSimulacronTestSetupWithSession(false, false)
+	testSetup, err := setup.NewSimulacronTestSetupWithSession(false, false)
+	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
 	t.Run("ForwardToOrigin", func(tt *testing.T) {
@@ -96,7 +98,8 @@ func testForwardDecisionsForReadsWithUseStatement(
 
 	config := setup.NewTestConfig(testSetup.Origin.GetInitialContactPoint(), testSetup.Target.GetInitialContactPoint())
 	config.ForwardReadsToTarget = forwardReadsToTarget
-	proxy := setup.NewProxyInstanceWithConfig(config)
+	proxy, err := setup.NewProxyInstanceWithConfig(config)
+	require.Nil(t, err)
 	defer proxy.Shutdown()
 
 	cluster := utils.NewCluster("127.0.0.1", "", "", 14002)

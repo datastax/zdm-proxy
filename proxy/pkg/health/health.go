@@ -96,8 +96,16 @@ func PerformHealthCheck(proxy *cloudgateproxy.CloudgateProxy) *StatusReport {
 }
 
 func newControlConnStatus(controlConn *cloudgateproxy.ControlConn, failureThreshold int) *ControlConnStatus {
+	currentEndpoint := controlConn.GetCurrentContactPoint()
+	var addr string
+	if currentEndpoint == nil {
+		addr = "NOT_CONNECTED"
+	} else {
+		addr = currentEndpoint.GetEndpointIdentifier()
+	}
+
 	controlConnReport := &ControlConnStatus{
-		Addr:                  controlConn.GetAddr(),
+		Addr:                  addr,
 		CurrentFailureCount:   controlConn.ReadFailureCounter(),
 		FailureCountThreshold: failureThreshold,
 		Status:                UP,

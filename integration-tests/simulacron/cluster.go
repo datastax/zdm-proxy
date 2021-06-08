@@ -11,39 +11,40 @@ import (
 
 type Cluster struct {
 	*baseSimulacron
-	initialContactPoint string
-	version             string
-	session             *gocql.Session
-	datacenters         []*Datacenter
+	InitialContactPoint string
+	Version             string
+	Session             *gocql.Session
+	Datacenters         []*Datacenter
+	Name                string
 }
 
 type Datacenter struct {
 	*baseSimulacron
-	nodes []*Node
+	Nodes []*Node
 }
 
 type Node struct {
 	*baseSimulacron
-	address string
+	Address string
 }
 
 type baseSimulacron struct {
 	process *Process
-	id      int
+	id      string
 }
 
-func (process *Process) newCluster(startSession bool, data *ClusterData) (*Cluster, error) {
+func (process *Process) newCluster(startSession bool, data *ClusterData, name string) (*Cluster, error) {
 	dcs := make([]*Datacenter, len(data.Datacenters))
 	for i := 0; i < len(dcs); i++ {
-		dcs[i] = newDatacenter(process, data.Datacenters[i])
+		dcs[i] = newDatacenter(process, data.Datacenters[i], data.Id)
 	}
 	var contactPoint string
 	var session *gocql.Session
 	var err error
-	if len(dcs) <= 0 || len(dcs[0].nodes) <= 0 {
+	if len(dcs) <= 0 || len(dcs[0].Nodes) <= 0 {
 		contactPoint = ""
 	} else {
-		contactPoint = strings.Split(dcs[0].nodes[0].address, ":")[0]
+		contactPoint = strings.Split(dcs[0].Nodes[0].Address, ":")[0]
 		if startSession {
 			cl := gocql.NewCluster(contactPoint)
 			session, err = cl.CreateSession()
@@ -54,31 +55,32 @@ func (process *Process) newCluster(startSession bool, data *ClusterData) (*Clust
 	}
 
 	return &Cluster{
-		initialContactPoint: contactPoint,
-		version:             env.ServerVersion,
-		baseSimulacron:      &baseSimulacron{id: data.Id, process: process},
-		session:             session,
-		datacenters:         dcs,
+		InitialContactPoint: contactPoint,
+		Version:             env.ServerVersion,
+		baseSimulacron:      &baseSimulacron{id: fmt.Sprintf("%d", data.Id), process: process},
+		Session:             session,
+		Datacenters:         dcs,
+		Name:                name,
 	}, nil
 }
 
-func newNode(process *Process, data *NodeData) *Node {
-	return &Node{baseSimulacron: &baseSimulacron{id: data.Id, process: process}, address: data.Address}
+func newNode(process *Process, data *NodeData, dcId int, clusterId int) *Node {
+	return &Node{baseSimulacron: &baseSimulacron{id: fmt.Sprintf("%d/%d/%d", clusterId, dcId, data.Id), process: process}, Address: data.Address}
 }
 
-func newDatacenter(process *Process, data *DatacenterData) *Datacenter {
+func newDatacenter(process *Process, data *DatacenterData, clusterId int) *Datacenter {
 	nodes := make([]*Node, len(data.Nodes))
 	for i := 0; i < len(nodes); i++ {
-		nodes[i] = newNode(process, data.Nodes[i])
+		nodes[i] = newNode(process, data.Nodes[i], data.Id, clusterId)
 	}
 	return &Datacenter{
-		baseSimulacron: &baseSimulacron{id: data.Id, process: process},
-		nodes:          nodes,
+		baseSimulacron: &baseSimulacron{id: fmt.Sprintf("%d/%d", clusterId, data.Id), process: process},
+		Nodes:          nodes,
 	}
 }
 
 func (baseSimulacron *baseSimulacron) GetId() string {
-	return fmt.Sprintf("%d", baseSimulacron.id)
+	return baseSimulacron.id
 }
 
 func GetNewCluster(startSession bool, numberOfNodes int) (*Cluster, error) {
@@ -98,23 +100,23 @@ func GetNewCluster(startSession bool, numberOfNodes int) (*Cluster, error) {
 }
 
 func (instance *Cluster) Remove() error {
-	if instance.session != nil {
-		instance.session.Close()
+	if instance.Session != nil {
+		instance.Session.Close()
 	}
 
 	return instance.process.Remove(instance.GetId())
 }
 
 func (instance *Cluster) GetInitialContactPoint() string {
-	return instance.initialContactPoint
+	return instance.InitialContactPoint
 }
 
 func (instance *Cluster) GetVersion() string {
-	return instance.version
+	return instance.Version
 }
 
 func (instance *Cluster) GetSession() *gocql.Session {
-	return instance.session
+	return instance.Session
 }
 
 func (baseSimulacron *baseSimulacron) Prime(then Then) error {
