@@ -92,7 +92,7 @@ func inspectFrame(
 		}
 		if queryInfo.getStatementType() == statementTypeSelect {
 			if isSystemQuery(queryInfo, currentKeyspaceName) || forwardReadsToTarget {
-				log.Debugf("Detected system query: %v with stream id: %v",  queryInfo.getQuery(), f.Header.StreamId) // TODO remove after investigation
+				log.Debugf("Detected system query: %v with stream id: %v",  queryInfo.getQuery(), f.Header.StreamId)
 				forwardDecision = forwardToTarget
 			} else {
 				forwardDecision = forwardToOrigin
@@ -107,7 +107,7 @@ func inspectFrame(
 		}
 		if queryInfo.getStatementType() == statementTypeSelect {
 			if isSystemQuery(queryInfo, currentKeyspaceName) || forwardReadsToTarget {
-				log.Debugf("Detected system query: %v with stream id: %v",  queryInfo.getQuery(), f.Header.StreamId) // TODO remove after investigation
+				log.Debugf("Detected system query: %v with stream id: %v",  queryInfo.getQuery(), f.Header.StreamId)
 				forwardDecision = forwardToTarget
 			} else {
 				forwardDecision = forwardToOrigin

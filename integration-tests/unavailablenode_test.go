@@ -13,7 +13,7 @@ import (
 // TestUnavailableNode tests if the proxy closes the client connection correctly when either cluster node connection is closed
 func TestUnavailableNode(t *testing.T) {
 
-	// TODO fix bug race condition close client connector coalescer (overload message)
+	// TODO fix bug race condition close client connector coalescer (overload message) - https://github.com/riptano/cloud-gate/issues/180
 	return
 	clusters := []string{"origin", "target", "both"}
 	for _, clusterNotResponding := range clusters {

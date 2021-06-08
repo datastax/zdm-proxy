@@ -8,34 +8,6 @@ import (
 	"io/ioutil"
 )
 
-//func parseHostAndPortFromSCBConfig(scbConfigDirPath string) (string, string, error){
-//	scbConfigFilePath, err := filepath.Abs(scbConfigDirPath + "/config.json")
-//	if err != nil {
-//		log.Errorf("Error in locating config.json file: %v in path %s", err, scbConfigDirPath)
-//		return "","", err
-//	}
-//
-//	scbConfigFile, err := ioutil.ReadFile(scbConfigFilePath)
-//	if err != nil {
-//		fmt.Errorf("error loading file from %s due to %v", scbConfigDirPath, err)
-//		return "", "", err
-//	}
-//
-//	var scbConfigMap map[string]interface{}
-//	json.Unmarshal(scbConfigFile, &scbConfigMap)
-//
-//	hostName, err := retrieveConfigParameterAsString(scbConfigMap, "host")
-//	if err != nil {
-//		return "", "", err
-//	}
-//
-//	port, err := retrieveConfigParameterAsString(scbConfigMap, "port")
-//	if err != nil {
-//		return "", "", err
-//	}
-//	return hostName, port, nil
-//}
-
 func parseHostAndPortFromSCBConfig(scbConfigFile []byte) (string, string, error){
 
 	if scbConfigFile == nil {

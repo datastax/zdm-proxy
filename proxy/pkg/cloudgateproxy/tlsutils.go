@@ -5,13 +5,19 @@ import (
 	"crypto/x509"
 	"fmt"
 	log "github.com/sirupsen/logrus"
+	"runtime"
 )
 
 func initializeTLSConfiguration(caCert []byte, cert []byte, key []byte, hostName string) (*tls.Config, error) {
 
 	rootCAs, err := x509.SystemCertPool()
 	if err != nil {
-		return nil, err
+		if runtime.GOOS == "windows" {
+			rootCAs = x509.NewCertPool()
+			err = nil
+		} else {
+			return nil, err
+		}
 	}
 
 	if caCert != nil {

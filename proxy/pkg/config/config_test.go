@@ -25,7 +25,7 @@ func TestTargetConfig_WithBundleOnly(t *testing.T) {
 	conf, err := New().ParseEnvVars()
 	require.Equal(t, conf.TargetCassandraSecureConnectBundlePath, "/path/to/bundle")
 	require.Empty(t, conf.TargetCassandraHostname)
-	require.Empty(t, conf.TargetCassandraPort)
+	require.Equal(t, conf.TargetCassandraPort, 9042)
 	require.Nil(t, err)
 	
 	os.Clearenv()
@@ -72,13 +72,13 @@ func TestTargetConfig_WithHostnameButWithoutPort(t *testing.T) {
 
 	setEnvVar("TARGET_CASSANDRA_HOSTNAME", "target.hostname.com")
 
-	_, err := New().ParseEnvVars()
-	require.Error(t, err, "TargetCassandraHostname was specified but the port is missing. " +
-		"Please provide TargetCassandraPort")
+	c, err := New().ParseEnvVars()
+	require.Nil(t, err)
+	require.Equal(t, 9042, c.TargetCassandraPort)
 }
 
 func setEnvVar(key string, value string) {
-	setEnvVar(key, value)
+	os.Setenv(key, value)
 }
 
 func clearAllEnvVars() {

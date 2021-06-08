@@ -129,43 +129,31 @@ func (p *CloudgateProxy) Start(ctx context.Context) error {
 
 
 func (p *CloudgateProxy) initializeControlConnections(ctx context.Context) error {
-
 	r := rand.New(rand.NewSource(time.Now().UTC().UnixNano()))
-	originControlConn, originContactPointIndex, err := connectToFirstAvailableEndpoint(p.originConnectionConfig, p.originContactPoints, ctx, false, r)
-	if err != nil {
-		return err
-	}
 
-	originContactPoint := p.originContactPoints[originContactPointIndex]
-	log.Debugf("Origin connection successfully established to %v", originContactPoint.GetEndpointIdentifier())
+	originControlConn := NewControlConn(
+		p.shutdownContext, p.Conf.OriginCassandraPort, p.originConnectionConfig, p.originContactPoints,
+		p.Conf.OriginCassandraUsername, p.Conf.OriginCassandraPassword, p.Conf)
 
-
-	targetControlConn, targetContactPointIndex, err := connectToFirstAvailableEndpoint(p.targetConnectionConfig, p.targetContactPoints, ctx, false, r)
-	if err != nil {
-		return err
-	}
-
-	targetContactPoint := p.targetContactPoints[targetContactPointIndex]
-	log.Debugf("Target control connection successfully established to %v", targetContactPoint.GetEndpointIdentifier())
-
-	p.lock.Lock()
-	defer p.lock.Unlock()
-
-	p.originControlConn =
-		NewControlConn(
-			originControlConn, p.shutdownContext, p.Conf.OriginCassandraPort, p.originConnectionConfig, p.originContactPoints,
-			originContactPointIndex, p.Conf.OriginCassandraUsername, p.Conf.OriginCassandraPassword, p.Conf)
-	if err := p.originControlConn.Start(p.shutdownWaitGroup, ctx); err != nil {
+	if err := originControlConn.Start(p.shutdownWaitGroup, ctx, r); err != nil {
 		return fmt.Errorf("failed to initialize origin control connection: %w", err)
 	}
 
-	p.targetControlConn =
-		NewControlConn(
-			targetControlConn, p.shutdownContext, p.Conf.TargetCassandraPort, p.targetConnectionConfig, p.targetContactPoints,
-			targetContactPointIndex, p.Conf.TargetCassandraUsername, p.Conf.TargetCassandraPassword, p.Conf)
-	if err := p.targetControlConn.Start(p.shutdownWaitGroup, ctx); err != nil {
+	p.lock.Lock()
+	p.originControlConn = originControlConn
+	p.lock.Unlock()
+
+	targetControlConn := NewControlConn(
+		p.shutdownContext, p.Conf.TargetCassandraPort, p.targetConnectionConfig, p.targetContactPoints,
+		p.Conf.TargetCassandraUsername, p.Conf.TargetCassandraPassword, p.Conf)
+
+	if err := targetControlConn.Start(p.shutdownWaitGroup, ctx, r); err != nil {
 		return fmt.Errorf("failed to initialize target control connection: %w", err)
 	}
+
+	p.lock.Lock()
+	p.targetControlConn = targetControlConn
+	p.lock.Unlock()
 
 	return nil
 }
@@ -360,7 +348,11 @@ func (p *CloudgateProxy) acceptConnectionsFromClients(address string, port int) 
 		for {
 			conn, err := l.Accept()
 			if err != nil {
-				if p.shutdownContext.Err() != nil || p.shutdownRequestCtx.Err() != nil {
+				p.listenerLock.Lock()
+				listenerClosed := p.listenerClosed
+				p.listenerLock.Unlock()
+
+				if listenerClosed || p.shutdownContext.Err() != nil || p.shutdownRequestCtx.Err() != nil {
 					log.Debugf("Shutting down client listener on port %d", port)
 					return
 				}

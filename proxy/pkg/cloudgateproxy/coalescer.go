@@ -104,11 +104,11 @@ func (recv *writeCoalescer) RunWriteQueueLoop() {
 					if firstFrameRead {
 						select {
 						case f, ok = <-recv.writeQueue:
-							if !ok {
-								close(resultChannel)
-								return
-							}
 						default:
+							ok = false
+						}
+
+						if !ok {
 							t := &coalescerIterationResult{
 								buffer:   tempBuffer,
 								draining: tempDraining,

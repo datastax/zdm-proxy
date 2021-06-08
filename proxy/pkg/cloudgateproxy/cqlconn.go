@@ -26,8 +26,8 @@ const (
 )
 type CqlConnection interface {
 	IsInitialized() bool
-	Initialize(version primitive.ProtocolVersion, streamId int16) error
-	InitializeContext(version primitive.ProtocolVersion, streamId int16, ctx context.Context) error
+	Initialize(version primitive.ProtocolVersion) error
+	InitializeContext(version primitive.ProtocolVersion, ctx context.Context) error
 	SendAndReceive(request *frame.Frame) (*frame.Frame, error)
 	SendAndReceiveContext(request *frame.Frame, ctx context.Context) (*frame.Frame, error)
 	Close() error
@@ -205,8 +205,8 @@ func (c *cqlConn) IsInitialized() bool {
 	return c.initialized
 }
 
-func (c *cqlConn) InitializeContext(version primitive.ProtocolVersion, streamId int16, ctx context.Context) error {
-	err := c.PerformHandshake(version, streamId, ctx)
+func (c *cqlConn) InitializeContext(version primitive.ProtocolVersion, ctx context.Context) error {
+	err := c.PerformHandshake(version, ctx)
 	if err != nil {
 		return fmt.Errorf("failed to perform handshake: %w", err)
 	}
@@ -215,8 +215,8 @@ func (c *cqlConn) InitializeContext(version primitive.ProtocolVersion, streamId 
 	return nil
 }
 
-func (c *cqlConn) Initialize(version primitive.ProtocolVersion, streamId int16) error {
-	return c.InitializeContext(version, streamId, context.Background())
+func (c *cqlConn) Initialize(version primitive.ProtocolVersion) error {
+	return c.InitializeContext(version, context.Background())
 }
 
 func (c *cqlConn) Close() error {
@@ -305,9 +305,9 @@ func (c *cqlConn) SendAndReceive(request *frame.Frame) (*frame.Frame, error) {
 	return c.SendAndReceiveContext(request, context.Background())
 }
 
-func (c *cqlConn) PerformHandshake(version primitive.ProtocolVersion, streamId int16, ctx context.Context) (err error) {
+func (c *cqlConn) PerformHandshake(version primitive.ProtocolVersion, ctx context.Context) (err error) {
 	log.Debug("performing handshake")
-	startup := frame.NewFrame(version, streamId, message.NewStartup())
+	startup := frame.NewFrame(version, -1, message.NewStartup())
 	var response *frame.Frame
 	authenticator := &DsePlainTextAuthenticator{c.credentials}
 	if response, err = c.SendAndReceiveContext(startup, ctx); err == nil {
@@ -317,12 +317,12 @@ func (c *cqlConn) PerformHandshake(version primitive.ProtocolVersion, streamId i
 			break
 		case *message.Authenticate:
 			var authResponse *frame.Frame
-			authResponse, err = performHandshakeStep(authenticator, version, streamId, response)
+			authResponse, err = performHandshakeStep(authenticator, version, -1, response)
 			if err == nil {
 				if response, err = c.SendAndReceiveContext(authResponse, ctx); err != nil {
 					err = fmt.Errorf("could not send AUTH RESPONSE: %w", err)
 				} else if _, authSuccess := response.Body.Message.(*message.AuthSuccess); !authSuccess {
-					authResponse, err = performHandshakeStep(authenticator, version, streamId, response)
+					authResponse, err = performHandshakeStep(authenticator, version, -1, response)
 					if err == nil {
 						if response, err = c.SendAndReceiveContext(authResponse, ctx); err != nil {
 							err = fmt.Errorf("could not send AUTH RESPONSE: %w", err)
@@ -354,7 +354,7 @@ func (c *cqlConn) Query(cql string, genericTypeCodec *GenericTypeCodec) (*Parsed
 		},
 	}
 
-	queryFrame := frame.NewFrame(ccProtocolVersion, 2, queryMsg)
+	queryFrame := frame.NewFrame(ccProtocolVersion, -1, queryMsg)
 	var rowSet *ParsedRowSet
 	for {
 		localResponse, err := c.SendAndReceiveContext(queryFrame, context.Background())
@@ -410,7 +410,7 @@ func (c *cqlConn) Query(cql string, genericTypeCodec *GenericTypeCodec) (*Parsed
 
 func (c *cqlConn) SendHeartbeat(ctx context.Context) error {
 	optionsMsg := &message.Options{}
-	heartBeatFrame := frame.NewFrame(ccProtocolVersion, 1, optionsMsg)
+	heartBeatFrame := frame.NewFrame(ccProtocolVersion, -1, optionsMsg)
 
 	response, err := c.SendAndReceiveContext(heartBeatFrame, ctx)
 	if err != nil {

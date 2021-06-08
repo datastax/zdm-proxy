@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"github.com/jpillora/backoff"
 	log "github.com/sirupsen/logrus"
-	"math/rand"
 	"net"
 	"time"
 )
@@ -96,37 +95,6 @@ func initializeConnectionConfig(secureConnectBundlePath string, hostName string,
 
 func (cc *ConnectionConfig) usesSNI() bool {
 	return cc.sniProxyEndpoint != ""
-}
-
-func connectToFirstAvailableEndpoint(connectionConfig *ConnectionConfig, endpoints []Endpoint, ctx context.Context, useBackoff bool, r *rand.Rand) (net.Conn, int, error) {
-	var conn net.Conn
-	var connectedEndpointIndex int
-	var err error
-	connectionEstablished := false
-	firstContactPointIndex := r.Intn(len(endpoints))
-	for i := 0; i < len(endpoints); i++ {
-		currentIndex := (firstContactPointIndex + i) % len(endpoints)
-		endpoint := endpoints[currentIndex]
-		err = nil
-		conn, _, err = openConnection(connectionConfig, endpoint, ctx, useBackoff)
-		if err != nil || conn == nil {
-			// could not establish connection using this endpoint, try the next one
-			log.Warnf("Could not establish a connection to endpoint %v due to %v, trying the next endpoint if available", endpoint.GetEndpointIdentifier(), err)
-			continue
-		} else {
-			// connection established, no need to try any remaining endpoints
-			connectionEstablished = true
-			connectedEndpointIndex = currentIndex
-			break
-		}
-	}
-
-	if !connectionEstablished {
-		return nil, -1, fmt.Errorf("could not connect to any of the endpoints provided")
-	}
-
-	return conn, connectedEndpointIndex, nil
-
 }
 
 func openConnection(cc *ConnectionConfig, ec Endpoint, ctx context.Context, useBackoff bool) (net.Conn, context.Context, error){

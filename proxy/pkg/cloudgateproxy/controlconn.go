@@ -10,7 +10,7 @@ import (
 	"github.com/riptano/cloud-gate/proxy/pkg/config"
 	log "github.com/sirupsen/logrus"
 	"math"
-	"net"
+	"math/rand"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -48,9 +48,10 @@ const ccProtocolVersion = primitive.ProtocolVersion3
 const ccWriteTimeout = 5 * time.Second
 const ccReadTimeout = 10 * time.Second
 
-func NewControlConn(conn net.Conn, ctx context.Context, defaultPort int, connConfig *ConnectionConfig, contactPoints []Endpoint, currentContactPointIndex int, username string, password string, conf *config.Config) *ControlConn {
+func NewControlConn(ctx context.Context, defaultPort int, connConfig *ConnectionConfig, contactPoints []Endpoint,
+	username string, password string, conf *config.Config) *ControlConn {
 	return &ControlConn{
-		cqlConn: NewCqlConnection(conn, username, password, ccReadTimeout, ccWriteTimeout),
+		cqlConn: nil,
 		retryBackoffPolicy: &backoff.Backoff{
 			Factor: conf.HeartbeatRetryBackoffFactor,
 			Jitter: true,
@@ -62,8 +63,8 @@ func NewControlConn(conn net.Conn, ctx context.Context, defaultPort int, connCon
 		defaultPort:              defaultPort,
 		connConfig:               connConfig,
 		contactPoints:            contactPoints,
-		currentContactPoint:      contactPoints[currentContactPointIndex],
-		currentContactPointIndex: currentContactPointIndex,
+		currentContactPoint:      nil,
+		currentContactPointIndex: 0,
 		username:                 username,
 		password:                 password,
 		counterLock:              &sync.RWMutex{},
@@ -80,15 +81,44 @@ func NewControlConn(conn net.Conn, ctx context.Context, defaultPort int, connCon
 	}
 }
 
-func (cc *ControlConn) Start(wg *sync.WaitGroup, ctx context.Context) error {
-	conn, contactPoint := cc.getConnAndContactPoint()
-	log.Infof("Opening control connection to %v.", cc.connConfig.clusterType)
-	newConn, newContactPoint, err := cc.Open(conn, contactPoint, ctx)
-	if err != nil {
-		cc.setConn(conn, nil, nil)
-		return fmt.Errorf("failed to initialize control connection: %w", err)
-	} else {
-		cc.setConn(conn, newConn, newContactPoint)
+func (cc *ControlConn) Start(wg *sync.WaitGroup, ctx context.Context, r *rand.Rand) error {
+	connectionEstablished := false
+	firstContactPointIndex := r.Intn(len(cc.contactPoints))
+
+	for i := 0; i < len(cc.contactPoints); i++ {
+		currentIndex := (firstContactPointIndex + i) % len(cc.contactPoints)
+		endpoint := cc.setCurrentContactPoint(currentIndex)
+		conn, _, err := openConnection(cc.connConfig, endpoint, ctx, false)
+		if err != nil || conn == nil {
+			// could not establish connection using this endpoint, try the next one
+			log.Warnf("Could not establish a control connection to endpoint %v due to %v, trying the next contact point if available.", endpoint.GetEndpointIdentifier(), err)
+			continue
+		}
+
+		cqlConn := NewCqlConnection(conn, cc.username, cc.password, ccReadTimeout, ccWriteTimeout)
+		newConn, newContactPoint, err := cc.Open(cqlConn, endpoint, ctx)
+		if err != nil {
+			connCloseErr := conn.Close()
+			if connCloseErr != nil {
+				log.Warnf("Failed to close connection after failure to start control connection: %v", connCloseErr)
+			}
+
+			log.Warnf("Could not establish a control connection to endpoint %v due to %v, " +
+				"trying the next contact point if available.", endpoint.GetEndpointIdentifier(), err)
+			continue
+		} else {
+			// connection established, no need to try any remaining endpoints
+			cc.setConn(nil, newConn, newContactPoint)
+			connectionEstablished = true
+			log.Debugf(
+				"Control connection (%v) successfully established to %v.",
+				cc.connConfig.clusterType, newContactPoint.GetEndpointIdentifier())
+			break
+		}
+	}
+
+	if !connectionEstablished {
+		return fmt.Errorf("could not connect to any of the endpoints provided (tried %v)", cc.contactPoints)
 	}
 
 	wg.Add(1)
@@ -124,7 +154,7 @@ func (cc *ControlConn) Start(wg *sync.WaitGroup, ctx context.Context) error {
 			conn, contactPoint := cc.getConnAndContactPoint()
 			if conn == nil || !conn.IsInitialized() {
 				log.Infof("Reopening control connection to %v.", cc.connConfig.clusterType)
-				newConn, newContactPoint, err = cc.Open(conn, contactPoint, nil)
+				newConn, newContactPoint, err := cc.Open(conn, contactPoint, nil)
 				if err != nil {
 					cc.setConn(conn, nil, nil)
 					timeUntilRetry := cc.retryBackoffPolicy.Duration()
@@ -222,7 +252,7 @@ func (cc *ControlConn) Open(conn CqlConnection, contactPoint Endpoint, ctx conte
 		conn = NewCqlConnection(tcpConn, cc.username, cc.password, ccReadTimeout, ccWriteTimeout)
 	}
 
-	err := conn.InitializeContext(ccProtocolVersion, 0, ctx)
+	err := conn.InitializeContext(ccProtocolVersion, ctx)
 	if err == nil {
 		_, err = cc.RefreshHosts(conn)
 	}
@@ -262,7 +292,7 @@ func (cc *ControlConn) Close() {
 	if conn != nil {
 		err := conn.Close()
 		if err != nil {
-			log.Warn("Failed to close connection, re-opening a new one anyway (possible leaked connection).")
+			log.Warnf("Failed to close connection (possible leaked connection): %v", err)
 		}
 	}
 }
@@ -392,6 +422,13 @@ func (cc *ControlConn) moveToNextContactPoint() Endpoint {
 	cc.cqlConnLock.Lock()
 	defer cc.cqlConnLock.Unlock()
 	cc.currentContactPointIndex = (cc.currentContactPointIndex + 1) % len(cc.contactPoints)
+	return cc.contactPoints[cc.currentContactPointIndex]
+}
+
+func (cc *ControlConn) setCurrentContactPoint(index int) Endpoint {
+	cc.cqlConnLock.Lock()
+	defer cc.cqlConnLock.Unlock()
+	cc.currentContactPointIndex = index % len(cc.contactPoints)
 	return cc.contactPoints[cc.currentContactPointIndex]
 }
 

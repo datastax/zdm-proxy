@@ -110,14 +110,14 @@ func ParseSystemPeersResult(rs *ParsedRowSet, defaultPort int, isPeersV2 bool) [
 func parseHost(addr net.IP, port int, row *ParsedRow) (*Host, error) {
 	var datacenter string
 	val, ok := row.GetByColumn("data_center")
-	if !ok {
+	if !ok || val == nil {
 		return nil, fmt.Errorf("could not parse data_center of host %v", addr)
 	}
 	datacenter = val.(string)
 
 	var rack string
 	val, ok = row.GetByColumn("rack")
-	if !ok {
+	if !ok || val == nil {
 		return nil, fmt.Errorf("could not parse rack of host %v", addr)
 	}
 	rack = val.(string)
@@ -138,7 +138,7 @@ func parseHost(addr net.IP, port int, row *ParsedRow) (*Host, error) {
 
 	var releaseVersion string
 	val, ok = row.GetByColumn("release_version")
-	if !ok {
+	if !ok || val == nil {
 		log.Warnf("could not parse release_version of host %v", addr)
 		releaseVersion = ""
 	} else {
@@ -147,7 +147,7 @@ func parseHost(addr net.IP, port int, row *ParsedRow) (*Host, error) {
 
 	var dseVersion string
 	val, ok = row.GetByColumn("dse_version")
-	if !ok {
+	if !ok || val == nil {
 		dseVersion = ""
 	} else {
 		dseVersion = val.(string)
