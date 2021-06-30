@@ -21,6 +21,14 @@ const (
 	forwardToNone   = forwardDecision("none")
 )
 
+type interceptedQueryType string
+
+const (
+	peersV2 = interceptedQueryType("peersV2")
+	peersV1 = interceptedQueryType("peersV1")
+	local   = interceptedQueryType("local")
+)
+
 type UnpreparedExecuteError struct {
 	Header     *frame.Header
 	Body       *frame.Body
@@ -78,7 +86,8 @@ func inspectFrame(
 	psCache *PreparedStatementCache,
 	mh metrics.IMetricsHandler,
 	currentKeyspaceName *atomic.Value,
-	forwardReadsToTarget bool) (StatementInfo, error) {
+	forwardReadsToTarget bool,
+	virtualizationEnabled bool) (StatementInfo, error) {
 
 	forwardDecision := forwardToBoth
 	f := frameContext.frame
@@ -91,6 +100,19 @@ func inspectFrame(
 			return nil, fmt.Errorf("could not inspect QUERY frame: %w", err)
 		}
 		if queryInfo.getStatementType() == statementTypeSelect {
+			if virtualizationEnabled {
+				if isSystemLocal(queryInfo, currentKeyspaceName) {
+					log.Debugf("Detected system local query: %v with stream id: %v",  queryInfo.getQuery(), f.Header.StreamId)
+					return NewInterceptedStatementInfo(local), nil
+				} else if isSystemPeersV1(queryInfo, currentKeyspaceName) {
+					log.Debugf("Detected system peers query: %v with stream id: %v",  queryInfo.getQuery(), f.Header.StreamId)
+					return NewInterceptedStatementInfo(peersV1), nil
+				} else if isSystemPeersV2(queryInfo, currentKeyspaceName) {
+					log.Debugf("Detected system peers_v2 query: %v with stream id: %v",  queryInfo.getQuery(), f.Header.StreamId)
+					return NewInterceptedStatementInfo(peersV2), nil
+				}
+			}
+
 			if isSystemQuery(queryInfo, currentKeyspaceName) || forwardReadsToTarget {
 				log.Debugf("Detected system query: %v with stream id: %v",  queryInfo.getQuery(), f.Header.StreamId)
 				forwardDecision = forwardToTarget
@@ -106,6 +128,19 @@ func inspectFrame(
 			return nil, fmt.Errorf("could not inspect PREPARE frame: %w", err)
 		}
 		if queryInfo.getStatementType() == statementTypeSelect {
+			if virtualizationEnabled {
+				if isSystemLocal(queryInfo, currentKeyspaceName) {
+					log.Debugf("Detected system local query: %v with stream id: %v",  queryInfo.getQuery(), f.Header.StreamId)
+					return NewPreparedStatementInfo(NewInterceptedStatementInfo(local)), nil
+				} else if isSystemPeersV1(queryInfo, currentKeyspaceName) {
+					log.Debugf("Detected system peers query: %v with stream id: %v",  queryInfo.getQuery(), f.Header.StreamId)
+					return NewPreparedStatementInfo(NewInterceptedStatementInfo(peersV1)), nil
+				} else if isSystemPeersV2(queryInfo, currentKeyspaceName) {
+					log.Debugf("Detected system peers_v2 query: %v with stream id: %v",  queryInfo.getQuery(), f.Header.StreamId)
+					return NewPreparedStatementInfo(NewInterceptedStatementInfo(peersV2)), nil
+				}
+			}
+
 			if isSystemQuery(queryInfo, currentKeyspaceName) || forwardReadsToTarget {
 				log.Debugf("Detected system query: %v with stream id: %v",  queryInfo.getQuery(), f.Header.StreamId)
 				forwardDecision = forwardToTarget
@@ -113,7 +148,7 @@ func inspectFrame(
 				forwardDecision = forwardToOrigin
 			}
 		}
-		return NewPreparedStatementInfo(forwardDecision), nil
+		return NewPreparedStatementInfo(NewGenericStatementInfo(forwardDecision)), nil
 
 	case primitive.OpCodeExecute:
 		decodedFrame, err := frameContext.GetOrDecodeFrame()
@@ -127,7 +162,7 @@ func inspectFrame(
 		log.Debugf("Execute with prepared-id = '%s'", executeMsg.QueryId)
 		if stmtInfo, ok := psCache.retrieveStmtInfoFromCache(executeMsg.QueryId); ok {
 			// The forward decision was set in the cache when handling the corresponding PREPARE request
-			return NewGenericStatementInfo(stmtInfo.forwardDecision), nil
+			return stmtInfo.GetBaseStatementInfo(), nil
 		} else {
 			log.Warnf("No cached entry for prepared-id = '%s'", executeMsg.QueryId)
 			_ = mh.IncrementCountByOne(metrics.PSCacheMissCount)
@@ -157,6 +192,41 @@ func isSystemQuery(info queryInfo, currentKeyspaceName *atomic.Value) bool {
 		strings.HasPrefix(keyspaceName, "dse_")
 }
 
+func isSystemPeersV1(info queryInfo, currentKeyspaceName *atomic.Value) bool {
+	keyspaceName := info.getKeyspaceName()
+	if keyspaceName == "" {
+		value := currentKeyspaceName.Load()
+		if value != nil {
+			keyspaceName = value.(string)
+		}
+	}
+
+	return keyspaceName == "system" && info.getTableName() == "peers"
+}
+
+func isSystemPeersV2(info queryInfo, currentKeyspaceName *atomic.Value) bool {
+	keyspaceName := info.getKeyspaceName()
+	if keyspaceName == "" {
+		value := currentKeyspaceName.Load()
+		if value != nil {
+			keyspaceName = value.(string)
+		}
+	}
+
+	return keyspaceName == "system" && info.getTableName() == "peers_v2"
+}
+
+func isSystemLocal(info queryInfo, currentKeyspaceName *atomic.Value) bool {
+	keyspaceName := info.getKeyspaceName()
+	if keyspaceName == "" {
+		value := currentKeyspaceName.Load()
+		if value != nil {
+			keyspaceName = value.(string)
+		}
+	}
+
+	return keyspaceName == "system" && info.getTableName() == "local"
+}
 
 type frameDecodeContext struct {
 	frame        *frame.RawFrame // always non nil

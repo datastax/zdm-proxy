@@ -52,8 +52,8 @@ func TestGetHosts(t *testing.T) {
 			require.True(t, addressInMap, fmt.Sprintf("%s does not match a node address in %v", endpt, nodesByAddress))
 			require.Equal(t, 9042, h.Port)
 			require.Equal(t, "rack1", h.Rack)
-			require.Equal(t, env.DseVersion, h.DseVersion)
-			require.Equal(t, env.CassandraVersion, h.ReleaseVersion)
+			require.Equal(t, env.DseVersion, *(h.DseVersion.AsNillableString()))
+			require.Equal(t, env.CassandraVersion, *h.ReleaseVersion)
 			require.Equal(t, "dc1", h.Datacenter)
 			require.NotNil(t, h.Tokens)
 			require.Equal(t, 1, len(h.Tokens))
@@ -139,8 +139,8 @@ func TestGetAssignedHosts(t *testing.T) {
 
 		t.Logf("Expect assigned %v, Actual assigned %v, Hosts %v", tt.assigned, assignedHosts, hosts)
 
-		for index, assignedHostIndex := range tt.assigned {
-			require.Equal(t, hosts[assignedHostIndex], assignedHosts[index])
+		for _, assignedHostIndex := range tt.assigned {
+			require.Contains(t, assignedHosts, hosts[assignedHostIndex])
 		}
 	}
 

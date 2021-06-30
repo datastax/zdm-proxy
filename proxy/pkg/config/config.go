@@ -6,14 +6,16 @@ import (
 	"fmt"
 	"github.com/kelseyhightower/envconfig"
 	log "github.com/sirupsen/logrus"
+	"net"
 	"strconv"
 	"strings"
 )
 
 // Config holds the values of environment variables necessary for proper Proxy function.
 type Config struct {
-	ProxyIndex         int `default:"0" split_words:"true"`
-	ProxyInstanceCount int `default:"1" split_words:"true"`
+	ProxyIndex         int    `default:"0" split_words:"true"`
+	ProxyInstanceCount int    `default:"-1" split_words:"true"`          // Overridden by length of ProxyAddresses (after split) if set
+	ProxyAddresses     string `required:"false" split_words:"true"`
 
 	OriginEnableHostAssignment bool `default:"false" split_words:"true"`
 	TargetEnableHostAssignment bool `default:"true" split_words:"true"`
@@ -102,30 +104,84 @@ func (c *Config) ParseEnvVars() (*Config, error) {
 		return nil, fmt.Errorf("could not load environment variables: %w", err)
 	}
 
-	err = c.validateTargetConfiguration()
+	err = c.Validate()
 	if err != nil {
-		return nil, fmt.Errorf("Invalid target configuration: %w", err)
+		return nil, err
 	}
 
-	originBuckets, err := c.ParseOriginBuckets()
-	if err != nil {
-		return nil, fmt.Errorf("could not parse origin buckets: %v", err)
-	}
-
-	targetBuckets, err := c.ParseTargetBuckets()
-	if err != nil {
-		return nil, fmt.Errorf("could not parse target buckets: %v", err)
-	}
-
-	if c.ProxyIndex < 0 || c.ProxyIndex >= c.ProxyInstanceCount {
-		return nil, fmt.Errorf("invalid ProxyIndex and ProxyInstanceCount values; " +
-			"proxy index must be less than instance count and non negative")
-	}
 
 	log.Infof("Parsed configuration: %v", c)
-	log.Infof("Parsed buckets: origin{%v}, target{%v}", originBuckets, targetBuckets)
 
 	return c, nil
+}
+
+func (c *Config) ParseVirtualizationConfig() (*TopologyConfig, error) {
+	virtualizationEnabled := true
+	proxyInstanceCount := c.ProxyInstanceCount
+	proxyAddressesTyped := []net.IP{net.ParseIP("127.0.0.1")}
+	if c.ProxyAddresses == "" {
+		virtualizationEnabled = false
+		if proxyInstanceCount == -1 {
+			proxyInstanceCount = 1
+		}
+	} else {
+		proxyAddresses := strings.Split(strings.ReplaceAll(c.ProxyAddresses, " ", ""), ",")
+		if len(proxyAddresses) <= 0 {
+			return nil, fmt.Errorf("invalid ProxyAddresses: %v", c.ProxyAddresses)
+		}
+
+		proxyAddressesTyped = make([]net.IP, 0, len(proxyAddresses))
+		for i := 0; i < len(proxyAddresses); i++ {
+			proxyAddr := proxyAddresses[i]
+			parsedIp := net.ParseIP(proxyAddr)
+			if parsedIp == nil {
+				return nil, fmt.Errorf("invalid proxy address in ProxyAddresses env var: %v", proxyAddr)
+			}
+			proxyAddressesTyped = append(proxyAddressesTyped, parsedIp)
+		}
+		proxyInstanceCount = len(proxyAddressesTyped)
+	}
+
+	if proxyInstanceCount <= 0 {
+		return nil, fmt.Errorf("invalid ProxyInstanceCount: %v", proxyInstanceCount)
+	}
+
+	proxyIndex := c.ProxyIndex
+	if proxyIndex < 0 || proxyIndex >= proxyInstanceCount {
+		return nil, fmt.Errorf("invalid ProxyIndex and ProxyInstanceCount values; " +
+			"proxy index (%d) must be less than instance count (%d) and non negative", proxyIndex, proxyInstanceCount)
+	}
+
+	return &TopologyConfig{
+		VirtualizationEnabled:    virtualizationEnabled,
+		Addresses:                proxyAddressesTyped,
+		Index:                    proxyIndex,
+		Count:                    proxyInstanceCount,
+	}, nil
+}
+
+func (c *Config) Validate() error {
+	err := c.validateTargetConfiguration()
+	if err != nil {
+		return fmt.Errorf("invalid target configuration: %w", err)
+	}
+
+	_, err = c.ParseOriginBuckets()
+	if err != nil {
+		return fmt.Errorf("could not parse origin buckets: %v", err)
+	}
+
+	_, err = c.ParseTargetBuckets()
+	if err != nil {
+		return fmt.Errorf("could not parse target buckets: %v", err)
+	}
+
+	_, err = c.ParseVirtualizationConfig()
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (c *Config) ParseOriginBuckets() ([]float64, error) {
@@ -186,4 +242,20 @@ func (c *Config) validateOriginConfiguration() error {
 	}
 
 	return nil
+}
+
+// TopologyConfig contains configuration parameters for 2 features related to multi cloudgate-proxy instance deployment:
+//   - Virtualization of system.peers
+//   - Assignment of C* hosts per proxy instance for request connections
+//
+type TopologyConfig struct {
+	VirtualizationEnabled bool     // enabled if PROXY_ADDRESSES is not empty
+	Addresses             []net.IP // comes from PROXY_ADDRESSES
+	Count                 int      // comes from PROXY_INSTANCE_COUNT unless PROXY_ADDRESSES is set
+	Index                 int      // comes from PROXY_INDEX
+}
+
+func (recv *TopologyConfig) String() string {
+	return fmt.Sprintf("TopologyConfig{VirtualizationEnabled=%v, Addresses=%v, Count=%v, Index=%v",
+		recv.VirtualizationEnabled, recv.Addresses, recv.Count, recv.Index)
 }

@@ -37,6 +37,9 @@ type ClientHandler struct {
 	originCassandraConnector *ClusterConnector
 	targetCassandraConnector *ClusterConnector
 
+	originControlConn *ControlConn
+	targetControlConn *ControlConn
+
 	preparedStatementCache *PreparedStatementCache
 
 	metricsHandler  metrics.IMetricsHandler
@@ -75,6 +78,7 @@ type ClientHandler struct {
 	clusterConnectorScheduler *Scheduler
 
 	conf *config.Config
+	virtualizationConfig *config.TopologyConfig
 
 	requestLoopWaitGroup *sync.WaitGroup
 }
@@ -83,7 +87,10 @@ func NewClientHandler(
 	clientTcpConn net.Conn,
 	originCassandraConnInfo *ClusterConnectionInfo,
 	targetCassandraConnInfo *ClusterConnectionInfo,
+	originControlConn *ControlConn,
+	targetControlConn *ControlConn,
 	conf *config.Config,
+	virtualizationConfig *config.TopologyConfig,
 	originUsername string,
 	originPassword string,
 	psCache *PreparedStatementCache,
@@ -150,6 +157,8 @@ func NewClientHandler(
 
 		originCassandraConnector: originConnector,
 		targetCassandraConnector: targetConnector,
+		originControlConn:        originControlConn,
+		targetControlConn:        targetControlConn,
 		preparedStatementCache:   psCache,
 		metricsHandler:           metricsHandler,
 		globalWaitGroup:          waitGroup,
@@ -172,6 +181,7 @@ func NewClientHandler(
 		requestResponseScheduler: requestResponseScheduler,
 		conf:                     conf,
 		requestLoopWaitGroup:     requestLoopWaitGroup,
+		virtualizationConfig:     virtualizationConfig,
 	}, nil
 }
 
@@ -307,11 +317,19 @@ func (ch *ClientHandler) listenForEventMessages() {
 					continue
 				}
 			case *message.StatusChangeEvent:
+				if ch.virtualizationConfig.VirtualizationEnabled {
+					log.Infof("Received status change event (fromTarget=%v) but virtualization is enabled, skipping: %v", fromTarget, msgType)
+					continue
+				}
 				if !fromTarget {
 					log.Infof("Received status change event from origin, skipping: %v", msgType)
 					continue
 				}
 			case *message.TopologyChangeEvent:
+				if ch.virtualizationConfig.VirtualizationEnabled {
+					log.Infof("Received topology change event (fromTarget=%v) but virtualization is enabled, skipping: %v", fromTarget, msgType)
+					continue
+				}
 				if !fromTarget {
 					log.Infof("Received topology change event from origin, skipping: %v", msgType)
 					continue
@@ -486,7 +504,7 @@ func (ch *ClientHandler) computeAggregatedResponse(requestContext *RequestContex
 		return ch.aggregateAndTrackResponses(requestContext.originResponse, requestContext.targetResponse), nil
 
 	} else {
-		return nil, fmt.Errorf("unknown forward decision %v, stream: %d", forwardDecision, requestContext.targetResponse.Header.StreamId)
+		return nil, fmt.Errorf("unknown forward decision %v, request context: %v", forwardDecision, requestContext)
 	}
 }
 
@@ -739,10 +757,11 @@ func (ch *ClientHandler) forwardRequest(request *frame.RawFrame, customResponseC
 	context := &frameDecodeContext{
 		frame: request,
 	}
-	context, err := modifyFrame(context)
+	var err error
+	context, err = modifyFrame(context)
 	request = context.frame
 	stmtInfo, err := inspectFrame(
-		context, ch.preparedStatementCache, ch.metricsHandler, ch.currentKeyspaceName, ch.conf.ForwardReadsToTarget)
+		context, ch.preparedStatementCache, ch.metricsHandler, ch.currentKeyspaceName, ch.conf.ForwardReadsToTarget, ch.virtualizationConfig.VirtualizationEnabled)
 	if err != nil {
 		if errVal, ok := err.(*UnpreparedExecuteError); ok {
 			unpreparedFrame, err := createUnpreparedFrame(errVal)
@@ -773,6 +792,67 @@ func (ch *ClientHandler) forwardRequest(request *frame.RawFrame, customResponseC
 func (ch *ClientHandler) executeForwardDecision(f *frame.RawFrame, stmtInfo StatementInfo, overallRequestStartTime time.Time, customResponseChannel chan *frame.RawFrame) error {
 	forwardDecision := stmtInfo.GetForwardDecision()
 	log.Tracef("Opcode: %v, Forward decision: %v", f.Header.OpCode, forwardDecision)
+
+	if forwardDecision == forwardToNone {
+		interceptedStatementInfo, ok := stmtInfo.(*InterceptedStatementInfo)
+		if !ok {
+			return fmt.Errorf("expected InterceptedStatementInfo but got %v", stmtInfo)
+		}
+
+		interceptedQueryType := interceptedStatementInfo.GetQueryType()
+		var interceptedQueryResponse message.Message
+		var err error
+		var controlConn *ControlConn
+		if ch.conf.ForwardReadsToTarget {
+			controlConn = ch.targetControlConn
+		} else {
+			controlConn = ch.originControlConn
+		}
+		switch interceptedQueryType {
+		case peersV2:
+			interceptedQueryResponse = &message.Invalid {
+				ErrorMessage: "unconfigured table peers_v2",
+			}
+		case peersV1:
+			virtualHosts, err := controlConn.GetVirtualHosts()
+			if err != nil {
+				return err
+			}
+			interceptedQueryResponse, err = NewSystemPeersRowsResult(
+				controlConn.GetGenericTypeCodec(), virtualHosts, controlConn.GetLocalVirtualHostIndex(),
+				ch.conf.ProxyQueryPort, controlConn.PreferredIpColumnExists())
+			if err != nil {
+				return err
+			}
+		case local:
+			virtualHosts, err := controlConn.GetVirtualHosts()
+			if err != nil {
+				return err
+			}
+			localVirtualHost := virtualHosts[controlConn.GetLocalVirtualHostIndex()]
+			interceptedQueryResponse, err = NewSystemLocalRowsResult(
+				controlConn.GetGenericTypeCodec(), controlConn.GetSystemLocalInfo(), localVirtualHost, ch.conf.ProxyQueryPort)
+			if err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("expected intercepted query type: %v", interceptedQueryType)
+		}
+
+		interceptedResponseFrame := frame.NewFrame(f.Header.Version, f.Header.StreamId, interceptedQueryResponse)
+		interceptedResponseRawFrame, err := defaultCodec.ConvertToRawFrame(interceptedResponseFrame)
+		if err != nil {
+			return fmt.Errorf("could not convert intercepted response frame %v: %w", interceptedResponseFrame, err)
+		}
+
+		if customResponseChannel != nil {
+			customResponseChannel <- interceptedResponseRawFrame
+		} else {
+			ch.clientConnector.sendResponseToClient(interceptedResponseRawFrame)
+		}
+
+		return nil
+	}
 
 	reqCtx := NewRequestContext(f, stmtInfo, overallRequestStartTime, customResponseChannel)
 	holder, err := ch.storeRequestContext(reqCtx)
@@ -821,6 +901,7 @@ func (ch *ClientHandler) executeForwardDecision(f *frame.RawFrame, stmtInfo Stat
 		ch.originCassandraConnector.sendRequestToCluster(f)
 		ch.targetCassandraConnector.sendRequestToCluster(f)
 		return nil
+
 	} else {
 		return fmt.Errorf("unknown forward decision %v, stream: %d", forwardDecision, f.Header.StreamId)
 	}

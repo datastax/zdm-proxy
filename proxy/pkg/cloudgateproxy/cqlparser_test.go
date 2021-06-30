@@ -22,9 +22,9 @@ func TestInspectFrame(t *testing.T) {
 		forwardReadsToTarget bool
 	}
 	psCache := NewPreparedStatementCache()
-	psCache.cache["BOTH"] = NewPreparedStatementInfo(forwardToBoth)
-	psCache.cache["ORIGIN"] = NewPreparedStatementInfo(forwardToOrigin)
-	psCache.cache["TARGET"] = NewPreparedStatementInfo(forwardToTarget)
+	psCache.cache["BOTH"] = NewPreparedStatementInfo(NewGenericStatementInfo(forwardToBoth))
+	psCache.cache["ORIGIN"] = NewPreparedStatementInfo(NewGenericStatementInfo(forwardToOrigin))
+	psCache.cache["TARGET"] = NewPreparedStatementInfo(NewGenericStatementInfo(forwardToTarget))
 	mh := mockMetricsHandler{}
 	km := new(atomic.Value)
 	forwardReadsToTarget := true
@@ -45,13 +45,13 @@ func TestInspectFrame(t *testing.T) {
 		{"OpCodeQuery SELECT dse_insights.tokens", args{mockQueryFrame("SELECT * FROM dse_insights.tokens"), psCache, mh, km, forwardReadsToOrigin}, NewGenericStatementInfo(forwardToTarget)},
 		{"OpCodeQuery non SELECT", args{mockQueryFrame("INSERT blah"), psCache, mh, km, forwardReadsToOrigin}, NewGenericStatementInfo(forwardToBoth)},
 		// PREPARE
-		{"OpCodePrepare SELECT", args{mockPrepareFrame("SELECT blah FROM ks1.t1"), psCache, mh, km, forwardReadsToOrigin}, NewPreparedStatementInfo(forwardToOrigin)},
-		{"OpCodePrepare SELECT system.local", args{mockPrepareFrame("SELECT * FROM system.local"), psCache, mh, km, forwardReadsToOrigin}, NewPreparedStatementInfo(forwardToTarget)},
-		{"OpCodePrepare SELECT system.peers", args{mockPrepareFrame("SELECT * FROM system.peers"), psCache, mh, km, forwardReadsToOrigin}, NewPreparedStatementInfo(forwardToTarget)},
-		{"OpCodePrepare SELECT system.peers_v2", args{mockPrepareFrame("SELECT * FROM system.peers_v2"), psCache, mh, km, forwardReadsToOrigin}, NewPreparedStatementInfo(forwardToTarget)},
-		{"OpCodePrepare SELECT system_auth.roles", args{mockPrepareFrame("SELECT * FROM system_auth.roles"), psCache, mh, km, forwardReadsToOrigin}, NewPreparedStatementInfo(forwardToTarget)},
-		{"OpCodePrepare SELECT dse_insights.tokens", args{mockPrepareFrame("SELECT * FROM dse_insights.tokens"), psCache, mh, km, forwardReadsToOrigin}, NewPreparedStatementInfo(forwardToTarget)},
-		{"OpCodePrepare non SELECT", args{mockPrepareFrame("INSERT blah"), psCache, mh, km, forwardReadsToOrigin}, NewPreparedStatementInfo(forwardToBoth)},
+		{"OpCodePrepare SELECT", args{mockPrepareFrame("SELECT blah FROM ks1.t1"), psCache, mh, km, forwardReadsToOrigin}, NewPreparedStatementInfo(NewGenericStatementInfo(forwardToOrigin))},
+		{"OpCodePrepare SELECT system.local", args{mockPrepareFrame("SELECT * FROM system.local"), psCache, mh, km, forwardReadsToOrigin}, NewPreparedStatementInfo(NewGenericStatementInfo(forwardToTarget))},
+		{"OpCodePrepare SELECT system.peers", args{mockPrepareFrame("SELECT * FROM system.peers"), psCache, mh, km, forwardReadsToOrigin}, NewPreparedStatementInfo(NewGenericStatementInfo(forwardToTarget))},
+		{"OpCodePrepare SELECT system.peers_v2", args{mockPrepareFrame("SELECT * FROM system.peers_v2"), psCache, mh, km, forwardReadsToOrigin}, NewPreparedStatementInfo(NewGenericStatementInfo(forwardToTarget))},
+		{"OpCodePrepare SELECT system_auth.roles", args{mockPrepareFrame("SELECT * FROM system_auth.roles"), psCache, mh, km, forwardReadsToOrigin}, NewPreparedStatementInfo(NewGenericStatementInfo(forwardToTarget))},
+		{"OpCodePrepare SELECT dse_insights.tokens", args{mockPrepareFrame("SELECT * FROM dse_insights.tokens"), psCache, mh, km, forwardReadsToOrigin}, NewPreparedStatementInfo(NewGenericStatementInfo(forwardToTarget))},
+		{"OpCodePrepare non SELECT", args{mockPrepareFrame("INSERT blah"), psCache, mh, km, forwardReadsToOrigin}, NewPreparedStatementInfo(NewGenericStatementInfo(forwardToBoth))},
 		// EXECUTE
 		{"OpCodeExecute origin", args{mockExecuteFrame("ORIGIN"), psCache, mh, km, forwardReadsToOrigin}, NewGenericStatementInfo(forwardToOrigin)},
 		{"OpCodeExecute target", args{mockExecuteFrame("TARGET"), psCache, mh, km, forwardReadsToOrigin}, NewGenericStatementInfo(forwardToTarget)},
@@ -66,7 +66,7 @@ func TestInspectFrame(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			actual, err := inspectFrame(&frameDecodeContext{frame: tt.args.f}, tt.args.psCache, tt.args.mh, tt.args.km, tt.args.forwardReadsToTarget)
+			actual, err := inspectFrame(&frameDecodeContext{frame: tt.args.f}, tt.args.psCache, tt.args.mh, tt.args.km, tt.args.forwardReadsToTarget, false)
 			if err != nil {
 				if !reflect.DeepEqual(err.Error(), tt.expected) {
 					t.Errorf("inspectFrame() actual = %v, expected %v", err, tt.expected)

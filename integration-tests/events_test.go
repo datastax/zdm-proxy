@@ -7,6 +7,7 @@ import (
 	"github.com/riptano/cloud-gate/integration-tests/ccm"
 	"github.com/riptano/cloud-gate/integration-tests/client"
 	"github.com/riptano/cloud-gate/integration-tests/env"
+	"github.com/riptano/cloud-gate/integration-tests/setup"
 	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
@@ -106,6 +107,10 @@ func TestTopologyStatusEvents(t *testing.T) {
 		t.Skip("Test requires CCM, set USE_CCM env variable to TRUE")
 	}
 
+	tempCcmSetup, err := setup.NewTemporaryCcmTestSetup(true, false)
+	require.Nil(t, err)
+	defer tempCcmSetup.Cleanup()
+
 	tests := []struct {
 		name                    string
 		clusterToChangeTopology *ccm.Cluster
@@ -113,19 +118,19 @@ func TestTopologyStatusEvents(t *testing.T) {
 	}{
 		{
 			name:                    "origin should not forward events",
-			clusterToChangeTopology: originCluster,
+			clusterToChangeTopology: tempCcmSetup.Origin,
 			expectedEvents:          false,
 		},
 		{
 			name:                    "target should forward events",
-			clusterToChangeTopology: targetCluster,
+			clusterToChangeTopology: tempCcmSetup.Target,
 			expectedEvents:          true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			proxyInstance, err := NewProxyInstanceForGlobalCcmClusters()
+			proxyInstance, err := setup.NewProxyInstance(tempCcmSetup.Origin, tempCcmSetup.Target)
 			require.Nil(t, err)
 			defer proxyInstance.Shutdown()
 

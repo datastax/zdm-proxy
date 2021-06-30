@@ -161,7 +161,7 @@ func (setup *SimulacronTestSetup) Cleanup() {
 	}
 }
 
-func NewTemporaryCcmTestSetup(start bool) (*CcmTestSetup, error) {
+func NewTemporaryCcmTestSetup(start bool, createProxy bool) (*CcmTestSetup, error) {
 	firstClusterId := env.Rand.Uint64() % (math.MaxUint64 - 1)
 	origin, err := ccm.GetNewCluster(firstClusterId, 20, env.OriginNodes, start)
 	if err != nil {
@@ -176,7 +176,7 @@ func NewTemporaryCcmTestSetup(start bool) (*CcmTestSetup, error) {
 	}
 
 	var proxyInstance *cloudgateproxy.CloudgateProxy
-	if start {
+	if createProxy {
 		proxyInstance, err = NewProxyInstance(origin, target)
 		if err != nil {
 			return nil, err
@@ -240,7 +240,8 @@ func NewTestConfig(originHost string, targetHost string) *config.Config {
 	conf := config.New()
 
 	conf.ProxyIndex = 0
-	conf.ProxyInstanceCount = 1
+	conf.ProxyInstanceCount = -1
+	conf.ProxyAddresses = ""
 
 	conf.OriginEnableHostAssignment = false
 	conf.TargetEnableHostAssignment = true

@@ -24,7 +24,7 @@ func TestWithCcmAuth(t *testing.T) {
 		t.Skip("Test requires CCM, set USE_CCM env variable to TRUE")
 	}
 
-	ccmSetup, err := setup.NewTemporaryCcmTestSetup(false)
+	ccmSetup, err := setup.NewTemporaryCcmTestSetup(false, false)
 	require.True(t, err == nil, "ccm setup failed: %s", err)
 
 	defer ccmSetup.Cleanup()
