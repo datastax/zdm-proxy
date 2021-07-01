@@ -2,6 +2,8 @@ package integration_tests
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	client2 "github.com/datastax/go-cassandra-native-protocol/client"
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
@@ -109,6 +111,13 @@ func TestShutdownInFlightRequests(t *testing.T) {
 		t.Fatalf("test timed out after 15 seconds")
 	}
 
+	errChan := make(chan error, 10)
+	go func() {
+		defer close(errChan)
+		time.Sleep(4500 * time.Millisecond)
+		stressTestShutdown(t, testClient, queryMsg1, errChan)
+	}()
+
 	select {
 	case rsp := <-inflightRequest2.Incoming():
 		require.Equal(t, primitive.OpCodeResult, rsp.Header.OpCode)
@@ -119,9 +128,45 @@ func TestShutdownInFlightRequests(t *testing.T) {
 	// 4 seconds instead of 5 just in case there is a time precision issue
 	require.GreaterOrEqual(t, time.Now().Sub(beginTimestamp).Nanoseconds(), (4 * time.Second).Nanoseconds())
 
+	err = <- errChan
+	require.Nil(t, err)
+
 	select {
 	case <-shutdownComplete:
 	case <-time.After(10 * time.Second):
 		t.Fatalf("test timed out")
+	}
+}
+
+// Test for a race condition that caused a panic on proxy shutdown
+func stressTestShutdown(t *testing.T, testClient *client2.CqlClientConnection, queryMsg *message.Query, errChan chan error) {
+	for i := 0; i < 100000; i++ {
+		reqFrame3 := frame.NewFrame(primitive.ProtocolVersion4, 4, queryMsg)
+		inflightRequest3, err := testClient.Send(reqFrame3)
+
+		if err != nil {
+			t.Logf("Break fatal on i=%v", i)
+			return
+		}
+
+		select {
+		case rsp, ok := <-inflightRequest3.Incoming():
+			if !ok {
+				t.Logf("Break on i=%v", i)
+				return
+			}
+			if rsp.Header.OpCode != primitive.OpCodeError {
+				errChan <- fmt.Errorf("expected %v actual %v", primitive.OpCodeError, rsp.Header.OpCode)
+				return
+			}
+			_, ok = rsp.Body.Message.(*message.Overloaded)
+			if !ok {
+				errChan <- fmt.Errorf("expected %v actual %T", "*message.Overloaded", rsp.Body.Message)
+				return
+			}
+		case <-time.After(15 * time.Second):
+			errChan <- errors.New("test timed out after 15 seconds")
+			return
+		}
 	}
 }

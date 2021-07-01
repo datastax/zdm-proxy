@@ -42,6 +42,8 @@ type ClientConnector struct {
 	requestsDoneChan <-chan bool
 	eventsDoneChan    <-chan bool
 
+	clientConnectorRequestsDoneChan chan bool
+
 	readScheduler *Scheduler
 
 	shutdownRequestCtx context.Context
@@ -79,11 +81,12 @@ func NewClientConnector(
 			"ClientConnector",
 			false,
 			writeScheduler),
-		responsesDoneChan:  responsesDoneChan,
-		requestsDoneChan:   requestsDoneChan,
-		eventsDoneChan:     eventsDoneChan,
-		readScheduler:      readScheduler,
-		shutdownRequestCtx: shutdownRequestCtx,
+		responsesDoneChan:               responsesDoneChan,
+		requestsDoneChan:                requestsDoneChan,
+		eventsDoneChan:                  eventsDoneChan,
+		clientConnectorRequestsDoneChan: make(chan bool, 1),
+		readScheduler:                   readScheduler,
+		shutdownRequestCtx:              shutdownRequestCtx,
 	}
 }
 
@@ -99,13 +102,21 @@ func (cc *ClientConnector) run(activeClients *int32) {
 		<- cc.responsesDoneChan
 		<- cc.requestsDoneChan
 		<- cc.eventsDoneChan
-		cc.writeCoalescer.Close()
+
+		log.Debugf("[ClientConnector] Requesting shutdown of request listener %v", cc.connection.RemoteAddr())
+		cc.clientHandlerCancelFunc()
 
 		log.Infof("[ClientConnector] Shutting down connection to %v", cc.connection.RemoteAddr())
 		err := cc.connection.Close()
 		if err != nil {
 			log.Warnf("[ClientConnector] Error received while closing connection to %v: %v", cc.connection.RemoteAddr(), err)
 		}
+
+		log.Debugf("[ClientConnector] Waiting until request listener is done.")
+		<- cc.clientConnectorRequestsDoneChan
+		log.Debugf("[ClientConnector] Shutting down write coalescer.")
+		cc.writeCoalescer.Close()
+
 		atomic.AddInt32(activeClients, -1)
 	}()
 }
@@ -124,6 +135,7 @@ func (cc *ClientConnector) listenForRequests() {
 			select {
 			case <-cc.clientHandlerContext.Done():
 			case <-cc.shutdownRequestCtx.Done():
+				log.Debugf("[ClientConnector] Entering \"draining\" mode of request listener %v", cc.connection.RemoteAddr())
 			}
 
 			lock.Lock()
@@ -133,11 +145,13 @@ func (cc *ClientConnector) listenForRequests() {
 		}()
 
 		defer cc.waitGroup.Done()
+		defer close(cc.clientConnectorRequestsDoneChan)
 
 		bufferedReader := bufio.NewReaderSize(cc.connection, cc.conf.RequestWriteBufferSizeBytes)
 		connectionAddr := cc.connection.RemoteAddr().String()
 		wg := &sync.WaitGroup{}
 		defer wg.Wait()
+		defer log.Infof("[ClientConnector] Shutting down request listener, waiting until request listener tasks are done...")
 		for cc.clientHandlerContext.Err() == nil {
 			f, err := readRawFrame(bufferedReader, connectionAddr, cc.clientHandlerContext)
 			if err != nil {
@@ -169,8 +183,6 @@ func (cc *ClientConnector) listenForRequests() {
 				log.Tracef("Request sent to client connector's request channel: %v", f.Header)
 			})
 		}
-
-		log.Debugf("Shutting down client connector request listener %v", connectionAddr)
 	}()
 }
 
