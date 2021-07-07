@@ -5,19 +5,18 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
 	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
+	"github.com/riptano/cloud-gate/proxy/pkg/metrics/noopmetrics"
 	"github.com/stretchr/testify/require"
-	"net/http"
 	"reflect"
 	"sync/atomic"
 	"testing"
-	"time"
 )
 
 func TestInspectFrame(t *testing.T) {
 	type args struct {
 		f                    *frame.RawFrame
 		psCache              *PreparedStatementCache
-		mh                   metrics.IMetricsHandler
+		mh                   *metrics.MetricHandler
 		km                   *atomic.Value
 		forwardReadsToTarget bool
 	}
@@ -25,7 +24,7 @@ func TestInspectFrame(t *testing.T) {
 	psCache.cache["BOTH"] = NewPreparedStatementInfo(NewGenericStatementInfo(forwardToBoth))
 	psCache.cache["ORIGIN"] = NewPreparedStatementInfo(NewGenericStatementInfo(forwardToOrigin))
 	psCache.cache["TARGET"] = NewPreparedStatementInfo(NewGenericStatementInfo(forwardToTarget))
-	mh := mockMetricsHandler{}
+	mh := newFakeMetricHandler()
 	km := new(atomic.Value)
 	forwardReadsToTarget := true
 	forwardReadsToOrigin := false
@@ -167,44 +166,6 @@ func contains(s []int, e int) bool {
 	return false
 }
 
-type mockMetricsHandler struct{}
-
-//goland:noinspection GoUnusedParameter
-func (h mockMetricsHandler) AddCounter(mn metrics.Metric) error { return nil }
-
-//goland:noinspection GoUnusedParameter
-func (h mockMetricsHandler) AddGauge(mn metrics.Metric) error { return nil }
-
-//goland:noinspection GoUnusedParameter
-func (h mockMetricsHandler) AddGaugeFunction(mn metrics.Metric, mf func() float64) error {
-	return nil
-}
-
-//goland:noinspection GoUnusedParameter
-func (h mockMetricsHandler) AddHistogram(mn metrics.Metric, buckets []float64) error { return nil }
-
-//goland:noinspection GoUnusedParameter
-func (h mockMetricsHandler) IncrementCountByOne(mn metrics.Metric) error { return nil }
-
-//goland:noinspection GoUnusedParameter
-func (h mockMetricsHandler) DecrementCountByOne(mn metrics.Metric) error { return nil }
-
-//goland:noinspection GoUnusedParameter
-func (h mockMetricsHandler) AddToCount(mn metrics.Metric, valueToAdd int) error { return nil }
-
-//goland:noinspection GoUnusedParameter
-func (h mockMetricsHandler) SubtractFromCount(mn metrics.Metric, valueToSubtract int) error {
-	return nil
-}
-
-//goland:noinspection GoUnusedParameter
-func (h mockMetricsHandler) TrackInHistogram(mn metrics.Metric, timeToTrack time.Time) error {
-	return nil
-}
-func (h mockMetricsHandler) UnregisterAllMetrics() error { return nil }
-
-func (h mockMetricsHandler) Handler() http.Handler { return nil }
-
 func mockPrepareFrame(query string) *frame.RawFrame {
 	prepareMsg := &message.Prepare{
 		Query:    query,
@@ -237,4 +198,75 @@ func mockFrame(message message.Message) *frame.RawFrame {
 	f := frame.NewFrame(primitive.ProtocolVersion4, 1, message)
 	rawFrame, _ := defaultCodec.ConvertToRawFrame(f)
 	return rawFrame
+}
+
+func newFakeMetricHandler() *metrics.MetricHandler {
+	return metrics.NewMetricHandler(noopmetrics.NewNoopMetricFactory(), []float64{}, []float64{}, newFakeProxyMetrics(), nil, nil)
+}
+
+func newFakeProxyMetrics() *metrics.ProxyMetrics {
+	return &metrics.ProxyMetrics{
+		FailedRequestsOrigin:                 newFakeCounter(),
+		FailedRequestsTarget:                 newFakeCounter(),
+		FailedRequestsBothFailedOnOriginOnly: newFakeCounter(),
+		FailedRequestsBothFailedOnTargetOnly: newFakeCounter(),
+		FailedRequestsBoth:                   newFakeCounter(),
+		PSCacheSize:                          newFakeGaugeFunc(),
+		PSCacheMissCount:                     newFakeCounter(),
+		ProxyRequestDurationOrigin:           newFakeHistogram(),
+		ProxyRequestDurationTarget:           newFakeHistogram(),
+		ProxyRequestDurationBoth:             newFakeHistogram(),
+		InFlightRequestsOrigin:               newFakeGauge(),
+		InFlightRequestsTarget:               newFakeGauge(),
+		InFlightRequestsBoth:                 newFakeGauge(),
+		OpenClientConnections:                newFakeGaugeFunc(),
+	}
+}
+
+func newFakeCounter() metrics.Counter {
+	c, _ := noopmetrics.NewNoopMetricFactory().GetOrCreateCounter(newFakeMetric())
+	return c
+}
+
+func newFakeGauge() metrics.Gauge {
+	g, _ := noopmetrics.NewNoopMetricFactory().GetOrCreateGauge(newFakeMetric())
+	return g
+}
+
+func newFakeGaugeFunc() metrics.GaugeFunc {
+	gf, _ := noopmetrics.NewNoopMetricFactory().GetOrCreateGaugeFunc(newFakeMetric(), func() float64 {
+		return 0.0
+	})
+	return gf
+}
+
+func newFakeHistogram() metrics.Histogram {
+	h, _ := noopmetrics.NewNoopMetricFactory().GetOrCreateHistogram(newFakeMetric(), []float64{})
+	return h
+}
+
+type fakeMetric struct { }
+
+func (recv *fakeMetric) GetName() string {
+	return ""
+}
+
+func (recv *fakeMetric) GetLabels() map[string]string {
+	return make(map[string]string)
+}
+
+func (recv *fakeMetric) GetDescription() string {
+	return ""
+}
+
+func (recv *fakeMetric) String() string {
+	return ""
+}
+
+func (recv *fakeMetric) WithLabels(map[string] string) metrics.Metric {
+	return newFakeMetric()
+}
+
+func newFakeMetric() metrics.Metric {
+	return &fakeMetric{}
 }

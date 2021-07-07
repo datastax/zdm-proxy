@@ -11,11 +11,16 @@ nameOverride: ""
 fullnameOverride: ""
 
 proxyConfig:
-  originCassandraHostname: 10.43.51.50
+  proxyIndex:
+  proxyInstanceCount:
+  proxyAddresses:
+  originEnableHostAssignment:
+  targetEnableHostAssignment:
+  originCassandraContactPoints: 10.43.51.50
   originCassandraUsername: cassandra
   originCassandraPassword: cassandra
   originCassandraPort: 9042
-  targetCassandraHostname: 10.43.41.105
+  targetCassandraContactPoints: 10.43.41.105
   targetCassandraUsername: cassandra
   targetCassandraPassword: cassandra
   targetCassandraPort: 9043
@@ -25,16 +30,15 @@ proxyConfig:
   heartbeatRetryIntervalMaxMs:
   heartbeatRetryBackoffFactor:
   heartbeatFailureThreshold:
-  debug: false
   proxyMetricsPort: 14001
   proxyQueryPort: 14002
   originBucketsMs:
   targetBucketsMs:
-  writeQueueSizeFrames:
-  writeBufferSizeBytes:
-  readBufferSizeBytes:
-  maxWorkers:
-  eventQueueSizeFrames:
+  enableMetrics:
+  maxClientsThreshold:
+  forwardReadsToTarget:
+  requestTimeoutMs:
+  debug: false
 
 serviceAccount:
   # Specifies whether a service account should be created

@@ -10,6 +10,8 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
 	"github.com/riptano/cloud-gate/integration-tests/setup"
 	"github.com/riptano/cloud-gate/integration-tests/simulacron"
+	"github.com/rs/zerolog"
+	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
@@ -112,6 +114,12 @@ func TestShutdownInFlightRequests(t *testing.T) {
 	}
 
 	errChan := make(chan error, 10)
+	oldLevel := log.GetLevel()
+	oldZeroLogLevel := zerolog.GlobalLevel()
+	log.SetLevel(log.InfoLevel)
+	defer log.SetLevel(oldLevel)
+	zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	defer zerolog.SetGlobalLevel(oldZeroLogLevel)
 	go func() {
 		defer close(errChan)
 		time.Sleep(4500 * time.Millisecond)

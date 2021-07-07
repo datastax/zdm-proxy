@@ -119,3 +119,24 @@ var (
 		"Number of client connections currently open",
 	)
 )
+
+type ProxyMetrics struct {
+	FailedRequestsOrigin                 Counter
+	FailedRequestsTarget                 Counter
+	FailedRequestsBothFailedOnOriginOnly Counter
+	FailedRequestsBothFailedOnTargetOnly Counter
+	FailedRequestsBoth                   Counter
+
+	PSCacheSize      GaugeFunc
+	PSCacheMissCount Counter
+
+	ProxyRequestDurationOrigin Histogram
+	ProxyRequestDurationTarget Histogram
+	ProxyRequestDurationBoth   Histogram
+
+	InFlightRequestsOrigin Gauge
+	InFlightRequestsTarget Gauge
+	InFlightRequestsBoth   Gauge
+
+	OpenClientConnections GaugeFunc
+}

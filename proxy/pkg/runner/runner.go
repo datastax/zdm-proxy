@@ -17,7 +17,7 @@ import (
 )
 
 func SetupHandlers() (metricsHandler *httpcloudgate.HandlerWithFallback, readinessHandler *httpcloudgate.HandlerWithFallback){
-	metricsHandler = httpcloudgate.NewHandlerWithFallback(metrics.DefaultHandler())
+	metricsHandler = httpcloudgate.NewHandlerWithFallback(metrics.DefaultHttpHandler())
 	readinessHandler = httpcloudgate.NewHandlerWithFallback(health.DefaultReadinessHandler())
 
 	http.Handle("/metrics", metricsHandler.Handler())
@@ -46,7 +46,7 @@ func RunMain(
 	cp, err := cloudgateproxy.RunWithRetries(conf, ctx, b)
 
 	if err == nil {
-		metricsHandler.SetHandler(cp.GetMetricsHandler().Handler())
+		metricsHandler.SetHandler(cp.GetMetricHandler().GetHttpHandler())
 		readinessHandler.SetHandler(health.ReadinessHandler(cp))
 		log.Info("Proxy started. Waiting for SIGINT/SIGTERM to shutdown.")
 

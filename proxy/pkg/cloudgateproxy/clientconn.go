@@ -6,7 +6,6 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/riptano/cloud-gate/proxy/pkg/config"
-	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
 	"net"
 	"sync"
@@ -30,8 +29,6 @@ type ClientConnector struct {
 	// channel on which the ClientConnector sends requests as it receives them from the client
 	requestChannel chan<- *frame.RawFrame
 
-	metricsHandler metrics.IMetricsHandler // Global metricsHandler object
-
 	waitGroup                 *sync.WaitGroup
 	clientHandlerContext      context.Context
 	clientHandlerCancelFunc   context.CancelFunc
@@ -52,7 +49,6 @@ type ClientConnector struct {
 func NewClientConnector(
 	connection net.Conn,
 	conf *config.Config,
-	metricsHandler metrics.IMetricsHandler,
 	waitGroup *sync.WaitGroup,
 	requestsChan chan<- *frame.RawFrame,
 	clientHandlerContext context.Context,
@@ -67,14 +63,12 @@ func NewClientConnector(
 		connection:              connection,
 		conf:                    conf,
 		requestChannel:          requestsChan,
-		metricsHandler:          metricsHandler,
 		waitGroup:               waitGroup,
 		clientHandlerContext:    clientHandlerContext,
 		clientHandlerCancelFunc: clientHandlerCancelFunc,
 		writeCoalescer: NewWriteCoalescer(
 			conf,
 			connection,
-			metricsHandler,
 			waitGroup,
 			clientHandlerContext,
 			clientHandlerCancelFunc,

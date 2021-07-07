@@ -5,7 +5,6 @@ import (
 	"context"
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/riptano/cloud-gate/proxy/pkg/config"
-	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
 	"net"
 	"sync"
@@ -19,7 +18,6 @@ const(
 type writeCoalescer struct {
 	connection       net.Conn
 	conf             *config.Config
-	metricsHandler   metrics.IMetricsHandler
 
 	clientHandlerWaitGroup  *sync.WaitGroup
 	clientHandlerContext    context.Context
@@ -39,7 +37,6 @@ type writeCoalescer struct {
 func NewWriteCoalescer(
 	conf *config.Config,
 	conn net.Conn,
-	handler metrics.IMetricsHandler,
 	clientHandlerWaitGroup *sync.WaitGroup,
 	clientHandlerContext context.Context,
 	clientHandlerCancelFunc context.CancelFunc,
@@ -59,7 +56,6 @@ func NewWriteCoalescer(
 	return &writeCoalescer{
 		connection:              conn,
 		conf:                    conf,
-		metricsHandler:          handler,
 		clientHandlerWaitGroup:  clientHandlerWaitGroup,
 		clientHandlerContext:    clientHandlerContext,
 		clientHandlerCancelFunc: clientHandlerCancelFunc,

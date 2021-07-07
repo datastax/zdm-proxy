@@ -33,7 +33,7 @@ type ClusterConnector struct {
 	clusterType             	ClusterType
 
 	clusterConnEventsChan   	chan *frame.RawFrame
-	metricsHandler          	metrics.IMetricsHandler
+	nodeMetrics          	    *metrics.NodeMetrics
 	waitGroup               	*sync.WaitGroup
 	clientHandlerContext    	context.Context
 	clientHandlerCancelFunc 	context.CancelFunc
@@ -57,7 +57,7 @@ func NewClusterConnectionInfo(connConfig *ConnectionConfig, endpointConfig Endpo
 func NewClusterConnector(
 	connInfo *ClusterConnectionInfo,
 	conf *config.Config,
-	metricsHandler metrics.IMetricsHandler,
+	nodeMetrics *metrics.NodeMetrics,
 	waitGroup *sync.WaitGroup,
 	clientHandlerContext context.Context,
 	clientHandlerCancelFunc context.CancelFunc,
@@ -79,7 +79,7 @@ func NewClusterConnector(
 	*/
 	//connectionOpenTimeout := time.Duration(conf.ClusterConnectionTimeoutMs)*time.Millisecond
 	//timeoutCtx, _ := context.WithTimeout(clientHandlerContext, connectionOpenTimeout)
-	conn, timeoutCtx, err := openConnectionToCluster(connInfo, clientHandlerContext, metricsHandler)
+	conn, timeoutCtx, err := openConnectionToCluster(connInfo, clientHandlerContext, nodeMetrics)
 	if err != nil {
 		if errors.Is(err, ShutdownErr) {
 			if timeoutCtx.Err() != nil {
@@ -91,21 +91,20 @@ func NewClusterConnector(
 
 	go func() {
 		<-clientHandlerContext.Done()
-		closeConnectionToCluster(conn, clusterType, metricsHandler)
+		closeConnectionToCluster(conn, clusterType, nodeMetrics)
 	}()
 
 	return &ClusterConnector{
 		connection:              		conn,
 		clusterType:             		clusterType,
 		clusterConnEventsChan:   		make(chan *frame.RawFrame, conf.EventQueueSizeFrames),
-		metricsHandler:          		metricsHandler,
+		nodeMetrics:          		    nodeMetrics,
 		waitGroup:               		waitGroup,
 		clientHandlerContext:    		clientHandlerContext,
 		clientHandlerCancelFunc: 		clientHandlerCancelFunc,
 		writeCoalescer: 				NewWriteCoalescer(
 											conf,
 											conn,
-											metricsHandler,
 											waitGroup,
 											clientHandlerContext,
 											clientHandlerCancelFunc,
@@ -124,7 +123,7 @@ func (cc *ClusterConnector) run() {
 	cc.writeCoalescer.RunWriteQueueLoop()
 }
 
-func openConnectionToCluster(connInfo *ClusterConnectionInfo, context context.Context, metricsHandler metrics.IMetricsHandler) (net.Conn, context.Context, error) {
+func openConnectionToCluster(connInfo *ClusterConnectionInfo, context context.Context, nodeMetrics *metrics.NodeMetrics) (net.Conn, context.Context, error) {
 	log.Infof("[ClusterConnector] Opening request connection to %v", connInfo.endpoint.GetEndpointIdentifier())
 	conn, timeoutCtx, err := openConnection(connInfo.connConfig, connInfo.endpoint, context, true)
 	if err != nil {
@@ -132,16 +131,16 @@ func openConnectionToCluster(connInfo *ClusterConnectionInfo, context context.Co
 	}
 
 	if connInfo.isOriginCassandra {
-		metricsHandler.IncrementCountByOne(metrics.OpenOriginConnections)
+		nodeMetrics.OriginMetrics.OpenOriginConnections.Add(1)
 	} else {
-		metricsHandler.IncrementCountByOne(metrics.OpenTargetConnections)
+		nodeMetrics.TargetMetrics.OpenTargetConnections.Add(1)
 	}
 
 	log.Infof("[ClusterConnector] Request connection to %v has been opened", conn.RemoteAddr())
 	return conn, timeoutCtx, nil
 }
 
-func closeConnectionToCluster(conn net.Conn, clusterType ClusterType, metricsHandler metrics.IMetricsHandler) {
+func closeConnectionToCluster(conn net.Conn, clusterType ClusterType, nodeMetrics *metrics.NodeMetrics) {
 	log.Infof("[ClusterConnector] Closing request connection to %v (%v)", clusterType, conn.RemoteAddr())
 	err := conn.Close()
 	if err != nil {
@@ -149,9 +148,9 @@ func closeConnectionToCluster(conn net.Conn, clusterType ClusterType, metricsHan
 	}
 
 	if clusterType == OriginCassandra {
-		metricsHandler.DecrementCountByOne(metrics.OpenOriginConnections)
+		nodeMetrics.OriginMetrics.OpenOriginConnections.Subtract(1)
 	} else {
-		metricsHandler.DecrementCountByOne(metrics.OpenTargetConnections)
+		nodeMetrics.TargetMetrics.OpenTargetConnections.Subtract(1)
 	}
 	log.Infof("[ClusterConnector] Request connection to %v (%v) has been closed", clusterType, conn.RemoteAddr())
 }

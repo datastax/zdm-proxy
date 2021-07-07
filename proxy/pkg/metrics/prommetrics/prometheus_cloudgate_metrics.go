@@ -10,31 +10,25 @@ import (
 	"net/http"
 	"strings"
 	"sync"
-	"time"
 )
 
 const metricsPrefix = "cloudgate"
 
-type collectorEntry struct {
-	metric    metrics.Metric
-	collector prometheus.Collector
-}
-
-type prometheusCloudgateProxyMetrics struct {
-	collectorMap map[uint32]*collectorEntry
-	lock         *sync.RWMutex
-	registerer   prometheus.Registerer
+type PrometheusMetricFactory struct {
+	registerer           prometheus.Registerer
+	lock                 *sync.Mutex
+	registeredCollectors []*collectorEntry
 }
 
 /***
 	Instantiation and initialization
  ***/
 
-func NewPrometheusCloudgateProxyMetrics(registerer prometheus.Registerer) *prometheusCloudgateProxyMetrics {
-	m := &prometheusCloudgateProxyMetrics{
-		collectorMap: make(map[uint32]*collectorEntry),
-		lock:         &sync.RWMutex{},
-		registerer:   registerer,
+func NewPrometheusMetricFactory(registerer prometheus.Registerer) *PrometheusMetricFactory {
+	m := &PrometheusMetricFactory{
+		registerer:           registerer,
+		lock:                 &sync.Mutex{},
+		registeredCollectors: make([]*collectorEntry, 0),
 	}
 	return m
 }
@@ -43,14 +37,7 @@ func NewPrometheusCloudgateProxyMetrics(registerer prometheus.Registerer) *prome
 	Methods for adding metrics
  ***/
 
-func (pm *prometheusCloudgateProxyMetrics) AddCounter(mn metrics.Metric) error {
-	pm.lock.Lock()
-	defer pm.lock.Unlock()
-
-	_, exists := pm.collectorMap[mn.GetUniqueIdentifier()]
-	if exists {
-		return fmt.Errorf("counter %v could not be registered: duplicate metrics collector registration attempted", mn)
-	}
+func (pm *PrometheusMetricFactory) GetOrCreateCounter(mn metrics.Metric) (metrics.Counter, error) {
 
 	var c prometheus.Collector
 	if mn.GetLabels() != nil {
@@ -72,38 +59,28 @@ func (pm *prometheusCloudgateProxyMetrics) AddCounter(mn metrics.Metric) error {
 	var err error
 	c, err = pm.registerCollector(mn, c)
 	if err != nil {
-		return fmt.Errorf("failed to add counter %v: %w", mn, err)
+		return nil, fmt.Errorf("failed to add counter %v: %w", mn, err)
 	}
-
-	entry := &collectorEntry{
-		metric:    mn,
-		collector: c,
-	}
-	pm.collectorMap[mn.GetUniqueIdentifier()] = entry
 
 	if mn.GetLabels() != nil {
 		vec, isCounterVec := c.(*prometheus.CounterVec)
 		if !isCounterVec {
-			log.Warnf("failed to initialize label but collector was added: %v", mn)
-			return nil
+			return nil, fmt.Errorf("failed to initialize label but collector was added: %v", mn)
 		}
 
 		// initialize label
-		_ = vec.With(mn.GetLabels())
+		promCounter := vec.With(mn.GetLabels())
+		return &PrometheusCounter{c: promCounter}, nil
+	} else {
+		promCounter, isCounter := c.(prometheus.Counter)
+		if !isCounter {
+			return nil, fmt.Errorf("failed to convert prometheus counter but collector was added: %v", mn)
+		}
+		return &PrometheusCounter{c: promCounter}, nil
 	}
-
-	return nil
 }
 
-func (pm *prometheusCloudgateProxyMetrics) AddGauge(mn metrics.Metric) error {
-	pm.lock.Lock()
-	defer pm.lock.Unlock()
-
-	_, exists := pm.collectorMap[mn.GetUniqueIdentifier()]
-	if exists {
-		return fmt.Errorf("gauge %v could not be registered: duplicate metrics collector registration attempted", mn)
-	}
-
+func (pm *PrometheusMetricFactory) GetOrCreateGauge(mn metrics.Metric) (metrics.Gauge, error) {
 	var g prometheus.Collector
 	if mn.GetLabels() != nil {
 		g = prometheus.NewGaugeVec(
@@ -124,41 +101,31 @@ func (pm *prometheusCloudgateProxyMetrics) AddGauge(mn metrics.Metric) error {
 	var err error
 	g, err = pm.registerCollector(mn, g)
 	if err != nil {
-		return fmt.Errorf("failed to add gauge %v: %w", mn, err)
+		return nil, fmt.Errorf("failed to add gauge %v: %w", mn, err)
 	}
-
-	entry := &collectorEntry{
-		metric:    mn,
-		collector: g,
-	}
-	pm.collectorMap[mn.GetUniqueIdentifier()] = entry
 
 	if mn.GetLabels() != nil {
 		vec, isGaugeVec := g.(*prometheus.GaugeVec)
 		if !isGaugeVec {
-			log.Warnf("failed to initialize label but collector was added: %v", mn)
-			return nil
+			return nil, fmt.Errorf("failed to initialize label but collector was added: %v", mn)
 		}
 
 		// initialize label
-		_ = vec.With(mn.GetLabels())
+		promGauge := vec.With(mn.GetLabels())
+		return &PrometheusGauge{g: promGauge}, nil
+	} else {
+		promGauge, isGauge := g.(prometheus.Gauge)
+		if !isGauge {
+			return nil, fmt.Errorf("failed to convert prometheus gauge but collector was added: %v", mn)
+		}
+		return &PrometheusGauge{g: promGauge}, nil
 	}
-
-	return nil
 }
 
-func (pm *prometheusCloudgateProxyMetrics) AddGaugeFunction(mn metrics.Metric, mf func() float64) error {
-	pm.lock.Lock()
-	defer pm.lock.Unlock()
-
-	_, exists := pm.collectorMap[mn.GetUniqueIdentifier()]
-	if exists {
-		return fmt.Errorf("gauge function %v could not be registered: duplicate metrics collector registration attempted", mn)
-	}
-
+func (pm *PrometheusMetricFactory) GetOrCreateGaugeFunc(mn metrics.Metric, mf func() float64) (metrics.GaugeFunc, error) {
 	var gf prometheus.Collector
 	if mn.GetLabels() != nil {
-		return fmt.Errorf("could not add metric %v because gauge functions don't support labels currently", mn)
+		return nil, fmt.Errorf("could not add metric %v because gauge functions don't support labels currently", mn)
 	} else {
 		gf = prometheus.NewGaugeFunc(
 			prometheus.GaugeOpts{
@@ -173,25 +140,17 @@ func (pm *prometheusCloudgateProxyMetrics) AddGaugeFunction(mn metrics.Metric, m
 	var err error
 	gf, err = pm.registerCollector(mn, gf)
 	if err != nil {
-		return fmt.Errorf("failed to add gauge function %v: %w", mn, err)
+		return nil, fmt.Errorf("failed to add gauge function %v: %w", mn, err)
 	}
 
-	entry := &collectorEntry{
-		metric:    mn,
-		collector: gf,
+	promGaugeFunc, isGaugeFunc := gf.(prometheus.GaugeFunc)
+	if !isGaugeFunc {
+		return nil, fmt.Errorf("failed to convert prometheus gauge func but collector was added: %v", mn)
 	}
-	pm.collectorMap[mn.GetUniqueIdentifier()] = entry
-	return nil
+	return &PrometheusGaugeFunc{gf: promGaugeFunc}, nil
 }
 
-func (pm *prometheusCloudgateProxyMetrics) AddHistogram(mn metrics.Metric, buckets []float64) error {
-	pm.lock.Lock()
-	defer pm.lock.Unlock()
-
-	_, exists := pm.collectorMap[mn.GetUniqueIdentifier()]
-	if exists {
-		return fmt.Errorf("histogram %v could not be registered: duplicate metrics collector registration attempted", mn)
-	}
+func (pm *PrometheusMetricFactory) GetOrCreateHistogram(mn metrics.Metric, buckets []float64) (metrics.Histogram, error) {
 
 	var h prometheus.Collector
 	if mn.GetLabels() != nil {
@@ -215,97 +174,42 @@ func (pm *prometheusCloudgateProxyMetrics) AddHistogram(mn metrics.Metric, bucke
 	var err error
 	h, err = pm.registerCollector(mn, h)
 	if err != nil {
-		return fmt.Errorf("failed to add histogram %v: %w", mn, err)
+		return nil, fmt.Errorf("failed to add histogram %v: %w", mn, err)
 	}
-
-	entry := &collectorEntry{
-		metric:    mn,
-		collector: h,
-	}
-	pm.collectorMap[mn.GetUniqueIdentifier()] = entry
 
 	if mn.GetLabels() != nil {
 		vec, isHistogramVec := h.(*prometheus.HistogramVec)
 		if !isHistogramVec {
-			log.Warnf("failed to initialize label but collector was added: %v", mn)
-			return nil
+			return nil, fmt.Errorf("failed to initialize label but collector was added: %v", mn)
 		}
 
 		// initialize label
-		_ = vec.With(mn.GetLabels())
-	}
-
-	return nil
-}
-
-func (pm *prometheusCloudgateProxyMetrics) IncrementCountByOne(mn metrics.Metric) error {
-	return pm.AddToCount(mn, 1)
-}
-
-func (pm *prometheusCloudgateProxyMetrics) DecrementCountByOne(mn metrics.Metric) error {
-	return pm.SubtractFromCount(mn, 1)
-}
-
-func (pm *prometheusCloudgateProxyMetrics) AddToCount(mn metrics.Metric, valueToAdd int) error {
-	c, err := pm.getMetricFromMap(mn)
-	if err != nil {
-		return err
-	}
-
-	switch ct := c.(type) {
-	case prometheus.Counter:
-		ct.Add(float64(valueToAdd))
-	case prometheus.Gauge:
-		ct.Add(float64(valueToAdd))
-	default:
-		return fmt.Errorf("the specified metric %v is neither a counter nor a gauge", mn)
-	}
-
-	return nil
-}
-
-func (pm *prometheusCloudgateProxyMetrics) SubtractFromCount(mn metrics.Metric, valueToSubtract int) error {
-	var c prometheus.Collector
-	var err error
-	if c, err = pm.getGaugeFromMap(mn); err == nil {
-		c.(prometheus.Gauge).Sub(float64(valueToSubtract))
-	}
-	return err
-}
-
-func (pm *prometheusCloudgateProxyMetrics) TrackInHistogram(mn metrics.Metric, begin time.Time) error {
-	if h, err := pm.getHistogramFromMap(mn); err == nil {
-		// Use seconds to track time, see https://prometheus.io/docs/practices/naming/#base-units
-		elapsedTimeInSeconds := float64(time.Since(begin)) / float64(time.Second)
-		h.Observe(elapsedTimeInSeconds)
-		return nil
+		promHistogram := vec.With(mn.GetLabels())
+		return &PrometheusHistogram{h: promHistogram}, nil
 	} else {
-		return err
+		promHistogram, isHistogram := h.(prometheus.Histogram)
+		if !isHistogram {
+			return nil, fmt.Errorf("failed to convert prometheus histogram func but collector was added: %v", mn)
+		}
+		return &PrometheusHistogram{h: promHistogram}, nil
 	}
 }
 
-func (pm *prometheusCloudgateProxyMetrics) UnregisterAllMetrics() error {
-
+func (pm *PrometheusMetricFactory) UnregisterAllMetrics() error {
 	pm.lock.Lock()
 	defer pm.lock.Unlock()
 
 	var failedUnregistrations []string
-	unregisteredMetrics := map[string]interface{}{}
-
-	for mn, c := range pm.collectorMap {
-		if _, alreadyUnregistered := unregisteredMetrics[c.metric.GetName()]; !alreadyUnregistered {
-			unregisteredMetrics[c.metric.GetName()] = nil
-			ok := pm.registerer.Unregister(c.collector)
-			if !ok {
-				failedUnregistrations = append(failedUnregistrations, c.metric.String())
-			} else {
-				log.Debugf("Collector %v successfully unregistered.", c.metric.GetName())
-			}
+	for _, c := range pm.registeredCollectors {
+		ok := pm.registerer.Unregister(c.collector)
+		if !ok {
+			failedUnregistrations = append(failedUnregistrations, c.name)
+		} else {
+			log.Debugf("Collector %v successfully unregistered.", c.name)
 		}
-
-		delete(pm.collectorMap, mn)
-		log.Debugf("CollectorEntry for metric %v deleted from map.", c.metric.String())
 	}
+
+	pm.registeredCollectors = make([]*collectorEntry, 0)
 
 	if len(failedUnregistrations) > 0 {
 		return fmt.Errorf(
@@ -316,110 +220,32 @@ func (pm *prometheusCloudgateProxyMetrics) UnregisterAllMetrics() error {
 	return nil
 }
 
-func (pm *prometheusCloudgateProxyMetrics) Handler() http.Handler {
+func (pm *PrometheusMetricFactory) HttpHandler() http.Handler {
 	return promhttp.Handler()
-}
-
-/***
-	Methods for internal use only
- ***/
-
-func (pm *prometheusCloudgateProxyMetrics) getCounterFromMap(mn metrics.Metric) (prometheus.Counter, error) {
-	c, err := pm.getMetricFromMap(mn)
-	if err != nil {
-		return nil, err
-	}
-
-	if ct, isCounter := c.(prometheus.Counter); isCounter {
-		return ct, nil
-	} else {
-		return nil, fmt.Errorf("the specified metric %v is not a counter", mn)
-	}
-}
-
-func (pm *prometheusCloudgateProxyMetrics) getGaugeFromMap(mn metrics.Metric) (prometheus.Gauge, error) {
-	c, err := pm.getMetricFromMap(mn)
-	if err != nil {
-		return nil, err
-	}
-
-	if g, isGauge := c.(prometheus.Gauge); isGauge {
-		return g, nil
-	} else {
-		return nil, fmt.Errorf("the specified metric %v is not a gauge", mn)
-	}
-}
-
-func (pm *prometheusCloudgateProxyMetrics) getHistogramFromMap(mn metrics.Metric) (prometheus.Histogram, error) {
-	c, err := pm.getMetricFromMap(mn)
-	if err != nil {
-		return nil, err
-	}
-
-	if h, isHistogram := c.(prometheus.Histogram); isHistogram {
-		return h, nil
-	} else {
-		return nil, fmt.Errorf("the specified metric %v is not a histogram", mn)
-	}
-}
-
-func (pm *prometheusCloudgateProxyMetrics) getMetricFromMap(mn metrics.Metric) (prometheus.Collector, error) {
-	pm.lock.RLock()
-	defer pm.lock.RUnlock()
-
-	if c, foundInMap := pm.collectorMap[mn.GetUniqueIdentifier()]; foundInMap {
-		switch m := c.collector.(type) {
-		case *prometheus.CounterVec:
-			counter, err := m.GetMetricWith(mn.GetLabels())
-			if err != nil {
-				return nil, fmt.Errorf("failed to get counter from CounterVec: %w", err)
-			} else {
-				return counter, nil
-			}
-		case *prometheus.GaugeVec:
-			gauge, err := m.GetMetricWith(mn.GetLabels())
-			if err != nil {
-				return nil, fmt.Errorf("failed to get gauge from GaugeVec: %w", err)
-			} else {
-				return gauge, nil
-			}
-		case *prometheus.HistogramVec:
-			observer, err := m.GetMetricWith(mn.GetLabels())
-			if err != nil {
-				return nil, fmt.Errorf("failed to get histogram from HistogramVec: %w", err)
-			}
-
-			histogram, isHistogram := observer.(prometheus.Histogram)
-			if isHistogram {
-				return histogram, nil
-			} else {
-				return nil, fmt.Errorf("observer retrieved from metric %v isn't histogram", mn)
-			}
-		default:
-			return c.collector, nil
-		}
-	} else {
-		// collector not found
-		return nil, fmt.Errorf("the specified metric %v could not be found", mn)
-	}
 }
 
 // Register this collector with Prometheus's DefaultRegisterer.
 // If it is a metric with labels and the registerer
 // returns an AlreadyRegisteredError then the returned collector is the existing one (and no error is returned).
 // If the registerer does not return any error, registerCollector returns c, i.e., the provided collector.
-func (pm *prometheusCloudgateProxyMetrics) registerCollector(mn metrics.Metric, c prometheus.Collector) (prometheus.Collector, error) {
-
+func (pm *PrometheusMetricFactory) registerCollector(mn metrics.Metric, c prometheus.Collector) (prometheus.Collector, error) {
 	if err := pm.registerer.Register(c); err != nil {
 		alreadyRegisteredErr := prometheus.AlreadyRegisteredError{}
-		if errors.As(err, &alreadyRegisteredErr) && mn.GetLabels() != nil {
-			// metrics with labels are only registered once instead of once per label combination
+		if errors.As(err, &alreadyRegisteredErr) {
 			return alreadyRegisteredErr.ExistingCollector, nil
 		}
-		return nil, fmt.Errorf("collector %v could not be registered due to %w", c, err)
+		return nil, fmt.Errorf("collector %v could not be registered due to %w", mn.String(), err)
 	} else {
-		log.Debugf("Collector %s registered", c)
+		log.Debugf("Collector %v registered", mn.GetName())
 	}
+
+	pm.lock.Lock()
+	pm.registeredCollectors = append(pm.registeredCollectors, &collectorEntry{
+		collector: c,
+		name:      mn.GetName(),
+	})
+	pm.lock.Unlock()
+
 	return c, nil
 }
 
@@ -434,4 +260,13 @@ func getLabelNames(mn metrics.Metric) []string {
 	}
 
 	return names
+}
+
+type collectorEntry struct {
+	collector prometheus.Collector
+	name      string
+}
+
+func (recv *collectorEntry) String() string {
+	return recv.name
 }

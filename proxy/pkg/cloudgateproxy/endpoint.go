@@ -11,7 +11,8 @@ import (
 type Endpoint interface {
 	GetSocketEndpoint() string
 	GetTlsConfig() *tls.Config
-	GetEndpointIdentifier()   string
+	GetEndpointIdentifier() string
+	String() string
 }
 
 type DefaultEndpoint struct {
@@ -46,7 +47,7 @@ type AstraEndpoint struct {
 	proxyAddr     string
 	baseTlsConfig *tls.Config
 	hostId        string
-	endpointId    string
+	friendlyName  string
 }
 
 func NewAstraEndpoint(proxyEndpoint string, proxyAddr string, hostId string, baseTlsConfig *tls.Config) *AstraEndpoint {
@@ -55,7 +56,7 @@ func NewAstraEndpoint(proxyEndpoint string, proxyAddr string, hostId string, bas
 		proxyAddr:     proxyAddr,
 		baseTlsConfig: baseTlsConfig,
 		hostId:        hostId,
-		endpointId:    fmt.Sprintf("%s-%s", proxyEndpoint, hostId),
+		friendlyName:  fmt.Sprintf("%s-%s", proxyEndpoint, hostId),
 	}
 }
 
@@ -74,7 +75,7 @@ func (recv *AstraEndpoint) GetTlsConfig() *tls.Config {
 }
 
 func (recv *AstraEndpoint) GetEndpointIdentifier() string {
-	return recv.endpointId
+	return recv.hostId
 }
 
 func (recv *AstraEndpoint) String() string {

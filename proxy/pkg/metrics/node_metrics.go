@@ -14,6 +14,8 @@ const (
 	errorWriteTimeout = "write_timeout"
 	errorUnprepared = "unprepared"
 	errorOther = "other"
+	
+	nodeLabel = "node"
 )
 
 var (
@@ -107,3 +109,59 @@ var (
 		"Number of connections to Target Cassandra currently open",
 	)
 )
+
+type NodeMetrics struct {
+	OriginMetrics *OriginMetrics
+	TargetMetrics *TargetMetrics
+}
+
+type TargetMetrics struct {
+	TargetClientTimeouts   Counter
+	TargetReadTimeouts     Counter
+	TargetWriteTimeouts    Counter
+	TargetUnpreparedErrors Counter
+	TargetOtherErrors      Counter
+
+	TargetRequestDuration Histogram
+
+	OpenTargetConnections Gauge
+}
+
+type OriginMetrics struct {
+	OriginClientTimeouts   Counter
+	OriginReadTimeouts     Counter
+	OriginWriteTimeouts    Counter
+	OriginUnpreparedErrors Counter
+	OriginOtherErrors      Counter
+
+	OriginRequestDuration Histogram
+
+	OpenOriginConnections Gauge
+}
+
+func CreateCounterNodeMetric(metricFactory MetricFactory, nodeDescription string, mn Metric) (Counter, error) {
+	m, err := metricFactory.GetOrCreateCounter(
+		mn.WithLabels(map[string]string{nodeLabel: nodeDescription}))
+	if err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+func CreateHistogramNodeMetric(metricFactory MetricFactory, nodeDescription string, mn Metric, buckets []float64) (Histogram, error) {
+	m, err := metricFactory.GetOrCreateHistogram(
+		mn.WithLabels(map[string]string{nodeLabel: nodeDescription}), buckets)
+	if err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+func CreateGaugeNodeMetric(metricFactory MetricFactory, nodeDescription string, mn Metric) (Gauge, error) {
+	m, err := metricFactory.GetOrCreateGauge(
+		mn.WithLabels(map[string]string{nodeLabel: nodeDescription}))
+	if err != nil {
+		return nil, err
+	}
+	return m, nil
+}

@@ -24,26 +24,7 @@ import (
 	"time"
 )
 
-var allMetrics = []metrics.Metric{
-	metrics.FailedRequestsBothFailedOnTargetOnly,
-	metrics.FailedRequestsBothFailedOnOriginOnly,
-	metrics.FailedRequestsBoth,
-	metrics.FailedRequestsOrigin,
-	metrics.FailedRequestsTarget,
-
-	metrics.PSCacheSize,
-	metrics.PSCacheMissCount,
-
-	metrics.ProxyRequestDurationTarget,
-	metrics.ProxyRequestDurationOrigin,
-	metrics.ProxyRequestDurationBoth,
-
-	metrics.InFlightRequestsTarget,
-	metrics.InFlightRequestsOrigin,
-	metrics.InFlightRequestsBoth,
-
-	metrics.OpenClientConnections,
-
+var nodeMetrics = []metrics.Metric{
 	metrics.OriginRequestDuration,
 	metrics.TargetRequestDuration,
 
@@ -63,6 +44,29 @@ var allMetrics = []metrics.Metric{
 	metrics.OpenTargetConnections,
 }
 
+var proxyMetrics = []metrics.Metric{
+	metrics.FailedRequestsBothFailedOnTargetOnly,
+	metrics.FailedRequestsBothFailedOnOriginOnly,
+	metrics.FailedRequestsBoth,
+	metrics.FailedRequestsOrigin,
+	metrics.FailedRequestsTarget,
+
+	metrics.PSCacheSize,
+	metrics.PSCacheMissCount,
+
+	metrics.ProxyRequestDurationTarget,
+	metrics.ProxyRequestDurationOrigin,
+	metrics.ProxyRequestDurationBoth,
+
+	metrics.InFlightRequestsTarget,
+	metrics.InFlightRequestsOrigin,
+	metrics.InFlightRequestsBoth,
+
+	metrics.OpenClientConnections,
+}
+
+var allMetrics = append(proxyMetrics, nodeMetrics...)
+
 var insertQuery = frame.NewFrame(
 	primitive.ProtocolVersion4,
 	client.ManagedStreamId,
@@ -77,7 +81,11 @@ var selectQuery = frame.NewFrame(
 
 func testMetrics(t *testing.T, metricsHandler *httpcloudgate.HandlerWithFallback) {
 
-	conf := setup.NewTestConfig("127.0.1.1", "127.0.1.2")
+	originHost := "127.0.1.1"
+	targetHost := "127.0.1.2"
+	originEndpoint := fmt.Sprintf("%v:9042", originHost)
+	targetEndpoint := fmt.Sprintf("%v:9042", targetHost)
+	conf := setup.NewTestConfig(originHost, targetHost)
 
 	origin, target := createOriginAndTarget(conf)
 	defer origin.Close()
@@ -95,46 +103,46 @@ func testMetrics(t *testing.T, metricsHandler *httpcloudgate.HandlerWithFallback
 	srv := startMetricsHandler(t, conf, wg, metricsHandler)
 	defer func() { _ = srv.Close() }()
 
-	lines := gatherMetrics(t, conf)
-	checkMetrics(t, lines, 0, 0, 0, 0, 0, 0, true, true)
+	lines := gatherMetrics(t, conf, false)
+	checkMetrics(t, false, lines, 0, 0, 0, 0, 0, 0, true, true, originEndpoint, targetEndpoint)
 
 	clientConn := startClient(t, origin, target, conf, ctx)
 
 	err := clientConn.InitiateHandshake(primitive.ProtocolVersion4, client.ManagedStreamId)
 	require.Nil(t, err)
 
-	lines = gatherMetrics(t, conf)
+	lines = gatherMetrics(t, conf, true)
 	// 2 on origin: STARTUP and AUTH_RESPONSE
 	// 2 on target: STARTUP and AUTH_RESPONSE
-	checkMetrics(t, lines, 1, 1, 1, 0, 2, 2, true, true)
+	checkMetrics(t, true, lines, 1, 1, 1, 0, 2, 2, true, true, originEndpoint, targetEndpoint)
 
 	_, err = clientConn.SendAndReceive(insertQuery)
 	require.Nil(t, err)
 
-	lines = gatherMetrics(t, conf)
+	lines = gatherMetrics(t, conf, true)
 	// 2 on origin: STARTUP and AUTH_RESPONSE
 	// 2 on target: STARTUP and AUTH_RESPONSE
 	// 1 on both: QUERY INSERT INTO
-	checkMetrics(t, lines, 1, 1, 1, 1, 2, 2, true, true)
+	checkMetrics(t, true, lines, 1, 1, 1, 1, 2, 2, true, true, originEndpoint, targetEndpoint)
 
 	_, err = clientConn.SendAndReceive(selectQuery)
 	require.Nil(t, err)
 
-	lines = gatherMetrics(t, conf)
+	lines = gatherMetrics(t, conf, true)
 	// 3 on origin: STARTUP, AUTH_RESPONSE, QUERY SELECT
 	// 2 on target: STARTUP and AUTH_RESPONSE
 	// 1 on both: QUERY INSERT INTO
-	checkMetrics(t, lines, 1, 1, 1, 1, 3, 2, false, true)
+	checkMetrics(t, true, lines, 1, 1, 1, 1, 3, 2, false, true, originEndpoint, targetEndpoint)
 
 }
 
 func createOriginAndTarget(conf *config.Config) (*client.CqlServer, *client.CqlServer) {
-	originAddr := fmt.Sprintf("%s:%d", conf.OriginCassandraHostname, conf.OriginCassandraPort)
+	originAddr := fmt.Sprintf("%s:%d", conf.OriginCassandraContactPoints, conf.OriginCassandraPort)
 	origin := client.NewCqlServer(originAddr, &client.AuthCredentials{
 		Username: conf.OriginCassandraUsername,
 		Password: conf.OriginCassandraPassword,
 	})
-	targetAddr := fmt.Sprintf("%s:%d", conf.TargetCassandraHostname, conf.TargetCassandraPort)
+	targetAddr := fmt.Sprintf("%s:%d", conf.TargetCassandraContactPoints, conf.TargetCassandraPort)
 	target := client.NewCqlServer(targetAddr, &client.AuthCredentials{
 		Username: conf.TargetCassandraUsername,
 		Password: conf.TargetCassandraPassword,
@@ -213,15 +221,21 @@ func startClient(
 	return clientConn
 }
 
-func gatherMetrics(t *testing.T, conf *config.Config) []string {
+func gatherMetrics(t *testing.T, conf *config.Config, checkNodeMetrics bool) []string {
 	httpAddr := fmt.Sprintf("%s:%d", conf.ProxyMetricsAddress, conf.ProxyMetricsPort)
 	statusCode, rspStr, err := utils.GetMetrics(httpAddr)
 	require.Nil(t, err)
 	require.Equal(t, http.StatusOK, statusCode)
 	require.NotEmpty(t, rspStr)
-	for _, metric := range allMetrics {
+	for _, metric := range proxyMetrics {
 		require.Contains(t, rspStr, metric.GetName())
 		require.Contains(t, rspStr, metric.GetDescription())
+	}
+	if checkNodeMetrics {
+		for _, metric := range nodeMetrics {
+			require.Contains(t, rspStr, metric.GetName())
+			require.Contains(t, rspStr, metric.GetDescription())
+		}
 	}
 	var result []string
 	lines := strings.Split(rspStr, "\n")
@@ -235,6 +249,7 @@ func gatherMetrics(t *testing.T, conf *config.Config) []string {
 
 func checkMetrics(
 	t *testing.T,
+	checkNodeMetrics bool,
 	lines []string,
 	openClientConns int,
 	openOriginConns int,
@@ -244,11 +259,11 @@ func checkMetrics(
 	successTarget int,
 	handshakeOnlyOrigin bool,
 	handshakeOnlyTarget bool,
+	originHost string,
+	targetHost string,
 ) {
 	prefix := "cloudgate"
 	require.Contains(t, lines, fmt.Sprintf("%v %v", getPrometheusName(prefix, metrics.OpenClientConnections), openClientConns))
-	require.Contains(t, lines, fmt.Sprintf("%v %v", getPrometheusName(prefix, metrics.OpenOriginConnections), openOriginConns))
-	require.Contains(t, lines, fmt.Sprintf("%v %v", getPrometheusName(prefix, metrics.OpenTargetConnections), openTargetConns))
 
 	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.FailedRequestsBoth)))
 	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.FailedRequestsBothFailedOnOriginOnly)))
@@ -259,19 +274,6 @@ func checkMetrics(
 	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.InFlightRequestsBoth)))
 	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.InFlightRequestsOrigin)))
 	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.InFlightRequestsTarget)))
-
-	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.OriginReadTimeouts)))
-	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.OriginWriteTimeouts)))
-	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.OriginOtherErrors)))
-	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.OriginClientTimeouts)))
-
-	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.TargetReadTimeouts)))
-	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.TargetWriteTimeouts)))
-	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.TargetOtherErrors)))
-	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.TargetClientTimeouts)))
-
-	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.OriginUnpreparedErrors)))
-	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.TargetUnpreparedErrors)))
 
 	if successOrigin == 0 {
 		require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithSuffix(prefix, metrics.ProxyRequestDurationOrigin, "sum")))
@@ -301,31 +303,48 @@ func checkMetrics(
 		require.Greater(t, value, 0.0)
 	}
 
-	if (successTarget + successBoth) == 0 {
-		require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithSuffix(prefix, metrics.TargetRequestDuration, "sum")))
-	} else {
-		if successBoth != 0 || !handshakeOnlyTarget {
-			value, err := findMetricValue(lines, fmt.Sprintf("%v ", getPrometheusNameWithSuffix(prefix, metrics.TargetRequestDuration, "sum")))
-			require.Nil(t, err)
-			require.Greater(t, value, 0.0)
-		}
-	}
-
-	if (successOrigin + successBoth) == 0 {
-		require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithSuffix(prefix, metrics.OriginRequestDuration, "sum")))
-	} else {
-		if successBoth != 0 || !handshakeOnlyOrigin {
-			value, err := findMetricValue(lines, fmt.Sprintf("%v ", getPrometheusNameWithSuffix(prefix, metrics.OriginRequestDuration, "sum")))
-			require.Nil(t, err)
-			require.Greater(t, value, 0.0)
-		}
-	}
-
-	require.Contains(t, lines, fmt.Sprintf("%v %v", getPrometheusNameWithSuffix(prefix, metrics.TargetRequestDuration, "count"), successTarget+successBoth))
 	require.Contains(t, lines, fmt.Sprintf("%v %v", getPrometheusNameWithSuffix(prefix, metrics.ProxyRequestDurationTarget, "count"), successTarget))
-	require.Contains(t, lines, fmt.Sprintf("%v %v", getPrometheusNameWithSuffix(prefix, metrics.OriginRequestDuration, "count"), successOrigin+successBoth))
 	require.Contains(t, lines, fmt.Sprintf("%v %v", getPrometheusNameWithSuffix(prefix, metrics.ProxyRequestDurationOrigin, "count"), successOrigin))
 	require.Contains(t, lines, fmt.Sprintf("%v %v", getPrometheusNameWithSuffix(prefix, metrics.ProxyRequestDurationBoth, "count"), successBoth))
+
+	if checkNodeMetrics {
+		require.Contains(t, lines, fmt.Sprintf("%v{node=\"%v\"} %v", getPrometheusName(prefix, metrics.OpenOriginConnections), originHost, openOriginConns))
+		require.Contains(t, lines, fmt.Sprintf("%v{node=\"%v\"} %v", getPrometheusName(prefix, metrics.OpenTargetConnections), targetHost, openTargetConns))
+		require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithNodeLabel(prefix, metrics.OriginReadTimeouts, originHost)))
+		require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithNodeLabel(prefix, metrics.OriginWriteTimeouts, originHost)))
+		require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithNodeLabel(prefix, metrics.OriginOtherErrors, originHost)))
+		require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithNodeLabel(prefix, metrics.OriginClientTimeouts, originHost)))
+
+		require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithNodeLabel(prefix, metrics.TargetReadTimeouts, targetHost)))
+		require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithNodeLabel(prefix, metrics.TargetWriteTimeouts, targetHost)))
+		require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithNodeLabel(prefix, metrics.TargetOtherErrors, targetHost)))
+		require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithNodeLabel(prefix, metrics.TargetClientTimeouts, targetHost)))
+
+		require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithNodeLabel(prefix, metrics.OriginUnpreparedErrors, originHost)))
+		require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithNodeLabel(prefix, metrics.TargetUnpreparedErrors, targetHost)))
+		if (successTarget + successBoth) == 0 {
+			require.Contains(t, lines, fmt.Sprintf("%v{node=\"%v\"} 0", getPrometheusNameWithSuffix(prefix, metrics.TargetRequestDuration, "sum"), targetHost))
+		} else {
+			if successBoth != 0 || !handshakeOnlyTarget {
+				value, err := findMetricValue(lines, fmt.Sprintf("%v{node=\"%v\"} ", getPrometheusNameWithSuffix(prefix, metrics.TargetRequestDuration, "sum"), targetHost))
+				require.Nil(t, err)
+				require.Greater(t, value, 0.0)
+			}
+		}
+
+		if (successOrigin + successBoth) == 0 {
+			require.Contains(t, lines, fmt.Sprintf("%v{node=\"%v\"} 0", getPrometheusNameWithSuffix(prefix, metrics.OriginRequestDuration, "sum"), originHost))
+		} else {
+			if successBoth != 0 || !handshakeOnlyOrigin {
+				value, err := findMetricValue(lines, fmt.Sprintf("%v{node=\"%v\"} ", getPrometheusNameWithSuffix(prefix, metrics.OriginRequestDuration, "sum"), originHost))
+				require.Nil(t, err)
+				require.Greater(t, value, 0.0)
+			}
+		}
+
+		require.Contains(t, lines, fmt.Sprintf("%v{node=\"%v\"} %v", getPrometheusNameWithSuffix(prefix, metrics.TargetRequestDuration, "count"), targetHost, successTarget+successBoth))
+		require.Contains(t, lines, fmt.Sprintf("%v{node=\"%v\"} %v", getPrometheusNameWithSuffix(prefix, metrics.OriginRequestDuration, "count"), originHost, successOrigin+successBoth))
+	}
 }
 
 func findMetricValue(lines []string, prefix string) (float64, error) {
@@ -370,13 +389,25 @@ func getPrometheusName(prefix string, mn metrics.Metric) string {
 	return getPrometheusNameWithSuffix(prefix, mn, "")
 }
 
-func getPrometheusNameWithSuffix(prefix string, mn metrics.Metric, suffix string) string {
+func getPrometheusNameWithNodeLabel(prefix string, mn metrics.Metric, node string) string {
+	return getPrometheusNameWithSuffixAndNodeLabel(prefix, mn, "", node)
+}
+
+func getPrometheusNameWithSuffixAndNodeLabel(prefix string, mn metrics.Metric, suffix string, node string) string {
 	if suffix != "" {
 		suffix = "_" + suffix
 	}
 
 	labels := mn.GetLabels()
-	if labels != nil {
+	newLabels := make(map[string]string)
+	for key, value := range labels {
+		newLabels[key] = value
+	}
+	if node != "" {
+		newLabels["node"] = node		
+	}
+	labels = newLabels
+	if labels != nil && len(labels) > 0 {
 		keys := make([]string, 0, len(labels))
 		for k := range labels {
 			keys = append(keys, k)
@@ -399,4 +430,8 @@ func getPrometheusNameWithSuffix(prefix string, mn metrics.Metric, suffix string
 	}
 
 	return fmt.Sprintf("%v_%v%v", prefix, mn.GetName(), suffix)
+}
+
+func getPrometheusNameWithSuffix(prefix string, mn metrics.Metric, suffix string) string {
+	return getPrometheusNameWithSuffixAndNodeLabel(prefix, mn, suffix, "")
 }

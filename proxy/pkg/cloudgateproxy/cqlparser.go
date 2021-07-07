@@ -84,7 +84,7 @@ func modifyFrame(context *frameDecodeContext) (*frameDecodeContext, error) {
 func inspectFrame(
 	frameContext *frameDecodeContext,
 	psCache *PreparedStatementCache,
-	mh metrics.IMetricsHandler,
+	mh *metrics.MetricHandler,
 	currentKeyspaceName *atomic.Value,
 	forwardReadsToTarget bool,
 	virtualizationEnabled bool) (StatementInfo, error) {
@@ -165,7 +165,7 @@ func inspectFrame(
 			return stmtInfo.GetBaseStatementInfo(), nil
 		} else {
 			log.Warnf("No cached entry for prepared-id = '%s'", executeMsg.QueryId)
-			_ = mh.IncrementCountByOne(metrics.PSCacheMissCount)
+			mh.GetProxyMetrics().PSCacheMissCount.Add(1)
 			// return meaningful error to caller so it can generate an unprepared response
 			return nil, &UnpreparedExecuteError{Header: f.Header, Body: decodedFrame.Body, preparedId: executeMsg.QueryId}
 		}

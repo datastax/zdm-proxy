@@ -29,7 +29,7 @@ func TestWithHttpHandlers(t *testing.T) {
 		testMetrics(t, metricsHandler)
 	})
 
-	metricsHandler.SetHandler(metrics.DefaultHandler())
+	metricsHandler.SetHandler(metrics.DefaultHttpHandler())
 
 	t.Run("testHttpEndpointsWithProxyNotInitialized", func(t *testing.T) {
 		testHttpEndpointsWithProxyNotInitialized(t, metricsHandler, readinessHandler)

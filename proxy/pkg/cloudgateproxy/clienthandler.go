@@ -25,7 +25,7 @@ import (
     	- a connector to TC
 
 	Additionally, it has:
-    - a global metricsHandler object (must be a reference to the one created in the proxy)
+    - a global metricHandler object (must be a reference to the one created in the proxy)
 	- the prepared statement cache
     - the connection's keyspace, if a USE statement has been issued
 
@@ -42,7 +42,8 @@ type ClientHandler struct {
 
 	preparedStatementCache *PreparedStatementCache
 
-	metricsHandler  metrics.IMetricsHandler
+	metricHandler   *metrics.MetricHandler
+	nodeMetrics     *metrics.NodeMetrics
 	globalWaitGroup *sync.WaitGroup
 
 	clientHandlerContext    context.Context
@@ -94,7 +95,7 @@ func NewClientHandler(
 	originUsername string,
 	originPassword string,
 	psCache *PreparedStatementCache,
-	metricsHandler metrics.IMetricsHandler,
+	metricHandler *metrics.MetricHandler,
 	waitGroup *sync.WaitGroup,
 	globalContext context.Context,
 	requestResponseScheduler *Scheduler,
@@ -103,6 +104,13 @@ func NewClientHandler(
 	numWorkers int,
 	shutdownRequestCtx context.Context,
 	requestLoopWaitGroup *sync.WaitGroup) (*ClientHandler, error) {
+
+	nodeMetrics, err := metricHandler.GetNodeMetrics(
+		originCassandraConnInfo.endpoint.GetEndpointIdentifier(),
+		targetCassandraConnInfo.endpoint.GetEndpointIdentifier())
+	if err != nil {
+		return nil, fmt.Errorf("failed to create node metrics: %w", err)
+	}
 
 	clientHandlerContext, clientHandlerCancelFunc := context.WithCancel(context.Background())
 
@@ -119,7 +127,7 @@ func NewClientHandler(
 	respChannel := make(chan *Response, numWorkers)
 
 	originConnector, err := NewClusterConnector(
-		originCassandraConnInfo, conf, metricsHandler, waitGroup,
+		originCassandraConnInfo, conf, nodeMetrics, waitGroup,
 		clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler)
 	if err != nil {
 		clientHandlerCancelFunc()
@@ -127,7 +135,7 @@ func NewClientHandler(
 	}
 
 	targetConnector, err := NewClusterConnector(
-		targetCassandraConnInfo, conf, metricsHandler, waitGroup,
+		targetCassandraConnInfo, conf, nodeMetrics, waitGroup,
 		clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler)
 	if err != nil {
 		clientHandlerCancelFunc()
@@ -143,7 +151,6 @@ func NewClientHandler(
 		clientConnector: NewClientConnector(
 			clientTcpConn,
 			conf,
-			metricsHandler,
 			waitGroup,
 			requestsChannel,
 			clientHandlerContext,
@@ -160,7 +167,8 @@ func NewClientHandler(
 		originControlConn:        originControlConn,
 		targetControlConn:        targetControlConn,
 		preparedStatementCache:   psCache,
-		metricsHandler:           metricsHandler,
+		metricHandler:            metricHandler,
+		nodeMetrics:              nodeMetrics,
 		globalWaitGroup:          waitGroup,
 		clientHandlerContext:     clientHandlerContext,
 		clientHandlerCancelFunc:  clientHandlerCancelFunc,
@@ -383,9 +391,9 @@ func (ch *ClientHandler) responseLoop() {
 
 				finished := false
 				if response.responseFrame == nil {
-					finished = reqCtx.SetTimeout(ch.metricsHandler, response.requestFrame)
+					finished = reqCtx.SetTimeout(ch.nodeMetrics, response.requestFrame)
 				} else {
-					finished = reqCtx.SetResponse(ch.metricsHandler, response.responseFrame, response.cluster)
+					finished = reqCtx.SetResponse(ch.nodeMetrics, response.responseFrame, response.cluster)
 					ch.trackClusterErrorMetrics(response.responseFrame, response.cluster)
 				}
 
@@ -433,16 +441,17 @@ func (ch *ClientHandler) finishRequest(holder *requestContextHolder, reqCtx *Req
 		log.Debugf("Could not free stream id: %v", err)
 	}
 
+	proxyMetrics := ch.metricHandler.GetProxyMetrics()
 	switch reqCtx.stmtInfo.GetForwardDecision() {
 	case forwardToBoth:
-		ch.metricsHandler.TrackInHistogram(metrics.ProxyRequestDurationBoth, reqCtx.startTime)
-		ch.metricsHandler.DecrementCountByOne(metrics.InFlightRequestsBoth)
+		proxyMetrics.ProxyRequestDurationBoth.Track(reqCtx.startTime)
+		proxyMetrics.InFlightRequestsBoth.Subtract(1)
 	case forwardToOrigin:
-		ch.metricsHandler.TrackInHistogram(metrics.ProxyRequestDurationOrigin, reqCtx.startTime)
-		ch.metricsHandler.DecrementCountByOne(metrics.InFlightRequestsOrigin)
+		proxyMetrics.ProxyRequestDurationOrigin.Track(reqCtx.startTime)
+		proxyMetrics.InFlightRequestsOrigin.Subtract(1)
 	case forwardToTarget:
-		ch.metricsHandler.TrackInHistogram(metrics.ProxyRequestDurationTarget, reqCtx.startTime)
-		ch.metricsHandler.DecrementCountByOne(metrics.InFlightRequestsTarget)
+		proxyMetrics.ProxyRequestDurationTarget.Track(reqCtx.startTime)
+		proxyMetrics.InFlightRequestsTarget.Subtract(1)
 	default:
 		log.Errorf("unexpected forwardDecision %v, unable to track proxy level metrics", reqCtx.stmtInfo.GetForwardDecision())
 	}
@@ -480,7 +489,7 @@ func (ch *ClientHandler) computeAggregatedResponse(requestContext *RequestContex
 		}
 		log.Debugf("Forward to origin: just returning the response received from OC: %d", requestContext.originResponse.Header.OpCode)
 		if !isResponseSuccessful(requestContext.originResponse) {
-			ch.metricsHandler.IncrementCountByOne(metrics.FailedRequestsOrigin)
+			ch.metricHandler.GetProxyMetrics().FailedRequestsOrigin.Add(1)
 		}
 		return requestContext.originResponse, nil
 
@@ -490,7 +499,7 @@ func (ch *ClientHandler) computeAggregatedResponse(requestContext *RequestContex
 		}
 		log.Debugf("Forward to target: just returning the response received from TC: %d", requestContext.targetResponse.Header.OpCode)
 		if !isResponseSuccessful(requestContext.targetResponse) {
-			ch.metricsHandler.IncrementCountByOne(metrics.FailedRequestsTarget)
+			ch.metricHandler.GetProxyMetrics().FailedRequestsTarget.Add(1)
 		}
 		return requestContext.targetResponse, nil
 
@@ -761,7 +770,7 @@ func (ch *ClientHandler) forwardRequest(request *frame.RawFrame, customResponseC
 	context, err = modifyFrame(context)
 	request = context.frame
 	stmtInfo, err := inspectFrame(
-		context, ch.preparedStatementCache, ch.metricsHandler, ch.currentKeyspaceName, ch.conf.ForwardReadsToTarget, ch.virtualizationConfig.VirtualizationEnabled)
+		context, ch.preparedStatementCache, ch.metricHandler, ch.currentKeyspaceName, ch.conf.ForwardReadsToTarget, ch.virtualizationConfig.VirtualizationEnabled)
 	if err != nil {
 		if errVal, ok := err.(*UnpreparedExecuteError); ok {
 			unpreparedFrame, err := createUnpreparedFrame(errVal)
@@ -860,13 +869,14 @@ func (ch *ClientHandler) executeForwardDecision(f *frame.RawFrame, stmtInfo Stat
 		return err
 	}
 
+	proxyMetrics := ch.metricHandler.GetProxyMetrics()
 	switch forwardDecision {
 	case forwardToBoth:
-		ch.metricsHandler.IncrementCountByOne(metrics.InFlightRequestsBoth)
+		proxyMetrics.InFlightRequestsBoth.Add(1)
 	case forwardToOrigin:
-		ch.metricsHandler.IncrementCountByOne(metrics.InFlightRequestsOrigin)
+		proxyMetrics.InFlightRequestsOrigin.Add(1)
 	case forwardToTarget:
-		ch.metricsHandler.IncrementCountByOne(metrics.InFlightRequestsTarget)
+		proxyMetrics.InFlightRequestsTarget.Add(1)
 	default:
 		log.Errorf("unexpected forwardDecision %v, unable to track proxy level metrics", forwardDecision)
 	}
@@ -876,7 +886,7 @@ func (ch *ClientHandler) executeForwardDecision(f *frame.RawFrame, stmtInfo Stat
 		ch.closedRespChannelLock.RLock()
 		defer ch.closedRespChannelLock.RUnlock()
 		if ch.closedRespChannel {
-			finished := reqCtx.SetTimeout(ch.metricsHandler, f)
+			finished := reqCtx.SetTimeout(ch.nodeMetrics, f)
 			if finished {
 				ch.finishRequest(holder, reqCtx)
 			}
@@ -928,20 +938,22 @@ func (ch *ClientHandler) aggregateAndTrackResponses(responseFromOriginCassandra 
 		}
 	}
 
+	proxyMetrics := ch.metricHandler.GetProxyMetrics()
 	if !isResponseSuccessful(responseFromOriginCassandra) && !isResponseSuccessful(responseFromTargetCassandra) {
 		log.Debugf("Aggregated response: both failures, sending back OC's response with opcode %d", originOpCode)
-		ch.metricsHandler.IncrementCountByOne(metrics.FailedRequestsBoth)
+		proxyMetrics.FailedRequestsBoth.Add(1)
 		return responseFromOriginCassandra
 	}
 
 	// if either response is a failure, the failure "wins" --> return the failed response
 	if !isResponseSuccessful(responseFromOriginCassandra) {
 		log.Debugf("Aggregated response: failure only on OC, sending back OC's response with opcode %d", originOpCode)
-		ch.metricsHandler.IncrementCountByOne(metrics.FailedRequestsBothFailedOnOriginOnly)
+		proxyMetrics.FailedRequestsBothFailedOnOriginOnly.Add(1)
 		return responseFromOriginCassandra
 	} else {
 		log.Debugf("Aggregated response: failure only on TargetCassandra, sending back TargetCassandra's response with opcode %d", originOpCode)
-		ch.metricsHandler.IncrementCountByOne(metrics.FailedRequestsBothFailedOnTargetOnly)
+		proxyMetrics.FailedRequestsBothFailedOnTargetOnly.Add(1)
+
 		return responseFromTargetCassandra
 	}
 
@@ -1065,27 +1077,27 @@ func (ch *ClientHandler) trackClusterErrorMetrics(response *frame.RawFrame, clus
 		case OriginCassandra:
 			switch errorMsg.GetErrorCode() {
 			case primitive.ErrorCodeUnprepared:
-				ch.metricsHandler.IncrementCountByOne(metrics.OriginUnpreparedErrors)
+				ch.nodeMetrics.OriginMetrics.OriginUnpreparedErrors.Add(1)
 			case primitive.ErrorCodeReadTimeout:
-				ch.metricsHandler.IncrementCountByOne(metrics.OriginReadTimeouts)
+				ch.nodeMetrics.OriginMetrics.OriginReadTimeouts.Add(1)
 			case primitive.ErrorCodeWriteTimeout:
-				ch.metricsHandler.IncrementCountByOne(metrics.OriginWriteTimeouts)
+				ch.nodeMetrics.OriginMetrics.OriginWriteTimeouts.Add(1)
 			default:
-				ch.metricsHandler.IncrementCountByOne(metrics.OriginOtherErrors)
+				ch.nodeMetrics.OriginMetrics.OriginOtherErrors.Add(1)
 			}
 		case TargetCassandra:
 			switch errorMsg.GetErrorCode() {
 			case primitive.ErrorCodeUnprepared:
-				ch.metricsHandler.IncrementCountByOne(metrics.TargetUnpreparedErrors)
-			case primitive.ErrorCodeReadTimeout:
-				ch.metricsHandler.IncrementCountByOne(metrics.TargetReadTimeouts)
-			case primitive.ErrorCodeWriteTimeout:
-				ch.metricsHandler.IncrementCountByOne(metrics.TargetWriteTimeouts)
-			default:
-				ch.metricsHandler.IncrementCountByOne(metrics.TargetOtherErrors)
-			}
+				ch.nodeMetrics.TargetMetrics.TargetUnpreparedErrors.Add(1)
+				case primitive.ErrorCodeReadTimeout:
+				ch.nodeMetrics.TargetMetrics.TargetReadTimeouts.Add(1)
+				case primitive.ErrorCodeWriteTimeout:
+				ch.nodeMetrics.TargetMetrics.TargetWriteTimeouts.Add(1)
+				default:
+				ch.nodeMetrics.TargetMetrics.TargetOtherErrors.Add(1)
+				}
 		default:
-			log.Errorf("unexpected clusterType %v, unable to track cluster metrics", cluster)
+			log.Errorf("unexpected clusterType %v, unable to track node metrics", cluster)
 		}
 	}
 }

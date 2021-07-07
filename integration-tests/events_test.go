@@ -128,9 +128,17 @@ func TestTopologyStatusEvents(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
+	for testIdx, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			proxyInstance, err := setup.NewProxyInstance(tempCcmSetup.Origin, tempCcmSetup.Target)
+			testConfig := setup.NewTestConfig(tempCcmSetup.Origin.GetInitialContactPoint(), tempCcmSetup.Target.GetInitialContactPoint())
+
+			// Each test adds a node and removes it so if the node is not removed properly the proxy in the following tests
+			// will try to use the previous test's node which will time out (because the node is being removed).
+			// To avoid this we force the proxy to use the contact point only
+			testConfig.TargetEnableHostAssignment = false
+			testConfig.OriginEnableHostAssignment = false
+
+			proxyInstance, err := setup.NewProxyInstanceWithConfig(testConfig)
 			require.Nil(t, err)
 			defer proxyInstance.Shutdown()
 
@@ -155,7 +163,7 @@ func TestTopologyStatusEvents(t *testing.T) {
 			require.True(t, ok, "expected ready but got %v", response.Body.Message)
 
 			clusterToAddNode := tt.clusterToChangeTopology
-			nodeIndex := clusterToAddNode.GetNumberOfSeedNodes()
+			nodeIndex := clusterToAddNode.GetNumberOfSeedNodes() + testIdx
 			err = clusterToAddNode.AddNode(nodeIndex)
 			require.True(t, err == nil, "failed to add node: %v", err)
 			defer clusterToAddNode.RemoveNode(nodeIndex)

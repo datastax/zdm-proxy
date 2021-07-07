@@ -24,7 +24,7 @@ func TestTargetConfig_WithBundleOnly(t *testing.T) {
 
 	conf, err := New().ParseEnvVars()
 	require.Equal(t, conf.TargetCassandraSecureConnectBundlePath, "/path/to/bundle")
-	require.Empty(t, conf.TargetCassandraHostname)
+	require.Empty(t, conf.TargetCassandraContactPoints)
 	require.Equal(t, conf.TargetCassandraPort, 9042)
 	require.Nil(t, err)
 	
@@ -38,7 +38,7 @@ func TestTargetConfig_WithHostnameAndPortOnly(t *testing.T) {
 	setEnvVar("TARGET_CASSANDRA_PORT", "5647")
 
 	conf, err := New().ParseEnvVars()
-	require.Equal(t, conf.TargetCassandraHostname, "target.hostname.com")
+	require.Equal(t, conf.TargetCassandraContactPoints, "target.hostname.com")
 	require.Equal(t, conf.TargetCassandraPort, 5647)
 	require.Empty(t, conf.TargetCassandraSecureConnectBundlePath)
 	require.Nil(t, err)
@@ -53,7 +53,7 @@ func TestTargetConfig_WithBundleAndHostname(t *testing.T) {
 	setEnvVar("TARGET_CASSANDRA_HOSTNAME", "target.hostname.com")
 
 	_, err := New().ParseEnvVars()
-	require.Error(t, err, "TargetCassandraSecureConnectBundlePath and TargetCassandraHostname are " +
+	require.Error(t, err, "TargetCassandraSecureConnectBundlePath and TargetCassandraContactPoints are " +
 		"mutually exclusive. Please specify only one of them.")
 
 	os.Clearenv()
@@ -63,7 +63,7 @@ func TestTargetConfig_WithoutBundleAndHostname(t *testing.T) {
 	setupRequiredEnvVars()
 
 	_, err := New().ParseEnvVars()
-	require.Error(t, err, "Both TargetCassandraSecureConnectBundlePath and TargetCassandraHostname are " +
+	require.Error(t, err, "Both TargetCassandraSecureConnectBundlePath and TargetCassandraContactPoints are " +
 		"empty. Please specify either one of them.")
 }
 

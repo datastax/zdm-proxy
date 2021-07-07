@@ -243,15 +243,15 @@ func NewTestConfig(originHost string, targetHost string) *config.Config {
 	conf.ProxyInstanceCount = -1
 	conf.ProxyAddresses = ""
 
-	conf.OriginEnableHostAssignment = false
+	conf.OriginEnableHostAssignment = true
 	conf.TargetEnableHostAssignment = true
 
-	conf.OriginCassandraHostname = originHost
+	conf.OriginCassandraContactPoints = originHost
 	conf.OriginCassandraUsername = "cassandra"
 	conf.OriginCassandraPassword = "cassandra"
 	conf.OriginCassandraPort = 9042
 
-	conf.TargetCassandraHostname = targetHost
+	conf.TargetCassandraContactPoints = targetHost
 	conf.TargetCassandraUsername = "cassandra"
 	conf.TargetCassandraPassword = "cassandra"
 	conf.TargetCassandraPort = 9042

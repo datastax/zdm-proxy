@@ -32,7 +32,7 @@ func NewConnectionConfig(tlsConfig *tls.Config, connectionTimeoutMs int, sniProx
 }
 
 // version from zipped bundle
-func initializeConnectionConfig(secureConnectBundlePath string, hostName string, port int, connTimeoutInMs int, clusterType ClusterType) (*ConnectionConfig, []Endpoint, error){
+func initializeConnectionConfig(secureConnectBundlePath string, contactPoints []string, port int, connTimeoutInMs int, clusterType ClusterType) (*ConnectionConfig, []Endpoint, error){
 	var connConfig *ConnectionConfig
 	controlConnEndpointConfigs := make([]Endpoint, 0)
 
@@ -73,9 +73,6 @@ func initializeConnectionConfig(secureConnectBundlePath string, hostName string,
 		}
 
 		connConfig = NewConnectionConfig(tlsConfig, connTimeoutInMs, metadata.ContactInfo.SniProxyAddress, sniProxyHostname, clusterType, endpointFactory)
-		if err != nil {
-			return nil, nil, err
-		}
 
 		// save all contact points as potential control connection endpoints so that if connecting to one fails it is possible to retry with the next one
 		for _, hostIdContactPoint := range metadata.ContactInfo.ContactPoints {
@@ -88,7 +85,9 @@ func initializeConnectionConfig(secureConnectBundlePath string, hostName string,
 		}
 
 		connConfig = NewConnectionConfig(nil, connTimeoutInMs, "", "", clusterType, endpointFactory)
-		controlConnEndpointConfigs = append(controlConnEndpointConfigs, NewDefaultEndpoint(hostName, port))
+		for _, contactPoint := range contactPoints {
+			controlConnEndpointConfigs = append(controlConnEndpointConfigs, NewDefaultEndpoint(contactPoint, port))
+		}
 	}
 	return connConfig, controlConnEndpointConfigs, nil
 }

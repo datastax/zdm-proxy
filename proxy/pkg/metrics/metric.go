@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"sync/atomic"
 )
 
 type metric struct {
@@ -19,16 +18,8 @@ type Metric interface {
 	GetName() string
 	GetLabels() map[string]string
 	GetDescription() string
-	GetUniqueIdentifier() uint32
 	String() string
-}
-
-var (
-	metricIdentifierCounter uint32 = 0
-)
-
-func incrementMetricIdentifier() uint32 {
-	return atomic.AddUint32(&metricIdentifierCounter, 1)
+	WithLabels(map[string] string) Metric
 }
 
 func newMetricBase(name string, description string, labels map[string]string) *metric {
@@ -36,7 +27,6 @@ func newMetricBase(name string, description string, labels map[string]string) *m
 		name:        name,
 		description: description,
 		labels:      labels,
-		identifier:  incrementMetricIdentifier(),
 	}
 	m.stringRepresentation = computeStringRepresentation(m)
 	return m
@@ -77,10 +67,6 @@ func computeStringRepresentation(mn *metric) string {
 	return fmt.Sprintf("%v", mn.GetName())
 }
 
-func (mn *metric) GetUniqueIdentifier() uint32 {
-	return mn.identifier
-}
-
 func (mn *metric) String() string {
 	return mn.stringRepresentation
 }
@@ -95,4 +81,15 @@ func (mn *metric) GetLabels() map[string]string {
 
 func (mn *metric) GetDescription() string {
 	return mn.description
+}
+
+func (mn *metric) WithLabels(labels map[string]string) Metric {
+	newLabels := make(map[string]string)
+	for key, val := range mn.labels {
+		newLabels[key] = val
+	}
+	for key, val := range labels {
+		newLabels[key] = val
+	}
+	return NewMetricWithLabels(mn.name, mn.description, newLabels)
 }

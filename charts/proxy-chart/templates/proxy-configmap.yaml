@@ -3,15 +3,43 @@ kind: ConfigMap
 metadata:
   name: "{{ include "proxy-chart.fullname" . }}-configmap"
 data:
-  ORIGIN_CASSANDRA_HOSTNAME: "{{ .Values.proxyConfig.originCassandraHostname }}"
+
+  { { - if .Values.proxyConfig.proxyIndex } }
+  PROXY_INDEX: "{{ .Values.proxyConfig.proxyIndex }}"
+  { { - end } }
+
+  { { - if .Values.proxyConfig.proxyInstanceCount } }
+  PROXY_INSTANCE_COUNT: "{{ .Values.proxyConfig.proxyInstanceCount }}"
+  { { - end } }
+
+  { { - if .Values.proxyConfig.proxyAddresses } }
+  PROXY_ADDRESSES: "{{ .Values.proxyConfig.proxyAddresses }}"
+  { { - end } }
+
+  { { - if .Values.proxyConfig.originEnableHostAssignment } }
+  ORIGIN_ENABLE_HOST_ASSIGNMENT: "{{ .Values.proxyConfig.originEnableHostAssignment }}"
+  { { - end } }
+
+  { { - if .Values.proxyConfig.targetEnableHostAssignment } }
+  TARGET_ENABLE_HOST_ASSIGNMENT: "{{ .Values.proxyConfig.targetEnableHostAssignment }}"
+  { { - end } }
+
+  ORIGIN_CASSANDRA_CONTACT_POINTS: "{{ .Values.proxyConfig.originCassandraContactPoints }}"
   ORIGIN_CASSANDRA_USERNAME: "{{ .Values.proxyConfig.originCassandraUsername }}"
   ORIGIN_CASSANDRA_PASSWORD: "{{ .Values.proxyConfig.originCassandraPassword }}"
+
+  {{- if .Values.proxyConfig.originCassandraPort }}
   ORIGIN_CASSANDRA_PORT: "{{ .Values.proxyConfig.originCassandraPort }}"
-  TARGET_CASSANDRA_HOSTNAME: "{{ .Values.proxyConfig.targetCassandraHostname }}"
+  {{- end }}
+
+  TARGET_CASSANDRA_CONTACT_POINTS: "{{ .Values.proxyConfig.targetCassandraContactPoints }}"
   TARGET_CASSANDRA_USERNAME: "{{ .Values.proxyConfig.targetCassandraUsername }}"
   TARGET_CASSANDRA_PASSWORD: "{{ .Values.proxyConfig.targetCassandraPassword }}"
+
+  {{- if .Values.proxyConfig.targetCassandraPort }}
   TARGET_CASSANDRA_PORT: "{{ .Values.proxyConfig.targetCassandraPort }}"
-  
+  {{- end }}
+
   {{- if .Values.proxyConfig.clusterConnectionTimeoutMs }}
   CLUSTER_CONNECTION_TIMEOUT_MS: "{{ .Values.proxyConfig.clusterConnectionTimeoutMs }}"
   {{- end }}
@@ -43,25 +71,21 @@ data:
   {{- if .Values.proxyConfig.targetBucketsMs }}
   TARGET_BUCKETS_MS: "{{ .Values.proxyConfig.targetBucketsMs }}"
   {{- end }}
-  
-  {{- if .Values.proxyConfig.writeQueueSizeFrames }}
-  WRITE_QUEUE_SIZE_FRAMES: "{{ .Values.proxyConfig.writeQueueSizeFrames }}"
-  {{- end }}
-  
-  {{- if .Values.proxyConfig.writeBufferSizeBytes }}
-  WRITE_BUFFER_SIZE_BYTES: "{{ .Values.proxyConfig.writeBufferSizeBytes }}"
+
+  {{- if .Values.proxyConfig.enableMetrics }}
+  ENABLE_METRICS: "{{ .Values.proxyConfig.enableMetrics }}"
   {{- end }}
 
-  {{- if .Values.proxyConfig.readBufferSizeBytes }}
-  READ_BUFFER_SIZE_BYTES: "{{ .Values.proxyConfig.readBufferSizeBytes }}"
-  {{- end }}
-  
-  {{- if .Values.proxyConfig.maxWorkers }}
-  REQUEST_QUEUE_SIZE_FRAMES: "{{ .Values.proxyConfig.maxWorkers }}"
+  {{- if .Values.proxyConfig.maxClientsThreshold }}
+  MAX_CLIENTS_THRESHOLD: "{{ .Values.proxyConfig.maxClientsThreshold }}"
   {{- end }}
 
-  {{- if .Values.proxyConfig.eventQueueSizeFrames }}
-  EVENT_QUEUE_SIZE_FRAMES: "{{ .Values.proxyConfig.eventQueueSizeFrames }}"
+  {{- if .Values.proxyConfig.forwardReadsToTarget }}
+  FORWARD_READS_TO_TARGET: "{{ .Values.proxyConfig.forwardReadsToTarget }}"
+  {{- end }}
+
+  {{- if .Values.proxyConfig.requestTimeoutMs }}
+  REQUEST_TIMEOUT_MS: "{{ .Values.proxyConfig.requestTimeoutMs }}"
   {{- end }}
 
   DEBUG: "{{ .Values.proxyConfig.debug }}"

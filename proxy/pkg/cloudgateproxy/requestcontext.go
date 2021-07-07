@@ -108,7 +108,7 @@ func (recv *RequestContext) SetTimer(timer *time.Timer) {
 	recv.timer = timer
 }
 
-func (recv *RequestContext) SetTimeout(metricsHandler metrics.IMetricsHandler, req *frame.RawFrame) bool {
+func (recv *RequestContext) SetTimeout(nodeMetrics *metrics.NodeMetrics, req *frame.RawFrame) bool {
 	recv.lock.Lock()
 	defer recv.lock.Unlock()
 
@@ -132,10 +132,10 @@ func (recv *RequestContext) SetTimeout(metricsHandler metrics.IMetricsHandler, r
 			sentTarget = true
 		}
 		if sentOrigin && recv.originResponse == nil {
-			metricsHandler.IncrementCountByOne(metrics.OriginClientTimeouts)
+			nodeMetrics.OriginMetrics.OriginClientTimeouts.Add(1)
 		}
 		if sentTarget && recv.targetResponse == nil {
-			metricsHandler.IncrementCountByOne(metrics.TargetClientTimeouts)
+			nodeMetrics.TargetMetrics.TargetClientTimeouts.Add(1)
 		}
 		return true
 	}
@@ -143,7 +143,7 @@ func (recv *RequestContext) SetTimeout(metricsHandler metrics.IMetricsHandler, r
 	return false
 }
 
-func (recv *RequestContext) SetResponse(metricsHandler metrics.IMetricsHandler, f *frame.RawFrame, cluster ClusterType) bool {
+func (recv *RequestContext) SetResponse(nodeMetrics *metrics.NodeMetrics, f *frame.RawFrame, cluster ClusterType) bool {
 	state, updated := recv.updateInternalState(f, cluster)
 	if !updated {
 		return false
@@ -157,10 +157,10 @@ func (recv *RequestContext) SetResponse(metricsHandler metrics.IMetricsHandler, 
 	switch cluster {
 	case OriginCassandra:
 		log.Tracef("Received response from %v for query with stream id %d", OriginCassandra, f.Header.StreamId)
-		metricsHandler.TrackInHistogram(metrics.OriginRequestDuration, recv.startTime)
+		nodeMetrics.OriginMetrics.OriginRequestDuration.Track(recv.startTime)
 	case TargetCassandra:
 		log.Tracef("Received response from %v for query with stream id %d", TargetCassandra, f.Header.StreamId)
-		metricsHandler.TrackInHistogram(metrics.TargetRequestDuration, recv.startTime)
+		nodeMetrics.TargetMetrics.TargetRequestDuration.Track(recv.startTime)
 	default:
 		log.Errorf("could not recognize cluster type %v", cluster)
 	}

@@ -13,19 +13,29 @@ An overview of the proxy architecture and logical flow will be added here soon.
 ## Environment Variables
 
 ```shell
-ORIGIN_CASSANDRA_HOSTNAME=localhost
-ORIGIN_CASSANDRA_USERNAME=cassandra
-ORIGIN_CASSANDRA_PASSWORD=cassandra
+PROXY_INDEX=0
+PROXY_ADDRESSES=127.0.0.1
+ORIGIN_ENABLE_HOST_ASSIGNMENT=true
+TARGET_ENABLE_HOST_ASSIGNMENT=true
+ORIGIN_CASSANDRA_CONTACT_POINTS=127.0.0.1 #required
+ORIGIN_CASSANDRA_USERNAME=cassandra       #required
+ORIGIN_CASSANDRA_PASSWORD=cassandra       #required
 ORIGIN_CASSANDRA_PORT=9042
-TARGET_CASSANDRA_HOSTNAME=localhost
-TARGET_CASSANDRA_USERNAME=cassandra
-TARGET_CASSANDRA_PASSWORD=cassandra
+TARGET_CASSANDRA_CONTACT_POINTS=127.0.0.1 #required
+TARGET_CASSANDRA_USERNAME=cassandra       #required
+TARGET_CASSANDRA_PASSWORD=cassandra       #required
 TARGET_CASSANDRA_PORT=9043
-DEBUG=true
-PROXY_METRICS_ADDRESS=localhost
+PROXY_METRICS_ADDRESS=127.0.0.1
 PROXY_METRICS_PORT=14001
 PROXY_QUERY_PORT=14002
-PROXY_QUERY_ADDRESS=localhost
+PROXY_QUERY_ADDRESS=127.0.0.1
+CLUSTER_CONNECTION_TIMEOUT_MS=30000
+HEARTBEAT_INTERVAL_MS=30000
+ENABLE_METRICS=true
+MAX_CLIENTS_THRESHOLD=500
+FORWARD_READS_TO_TARGET=false
+REQUEST_TIMEOUT_MS=10000
+DEBUG=true
 ```
 
 These environment variables must be set and exported for the proxy to work. They are read and processed into a `Config` struct, which is passed into the Proxy Service.
@@ -84,7 +94,7 @@ If using IntelliJ Goland or the go plugin for IntelliJ Idea Ultimate, create a r
 
 ![Run configuration](img/cloudgate_proxy_run_config.png)
   
-In the configuration, use this environment variable list: `ORIGIN_CASSANDRA_HOSTNAME=127.0.0.1;ORIGIN_CASSANDRA_USERNAME=cassandra;ORIGIN_CASSANDRA_PASSWORD=cassandra;ORIGIN_CASSANDRA_PORT=9042;TARGET_CASSANDRA_HOSTNAME=127.0.0.10;TARGET_CASSANDRA_USERNAME=cassandra;TARGET_CASSANDRA_PASSWORD=cassandra;TARGET_CASSANDRA_PORT=9042;DEBUG=true;PROXY_METRICS_PORT=14001;PROXY_QUERY_PORT=14002`
+In the configuration, use this environment variable list: `ORIGIN_CASSANDRA_CONTACT_POINTS=127.0.0.1;ORIGIN_CASSANDRA_USERNAME=cassandra;ORIGIN_CASSANDRA_PASSWORD=cassandra;ORIGIN_CASSANDRA_PORT=9042;TARGET_CASSANDRA_CONTACT_POINTS=127.0.0.10;TARGET_CASSANDRA_USERNAME=cassandra;TARGET_CASSANDRA_PASSWORD=cassandra;TARGET_CASSANDRA_PORT=9042;DEBUG=true;PROXY_METRICS_PORT=14001;PROXY_QUERY_PORT=14002`
 
 Start the proxy with the newly created run configuration.
 
@@ -122,11 +132,11 @@ docker build . -f proxy/Dockerfile
 To make it easier to provide all of the necessary environment variables, create a simple `test.env` file with the following content:
 
 ```shell
-ORIGIN_CASSANDRA_HOSTNAME=localhost
+ORIGIN_CASSANDRA_CONTACT_POINTS=localhost
 ORIGIN_CASSANDRA_USERNAME=cassandra
 ORIGIN_CASSANDRA_PASSWORD=cassandra
 ORIGIN_CASSANDRA_PORT=9042
-TARGET_CASSANDRA_HOSTNAME=localhost
+TARGET_CASSANDRA_CONTACT_POINTS=localhost
 TARGET_CASSANDRA_USERNAME=cassandra
 TARGET_CASSANDRA_PASSWORD=cassandra
 TARGET_CASSANDRA_PORT=9043
