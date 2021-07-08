@@ -130,7 +130,7 @@ func openTCPConnectionWithBackoff(addr string, ctx context.Context) (net.Conn, e
 		Jitter: false,
 	}
 
-	log.Infof("[openTCPConnectionWithBackoff] Attempting to connect to %v...", addr)
+	log.Debugf("[openTCPConnectionWithBackoff] Attempting to connect to %v...", addr)
 	dialer := net.Dialer{}
 	for {
 		conn, err := dialer.DialContext(ctx, "tcp", addr)
@@ -143,7 +143,7 @@ func openTCPConnectionWithBackoff(addr string, ctx context.Context) (net.Conn, e
 			time.Sleep(nextDuration)
 			continue
 		}
-		log.Infof("[openTCPConnectionWithBackoff] Successfully established connection with %v", conn.RemoteAddr())
+		log.Debugf("[openTCPConnectionWithBackoff] Successfully established connection with %v", conn.RemoteAddr())
 		return conn, nil
 	}
 }

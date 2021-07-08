@@ -75,15 +75,10 @@ func NewHost(
 }
 
 func (recv *Host) String() string {
-	return fmt.Sprintf("Host{addr: %v, port: %v, host_id: %v, dc: %v, rack: %v, tokens: %v, version: %v, dse_version: %v",
+	return fmt.Sprintf("Host{addr: %v, port: %v, host_id: %v}",
 		recv.Address,
 		recv.Port,
-		hex.EncodeToString(recv.HostId[:]),
-		recv.Datacenter,
-		recv.Rack,
-		recv.Tokens,
-		recv.ReleaseVersion,
-		recv.DseVersion)
+		hex.EncodeToString(recv.HostId[:]))
 }
 
 func ParseSystemLocalResult(rs *ParsedRowSet, defaultPort int) (*systemLocalInfo, *Host, error) {

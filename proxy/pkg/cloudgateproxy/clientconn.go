@@ -145,7 +145,7 @@ func (cc *ClientConnector) listenForRequests() {
 		connectionAddr := cc.connection.RemoteAddr().String()
 		wg := &sync.WaitGroup{}
 		defer wg.Wait()
-		defer log.Infof("[ClientConnector] Shutting down request listener, waiting until request listener tasks are done...")
+		defer log.Debugf("[ClientConnector] Shutting down request listener, waiting until request listener tasks are done...")
 		for cc.clientHandlerContext.Err() == nil {
 			f, err := readRawFrame(bufferedReader, connectionAddr, cc.clientHandlerContext)
 			if err != nil {
