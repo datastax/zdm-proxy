@@ -565,7 +565,7 @@ func NewSystemPeersRowsResult(
 	for i := 0; i < len(virtualHosts); i++ {
 		errors := make([]error, 0)
 
-		if i == localVirtualHostIndex {
+		if i == localVirtualHostIndex && i != 0 && len(virtualHosts) != 1 {
 			continue
 		}
 
@@ -614,6 +614,10 @@ func NewSystemPeersRowsResult(
 		first = false
 	}
 
+	if localVirtualHostIndex == 0 && len(virtualHosts) == 1 {
+		rows = [][]interface{}{}
+	}
+
 	return EncodeRowsResult(genericTypeCodec, columns, rows)
 }
 
@@ -660,14 +664,29 @@ func convertNullableToValue(val interface{}) interface{} {
 
 	switch typedVal := val.(type) {
 	case *string:
+		if typedVal == nil {
+			return nil
+		}
 		return *typedVal
 	case *int:
+		if typedVal == nil {
+			return nil
+		}
 		return *typedVal
 	case *int32:
+		if typedVal == nil {
+			return nil
+		}
 		return *typedVal
 	case *int64:
+		if typedVal == nil {
+			return nil
+		}
 		return *typedVal
 	case *bool:
+		if typedVal == nil {
+			return nil
+		}
 		return *typedVal
 	default:
 		return val

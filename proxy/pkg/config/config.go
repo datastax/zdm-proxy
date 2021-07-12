@@ -69,7 +69,8 @@ type Config struct {
 
 	EventQueueSizeFrames int `default:"12" split_words:"true"`
 
-	ForwardReadsToTarget bool `default:"false" split_words:"true"`
+	ForwardReadsToTarget         bool `default:"false" split_words:"true"`
+	ForwardSystemQueriesToTarget bool `default:"true" split_words:"true"`
 
 	RequestTimeoutMs int `default:"10000" split_words:"true"`
 

@@ -112,27 +112,28 @@ func testMetrics(t *testing.T, metricsHandler *httpcloudgate.HandlerWithFallback
 	require.Nil(t, err)
 
 	lines = gatherMetrics(t, conf, true)
-	// 2 on origin: STARTUP and AUTH_RESPONSE
-	// 2 on target: STARTUP and AUTH_RESPONSE
-	checkMetrics(t, true, lines, 1, 1, 1, 0, 2, 2, true, true, originEndpoint, targetEndpoint)
+	// 1 on origin: AUTH_RESPONSE
+	// 1 on target: AUTH_RESPONSE
+	// 1 on both: STARTUP
+	checkMetrics(t, true, lines, 1, 1, 1, 1, 1, 1, true, true, originEndpoint, targetEndpoint)
 
 	_, err = clientConn.SendAndReceive(insertQuery)
 	require.Nil(t, err)
 
 	lines = gatherMetrics(t, conf, true)
-	// 2 on origin: STARTUP and AUTH_RESPONSE
-	// 2 on target: STARTUP and AUTH_RESPONSE
-	// 1 on both: QUERY INSERT INTO
-	checkMetrics(t, true, lines, 1, 1, 1, 1, 2, 2, true, true, originEndpoint, targetEndpoint)
+	// 1 on origin: AUTH_RESPONSE
+	// 1 on target: AUTH_RESPONSE
+	// 2 on both: STARTUP and QUERY INSERT INTO
+	checkMetrics(t, true, lines, 1, 1, 1, 2, 1, 1, true, true, originEndpoint, targetEndpoint)
 
 	_, err = clientConn.SendAndReceive(selectQuery)
 	require.Nil(t, err)
 
 	lines = gatherMetrics(t, conf, true)
-	// 3 on origin: STARTUP, AUTH_RESPONSE, QUERY SELECT
-	// 2 on target: STARTUP and AUTH_RESPONSE
-	// 1 on both: QUERY INSERT INTO
-	checkMetrics(t, true, lines, 1, 1, 1, 1, 3, 2, false, true, originEndpoint, targetEndpoint)
+	// 2 on origin: AUTH_RESPONSE and QUERY SELECT
+	// 1 on target: AUTH_RESPONSE
+	// 2 on both: STARTUP and QUERY INSERT INTO
+	checkMetrics(t, true, lines, 1, 1, 1, 2, 2, 1, false, true, originEndpoint, targetEndpoint)
 
 }
 

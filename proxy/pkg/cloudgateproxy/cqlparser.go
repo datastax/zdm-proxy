@@ -87,6 +87,7 @@ func inspectFrame(
 	mh *metrics.MetricHandler,
 	currentKeyspaceName *atomic.Value,
 	forwardReadsToTarget bool,
+	forwardSystemQueriesToTarget bool,
 	virtualizationEnabled bool) (StatementInfo, error) {
 
 	forwardDecision := forwardToBoth
@@ -113,11 +114,19 @@ func inspectFrame(
 				}
 			}
 
-			if isSystemQuery(queryInfo, currentKeyspaceName) || forwardReadsToTarget {
+			if isSystemQuery(queryInfo, currentKeyspaceName) {
 				log.Debugf("Detected system query: %v with stream id: %v",  queryInfo.getQuery(), f.Header.StreamId)
-				forwardDecision = forwardToTarget
+				if forwardSystemQueriesToTarget {
+					forwardDecision = forwardToTarget
+				} else {
+					forwardDecision = forwardToOrigin
+				}
 			} else {
-				forwardDecision = forwardToOrigin
+				if forwardReadsToTarget {
+					forwardDecision = forwardToTarget
+				} else {
+					forwardDecision = forwardToOrigin
+				}
 			}
 		}
 		return NewGenericStatementInfo(forwardDecision), nil
@@ -141,11 +150,19 @@ func inspectFrame(
 				}
 			}
 
-			if isSystemQuery(queryInfo, currentKeyspaceName) || forwardReadsToTarget {
+			if isSystemQuery(queryInfo, currentKeyspaceName) {
 				log.Debugf("Detected system query: %v with stream id: %v",  queryInfo.getQuery(), f.Header.StreamId)
-				forwardDecision = forwardToTarget
+				if forwardSystemQueriesToTarget {
+					forwardDecision = forwardToTarget
+				} else {
+					forwardDecision = forwardToOrigin
+				}
 			} else {
-				forwardDecision = forwardToOrigin
+				if forwardReadsToTarget {
+					forwardDecision = forwardToTarget
+				} else {
+					forwardDecision = forwardToOrigin
+				}
 			}
 		}
 		return NewPreparedStatementInfo(NewGenericStatementInfo(forwardDecision)), nil
@@ -170,7 +187,7 @@ func inspectFrame(
 			return nil, &UnpreparedExecuteError{Header: f.Header, Body: decodedFrame.Body, preparedId: executeMsg.QueryId}
 		}
 
-	case primitive.OpCodeStartup, primitive.OpCodeAuthResponse:
+	case primitive.OpCodeAuthResponse:
 		return NewGenericStatementInfo(forwardToOrigin), nil
 
 	default:

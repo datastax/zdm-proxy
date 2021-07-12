@@ -292,6 +292,7 @@ func NewTestConfig(originHost string, targetHost string) *config.Config {
 	conf.EventQueueSizeFrames = 12
 
 	conf.ForwardReadsToTarget = false
+	conf.ForwardSystemQueriesToTarget = true
 
 	conf.RequestTimeoutMs = 10000
 

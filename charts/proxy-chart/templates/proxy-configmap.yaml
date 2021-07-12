@@ -84,6 +84,10 @@ data:
   FORWARD_READS_TO_TARGET: "{{ .Values.proxyConfig.forwardReadsToTarget }}"
   {{- end }}
 
+  {{- if .Values.proxyConfig.forwardSystemQueriesToTarget }}
+  FORWARD_SYSTEM_QUERIES_TO_TARGET: "{{ .Values.proxyConfig.forwardSystemQueriesToTarget }}"
+  {{- end }}
+
   {{- if .Values.proxyConfig.requestTimeoutMs }}
   REQUEST_TIMEOUT_MS: "{{ .Values.proxyConfig.requestTimeoutMs }}"
   {{- end }}

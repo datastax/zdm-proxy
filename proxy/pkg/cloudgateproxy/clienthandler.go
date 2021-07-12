@@ -53,8 +53,9 @@ type ClientHandler struct {
 
 	authErrorMessage *message.AuthenticationError
 
-	startupFrame *frame.RawFrame
-	targetCreds  *AuthCredentials
+	startupFrame          *frame.RawFrame
+	targetStartupResponse *frame.RawFrame
+	targetCreds           *AuthCredentials
 
 	originUsername string
 	originPassword string
@@ -230,8 +231,6 @@ func (ch *ClientHandler) requestLoop() {
 		connectionAddr := ch.clientConnector.connection.RemoteAddr().String()
 
 		wg := &sync.WaitGroup{}
-		defer wg.Wait()
-
 		for {
 			f, ok := <-ch.reqChannel
 			if !ok {
@@ -260,7 +259,25 @@ func (ch *ClientHandler) requestLoop() {
 			}
 		}
 
+		wg.Wait()
+
 		log.Debugf("Shutting down client handler request listener %v.", connectionAddr)
+
+		go func() {
+			<-ch.clientHandlerContext.Done()
+			ch.requestContextHolders.Range(func(key, value interface{}) bool {
+				reqCtxHolder := value.(*requestContextHolder)
+				reqCtx := reqCtxHolder.Get()
+				if reqCtx == nil {
+					return true
+				}
+				canceled := reqCtx.Cancel()
+				if canceled {
+					ch.cancelRequest(reqCtxHolder, reqCtx)
+				}
+				return true
+			})
+		}()
 
 		ch.requestWaitGroup.Wait()
 	}()
@@ -470,14 +487,47 @@ func (ch *ClientHandler) finishRequest(holder *requestContextHolder, reqCtx *Req
 	}
 
 	reqCtx.request = nil
+	originResponse := reqCtx.originResponse
 	reqCtx.originResponse = nil
+	targetResponse := reqCtx.targetResponse
 	reqCtx.targetResponse = nil
 
 	if reqCtx.customResponseChannel != nil {
-		reqCtx.customResponseChannel <- aggregatedResponse
+		reqCtx.customResponseChannel <- &customResponse{
+			originResponse:     originResponse,
+			targetResponse:     targetResponse,
+			aggregatedResponse: aggregatedResponse,
+		}
 	} else {
 		ch.clientConnector.sendResponseToClient(aggregatedResponse)
 	}
+}
+
+// should only be called after Cancel returns true
+func (ch *ClientHandler) cancelRequest(holder *requestContextHolder, reqCtx *RequestContext) {
+	defer ch.requestWaitGroup.Done()
+	err := holder.Clear(reqCtx)
+	if err != nil {
+		log.Debugf("Could not free stream id: %v", err)
+	}
+
+	proxyMetrics := ch.metricHandler.GetProxyMetrics()
+	switch reqCtx.stmtInfo.GetForwardDecision() {
+	case forwardToBoth:
+		proxyMetrics.InFlightRequestsBoth.Subtract(1)
+	case forwardToOrigin:
+		proxyMetrics.InFlightRequestsOrigin.Subtract(1)
+	case forwardToTarget:
+		proxyMetrics.InFlightRequestsTarget.Subtract(1)
+	default:
+		log.Errorf("unexpected forwardDecision %v, unable to track proxy level metrics", reqCtx.stmtInfo.GetForwardDecision())
+	}
+
+	if reqCtx.customResponseChannel != nil {
+		close(reqCtx.customResponseChannel)
+	}
+
+	log.Tracef("Canceled request %v.", reqCtx.request.Header)
 }
 
 // Computes the response to be sent to the client based on the forward decision of the request.
@@ -559,9 +609,9 @@ func (ch *ClientHandler) processAggregatedResponse(response *frame.RawFrame, req
 }
 
 type handshakeRequestResult struct {
-	authSuccess  bool
-	err          error
-	responseChan chan *frame.RawFrame
+	authSuccess        bool
+	err                error
+	customResponseChan chan *customResponse
 }
 
 // Handles requests while the handshake has not been finalized.
@@ -570,7 +620,7 @@ type handshakeRequestResult struct {
 //
 // When the Origin handshake ends, this function blocks, waiting until Target handshake is done.
 // This ensures that the client connection is Ready only when both Cluster Connector connections are ready.
-func (ch *ClientHandler) handleHandshakeRequest(f *frame.RawFrame, wg *sync.WaitGroup) (bool, error) {
+func (ch *ClientHandler) handleHandshakeRequest(request *frame.RawFrame, wg *sync.WaitGroup) (bool, error) {
 	scheduledTaskChannel := make(chan *handshakeRequestResult, 1)
 	wg.Add(1)
 	ch.requestResponseScheduler.Schedule(func() {
@@ -579,15 +629,13 @@ func (ch *ClientHandler) handleHandshakeRequest(f *frame.RawFrame, wg *sync.Wait
 		if ch.authErrorMessage != nil {
 			scheduledTaskChannel <- &handshakeRequestResult{
 				authSuccess: false,
-				err:         ch.sendAuthErrorToClient(f),
+				err:         ch.sendAuthErrorToClient(request),
 			}
 			return
 		}
 
-		if f.Header.OpCode == primitive.OpCodeStartup {
-			ch.startupFrame = f
-		} else if f.Header.OpCode == primitive.OpCodeAuthResponse {
-			newAuthFrame, err := ch.replaceAuthFrame(f)
+		if request.Header.OpCode == primitive.OpCodeAuthResponse {
+			newAuthFrame, err := ch.replaceAuthFrame(request)
 			if err != nil {
 				scheduledTaskChannel <- &handshakeRequestResult{
 					authSuccess: false,
@@ -596,11 +644,11 @@ func (ch *ClientHandler) handleHandshakeRequest(f *frame.RawFrame, wg *sync.Wait
 				return
 			}
 
-			f = newAuthFrame
+			request = newAuthFrame
 		}
 
-		responseChan := make(chan *frame.RawFrame, 1)
-		err := ch.forwardRequest(f, responseChan)
+		responseChan := make(chan *customResponse, 1)
+		err := ch.forwardRequest(request, responseChan)
 		if err != nil {
 			scheduledTaskChannel <- &handshakeRequestResult{
 				authSuccess: false,
@@ -610,9 +658,9 @@ func (ch *ClientHandler) handleHandshakeRequest(f *frame.RawFrame, wg *sync.Wait
 		}
 
 		scheduledTaskChannel <- &handshakeRequestResult{
-			authSuccess:  false,
-			err:          err,
-			responseChan: responseChan,
+			authSuccess:        false,
+			err:                err,
+			customResponseChan: responseChan,
 		}
 	})
 
@@ -621,83 +669,100 @@ func (ch *ClientHandler) handleHandshakeRequest(f *frame.RawFrame, wg *sync.Wait
 		return false, errors.New("unexpected scheduledTaskChannel closure in handle handshake request")
 	}
 
-	if result.responseChan == nil {
+	if result.customResponseChan == nil {
 		return result.authSuccess, result.err
 	}
 
-	responseChan := result.responseChan
-
+	var response *customResponse
 	select {
-	case response, ok := <-responseChan:
-		if response == nil || !ok {
-			return false, nil
-		}
-
-		scheduledTaskChannel = make(chan *handshakeRequestResult, 1)
-		wg.Add(1)
-		ch.requestResponseScheduler.Schedule(func() {
-			defer wg.Done()
-			defer close(scheduledTaskChannel)
-			tempResult := &handshakeRequestResult{
-				authSuccess:  false,
-				err:          nil,
-				responseChan: nil,
-			}
-			if response.Header.OpCode == primitive.OpCodeReady || response.Header.OpCode == primitive.OpCodeAuthSuccess {
-				// target handshake must happen within a single client request lifetime
-				// to guarantee that no other request with the same
-				// stream id goes to target in the meantime
-
-				// if we add stream id mapping logic in the future, then
-				// we can start the target handshake earlier and wait for it to end here
-
-				targetAuthChannel, err := ch.startTargetHandshake()
-				if err != nil {
-					tempResult.err = err
-					scheduledTaskChannel <- tempResult
-					return
-				}
-
-				err, ok := <-targetAuthChannel
-				if !ok {
-					tempResult.err = errors.New("target handshake failed (scheduledTaskChannel closed)")
-					scheduledTaskChannel <- tempResult
-					return
-				}
-
-				if err != nil {
-					var authError *AuthError
-					if errors.As(err, &authError) {
-						ch.authErrorMessage = authError.errMsg
-						tempResult.err = ch.sendAuthErrorToClient(f)
-						scheduledTaskChannel <- tempResult
-						return
-					}
-
-					log.Errorf("handshake failed, shutting down the client handler and connectors: %s", err.Error())
-					ch.clientHandlerCancelFunc()
-					tempResult.err = fmt.Errorf("handshake failed: %w", ShutdownErr)
-					scheduledTaskChannel <- tempResult
-					return
-				}
-
-				tempResult.authSuccess = true
-				scheduledTaskChannel <- tempResult
-			}
-
-			// send overall response back to client
-			ch.clientConnector.sendResponseToClient(response)
-			scheduledTaskChannel <- tempResult
-		})
-
-		result, ok = <- scheduledTaskChannel
-		if !ok {
-			return false, errors.New("unexpected scheduledTaskChannel closure in handle handshake request")
-		}
-		return result.authSuccess, result.err
+	case response, _ = <-result.customResponseChan:
 	case <-ch.clientHandlerContext.Done():
 		return false, ShutdownErr
 	}
+
+	if response == nil {
+		return false, fmt.Errorf("no response received for handshake request %v", request)
+	}
+
+	aggregatedResponse := response.aggregatedResponse
+
+	if request.Header.OpCode == primitive.OpCodeStartup {
+		if response.targetResponse == nil {
+			return false, fmt.Errorf("no response received from Target for startup %v", request)
+		}
+		ch.targetStartupResponse = response.targetResponse
+		ch.startupFrame = request
+
+		_, _, _, err := handleTargetHandshakeResponse(
+			1, response.targetResponse, ch.clientConnector.connection.RemoteAddr(), ch.targetCassandraConnector.connection.RemoteAddr())
+		if err != nil {
+			return false, fmt.Errorf("unsuccessful startup on Target: %w", err)
+		}
+		aggregatedResponse = response.originResponse
+	}
+
+	scheduledTaskChannel = make(chan *handshakeRequestResult, 1)
+	wg.Add(1)
+	ch.requestResponseScheduler.Schedule(func() {
+		defer wg.Done()
+		defer close(scheduledTaskChannel)
+		tempResult := &handshakeRequestResult{
+			authSuccess:        false,
+			err:                nil,
+			customResponseChan: nil,
+		}
+		if aggregatedResponse.Header.OpCode == primitive.OpCodeReady || aggregatedResponse.Header.OpCode == primitive.OpCodeAuthSuccess {
+			// target handshake must happen within a single client request lifetime
+			// to guarantee that no other request with the same
+			// stream id goes to target in the meantime
+
+			// if we add stream id mapping logic in the future, then
+			// we can start the target handshake earlier and wait for it to end here
+
+			targetAuthChannel, err := ch.startTargetHandshake()
+			if err != nil {
+				tempResult.err = err
+				scheduledTaskChannel <- tempResult
+				return
+			}
+
+			err, ok := <-targetAuthChannel
+			if !ok {
+				tempResult.err = errors.New("target handshake failed (scheduledTaskChannel closed)")
+				scheduledTaskChannel <- tempResult
+				return
+			}
+
+			if err != nil {
+				var authError *AuthError
+				if errors.As(err, &authError) {
+					ch.authErrorMessage = authError.errMsg
+					tempResult.err = ch.sendAuthErrorToClient(request)
+					scheduledTaskChannel <- tempResult
+					return
+				}
+
+				log.Errorf("handshake failed, shutting down the client handler and connectors: %s", err.Error())
+				ch.clientHandlerCancelFunc()
+				tempResult.err = fmt.Errorf("handshake failed: %w", ShutdownErr)
+				scheduledTaskChannel <- tempResult
+				return
+			}
+
+			tempResult.authSuccess = true
+			scheduledTaskChannel <- tempResult
+		}
+
+		// send overall response back to client
+		ch.clientConnector.sendResponseToClient(aggregatedResponse)
+		scheduledTaskChannel <- tempResult
+	})
+
+	result, ok = <- scheduledTaskChannel
+	if !ok {
+		return false, errors.New("unexpected scheduledTaskChannel closure in handle handshake request")
+	}
+	return result.authSuccess, result.err
 }
 
 // Builds auth error response and sends it to the client.
@@ -737,13 +802,17 @@ func (ch *ClientHandler) startTargetHandshake() (chan error, error) {
 	if startupFrame == nil {
 		return nil, errors.New("can not start target handshake before a Startup body was received")
 	}
+	targetStartupResponse := ch.targetStartupResponse
+	if targetStartupResponse == nil {
+		return nil, errors.New("can not start target handshake before a Startup response was received from target")
+	}
 
 	channel := make(chan error)
 	ch.requestWaitGroup.Add(1)
 	go func() {
 		defer ch.requestWaitGroup.Done()
 		defer close(channel)
-		err := ch.handleTargetCassandraStartup(startupFrame)
+		err := ch.handleTargetCassandraStartup(startupFrame, targetStartupResponse)
 		channel <- err
 	}()
 	return channel, nil
@@ -761,7 +830,7 @@ func (ch *ClientHandler) handleRequest(f *frame.RawFrame) {
 }
 
 // Forwards the request, parsing it and enqueuing it to the appropriate cluster connector(s)' write queue(s).
-func (ch *ClientHandler) forwardRequest(request *frame.RawFrame, customResponseChannel chan *frame.RawFrame) error {
+func (ch *ClientHandler) forwardRequest(request *frame.RawFrame, customResponseChannel chan *customResponse) error {
 	overallRequestStartTime := time.Now()
 	context := &frameDecodeContext{
 		frame: request,
@@ -770,7 +839,7 @@ func (ch *ClientHandler) forwardRequest(request *frame.RawFrame, customResponseC
 	context, err = modifyFrame(context)
 	request = context.frame
 	stmtInfo, err := inspectFrame(
-		context, ch.preparedStatementCache, ch.metricHandler, ch.currentKeyspaceName, ch.conf.ForwardReadsToTarget, ch.virtualizationConfig.VirtualizationEnabled)
+		context, ch.preparedStatementCache, ch.metricHandler, ch.currentKeyspaceName, ch.conf.ForwardReadsToTarget, ch.conf.ForwardSystemQueriesToTarget, ch.virtualizationConfig.VirtualizationEnabled)
 	if err != nil {
 		if errVal, ok := err.(*UnpreparedExecuteError); ok {
 			unpreparedFrame, err := createUnpreparedFrame(errVal)
@@ -798,7 +867,7 @@ func (ch *ClientHandler) forwardRequest(request *frame.RawFrame, customResponseC
 
 // executeForwardDecision executes the forward decision and waits for one or two responses, then returns the response
 // that should be sent back to the client.
-func (ch *ClientHandler) executeForwardDecision(f *frame.RawFrame, stmtInfo StatementInfo, overallRequestStartTime time.Time, customResponseChannel chan *frame.RawFrame) error {
+func (ch *ClientHandler) executeForwardDecision(f *frame.RawFrame, stmtInfo StatementInfo, overallRequestStartTime time.Time, customResponseChannel chan *customResponse) error {
 	forwardDecision := stmtInfo.GetForwardDecision()
 	log.Tracef("Opcode: %v, Forward decision: %v", f.Header.OpCode, forwardDecision)
 
@@ -812,7 +881,7 @@ func (ch *ClientHandler) executeForwardDecision(f *frame.RawFrame, stmtInfo Stat
 		var interceptedQueryResponse message.Message
 		var err error
 		var controlConn *ControlConn
-		if ch.conf.ForwardReadsToTarget {
+		if ch.conf.ForwardSystemQueriesToTarget {
 			controlConn = ch.targetControlConn
 		} else {
 			controlConn = ch.originControlConn
@@ -855,7 +924,7 @@ func (ch *ClientHandler) executeForwardDecision(f *frame.RawFrame, stmtInfo Stat
 		}
 
 		if customResponseChannel != nil {
-			customResponseChannel <- interceptedResponseRawFrame
+			customResponseChannel <- &customResponse{aggregatedResponse: interceptedResponseRawFrame}
 		} else {
 			ch.clientConnector.sendResponseToClient(interceptedResponseRawFrame)
 		}
@@ -1100,4 +1169,25 @@ func (ch *ClientHandler) trackClusterErrorMetrics(response *frame.RawFrame, clus
 			log.Errorf("unexpected clusterType %v, unable to track node metrics", cluster)
 		}
 	}
+}
+
+func (ch *ClientHandler) sendRequestToDestination(
+	f *frame.RawFrame, decision forwardDecision, scheduledTaskChannel chan *handshakeRequestResult) chan *customResponse {
+	overallRequestStartTime := time.Now()
+	channel := make(chan *customResponse, 1)
+	err := ch.executeForwardDecision(f, NewGenericStatementInfo(decision), overallRequestStartTime, channel)
+	if err != nil {
+		scheduledTaskChannel <- &handshakeRequestResult{
+			authSuccess: false,
+			err:         fmt.Errorf("unable to send handshake frame %v (decision: %v): %w", f, decision, err),
+		}
+		return nil
+	}
+	return channel
+}
+
+type customResponse struct {
+	originResponse     *frame.RawFrame
+	targetResponse     *frame.RawFrame
+	aggregatedResponse *frame.RawFrame
 }

@@ -76,6 +76,7 @@ const (
 	RequestPending = iota
 	RequestTimedOut
 	RequestDone
+	RequestCanceled
 )
 
 type RequestContext struct {
@@ -87,10 +88,10 @@ type RequestContext struct {
 	timer          *time.Timer
 	lock           *sync.Mutex
 	startTime      time.Time
-	customResponseChannel chan *frame.RawFrame
+	customResponseChannel chan *customResponse
 }
 
-func NewRequestContext(req *frame.RawFrame, stmtInfo StatementInfo, starTime time.Time, customResponseChannel chan *frame.RawFrame) *RequestContext {
+func NewRequestContext(req *frame.RawFrame, stmtInfo StatementInfo, starTime time.Time, customResponseChannel chan *customResponse) *RequestContext {
 	return &RequestContext{
 		request:        req,
 		stmtInfo:       stmtInfo,
@@ -141,6 +142,20 @@ func (recv *RequestContext) SetTimeout(nodeMetrics *metrics.NodeMetrics, req *fr
 	}
 
 	return false
+}
+
+func (recv *RequestContext) Cancel() bool {
+	recv.lock.Lock()
+	defer recv.lock.Unlock()
+
+	if recv.state != RequestPending {
+		// already done
+		return false
+	}
+
+	recv.state = RequestCanceled
+	recv.timer.Stop()
+	return true
 }
 
 func (recv *RequestContext) SetResponse(nodeMetrics *metrics.NodeMetrics, f *frame.RawFrame, cluster ClusterType) bool {
