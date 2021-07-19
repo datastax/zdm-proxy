@@ -32,7 +32,7 @@ func RunMain(
 	metricsHandler *httpcloudgate.HandlerWithFallback,
 	readinessHandler *httpcloudgate.HandlerWithFallback) {
 
-	log.Info("Starting http server.")
+	log.Infof("Starting http server (metrics and health checks) on %v:%d", conf.ProxyMetricsAddress, conf.ProxyMetricsPort)
 	wg := &sync.WaitGroup{}
 	srv := httpcloudgate.StartHttpServer(fmt.Sprintf("%s:%d", conf.ProxyMetricsAddress, conf.ProxyMetricsPort), wg)
 

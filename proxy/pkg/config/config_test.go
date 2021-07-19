@@ -10,7 +10,7 @@ func setupRequiredEnvVars() {
 	clearAllEnvVars()
 	setEnvVar("ORIGIN_CASSANDRA_USERNAME", "originUser")
 	setEnvVar("ORIGIN_CASSANDRA_PASSWORD", "originPassword")
-	setEnvVar("ORIGIN_CASSANDRA_HOSTNAME", "origin.hostname.com")
+	setEnvVar("ORIGIN_CASSANDRA_CONTACT_POINTS", "origin.hostname.com")
 	setEnvVar("ORIGIN_CASSANDRA_PORT", "7890")
 	setEnvVar("PROXY_METRICS_PORT", "1234")
 	setEnvVar("TARGET_CASSANDRA_USERNAME", "targetUser")
@@ -23,10 +23,10 @@ func TestTargetConfig_WithBundleOnly(t *testing.T) {
 	setEnvVar("TARGET_CASSANDRA_SECURE_CONNECT_BUNDLE_PATH", "/path/to/bundle")
 
 	conf, err := New().ParseEnvVars()
+	require.Nil(t, err)
 	require.Equal(t, conf.TargetCassandraSecureConnectBundlePath, "/path/to/bundle")
 	require.Empty(t, conf.TargetCassandraContactPoints)
 	require.Equal(t, conf.TargetCassandraPort, 9042)
-	require.Nil(t, err)
 	
 	os.Clearenv()
 }
@@ -34,14 +34,14 @@ func TestTargetConfig_WithBundleOnly(t *testing.T) {
 func TestTargetConfig_WithHostnameAndPortOnly(t *testing.T) {
 	setupRequiredEnvVars()
 
-	setEnvVar("TARGET_CASSANDRA_HOSTNAME", "target.hostname.com")
+	setEnvVar("TARGET_CASSANDRA_CONTACT_POINTS", "target.hostname.com")
 	setEnvVar("TARGET_CASSANDRA_PORT", "5647")
 
 	conf, err := New().ParseEnvVars()
+	require.Nil(t, err)
 	require.Equal(t, conf.TargetCassandraContactPoints, "target.hostname.com")
 	require.Equal(t, conf.TargetCassandraPort, 5647)
 	require.Empty(t, conf.TargetCassandraSecureConnectBundlePath)
-	require.Nil(t, err)
 
 	os.Clearenv()
 }
@@ -50,7 +50,7 @@ func TestTargetConfig_WithBundleAndHostname(t *testing.T) {
 	setupRequiredEnvVars()
 
 	setEnvVar("TARGET_CASSANDRA_SECURE_CONNECT_BUNDLE_PATH", "/path/to/bundle")
-	setEnvVar("TARGET_CASSANDRA_HOSTNAME", "target.hostname.com")
+	setEnvVar("TARGET_CASSANDRA_CONTACT_POINTS", "target.hostname.com")
 
 	_, err := New().ParseEnvVars()
 	require.Error(t, err, "TargetCassandraSecureConnectBundlePath and TargetCassandraContactPoints are " +
@@ -70,7 +70,7 @@ func TestTargetConfig_WithoutBundleAndHostname(t *testing.T) {
 func TestTargetConfig_WithHostnameButWithoutPort(t *testing.T) {
 	setupRequiredEnvVars()
 
-	setEnvVar("TARGET_CASSANDRA_HOSTNAME", "target.hostname.com")
+	setEnvVar("TARGET_CASSANDRA_CONTACT_POINTS", "target.hostname.com")
 
 	c, err := New().ParseEnvVars()
 	require.Nil(t, err)

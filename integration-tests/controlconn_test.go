@@ -604,23 +604,19 @@ func TestRefreshTopologyEventHandler(t *testing.T) {
 				}
 			}
 
-			origin, target := createOriginAndTarget(conf)
-			defer origin.Close()
-			defer target.Close()
-			origin.RequestHandlers = []client.RequestHandler{createMutableHandler(originHandler)}
-			target.RequestHandlers = []client.RequestHandler{createMutableHandler(targetHandler)}
-			wg := &sync.WaitGroup{}
-			defer wg.Wait()
-			ctx, cancelFunc := context.WithCancel(context.Background())
-			defer cancelFunc()
-			startOriginAndTarget(t, origin, target, ctx)
-			proxy := startProxy(t, origin, target, conf, ctx, wg)
-
+			testSetup, err := setup.NewCqlServerTestSetup(conf, false, false, false)
+			require.Nil(t, err)
+			defer testSetup.Cleanup()
+			testSetup.Origin.CqlServer.RequestHandlers = []client.RequestHandler{createMutableHandler(originHandler)}
+			testSetup.Target.CqlServer.RequestHandlers = []client.RequestHandler{createMutableHandler(targetHandler)}
+			err = testSetup.Start(conf, false, primitive.ProtocolVersion4)
+			require.Nil(t, err)
+			proxy := testSetup.Proxy
 			beforeSleepTestFunc(t, proxy.GetOriginControlConn(), originHandler, "cluster1", "dc1", "127.0.1.1", tt.oldOriginPeersCount, tt.newOriginPeersCount)
 			beforeSleepTestFunc(t, proxy.GetTargetControlConn(), targetHandler, "cluster2", "dc2", "127.0.1.2", tt.oldTargetPeersCount, tt.newTargetPeersCount)
 			time.Sleep(5 * time.Second)
-			afterSleepTestFunc(t, proxy.GetOriginControlConn(), originHandler, origin, "cluster1", "dc1", "127.0.1.1", tt.oldOriginPeersCount, tt.newOriginPeersCount)
-			afterSleepTestFunc(t, proxy.GetTargetControlConn(), targetHandler, target, "cluster2", "dc2", "127.0.1.2", tt.oldTargetPeersCount, tt.newTargetPeersCount)
+			afterSleepTestFunc(t, proxy.GetOriginControlConn(), originHandler, testSetup.Origin.CqlServer, "cluster1", "dc1", "127.0.1.1", tt.oldOriginPeersCount, tt.newOriginPeersCount)
+			afterSleepTestFunc(t, proxy.GetTargetControlConn(), targetHandler, testSetup.Target.CqlServer, "cluster2", "dc2", "127.0.1.2", tt.oldTargetPeersCount, tt.newTargetPeersCount)
 		})
 	}
 }

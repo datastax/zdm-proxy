@@ -65,13 +65,13 @@ func TestInspectFrame(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			actual, err := inspectFrame(&frameDecodeContext{frame: tt.args.f}, tt.args.psCache, tt.args.mh, tt.args.km, tt.args.forwardReadsToTarget, false)
+			actual, err := parseStatement(&frameDecodeContext{frame: tt.args.f}, tt.args.psCache, tt.args.mh, tt.args.km, tt.args.forwardReadsToTarget, false)
 			if err != nil {
 				if !reflect.DeepEqual(err.Error(), tt.expected) {
-					t.Errorf("inspectFrame() actual = %v, expected %v", err, tt.expected)
+					t.Errorf("parseStatement() actual = %v, expected %v", err, tt.expected)
 				}
 			} else if !reflect.DeepEqual(actual, tt.expected) {
-				t.Errorf("inspectFrame() actual = %v, want %v", actual, tt.expected)
+				t.Errorf("parseStatement() actual = %v, want %v", actual, tt.expected)
 			}
 		})
 	}

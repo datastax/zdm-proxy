@@ -2,8 +2,9 @@ package setup
 
 import (
 	"context"
-	"github.com/gocql/gocql"
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
 	"github.com/riptano/cloud-gate/integration-tests/ccm"
+	"github.com/riptano/cloud-gate/integration-tests/cqlserver"
 	"github.com/riptano/cloud-gate/integration-tests/env"
 	"github.com/riptano/cloud-gate/integration-tests/simulacron"
 	"github.com/riptano/cloud-gate/proxy/pkg/cloudgateproxy"
@@ -15,9 +16,6 @@ import (
 
 type TestCluster interface {
 	GetInitialContactPoint() string
-	GetVersion() string
-	GetId() string
-	GetSession() *gocql.Session
 	Remove() error
 }
 
@@ -106,12 +104,6 @@ type SimulacronTestSetup struct {
 	Proxy  *cloudgateproxy.CloudgateProxy
 }
 
-type CcmTestSetup struct {
-	Origin *ccm.Cluster
-	Target *ccm.Cluster
-	Proxy  *cloudgateproxy.CloudgateProxy
-}
-
 func NewSimulacronTestSetupWithSession(createProxy bool, createSession bool) (*SimulacronTestSetup, error) {
 	return NewSimulacronTestSetupWithSessionAndNodes(createProxy, createSession, 1)
 }
@@ -159,6 +151,12 @@ func (setup *SimulacronTestSetup) Cleanup() {
 	if err != nil {
 		log.Errorf("remove origin simulacron cluster error: %s", err)
 	}
+}
+
+type CcmTestSetup struct {
+	Origin *ccm.Cluster
+	Target *ccm.Cluster
+	Proxy  *cloudgateproxy.CloudgateProxy
 }
 
 func NewTemporaryCcmTestSetup(start bool, createProxy bool) (*CcmTestSetup, error) {
@@ -223,6 +221,114 @@ func (setup *CcmTestSetup) Cleanup() {
 	}
 
 	err = setup.Origin.Remove()
+	if err != nil {
+		log.Errorf("remove origin ccm cluster error: %s", err)
+	}
+}
+
+type CqlServerTestSetup struct {
+	Origin *cqlserver.Cluster
+	Target *cqlserver.Cluster
+	Proxy  *cloudgateproxy.CloudgateProxy
+	Client *cqlserver.Client
+}
+
+func NewCqlServerTestSetup(conf *config.Config, start bool, createProxy bool, connectClient bool) (*CqlServerTestSetup, error) {
+	origin, err := cqlserver.NewCqlServerCluster(conf.OriginCassandraContactPoints, conf.OriginCassandraPort,
+		conf.OriginCassandraUsername, conf.OriginCassandraPassword, start)
+	if err != nil {
+		return nil, err
+	}
+	target, err := cqlserver.NewCqlServerCluster(conf.TargetCassandraContactPoints, conf.TargetCassandraPort,
+		conf.TargetCassandraUsername, conf.TargetCassandraPassword, start)
+	if err != nil {
+		err2 := origin.Close()
+		if err2 != nil {
+			log.Warnf("error closing origin cql server cluster after target start failed: %v", err2)
+		}
+		return nil, err
+	}
+
+	var proxyInstance *cloudgateproxy.CloudgateProxy
+	if createProxy {
+		proxyInstance, err = NewProxyInstanceWithConfig(conf)
+		if err != nil {
+			err2 := origin.Close()
+			if err2 != nil {
+				log.Warnf("error closing origin cql server cluster after target start failed: %v", err2)
+			}
+			err2 = target.Close()
+			if err2 != nil {
+				log.Warnf("error closing origin cql server cluster after target start failed: %v", err2)
+			}
+			return nil, err
+		}
+	} else {
+		proxyInstance = nil
+	}
+
+	cqlClient, err := cqlserver.NewCqlClient(conf.ProxyQueryAddress, conf.ProxyQueryPort,
+		conf.OriginCassandraUsername, conf.OriginCassandraPassword, connectClient)
+
+	if err != nil {
+		err2 := origin.Close()
+		if err2 != nil {
+			log.Warnf("error closing origin cql server cluster after target start failed: %v", err2)
+		}
+		err2 = target.Close()
+		if err2 != nil {
+			log.Warnf("error closing origin cql server cluster after target start failed: %v", err2)
+		}
+		if proxyInstance != nil {
+			proxyInstance.Shutdown()
+		}
+		return nil, err
+	}
+
+	return &CqlServerTestSetup{
+		Origin: origin,
+		Target: target,
+		Proxy:  proxyInstance,
+		Client: cqlClient,
+	}, nil
+}
+
+func (setup *CqlServerTestSetup) Start(config *config.Config, connectClient bool, version primitive.ProtocolVersion) error {
+	err := setup.Origin.Start()
+	if err != nil {
+		return err
+	}
+	err = setup.Target.Start()
+	if err != nil {
+		return err
+	}
+	if config != nil {
+		proxy, err := NewProxyInstanceWithConfig(config)
+		if err != nil {
+			return err
+		}
+		setup.Proxy = proxy
+	}
+	if connectClient {
+		err := setup.Client.Connect(version)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (setup *CqlServerTestSetup) Cleanup() {
+	if setup.Proxy != nil {
+		setup.Proxy.Shutdown()
+	}
+
+	err := setup.Target.Close()
+	if err != nil {
+		log.Errorf("remove target ccm cluster error: %s", err)
+	}
+
+	err = setup.Origin.Close()
 	if err != nil {
 		log.Errorf("remove origin ccm cluster error: %s", err)
 	}

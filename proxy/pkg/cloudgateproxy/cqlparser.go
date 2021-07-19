@@ -81,7 +81,7 @@ func modifyFrame(context *frameDecodeContext) (*frameDecodeContext, error) {
 	}
 }
 
-func inspectFrame(
+func parseStatement(
 	frameContext *frameDecodeContext,
 	psCache *PreparedStatementCache,
 	mh *metrics.MetricHandler,
@@ -90,83 +90,26 @@ func inspectFrame(
 	forwardSystemQueriesToTarget bool,
 	virtualizationEnabled bool) (StatementInfo, error) {
 
-	forwardDecision := forwardToBoth
 	f := frameContext.frame
-
 	switch f.Header.OpCode {
-
 	case primitive.OpCodeQuery:
 		queryInfo, err := frameContext.GetOrInspectQuery()
 		if err != nil {
 			return nil, fmt.Errorf("could not inspect QUERY frame: %w", err)
 		}
-		if queryInfo.getStatementType() == statementTypeSelect {
-			if virtualizationEnabled {
-				if isSystemLocal(queryInfo, currentKeyspaceName) {
-					log.Debugf("Detected system local query: %v with stream id: %v",  queryInfo.getQuery(), f.Header.StreamId)
-					return NewInterceptedStatementInfo(local), nil
-				} else if isSystemPeersV1(queryInfo, currentKeyspaceName) {
-					log.Debugf("Detected system peers query: %v with stream id: %v",  queryInfo.getQuery(), f.Header.StreamId)
-					return NewInterceptedStatementInfo(peersV1), nil
-				} else if isSystemPeersV2(queryInfo, currentKeyspaceName) {
-					log.Debugf("Detected system peers_v2 query: %v with stream id: %v",  queryInfo.getQuery(), f.Header.StreamId)
-					return NewInterceptedStatementInfo(peersV2), nil
-				}
-			}
-
-			if isSystemQuery(queryInfo, currentKeyspaceName) {
-				log.Debugf("Detected system query: %v with stream id: %v",  queryInfo.getQuery(), f.Header.StreamId)
-				if forwardSystemQueriesToTarget {
-					forwardDecision = forwardToTarget
-				} else {
-					forwardDecision = forwardToOrigin
-				}
-			} else {
-				if forwardReadsToTarget {
-					forwardDecision = forwardToTarget
-				} else {
-					forwardDecision = forwardToOrigin
-				}
-			}
-		}
-		return NewGenericStatementInfo(forwardDecision), nil
-
+		return getStatementInfoFromQueryInfo(
+			frameContext.frame, currentKeyspaceName, forwardReadsToTarget,
+			forwardSystemQueriesToTarget, virtualizationEnabled, queryInfo), nil
 	case primitive.OpCodePrepare:
 		queryInfo, err := frameContext.GetOrInspectQuery()
 		if err != nil {
 			return nil, fmt.Errorf("could not inspect PREPARE frame: %w", err)
 		}
-		if queryInfo.getStatementType() == statementTypeSelect {
-			if virtualizationEnabled {
-				if isSystemLocal(queryInfo, currentKeyspaceName) {
-					log.Debugf("Detected system local query: %v with stream id: %v",  queryInfo.getQuery(), f.Header.StreamId)
-					return NewPreparedStatementInfo(NewInterceptedStatementInfo(local)), nil
-				} else if isSystemPeersV1(queryInfo, currentKeyspaceName) {
-					log.Debugf("Detected system peers query: %v with stream id: %v",  queryInfo.getQuery(), f.Header.StreamId)
-					return NewPreparedStatementInfo(NewInterceptedStatementInfo(peersV1)), nil
-				} else if isSystemPeersV2(queryInfo, currentKeyspaceName) {
-					log.Debugf("Detected system peers_v2 query: %v with stream id: %v",  queryInfo.getQuery(), f.Header.StreamId)
-					return NewPreparedStatementInfo(NewInterceptedStatementInfo(peersV2)), nil
-				}
-			}
-
-			if isSystemQuery(queryInfo, currentKeyspaceName) {
-				log.Debugf("Detected system query: %v with stream id: %v",  queryInfo.getQuery(), f.Header.StreamId)
-				if forwardSystemQueriesToTarget {
-					forwardDecision = forwardToTarget
-				} else {
-					forwardDecision = forwardToOrigin
-				}
-			} else {
-				if forwardReadsToTarget {
-					forwardDecision = forwardToTarget
-				} else {
-					forwardDecision = forwardToOrigin
-				}
-			}
-		}
-		return NewPreparedStatementInfo(NewGenericStatementInfo(forwardDecision)), nil
-
+		prepareForwardDecision := forwardToBoth // always send PREPARE to both, use origin's ID
+		baseStmtInfo := getStatementInfoFromQueryInfo(
+			frameContext.frame, currentKeyspaceName, forwardReadsToTarget,
+			forwardSystemQueriesToTarget, virtualizationEnabled, queryInfo)
+		return NewPreparedStatementInfo(prepareForwardDecision, baseStmtInfo), nil
 	case primitive.OpCodeExecute:
 		decodedFrame, err := frameContext.GetOrDecodeFrame()
 		if err != nil {
@@ -176,23 +119,63 @@ func inspectFrame(
 		if !ok {
 			return nil, fmt.Errorf("expected Execute but got %v instead", decodedFrame.Body.Message.GetOpCode())
 		}
-		log.Debugf("Execute with prepared-id = '%s'", executeMsg.QueryId)
-		if stmtInfo, ok := psCache.retrieveStmtInfoFromCache(executeMsg.QueryId); ok {
+		if preparedData, ok := psCache.Get(executeMsg.QueryId); ok {
+			log.Debugf("Execute with prepared-id = '%s' has prepared-data = %v", executeMsg.QueryId, preparedData)
 			// The forward decision was set in the cache when handling the corresponding PREPARE request
-			return stmtInfo.GetBaseStatementInfo(), nil
+			return NewBoundStatementInfo(preparedData), nil
 		} else {
 			log.Warnf("No cached entry for prepared-id = '%s'", executeMsg.QueryId)
 			mh.GetProxyMetrics().PSCacheMissCount.Add(1)
 			// return meaningful error to caller so it can generate an unprepared response
 			return nil, &UnpreparedExecuteError{Header: f.Header, Body: decodedFrame.Body, preparedId: executeMsg.QueryId}
 		}
-
 	case primitive.OpCodeAuthResponse:
 		return NewGenericStatementInfo(forwardToOrigin), nil
-
 	default:
 		return NewGenericStatementInfo(forwardToBoth), nil
 	}
+}
+
+func getStatementInfoFromQueryInfo(
+	f *frame.RawFrame,
+	currentKeyspaceName *atomic.Value,
+	forwardReadsToTarget bool,
+	forwardSystemQueriesToTarget bool,
+	virtualizationEnabled bool,
+	queryInfo queryInfo) StatementInfo {
+
+	forwardDecision := forwardToBoth
+	if queryInfo.getStatementType() == statementTypeSelect {
+		if virtualizationEnabled {
+			if isSystemLocal(queryInfo, currentKeyspaceName) {
+				log.Debugf("Detected system local query: %v with stream id: %v", queryInfo.getQuery(), f.Header.StreamId)
+				return NewInterceptedStatementInfo(local)
+			} else if isSystemPeersV1(queryInfo, currentKeyspaceName) {
+				log.Debugf("Detected system peers query: %v with stream id: %v", queryInfo.getQuery(), f.Header.StreamId)
+				return NewInterceptedStatementInfo(peersV1)
+			} else if isSystemPeersV2(queryInfo, currentKeyspaceName) {
+				log.Debugf("Detected system peers_v2 query: %v with stream id: %v", queryInfo.getQuery(), f.Header.StreamId)
+				return NewInterceptedStatementInfo(peersV2)
+			}
+		}
+
+		if isSystemQuery(queryInfo, currentKeyspaceName) {
+			log.Debugf("Detected system query: %v with stream id: %v", queryInfo.getQuery(), f.Header.StreamId)
+			if forwardSystemQueriesToTarget {
+				forwardDecision = forwardToTarget
+			} else {
+				forwardDecision = forwardToOrigin
+			}
+		} else {
+			if forwardReadsToTarget {
+				forwardDecision = forwardToTarget
+			} else {
+				forwardDecision = forwardToOrigin
+			}
+		}
+	}
+
+	return NewGenericStatementInfo(forwardDecision)
 }
 
 func isSystemQuery(info queryInfo, currentKeyspaceName *atomic.Value) bool {

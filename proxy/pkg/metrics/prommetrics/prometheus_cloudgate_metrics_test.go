@@ -22,7 +22,10 @@ func TestPrometheusCloudgateProxyMetrics_AddCounter(t *testing.T) {
 	handler := NewPrometheusMetricFactory(registry)
 	assert.Empty(t, handler.registeredCollectors)
 	counter, err := handler.GetOrCreateCounter(counterMetric)
-	assert.Contains(t, handler.registeredCollectors, counter.(*PrometheusCounter).c)
+	assert.Contains(t, handler.registeredCollectors, &collectorEntry{
+		collector: counter.(*PrometheusCounter).c,
+		name:      "test_counter",
+	})
 	assert.Nil(t, err)
 	gather, err := registry.Gather()
 	assert.Nil(t, err)
@@ -43,7 +46,7 @@ func TestPrometheusCloudgateProxyMetrics_AddCounterWithLabels(t *testing.T) {
 
 	counter, err := handler.GetOrCreateCounter(counterMetric)
 	require.Nil(t, err)
-	assert.NotContains(t, handler.registeredCollectors, counter.(*PrometheusCounter).c)
+	assert.Equal(t, 1, len(handler.registeredCollectors))
 	gather, err := registry.Gather()
 	assert.Nil(t, err)
 	assert.Len(t, gather, 1)
@@ -71,7 +74,10 @@ func TestPrometheusCloudgateProxyMetrics_AddGauge(t *testing.T) {
 	assert.Empty(t, handler.registeredCollectors)
 	gauge, err := handler.GetOrCreateGauge(gaugeMetric)
 	assert.Nil(t, err)
-	assert.Contains(t, handler.registeredCollectors, gauge.(*PrometheusGauge).g)
+	assert.Contains(t, handler.registeredCollectors, &collectorEntry{
+		collector: gauge.(*PrometheusGauge).g,
+		name:      "test_gauge",
+	})
 	gather, err := registry.Gather()
 	assert.Nil(t, err)
 	assert.Len(t, gather, 1)
@@ -91,7 +97,7 @@ func TestPrometheusCloudgateProxyMetrics_AddGaugeWithLabels(t *testing.T) {
 
 	g, err := handler.GetOrCreateGauge(gaugeMetric)
 	assert.Nil(t, err)
-	assert.NotContains(t, handler.registeredCollectors, g.(*PrometheusGauge).g)
+	assert.Equal(t, 1, len(handler.registeredCollectors))
 	gather, err := registry.Gather()
 	assert.Nil(t, err)
 	assert.Len(t, gather, 1)
@@ -121,7 +127,10 @@ func TestPrometheusCloudgateProxyMetrics_AddGaugeFunction(t *testing.T) {
 	assert.Empty(t, handler.registeredCollectors)
 	gf, err := handler.GetOrCreateGaugeFunc(gaugeFuncMetric, func() float64 { return 12.34 })
 	assert.Nil(t, err)
-	assert.Contains(t, handler.registeredCollectors, gf.(*PrometheusGaugeFunc).gf)
+	assert.Contains(t, handler.registeredCollectors, &collectorEntry{
+		collector: gf.(*PrometheusGaugeFunc).gf,
+		name:      "test_gauge_func",
+	})
 	gather, err := registry.Gather()
 	assert.Nil(t, err)
 	assert.Len(t, gather, 1)
@@ -140,7 +149,10 @@ func TestPrometheusCloudgateProxyMetrics_AddHistogram(t *testing.T) {
 	assert.Empty(t, handler.registeredCollectors)
 	h, err := handler.GetOrCreateHistogram(histogramMetric, nil)
 	assert.Nil(t, err)
-	assert.Contains(t, handler.registeredCollectors, h.(*PrometheusHistogram).h)
+	assert.Contains(t, handler.registeredCollectors, &collectorEntry{
+		collector: h.(*PrometheusHistogram).h.(prometheus.Collector),
+		name:      "test_histogram",
+	})
 	gather, err := registry.Gather()
 	assert.Nil(t, err)
 	assert.Len(t, gather, 1)
@@ -160,7 +172,6 @@ func TestPrometheusCloudgateProxyMetrics_AddHistogramWithLabels(t *testing.T) {
 
 	h, err := handler.GetOrCreateHistogram(histogramMetric, nil)
 	assert.Nil(t, err)
-	assert.NotContains(t, handler.registeredCollectors, h.(*PrometheusHistogram).h)
 	assert.Equal(t, 1, len(handler.registeredCollectors))
 	gather, err := registry.Gather()
 	assert.Nil(t, err)

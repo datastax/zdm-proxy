@@ -133,7 +133,7 @@ func (p *CloudgateProxy) Start(ctx context.Context) error {
 		return err
 	}
 
-	log.Infof("Proxy connected and ready to accept queries on port %d", p.Conf.ProxyQueryPort)
+	log.Infof("Proxy connected and ready to accept queries on %v:%d", p.Conf.ProxyQueryAddress, p.Conf.ProxyQueryPort)
 	return nil
 }
 

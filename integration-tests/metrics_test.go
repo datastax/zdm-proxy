@@ -1,7 +1,6 @@
 package integration_tests
 
 import (
-	"context"
 	"fmt"
 	"github.com/datastax/go-cassandra-native-protocol/client"
 	"github.com/datastax/go-cassandra-native-protocol/frame"
@@ -10,10 +9,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/riptano/cloud-gate/integration-tests/setup"
 	"github.com/riptano/cloud-gate/integration-tests/utils"
-	"github.com/riptano/cloud-gate/proxy/pkg/cloudgateproxy"
 	"github.com/riptano/cloud-gate/proxy/pkg/config"
 	"github.com/riptano/cloud-gate/proxy/pkg/httpcloudgate"
 	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
+	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
 	"net/http"
 	"sort"
@@ -87,29 +86,31 @@ func testMetrics(t *testing.T, metricsHandler *httpcloudgate.HandlerWithFallback
 	targetEndpoint := fmt.Sprintf("%v:9042", targetHost)
 	conf := setup.NewTestConfig(originHost, targetHost)
 
-	origin, target := createOriginAndTarget(conf)
-	defer origin.Close()
-	defer target.Close()
-	origin.RequestHandlers = []client.RequestHandler{client.HeartbeatHandler, client.HandshakeHandler, client.NewSystemTablesHandler("cluster1", "dc1"), handleReads, handleWrites}
-	target.RequestHandlers = []client.RequestHandler{client.HeartbeatHandler, client.HandshakeHandler, client.NewSystemTablesHandler("cluster2", "dc2"), handleWrites}
+	testSetup, err := setup.NewCqlServerTestSetup(conf, false, false, false)
+	require.Nil(t, err)
+	defer testSetup.Cleanup()
+	testSetup.Origin.CqlServer.RequestHandlers = []client.RequestHandler{client.HeartbeatHandler, client.HandshakeHandler, client.NewSystemTablesHandler("cluster1", "dc1"), handleReads, handleWrites}
+	testSetup.Target.CqlServer.RequestHandlers = []client.RequestHandler{client.HeartbeatHandler, client.HandshakeHandler, client.NewSystemTablesHandler("cluster2", "dc2"), handleWrites}
+
+	err = testSetup.Start(conf, false, primitive.ProtocolVersion4)
+	require.Nil(t, err)
 
 	wg := &sync.WaitGroup{}
 	defer wg.Wait()
-	ctx, cancelFunc := context.WithCancel(context.Background())
-	defer cancelFunc()
-	startOriginAndTarget(t, origin, target, ctx)
-	startProxy(t, origin, target, conf, ctx, wg)
-
 	srv := startMetricsHandler(t, conf, wg, metricsHandler)
-	defer func() { _ = srv.Close() }()
+	defer func() {
+		err := srv.Close()
+		if err != nil {
+			log.Warnf("error cleaning http server: %v", err)
+		}
+	}()
 
 	lines := gatherMetrics(t, conf, false)
 	checkMetrics(t, false, lines, 0, 0, 0, 0, 0, 0, true, true, originEndpoint, targetEndpoint)
 
-	clientConn := startClient(t, origin, target, conf, ctx)
-
-	err := clientConn.InitiateHandshake(primitive.ProtocolVersion4, client.ManagedStreamId)
+	err = testSetup.Client.Connect(primitive.ProtocolVersion4)
 	require.Nil(t, err)
+	clientConn := testSetup.Client.CqlConnection
 
 	lines = gatherMetrics(t, conf, true)
 	// 1 on origin: AUTH_RESPONSE
@@ -137,56 +138,6 @@ func testMetrics(t *testing.T, metricsHandler *httpcloudgate.HandlerWithFallback
 
 }
 
-func createOriginAndTarget(conf *config.Config) (*client.CqlServer, *client.CqlServer) {
-	originAddr := fmt.Sprintf("%s:%d", conf.OriginCassandraContactPoints, conf.OriginCassandraPort)
-	origin := client.NewCqlServer(originAddr, &client.AuthCredentials{
-		Username: conf.OriginCassandraUsername,
-		Password: conf.OriginCassandraPassword,
-	})
-	targetAddr := fmt.Sprintf("%s:%d", conf.TargetCassandraContactPoints, conf.TargetCassandraPort)
-	target := client.NewCqlServer(targetAddr, &client.AuthCredentials{
-		Username: conf.TargetCassandraUsername,
-		Password: conf.TargetCassandraPassword,
-	})
-	return origin, target
-}
-
-func startOriginAndTarget(
-	t *testing.T,
-	origin *client.CqlServer,
-	target *client.CqlServer,
-	ctx context.Context,
-) {
-	err := origin.Start(ctx)
-	require.Nil(t, err)
-	err = target.Start(ctx)
-	require.Nil(t, err)
-}
-
-func startProxy(
-	t *testing.T,
-	origin *client.CqlServer,
-	target *client.CqlServer,
-	conf *config.Config,
-	ctx context.Context,
-	wg *sync.WaitGroup,
-) *cloudgateproxy.CloudgateProxy {
-	proxy, err := cloudgateproxy.Run(conf, ctx)
-	require.Nil(t, err)
-	require.NotNil(t, proxy)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		<-ctx.Done()
-		proxy.Shutdown()
-	}()
-	originControlConn, _ := origin.AcceptAny()
-	targetControlConn, _ := target.AcceptAny()
-	require.NotNil(t, originControlConn)
-	require.NotNil(t, targetControlConn)
-	return proxy
-}
-
 func startMetricsHandler(
 	t *testing.T, conf *config.Config, wg *sync.WaitGroup, metricsHandler *httpcloudgate.HandlerWithFallback) *http.Server {
 	httpAddr := fmt.Sprintf("%s:%d", conf.ProxyMetricsAddress, conf.ProxyMetricsPort)
@@ -194,32 +145,6 @@ func startMetricsHandler(
 	require.NotNil(t, srv)
 	metricsHandler.SetHandler(promhttp.Handler())
 	return srv
-}
-
-func startClient(
-	t *testing.T,
-	origin *client.CqlServer,
-	target *client.CqlServer,
-	conf *config.Config,
-	ctx context.Context,
-) *client.CqlClientConnection {
-	proxyAddr := fmt.Sprintf("%s:%d", conf.ProxyQueryAddress, conf.ProxyQueryPort)
-	clt := client.NewCqlClient(proxyAddr, &client.AuthCredentials{
-		Username: conf.OriginCassandraUsername,
-		Password: conf.OriginCassandraPassword,
-	})
-	clientConn, err := clt.Connect(ctx)
-	require.Nil(t, err)
-	require.NotNil(t, clientConn)
-	go func() {
-		<-ctx.Done()
-		clientConn.Close()
-	}()
-	originClientConn, _ := origin.AcceptAny()
-	targetClientConn, _ := target.AcceptAny()
-	require.NotNil(t, originClientConn)
-	require.NotNil(t, targetClientConn)
-	return clientConn
 }
 
 func gatherMetrics(t *testing.T, conf *config.Config, checkNodeMetrics bool) []string {

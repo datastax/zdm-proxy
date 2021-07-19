@@ -79,7 +79,7 @@ func (ch *ClientHandler) handleTargetCassandraStartup(startupFrame *frame.RawFra
 		if !requestSent {
 			overallRequestStartTime := time.Now()
 			channel := make(chan *customResponse, 1)
-			err := ch.executeForwardDecision(request, NewGenericStatementInfo(forwardToTarget), overallRequestStartTime, channel)
+			err := ch.executeStatement(&frameDecodeContext{frame: request}, NewGenericStatementInfo(forwardToTarget), overallRequestStartTime, channel)
 			if err != nil {
 				return fmt.Errorf("unable to send target handshake frame to %v: %w", targetCassandraIPAddress, err)
 			}

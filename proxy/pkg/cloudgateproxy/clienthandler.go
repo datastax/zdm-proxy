@@ -560,7 +560,7 @@ func (ch *ClientHandler) computeAggregatedResponse(requestContext *RequestContex
 		if requestContext.targetResponse == nil {
 			return nil, fmt.Errorf("did not receive response from target cassandra channel, stream: %d", requestContext.request.Header.StreamId)
 		}
-		return ch.aggregateAndTrackResponses(requestContext.originResponse, requestContext.targetResponse), nil
+		return ch.aggregateAndTrackResponses(requestContext.request, requestContext.originResponse, requestContext.targetResponse), nil
 
 	} else {
 		return nil, fmt.Errorf("unknown forward decision %v, request context: %v", forwardDecision, requestContext)
@@ -576,34 +576,43 @@ func (ch *ClientHandler) processAggregatedResponse(response *frame.RawFrame, req
 			return fmt.Errorf("error decoding result response: %w", err)
 		}
 
-		resultMsg, ok := body.Message.(message.Result)
-		if !ok {
-			return fmt.Errorf("expected RESULT body but got %T", body.Message)
-		}
-
-		resultType := resultMsg.GetResultType()
-		if resultType == primitive.ResultTypePrepared || resultType == primitive.ResultTypeSetKeyspace {
-			switch bodyMsg := body.Message.(type) {
-			case *message.PreparedResult:
-				if bodyMsg.PreparedQueryId == nil {
-					log.Error("unexpected prepared query id nil")
-				} else if reqCtx.stmtInfo == nil {
-					log.Error("unexpected statement info nil on request context")
-				} else if preparedStmtInfo, ok := reqCtx.stmtInfo.(*PreparedStatementInfo); !ok {
-					log.Error("unexpected request context statement info is not prepared statement info")
-				} else {
-					ch.preparedStatementCache.cachePreparedId(bodyMsg.PreparedQueryId, preparedStmtInfo)
-				}
-			case *message.SetKeyspaceResult:
-				if bodyMsg.Keyspace == "" {
-					log.Warnf("unexpected set keyspace empty")
-				} else {
-					ch.currentKeyspaceName.Store(bodyMsg.Keyspace)
-				}
-			default:
-				return fmt.Errorf("expected resulttype %v but got %T", resultType, bodyMsg)
+		switch bodyMsg := body.Message.(type) {
+		case *message.PreparedResult:
+			err = ch.processPreparedResponse(bodyMsg, reqCtx)
+			if err != nil {
+				return fmt.Errorf("failed to handle prepared result: %w", err)
+			}
+		case *message.SetKeyspaceResult:
+			if bodyMsg.Keyspace == "" {
+				log.Warnf("unexpected set keyspace empty")
+			} else {
+				ch.currentKeyspaceName.Store(bodyMsg.Keyspace)
 			}
 		}
+	}
+	return nil
+}
+
+func (ch *ClientHandler) processPreparedResponse(bodyMsg *message.PreparedResult, reqCtx *RequestContext) error {
+	if bodyMsg.PreparedQueryId == nil {
+		return errors.New("unexpected prepared query id nil")
+	} else if reqCtx.stmtInfo == nil {
+		return errors.New("unexpected statement info nil on request context")
+	} else if preparedStmtInfo, ok := reqCtx.stmtInfo.(*PreparedStatementInfo); !ok {
+		return errors.New("unexpected request context statement info is not prepared statement info")
+	} else if reqCtx.targetResponse == nil {
+		return errors.New("unexpected target response nil")
+	} else {
+		targetBody, err := defaultCodec.DecodeBody(reqCtx.targetResponse.Header, bytes.NewReader(reqCtx.targetResponse.Body))
+		if err != nil {
+			return fmt.Errorf("error decoding target result response: %w", err)
+		}
+
+		targetPreparedResult, ok := targetBody.Message.(*message.PreparedResult)
+		if !ok {
+			return fmt.Errorf("expected PREPARED RESULT targetBody in target result response but got %T", targetBody.Message)
+		}
+		ch.preparedStatementCache.Store(bodyMsg.PreparedQueryId, targetPreparedResult.PreparedQueryId, preparedStmtInfo)
 	}
 	return nil
 }
@@ -837,9 +846,9 @@ func (ch *ClientHandler) forwardRequest(request *frame.RawFrame, customResponseC
 	}
 	var err error
 	context, err = modifyFrame(context)
-	request = context.frame
-	stmtInfo, err := inspectFrame(
-		context, ch.preparedStatementCache, ch.metricHandler, ch.currentKeyspaceName, ch.conf.ForwardReadsToTarget, ch.conf.ForwardSystemQueriesToTarget, ch.virtualizationConfig.VirtualizationEnabled)
+	stmtInfo, err := parseStatement(
+		context, ch.preparedStatementCache, ch.metricHandler, ch.currentKeyspaceName, ch.conf.ForwardReadsToTarget,
+		ch.conf.ForwardSystemQueriesToTarget, ch.virtualizationConfig.VirtualizationEnabled)
 	if err != nil {
 		if errVal, ok := err.(*UnpreparedExecuteError); ok {
 			unpreparedFrame, err := createUnpreparedFrame(errVal)
@@ -847,7 +856,7 @@ func (ch *ClientHandler) forwardRequest(request *frame.RawFrame, customResponseC
 				return err
 			}
 			log.Debugf(
-				"PS Cache miss, created unprepared response with version %v, streamId %v and preparedId %v",
+				"PS Cache miss, created unprepared response with version %v, streamId %v and preparedId %s",
 				errVal.Header.Version, errVal.Header.StreamId, errVal.preparedId)
 
 			// send it back to client
@@ -858,26 +867,28 @@ func (ch *ClientHandler) forwardRequest(request *frame.RawFrame, customResponseC
 		return err
 	}
 
-	err = ch.executeForwardDecision(request, stmtInfo, overallRequestStartTime, customResponseChannel)
+	err = ch.executeStatement(context, stmtInfo, overallRequestStartTime, customResponseChannel)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-// executeForwardDecision executes the forward decision and waits for one or two responses, then returns the response
+// executeStatement executes the forward decision and waits for one or two responses, then returns the response
 // that should be sent back to the client.
-func (ch *ClientHandler) executeForwardDecision(f *frame.RawFrame, stmtInfo StatementInfo, overallRequestStartTime time.Time, customResponseChannel chan *customResponse) error {
+func (ch *ClientHandler) executeStatement(
+	frameContext *frameDecodeContext, stmtInfo StatementInfo, overallRequestStartTime time.Time, customResponseChannel chan *customResponse) error {
 	forwardDecision := stmtInfo.GetForwardDecision()
-	log.Tracef("Opcode: %v, Forward decision: %v", f.Header.OpCode, forwardDecision)
+	log.Tracef("Opcode: %v, Forward decision: %v", frameContext.frame.Header.OpCode, forwardDecision)
 
-	if forwardDecision == forwardToNone {
-		interceptedStatementInfo, ok := stmtInfo.(*InterceptedStatementInfo)
-		if !ok {
-			return fmt.Errorf("expected InterceptedStatementInfo but got %v", stmtInfo)
-		}
+	f := frameContext.frame
+	originRequest := f
+	targetRequest := f
+	var clientResponse *frame.RawFrame
 
-		interceptedQueryType := interceptedStatementInfo.GetQueryType()
+	switch castedStmtInfo := stmtInfo.(type) {
+	case *InterceptedStatementInfo:
+		interceptedQueryType := castedStmtInfo.GetQueryType()
 		var interceptedQueryResponse message.Message
 		var err error
 		var controlConn *ControlConn
@@ -923,10 +934,38 @@ func (ch *ClientHandler) executeForwardDecision(f *frame.RawFrame, stmtInfo Stat
 			return fmt.Errorf("could not convert intercepted response frame %v: %w", interceptedResponseFrame, err)
 		}
 
+		clientResponse = interceptedResponseRawFrame
+	case *BoundStatementInfo:
+		if forwardDecision == forwardToBoth || forwardDecision == forwardToTarget {
+			decodedFrame, err := frameContext.GetOrDecodeFrame()
+			if err != nil {
+				return fmt.Errorf("could not decode execute raw frame: %w", err)
+			}
+			decodedFrame = decodedFrame.Clone()
+			executeMsg, ok := decodedFrame.Body.Message.(*message.Execute)
+			if !ok {
+				return fmt.Errorf("expected Execute but got %v instead", decodedFrame.Body.Message.GetOpCode())
+			}
+			originalQueryId := executeMsg.QueryId
+			executeMsg.QueryId = castedStmtInfo.GetPreparedData().GetTargetPreparedId()
+			log.Debugf("Replacing prepared ID %s with %s for target cluster.", originalQueryId, executeMsg.QueryId)
+			targetExecuteRequest, err := defaultCodec.ConvertToRawFrame(decodedFrame)
+			if err != nil {
+				return fmt.Errorf("could not convert target EXECUTE response to raw frame: %w", err)
+			}
+			targetRequest = targetExecuteRequest
+		}
+	}
+
+	if forwardDecision == forwardToNone {
+		if clientResponse == nil {
+			return fmt.Errorf("forwardDecision is NONE but client response is nil")
+		}
+
 		if customResponseChannel != nil {
-			customResponseChannel <- &customResponse{aggregatedResponse: interceptedResponseRawFrame}
+			customResponseChannel <- &customResponse{aggregatedResponse: clientResponse}
 		} else {
-			ch.clientConnector.sendResponseToClient(interceptedResponseRawFrame)
+			ch.clientConnector.sendResponseToClient(clientResponse)
 		}
 
 		return nil
@@ -965,25 +1004,22 @@ func (ch *ClientHandler) executeForwardDecision(f *frame.RawFrame, stmtInfo Stat
 	})
 	reqCtx.SetTimer(timer)
 
-	if forwardDecision == forwardToOrigin {
-		log.Debugf("Forwarding request with opcode %v for stream %v to OC", f.Header.OpCode, f.Header.StreamId)
-		ch.originCassandraConnector.sendRequestToCluster(f)
-		return nil
-
-	} else if forwardDecision == forwardToTarget {
-		log.Debugf("Forwarding request with opcode %v for stream %v to TC", f.Header.OpCode, f.Header.StreamId)
-		ch.targetCassandraConnector.sendRequestToCluster(f)
-		return nil
-
-	} else if forwardDecision == forwardToBoth {
+	switch forwardDecision {
+	case forwardToBoth:
 		log.Debugf("Forwarding request with opcode %v for stream %v to OC and TC", f.Header.OpCode, f.Header.StreamId)
-		ch.originCassandraConnector.sendRequestToCluster(f)
-		ch.targetCassandraConnector.sendRequestToCluster(f)
-		return nil
-
-	} else {
+		ch.originCassandraConnector.sendRequestToCluster(originRequest)
+		ch.targetCassandraConnector.sendRequestToCluster(targetRequest)
+	case forwardToOrigin:
+		log.Debugf("Forwarding request with opcode %v for stream %v to OC", f.Header.OpCode, f.Header.StreamId)
+		ch.originCassandraConnector.sendRequestToCluster(originRequest)
+	case forwardToTarget:
+		log.Debugf("Forwarding request with opcode %v for stream %v to TC", f.Header.OpCode, f.Header.StreamId)
+		ch.targetCassandraConnector.sendRequestToCluster(targetRequest)
+	default:
 		return fmt.Errorf("unknown forward decision %v, stream: %d", forwardDecision, f.Header.StreamId)
 	}
+
+	return nil
 }
 
 // Aggregates the responses received from the two clusters as follows:
@@ -991,7 +1027,8 @@ func (ch *ClientHandler) executeForwardDecision(f *frame.RawFrame, stmtInfo Stat
 //   - if either response is a failure, the failure "wins": return the failed response
 //
 // Also updates metrics appropriately.
-func (ch *ClientHandler) aggregateAndTrackResponses(responseFromOriginCassandra *frame.RawFrame, responseFromTargetCassandra *frame.RawFrame) *frame.RawFrame {
+func (ch *ClientHandler) aggregateAndTrackResponses(
+	request *frame.RawFrame, responseFromOriginCassandra *frame.RawFrame, responseFromTargetCassandra *frame.RawFrame) *frame.RawFrame {
 
 	originOpCode := responseFromOriginCassandra.Header.OpCode
 	log.Debugf("Aggregating responses. OC opcode %d, TargetCassandra opcode %d", originOpCode, responseFromTargetCassandra.Header.OpCode)
@@ -1001,6 +1038,9 @@ func (ch *ClientHandler) aggregateAndTrackResponses(responseFromOriginCassandra 
 		if originOpCode == primitive.OpCodeSupported {
 			log.Debugf("Aggregated response: both successes, sending back TC's response with opcode %d", originOpCode)
 			return responseFromTargetCassandra
+		} else if request.Header.OpCode == primitive.OpCodePrepare {
+			// special case for PREPARE requests to always return ORIGIN, even though the default handling for "BOTH" requests would be enough
+			return responseFromOriginCassandra
 		} else {
 			log.Debugf("Aggregated response: both successes, sending back OC's response with opcode %d", originOpCode)
 			return responseFromOriginCassandra
@@ -1169,21 +1209,6 @@ func (ch *ClientHandler) trackClusterErrorMetrics(response *frame.RawFrame, clus
 			log.Errorf("unexpected clusterType %v, unable to track node metrics", cluster)
 		}
 	}
-}
-
-func (ch *ClientHandler) sendRequestToDestination(
-	f *frame.RawFrame, decision forwardDecision, scheduledTaskChannel chan *handshakeRequestResult) chan *customResponse {
-	overallRequestStartTime := time.Now()
-	channel := make(chan *customResponse, 1)
-	err := ch.executeForwardDecision(f, NewGenericStatementInfo(decision), overallRequestStartTime, channel)
-	if err != nil {
-		scheduledTaskChannel <- &handshakeRequestResult{
-			authSuccess: false,
-			err:         fmt.Errorf("unable to send handshake frame %v (decision: %v): %w", f, decision, err),
-		}
-		return nil
-	}
-	return channel
 }
 
 type customResponse struct {

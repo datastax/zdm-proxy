@@ -31,23 +31,45 @@ func (recv *GenericStatementInfo) String() string {
 }
 
 type PreparedStatementInfo struct {
-	baseStatementInfo StatementInfo
+	prepareForwardDecision forwardDecision
+	baseStatementInfo      StatementInfo
 }
 
-func NewPreparedStatementInfo(baseStmtInfo StatementInfo) *PreparedStatementInfo {
-	return &PreparedStatementInfo{baseStatementInfo: baseStmtInfo}
+func NewPreparedStatementInfo(prepareForwardDecision forwardDecision, baseStmtInfo StatementInfo) *PreparedStatementInfo {
+	return &PreparedStatementInfo{prepareForwardDecision: prepareForwardDecision, baseStatementInfo: baseStmtInfo}
 }
 
 func (recv *PreparedStatementInfo) String() string {
-	return fmt.Sprintf("PreparedStatementInfo{baseStatementInfo: %v}", recv.baseStatementInfo)
+	return fmt.Sprintf("PreparedStatementInfo{prepareForwardDecision: %v, baseStatementInfo: %v}",
+		recv.prepareForwardDecision, recv.baseStatementInfo)
 }
 
 func (recv *PreparedStatementInfo) GetForwardDecision() forwardDecision {
-	return recv.baseStatementInfo.GetForwardDecision()
+	return recv.prepareForwardDecision
 }
 
 func (recv *PreparedStatementInfo) GetBaseStatementInfo() StatementInfo {
 	return recv.baseStatementInfo
+}
+
+type BoundStatementInfo struct {
+	preparedData PreparedData
+}
+
+func NewBoundStatementInfo(preparedData PreparedData) *BoundStatementInfo {
+	return &BoundStatementInfo{preparedData: preparedData}
+}
+
+func (recv *BoundStatementInfo) String() string {
+	return fmt.Sprintf("BoundStatementInfo{PreparedData: %v}", recv.preparedData)
+}
+
+func (recv *BoundStatementInfo) GetForwardDecision() forwardDecision {
+	return recv.preparedData.GetPreparedStatementInfo().GetBaseStatementInfo().GetForwardDecision()
+}
+
+func (recv *BoundStatementInfo) GetPreparedData() PreparedData {
+	return recv.preparedData
 }
 
 type InterceptedStatementInfo struct {
