@@ -42,6 +42,11 @@ func retrieveAstraMetadata(astraMetadataServiceHostName string, astraMetadataSer
 	metadataBody, err := ioutil.ReadAll(metadataResponse.Body)
 	log.Debugf("Metadata JSON: %s", string(metadataBody))
 
+	if metadataResponse.StatusCode < 200 || metadataResponse.StatusCode >= 300 {
+		return nil, fmt.Errorf("metadata service (Astra) returned not successful status code %d, body: %v",
+			metadataResponse.StatusCode, string(metadataBody))
+	}
+
 	err = json.Unmarshal(metadataBody, &metadata)
 	return metadata, err
 }

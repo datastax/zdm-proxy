@@ -425,7 +425,7 @@ func NewSystemLocalRowsResult(
 	overrideValueAndColumnIfExists(&row, &columns, nativeTransportPortColumn, virtualHost.Host.NativeTransportPort, proxyPort)
 	overrideValueAndColumnIfExists(&row, &columns, nativeTransportPortSslColumn, virtualHost.Host.NativeTransportPortSsl, proxyPort)
 	addValueAndColumnIfExists(&row, &columns, partitionerColumn, systemLocalInfo.partitioner)
-	addValueAndColumn(&row, &columns, rackColumn, virtualHost.Host.Rack)
+	addValueAndColumn(&row, &columns, rackColumn, "rack0")
 	addValueAndColumn(&row, &columns, releaseVersionColumn, virtualHost.Host.ReleaseVersion)
 	addValueAndColumn(&row, &columns, rpcAddressColumn, virtualHost.Addr)
 	if virtualHost.Host.SchemaVersion == nil {
@@ -441,7 +441,7 @@ func NewSystemLocalRowsResult(
 	addValueAndColumnIfExists(&row, &columns, storagePortColumn, virtualHost.Host.StoragePort)
 	addValueAndColumnIfExists(&row, &columns, storagePortSslColumn, virtualHost.Host.StoragePortSsl)
 	addValueAndColumnIfExists(&row, &columns, thriftVersionColumn, systemLocalInfo.thriftVersion)
-	addValueAndColumn(&row, &columns, tokensColumn, []string{virtualHost.Token})
+	addValueAndColumn(&row, &columns, tokensColumn, virtualHost.Tokens)
 	addValueAndColumn(&row, &columns, truncatedAtColumn, nil)
 	addValueAndColumnIfExists(&row, &columns, workloadColumn, virtualHost.Host.Workload)
 	addValueAndColumnIfExists(&row, &columns, workloadsColumn, virtualHost.Host.Workloads)
@@ -573,7 +573,7 @@ func NewSystemPeersRowsResult(
 
 		proxyAddress := virtualHost.Addr
 		host := virtualHost.Host
-		token := virtualHost.Token
+		tokens := virtualHost.Tokens
 
 		row := make([]interface{}, 0, len(columns))
 
@@ -589,7 +589,7 @@ func NewSystemPeersRowsResult(
 		if preferredIpColExists {
 			addPeerColumn(first, &row, &columns, addedColumns, preferredIpPeersColumn, proxyAddress, &errors)
 		}
-		addPeerColumn(first, &row, &columns, addedColumns, rackPeersColumn, host.Rack, &errors)
+		addPeerColumn(first, &row, &columns, addedColumns, rackPeersColumn, "rack0", &errors)
 		addPeerColumn(first, &row, &columns, addedColumns, releaseVersionPeersColumn, host.ReleaseVersion, &errors)
 		addPeerColumn(first, &row, &columns, addedColumns, rpcAddressPeersColumn, proxyAddress, &errors)
 		if host.SchemaVersion == nil {
@@ -604,7 +604,7 @@ func NewSystemPeersRowsResult(
 		addPeerColumnIfExists(first, &row, &columns, addedColumns, serverIdPeersColumn, host.ServerId, &errors)
 		addPeerColumnIfExists(first, &row, &columns, addedColumns, storagePortPeersColumn, host.StoragePort, &errors)
 		addPeerColumnIfExists(first, &row, &columns, addedColumns, storagePortSslPeersColumn, host.StoragePortSsl, &errors)
-		addPeerColumn(first, &row, &columns, addedColumns, tokensPeersColumn, []string{token}, &errors)
+		addPeerColumn(first, &row, &columns, addedColumns, tokensPeersColumn, tokens, &errors)
 		addPeerColumnIfExists(first, &row, &columns, addedColumns, workloadPeersColumn, host.Workload, &errors)
 		addPeerColumnIfExists(first, &row, &columns, addedColumns, workloadsPeersColumn, host.Workloads, &errors)
 		if len(errors) > 0 {

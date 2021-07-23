@@ -16,6 +16,7 @@ type Config struct {
 	ProxyIndex         int    `default:"0" split_words:"true"`
 	ProxyInstanceCount int    `default:"-1" split_words:"true"` // Overridden by length of ProxyAddresses (after split) if set
 	ProxyAddresses     string `split_words:"true"`
+	ProxyNumTokens     int    `default:"8" split_words:"true"`
 
 	OriginEnableHostAssignment bool `default:"true" split_words:"true"`
 	TargetEnableHostAssignment bool `default:"true" split_words:"true"`
@@ -153,11 +154,16 @@ func (c *Config) ParseVirtualizationConfig() (*TopologyConfig, error) {
 			"proxy index (%d) must be less than instance count (%d) and non negative", proxyIndex, proxyInstanceCount)
 	}
 
+	if c.ProxyNumTokens <= 0 || c.ProxyNumTokens > 256 {
+		return nil, fmt.Errorf("invalid ProxyNumTokens (%v), it must be positive and equal or less than 256", c.ProxyNumTokens)
+	}
+
 	return &TopologyConfig{
 		VirtualizationEnabled:    virtualizationEnabled,
 		Addresses:                proxyAddressesTyped,
 		Index:                    proxyIndex,
 		Count:                    proxyInstanceCount,
+		NumTokens:                c.ProxyNumTokens,
 	}, nil
 }
 
@@ -278,9 +284,10 @@ type TopologyConfig struct {
 	Addresses             []net.IP // comes from PROXY_ADDRESSES
 	Count                 int      // comes from PROXY_INSTANCE_COUNT unless PROXY_ADDRESSES is set
 	Index                 int      // comes from PROXY_INDEX
+	NumTokens             int      // comes from PROXY_NUM_TOKENS
 }
 
 func (recv *TopologyConfig) String() string {
-	return fmt.Sprintf("TopologyConfig{VirtualizationEnabled=%v, Addresses=%v, Count=%v, Index=%v",
-		recv.VirtualizationEnabled, recv.Addresses, recv.Count, recv.Index)
+	return fmt.Sprintf("TopologyConfig{VirtualizationEnabled=%v, Addresses=%v, Count=%v, Index=%v, NumTokens=%v",
+		recv.VirtualizationEnabled, recv.Addresses, recv.Count, recv.Index, recv.NumTokens)
 }

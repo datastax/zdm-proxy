@@ -348,6 +348,7 @@ func NewTestConfig(originHost string, targetHost string) *config.Config {
 	conf.ProxyIndex = 0
 	conf.ProxyInstanceCount = -1
 	conf.ProxyAddresses = ""
+	conf.ProxyNumTokens = 8
 
 	conf.OriginEnableHostAssignment = true
 	conf.TargetEnableHostAssignment = true

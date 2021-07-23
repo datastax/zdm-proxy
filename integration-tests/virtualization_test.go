@@ -9,6 +9,7 @@ import (
 	"github.com/riptano/cloud-gate/proxy/pkg/cloudgateproxy"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
+	"math/big"
 	"math/rand"
 	"sort"
 	"strings"
@@ -97,7 +98,7 @@ func TestVirtualizationNumberOfConnections(t *testing.T) {
 			for i := 0; i < tt.proxyInstanceCreationCount; i++ {
 				proxies[i], err = LaunchProxyWithVirtualizationConfig(
 					strings.Join(tt.proxyAddresses[i], ","), tt.proxyIndexes[i], tt.proxyInstanceCount,
-					fmt.Sprintf("%s%d", "127.0.0.", i+1), testSetup.Origin, testSetup.Target)
+					fmt.Sprintf("%s%d", "127.0.0.", i+1), 8, testSetup.Origin, testSetup.Target)
 				j := i
 				require.Nil(t, err)
 				//goland:noinspection GoDeferInLoop
@@ -188,12 +189,13 @@ func TestVirtualizationTokenAwareness(t *testing.T) {
 		expectedConns               []int
 		nodes                       int
 		expectedReplicas            []string
+		numTokens                   int
 	}
 
 	tests := []test{
 		{
-			name:                  "3 nodes, 3 instances, 3 virtual hosts, assignment enabled",
-			proxyIndexes:          []int{0, 1, 2},
+			name:         "3 nodes, 3 instances, 3 virtual hosts, assignment enabled",
+			proxyIndexes: []int{0, 1, 2},
 			proxyAddresses: [][]string{
 				{"127.0.0.1", "127.0.0.2", "127.0.0.3"},
 				{"127.0.0.1", "127.0.0.2", "127.0.0.3"},
@@ -205,10 +207,11 @@ func TestVirtualizationTokenAwareness(t *testing.T) {
 			expectedConns:               []int{3, 1, 1},
 			nodes:                       3,
 			expectedReplicas:            []string{"127.0.0.1", "127.0.0.2", "127.0.0.3"},
+			numTokens:                   8,
 		},
 		{
-			name:                  "3 nodes, 4 instances, 4 virtual hosts, assignment enabled",
-			proxyIndexes:          []int{0, 1, 2, 3},
+			name:         "3 nodes, 4 instances, 4 virtual hosts, assignment enabled",
+			proxyIndexes: []int{0, 1, 2, 3},
 			proxyAddresses: [][]string{
 				{"127.0.0.1", "127.0.0.2", "127.0.0.3", "127.0.0.4"},
 				{"127.0.0.1", "127.0.0.2", "127.0.0.3", "127.0.0.4"},
@@ -221,6 +224,7 @@ func TestVirtualizationTokenAwareness(t *testing.T) {
 			expectedConns:               []int{3, 1, 1, 1},
 			nodes:                       3,
 			expectedReplicas:            []string{"127.0.0.1", "127.0.0.2", "127.0.0.3", "127.0.0.4"},
+			numTokens:                   8,
 		},
 		{
 			name:                        "3 nodes, 3 instances, 1 virtual host, assignment enabled",
@@ -233,6 +237,7 @@ func TestVirtualizationTokenAwareness(t *testing.T) {
 			expectedConns:               []int{3, 0, 0},
 			nodes:                       3,
 			expectedReplicas:            []string{"127.0.0.1"},
+			numTokens:                   8,
 		},
 	}
 
@@ -261,7 +266,7 @@ func TestVirtualizationTokenAwareness(t *testing.T) {
 			for i := 0; i < tt.proxyInstanceCreationCount; i++ {
 				proxies[i], err = LaunchProxyWithVirtualizationConfig(
 					strings.Join(tt.proxyAddresses[i], ","), tt.proxyIndexes[i], tt.proxyInstanceCount,
-					fmt.Sprintf("%s%d", "127.0.0.", i+1), origin, target)
+					fmt.Sprintf("%s%d", "127.0.0.", i+1), tt.numTokens, origin, target)
 				j := i
 				require.Nil(t, err)
 				//goland:noinspection GoDeferInLoop
@@ -304,7 +309,7 @@ func TestVirtualizationTokenAwareness(t *testing.T) {
 				}
 			}
 
-			replicas := computeReplicas(len(tt.expectedReplicas))
+			replicas := computeReplicas(len(tt.expectedReplicas), tt.numTokens)
 
 			for i := 0; i < len(queries); i++ {
 				hosts := queriesMap[i]
@@ -322,7 +327,7 @@ func TestVirtualizationTokenAwareness(t *testing.T) {
 }
 
 func LaunchProxyWithVirtualizationConfig(
-	proxyAddresses string, proxyIndex int, instanceCount int, listenAddress string,
+	proxyAddresses string, proxyIndex int, instanceCount int, listenAddress string, numTokens int,
 	origin setup.TestCluster, target setup.TestCluster) (*cloudgateproxy.CloudgateProxy, error) {
 	conf := setup.NewTestConfig(origin.GetInitialContactPoint(), target.GetInitialContactPoint())
 	conf.ProxyIndex = proxyIndex
@@ -330,6 +335,7 @@ func LaunchProxyWithVirtualizationConfig(
 	conf.ProxyAddresses = proxyAddresses
 	conf.ProxyQueryAddress = listenAddress
 	conf.ProxyMetricsAddress = listenAddress
+	conf.ProxyNumTokens = numTokens
 	return setup.NewProxyInstanceWithConfig(conf)
 }
 
@@ -351,13 +357,30 @@ func getReplicaForToken(tokens []*replica, t int64) *replica {
 	return tokens[p]
 }
 
-func computeReplicas(n int) []*replica {
-	replicas := make([]*replica, n)
+func computeReplicas(n int, numTokens int) []*replica {
+	twoPow64 := new(big.Int).Exp(big.NewInt(2), big.NewInt(64), nil)
+	twoPow63 := new(big.Int).Exp(big.NewInt(2), big.NewInt(63), nil)
+	numTokensBig := big.NewInt(int64(numTokens))
+	proxyAddressesCountBig := big.NewInt(int64(n))
+	replicas := make([]*replica, n*numTokens)
 	for i := 0; i < n; i++ {
-		var maxUint64, maxUint63 uint64
-		maxUint64 = 1<<64 - 1
-		maxUint63 = 1<<63 - 1
-		replicas[i] = &replica{i, int64((maxUint64/uint64(n))*uint64(i) - maxUint63)}
+		for t := 0; t < numTokens; t++ {
+			a := new(big.Int).Div(
+				twoPow64,
+				new(big.Int).Mul(
+					numTokensBig, proxyAddressesCountBig))
+
+			b := new(big.Int).Add(
+				new(big.Int).Mul(
+					big.NewInt(int64(t)), proxyAddressesCountBig),
+				big.NewInt(int64(i)))
+
+			tokenInt := new(big.Int).Sub(new(big.Int).Mul(a, b), twoPow63).Int64()
+			replicas[i*numTokens+t] = &replica{i, tokenInt}
+		}
 	}
+	sort.Slice(replicas[:], func(i, j int) bool {
+		return replicas[i].token < replicas[j].token
+	})
 	return replicas
 }

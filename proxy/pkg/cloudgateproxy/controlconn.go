@@ -11,6 +11,7 @@ import (
 	"github.com/riptano/cloud-gate/proxy/pkg/config"
 	log "github.com/sirupsen/logrus"
 	"math"
+	"math/big"
 	"math/rand"
 	"net"
 	"sort"
@@ -346,7 +347,7 @@ func (cc *ControlConn) RefreshHosts(conn CqlConnection) ([]*Host, error) {
 
 	var virtualHosts []*VirtualHost
 	if cc.virtualConfig.VirtualizationEnabled {
-		virtualHosts, err = computeVirtualHosts(cc.virtualConfig.Addresses, orderedHosts)
+		virtualHosts, err = computeVirtualHosts(cc.virtualConfig.Addresses, orderedHosts, cc.virtualConfig.NumTokens)
 		if err != nil {
 			return nil, err
 		}
@@ -533,23 +534,39 @@ func shuffleHosts(rnd *rand.Rand, hosts []*Host) {
 	})
 }
 
-func computeVirtualHosts(proxyAddresses []net.IP, orderedHosts []*Host) ([]*VirtualHost, error) {
-	var maxUint64, maxUint63 uint64
-	maxUint64 = 1<<64 - 1
-	maxUint63 = 1<<63 - 1
+func computeVirtualHosts(proxyAddresses []net.IP, orderedHosts []*Host, numTokens int) ([]*VirtualHost, error) {
+	twoPow64 := new(big.Int).Exp(big.NewInt(2), big.NewInt(64), nil)
+	twoPow63 := new(big.Int).Exp(big.NewInt(2), big.NewInt(63), nil)
 	proxyAddressesCount := len(proxyAddresses)
+	proxyAddressesCountBig := big.NewInt(int64(proxyAddressesCount))
 	assignedHostsForVirtualization := computeAssignedHostsForVirtualization(proxyAddressesCount, orderedHosts)
 	virtualHosts := make([]*VirtualHost, proxyAddressesCount)
+	numTokensBig := big.NewInt(int64(numTokens))
 	for i := 0; i < proxyAddressesCount; i++ {
-		tokenInt := int((maxUint64/uint64(proxyAddressesCount))*uint64(i) - maxUint63)
-		token := fmt.Sprintf("%d", tokenInt)
+		tokens := make([]string, numTokens)
+		for t := 0; t < numTokens; t++ {
+			a := new(big.Int).Div(
+				twoPow64,
+				new(big.Int).Mul(
+					numTokensBig, proxyAddressesCountBig))
+
+			b := new(big.Int).Add(
+				new(big.Int).Mul(
+					big.NewInt(int64(t)), proxyAddressesCountBig),
+				big.NewInt(int64(i)))
+
+			tokenInt := new(big.Int).Sub(new(big.Int).Mul(a, b), twoPow63).Int64()
+			token := fmt.Sprintf("%d", tokenInt)
+			tokens[t] = token
+		}
+		//tokenInt := int((maxUint65/uint64(proxyAddressesCount))*uint64(i) - twoPow63)
 		hostId := uuid.NewSHA1(uuid.Nil, proxyAddresses[i])
 		primitiveHostId, err := primitive.ParseUuid(hostId.String())
 		if err != nil {
 			return nil, fmt.Errorf("could not compute virtual hosts due to proxy host id parsing error: %w", err)
 		}
 		virtualHosts[i] = &VirtualHost{
-			Token:  token,
+			Tokens: tokens,
 			Addr:   proxyAddresses[i],
 			Host:   assignedHostsForVirtualization[i],
 			HostId: primitiveHostId,
@@ -569,16 +586,16 @@ func computeAssignedHostsForVirtualization(count int, orderedHosts []*Host) []*H
 }
 
 type VirtualHost struct {
-	Token  string
+	Tokens []string
 	Addr   net.IP
 	Host   *Host
 	HostId *primitive.UUID
 }
 
 func (recv *VirtualHost) String() string {
-	return fmt.Sprintf("VirtualHost{addr: %v, host_id: %v, token: %v, host: %v}",
+	return fmt.Sprintf("VirtualHost{addr: %v, host_id: %v, tokens: %v, host: %v}",
 		recv.Addr,
 		recv.HostId,
-		recv.Token,
+		recv.Tokens,
 		recv.Host)
 }
