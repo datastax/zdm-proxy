@@ -16,23 +16,26 @@ type ConnectionConfig struct {
 	sniProxyEndpoint    string
 	sniProxyAddr        string
 	clusterType         ClusterType
+	datacenter          string
 	endpointFactory     func(*Host) Endpoint
 }
 
 func NewConnectionConfig(tlsConfig *tls.Config, connectionTimeoutMs int, sniProxyEndpoint string, sniProxyAddr string,
-	clusterType ClusterType, endpointFactory func(*Host) Endpoint) *ConnectionConfig {
+	clusterType ClusterType, datacenter string, endpointFactory func(*Host) Endpoint) *ConnectionConfig {
 	return &ConnectionConfig{
 		tlsConfig:           tlsConfig,
 		connectionTimeoutMs: connectionTimeoutMs,
 		sniProxyEndpoint:    sniProxyEndpoint,
 		sniProxyAddr:        sniProxyAddr,
 		clusterType:         clusterType,
+		datacenter:          datacenter,
 		endpointFactory:     endpointFactory,
 	}
 }
 
 // version from zipped bundle
-func initializeConnectionConfig(secureConnectBundlePath string, contactPoints []string, port int, connTimeoutInMs int, clusterType ClusterType) (*ConnectionConfig, []Endpoint, error){
+func initializeConnectionConfig(secureConnectBundlePath string, contactPointsFromConfig []string, port int,
+	connTimeoutInMs int, clusterType ClusterType, datacenterFromConfig string) (*ConnectionConfig, []Endpoint, error){
 	var connConfig *ConnectionConfig
 	controlConnEndpointConfigs := make([]Endpoint, 0)
 
@@ -72,7 +75,7 @@ func initializeConnectionConfig(secureConnectBundlePath string, contactPoints []
 			return NewAstraEndpoint(metadata.ContactInfo.SniProxyAddress, sniProxyHostname, h.HostId.String(), tlsConfig)
 		}
 
-		connConfig = NewConnectionConfig(tlsConfig, connTimeoutInMs, metadata.ContactInfo.SniProxyAddress, sniProxyHostname, clusterType, endpointFactory)
+		connConfig = NewConnectionConfig(tlsConfig, connTimeoutInMs, metadata.ContactInfo.SniProxyAddress, sniProxyHostname, clusterType, metadata.ContactInfo.LocalDc, endpointFactory)
 
 		// save all contact points as potential control connection endpoints so that if connecting to one fails it is possible to retry with the next one
 		for _, hostIdContactPoint := range metadata.ContactInfo.ContactPoints {
@@ -84,8 +87,8 @@ func initializeConnectionConfig(secureConnectBundlePath string, contactPoints []
 			return NewDefaultEndpoint(h.Address.String(), h.Port)
 		}
 
-		connConfig = NewConnectionConfig(nil, connTimeoutInMs, "", "", clusterType, endpointFactory)
-		for _, contactPoint := range contactPoints {
+		connConfig = NewConnectionConfig(nil, connTimeoutInMs, "", "", clusterType, datacenterFromConfig, endpointFactory)
+		for _, contactPoint := range contactPointsFromConfig {
 			controlConnEndpointConfigs = append(controlConnEndpointConfigs, NewDefaultEndpoint(contactPoint, port))
 		}
 	}

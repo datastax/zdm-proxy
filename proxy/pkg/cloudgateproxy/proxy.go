@@ -20,8 +20,8 @@ import (
 )
 
 type CloudgateProxy struct {
-	Conf                 *config.Config
-	VirtualizationConfig *config.TopologyConfig
+	Conf           *config.Config
+	TopologyConfig *config.TopologyConfig
 
 	originConnectionConfig *ConnectionConfig
 	originContactPoints    []Endpoint
@@ -97,9 +97,9 @@ func (p *CloudgateProxy) Start(ctx context.Context) error {
 		return err
 	}
 
-	originHosts, err := p.originControlConn.GetHosts()
+	originHosts, err := p.originControlConn.GetHostsInLocalDatacenter()
 	if err != nil {
-		return fmt.Errorf("failed to initialize proxy, could not get origin hosts: %w", err)
+		return fmt.Errorf("failed to initialize proxy, could not get origin hostsInLocalDc: %w", err)
 	}
 
 	originAssignedHosts, err := p.originControlConn.GetAssignedHosts()
@@ -110,9 +110,9 @@ func (p *CloudgateProxy) Start(ctx context.Context) error {
 	log.Infof("Initialized origin control connection. Cluster Name: %v, Hosts: %v, Assigned Hosts: %v.",
 		p.originControlConn.GetClusterName(), originHosts, originAssignedHosts)
 
-	targetHosts, err := p.targetControlConn.GetHosts()
+	targetHosts, err := p.targetControlConn.GetHostsInLocalDatacenter()
 	if err != nil {
-		return fmt.Errorf("failed to initialize proxy, could not get target hosts: %w", err)
+		return fmt.Errorf("failed to initialize proxy, could not get target hostsInLocalDc: %w", err)
 	}
 
 	targetAssignedHosts, err := p.targetControlConn.GetAssignedHosts()
@@ -141,14 +141,14 @@ func (p *CloudgateProxy) Start(ctx context.Context) error {
 func (p *CloudgateProxy) initializeControlConnections(ctx context.Context) error {
 	var err error
 
-	virtualizationConfig, err := p.Conf.ParseVirtualizationConfig()
+	topologyConfig, err := p.Conf.ParseTopologyConfig()
 	if err != nil {
-		return fmt.Errorf("failed to parse virtualization config: %w", err)
+		return fmt.Errorf("failed to parse topology config: %w", err)
 	}
 
-	log.Infof("Parsed Virtualization Config: %v", virtualizationConfig)
+	log.Infof("Parsed Topology Config: %v", topologyConfig)
 	p.lock.Lock()
-	p.VirtualizationConfig = virtualizationConfig
+	p.TopologyConfig = topologyConfig
 	p.lock.Unlock()
 
 	parsedOriginContactPoints, err := p.Conf.ParseOriginContactPoints()
@@ -174,7 +174,8 @@ func (p *CloudgateProxy) initializeControlConnections(ctx context.Context) error
 		parsedOriginContactPoints,
 		p.Conf.OriginCassandraPort,
 		p.Conf.ClusterConnectionTimeoutMs,
-		OriginCassandra)
+		OriginCassandra,
+		p.Conf.OriginDatacenter)
 	if err != nil {
 		return fmt.Errorf("error initializing the connection configuration or control connection for Origin: %w", err)
 	}
@@ -189,7 +190,8 @@ func (p *CloudgateProxy) initializeControlConnections(ctx context.Context) error
 		parsedTargetContactPoints,
 		p.Conf.TargetCassandraPort,
 		p.Conf.ClusterConnectionTimeoutMs,
-		TargetCassandra)
+		TargetCassandra,
+		p.Conf.TargetDatacenter)
 	if err != nil {
 		return fmt.Errorf("error initializing the connection configuration or control connection for Target: %w", err)
 	}
@@ -202,7 +204,7 @@ func (p *CloudgateProxy) initializeControlConnections(ctx context.Context) error
 
 	originControlConn := NewControlConn(
 		p.shutdownContext, p.Conf.OriginCassandraPort, p.originConnectionConfig, p.originContactPoints,
-		p.Conf.OriginCassandraUsername, p.Conf.OriginCassandraPassword, p.Conf, virtualizationConfig, p.proxyRand)
+		p.Conf.OriginCassandraUsername, p.Conf.OriginCassandraPassword, p.Conf, topologyConfig, p.proxyRand)
 
 	if err := originControlConn.Start(p.shutdownWaitGroup, ctx, firstContactPointIndex); err != nil {
 		return fmt.Errorf("failed to initialize origin control connection: %w", err)
@@ -214,7 +216,7 @@ func (p *CloudgateProxy) initializeControlConnections(ctx context.Context) error
 
 	targetControlConn := NewControlConn(
 		p.shutdownContext, p.Conf.TargetCassandraPort, p.targetConnectionConfig, p.targetContactPoints,
-		p.Conf.TargetCassandraUsername, p.Conf.TargetCassandraPassword, p.Conf, virtualizationConfig, p.proxyRand)
+		p.Conf.TargetCassandraUsername, p.Conf.TargetCassandraPassword, p.Conf, topologyConfig, p.proxyRand)
 
 	firstContactPointIndex = p.proxyRand.Intn(len(p.targetContactPoints))
 	if err := targetControlConn.Start(p.shutdownWaitGroup, ctx, firstContactPointIndex); err != nil {
@@ -452,7 +454,7 @@ func (p *CloudgateProxy) handleNewConnection(clientConn net.Conn) {
 		p.originControlConn,
 		p.targetControlConn,
 		p.Conf,
-		p.VirtualizationConfig,
+		p.TopologyConfig,
 		p.Conf.OriginCassandraUsername,
 		p.Conf.OriginCassandraPassword,
 		p.PreparedStatementCache,

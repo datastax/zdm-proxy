@@ -18,6 +18,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
 	"net"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -34,7 +35,7 @@ func TestGetHosts(t *testing.T) {
 		clusterName := cc.GetClusterName()
 		require.Equal(t, cluster.Name, clusterName)
 
-		hosts, err := cc.GetHosts()
+		hosts, err := cc.GetHostsInLocalDatacenter()
 		require.Nil(t, err)
 		require.Equal(t, 3, len(hosts))
 		nodesByAddress := make(map[string]*simulacron.Node, 3)
@@ -129,7 +130,7 @@ func TestGetAssignedHosts(t *testing.T) {
 
 	checkAssignedHostsFunc := func(t *testing.T, cc *cloudgateproxy.ControlConn, cluster *simulacron.Cluster, tt test) {
 
-		hosts, err := cc.GetHosts()
+		hosts, err := cc.GetHostsInLocalDatacenter()
 		require.Nil(t, err)
 		require.Equal(t, 3, len(hosts))
 
@@ -225,7 +226,7 @@ func TestNextAssignedHost(t *testing.T) {
 
 	checkAssignedHostsCounterFunc := func(t *testing.T, cc *cloudgateproxy.ControlConn, cluster *simulacron.Cluster, tt test) {
 
-		hosts, err := cc.GetHosts()
+		hosts, err := cc.GetHostsInLocalDatacenter()
 		require.Nil(t, err)
 		require.Equal(t, 3, len(hosts))
 
@@ -390,7 +391,7 @@ func TestConnectionAssignment(t *testing.T) {
 
 	checkRequestsPerNode := func(t *testing.T, cc *cloudgateproxy.ControlConn, cluster *simulacron.Cluster, tt test, queryString string) {
 
-		hosts, err := cc.GetHosts()
+		hosts, err := cc.GetHostsInLocalDatacenter()
 		require.Nil(t, err)
 		require.Equal(t, 3, len(hosts))
 
@@ -480,67 +481,104 @@ func TestConnectionAssignment(t *testing.T) {
 }
 
 func TestRefreshTopologyEventHandler(t *testing.T) {
-	checkHosts := func (t *testing.T, controlConn *cloudgateproxy.ControlConn, expectedDc string, peersIpPrefix string, peersCount int) (err error, fatal bool) {
-		hosts, err := controlConn.GetHosts()
+	checkHosts := func (t *testing.T, controlConn *cloudgateproxy.ControlConn, localHostDc string, peersIpPrefix string,
+		peersCount map[string] int, expectedHostsCountPerDc map[string]int) (err error, fatal bool) {
+		hosts, err := controlConn.GetHostsInLocalDatacenter()
 		if err != nil {
 			return fmt.Errorf("err should be nil: %v", err), true
 		}
 
-		t.Logf("check hosts, expectedDc %v prefix %v count %v hosts count %v", expectedDc, peersIpPrefix, peersCount, len(hosts))
+		hostsPerDc := groupHostsPerDc(hosts)
 
-		if len(hosts) != peersCount + 1 {
-			return fmt.Errorf("hosts len should be %d: %v", peersCount + 1, hosts), false
+		t.Logf("check hosts, localHostDc %v prefix %v count %v hosts count %v", localHostDc, peersIpPrefix, expectedHostsCountPerDc, len(hosts))
+
+		if len(expectedHostsCountPerDc) != len(hostsPerDc) {
+			return fmt.Errorf("dc length mismatch %v vs %v", len(expectedHostsCountPerDc), len(hostsPerDc)), false
 		}
 
-		expectedAddresses := []string{peersIpPrefix} // local host
+		for dc, count := range expectedHostsCountPerDc {
+			if len(hostsPerDc[dc]) != count {
+				return fmt.Errorf("hosts len should be %d: %v", count, hostsPerDc[dc]), false
+			}
+		}
 
-		for i := 0; i < peersCount; i++ {
-			expectedAddresses = append(expectedAddresses, fmt.Sprintf("%s%d", peersIpPrefix, i + 1))
+		expectedAddresses := map[string][]string{localHostDc: {peersIpPrefix}} // local host
+
+		totalExpectedPeersCount := 0
+		peersKeys := make([]string, 0)
+		for key, _ := range peersCount {
+			peersKeys = append(peersKeys, key)
+		}
+		sort.Strings(peersKeys)
+		for _, dc := range peersKeys {
+			count := peersCount[dc]
+			expectedAddressesForDc := expectedAddresses[dc]
+			for i := 0; i < count; i++ {
+				expectedAddressesForDc = append(expectedAddressesForDc, fmt.Sprintf("%s%d", peersIpPrefix, totalExpectedPeersCount + (i + 1)))
+			}
+			expectedAddresses[dc] = expectedAddressesForDc
+			totalExpectedPeersCount += count
 		}
 
 		hostsByIp := make(map[string]*cloudgateproxy.Host)
-		for _, h := range hosts {
-			t.Logf("check host %v prefix %v count %v hosts count %v", h.Address.String(), peersIpPrefix, peersCount, len(hosts))
-			hostsByIp[h.Address.String()] = h
-			if h.Datacenter != expectedDc {
-				return fmt.Errorf("expected dc %v in host %v but actual was %v", expectedDc, h.Address.String(), h.Datacenter), false
-			}
-			found := false
-			for _, expectedAddr := range expectedAddresses {
-				if expectedAddr == h.Address.String() {
-					found = true
+		for _, hostsForDc := range hostsPerDc {
+			for _, h := range hostsForDc {
+				t.Logf("check host %v prefix %v count %v hosts count %v", h.Address.String(), peersIpPrefix, expectedHostsCountPerDc, len(hosts))
+				hostsByIp[h.Address.String()] = h
+				found := 0
+				for expectedDc, expectedAddressesForDc := range expectedAddresses {
+					for _, expectedAddr := range expectedAddressesForDc {
+						if expectedAddr == h.Address.String() {
+							found++
+							if h.Datacenter != expectedDc {
+								return fmt.Errorf("expected expectedDc %v in host %v but actual was %v", expectedDc, h.Address.String(), h.Datacenter), false
+							}
+						}
+					}
 				}
-			}
 
-			if !found {
-				return fmt.Errorf("unexpected host address found: %v", h.Address.String()), false
+				if found != 1 {
+					return fmt.Errorf("unexpected host address found: %v, found counter %v", h.Address.String(), found), false
+				}
 			}
 		}
 
-		if len(hostsByIp) != peersCount + 1 {
-			return fmt.Errorf("hosts by address len should be %d: %v", peersCount + 1, hostsByIp), false
+		if len(hostsByIp) > 0 && len(expectedHostsCountPerDc) == 0 {
+			return fmt.Errorf("expected hosts length is 0 but hostsByIp length is not 0 (%v)", len(hostsByIp)), false
+		}
+
+		for _, hostsDc := range expectedHostsCountPerDc {
+			if len(hostsByIp) != hostsDc {
+				return fmt.Errorf("hosts by address len should be %d: %v", hostsDc, hostsByIp), false
+			}
+
+			// only 1 dc
+			break
 		}
 
 		return nil, false
 	}
 
 	beforeSleepTestFunc := func (t *testing.T, controlConn *cloudgateproxy.ControlConn, handler *atomic.Value,
-		cluster string, expectedDc string, peersIpPrefix string, peersCount int, newPeersCount int) {
-		err, _ := checkHosts(t, controlConn, expectedDc, peersIpPrefix, peersCount)
+		cluster string, oldLocalHostDc string, newLocalHostDc string, peersIpPrefix string, peersCount map[string]int,
+		newPeersCount map[string]int, expectedOldHosts map[string]int) {
+		err, _ := checkHosts(t, controlConn, oldLocalHostDc, peersIpPrefix, peersCount, expectedOldHosts)
 		require.Nil(t, err)
 
-		handler.Store(newRefreshTopologyTestHandler(cluster, expectedDc + "_1", peersIpPrefix, newPeersCount))
+		handler.Store(newRefreshTopologyTestHandler(cluster, newLocalHostDc, peersIpPrefix, newPeersCount))
 	}
 
 	afterSleepTestFunc := func (
 		t *testing.T, controlConn *cloudgateproxy.ControlConn, handler *atomic.Value, server *client.CqlServer,
-		cluster string, expectedDc string, peersIpPrefix string, oldPeersCount int, newPeersCount int) {
+		cluster string, oldLocalHostDc string, newLocalHostDc string, peersIpPrefix string,
+		oldPeersCount map[string]int, newPeersCount map[string]int,
+		expectedOldHosts map[string]int, expectedNewHosts map[string]int) {
 		serverConns, err := server.AllAcceptedClients()
 		require.Nil(t, err)
 		require.Equal(t, 1, len(serverConns))
 		serverConn := serverConns[0]
 
-		err, _ = checkHosts(t, controlConn, expectedDc, peersIpPrefix, oldPeersCount)
+		err, _ = checkHosts(t, controlConn, oldLocalHostDc, peersIpPrefix, oldPeersCount, expectedOldHosts)
 		require.Nil(t, err)
 
 		topologyEvent := &message.TopologyChangeEvent{
@@ -555,48 +593,144 @@ func TestRefreshTopologyEventHandler(t *testing.T) {
 		require.Nil(t, err)
 
 		utils.RequireWithRetries(t, func() (err error, fatal bool) {
-			return checkHosts(t, controlConn, expectedDc + "_1", peersIpPrefix, newPeersCount)
+			return checkHosts(t, controlConn, newLocalHostDc, peersIpPrefix, newPeersCount, expectedNewHosts)
 		}, 50, 100 * time.Millisecond)
 	}
 
 	type test struct {
-		oldOriginPeersCount int
-		newOriginPeersCount int
-		oldTargetPeersCount int
-		newTargetPeersCount int
+		name                        string
+		originDcConf                string
+		targetDcConf                string
+		oldOriginLocalHostDc        string
+		newOriginLocalHostDc        string
+		oldTargetLocalHostDc        string
+		newTargetLocalHostDc        string
+		oldOriginPeersCount         map[string]int
+		newOriginPeersCount         map[string]int
+		oldTargetPeersCount         map[string]int
+		newTargetPeersCount         map[string]int
+		expectedOldOriginHostsCount map[string]int
+		expectedNewOriginHostsCount map[string]int
+		expectedOldTargetHostsCount map[string]int
+		expectedNewTargetHostsCount map[string]int
 	}
 
 	tests := []test{
 		{
-			oldOriginPeersCount: 10,
-			newOriginPeersCount: 11,
-			oldTargetPeersCount: 5,
-			newTargetPeersCount: 6,
+			name:                        "single_dc_add_peer",
+			originDcConf:                "",
+			targetDcConf:                "",
+			oldOriginLocalHostDc:        "dc1",
+			newOriginLocalHostDc:        "dc1",
+			oldTargetLocalHostDc:        "dc2",
+			newTargetLocalHostDc:        "dc2",
+			oldOriginPeersCount:         map[string]int{"dc1": 10},
+			newOriginPeersCount:         map[string]int{"dc1": 11},
+			oldTargetPeersCount:         map[string]int{"dc2": 5},
+			newTargetPeersCount:         map[string]int{"dc2": 6},
+			expectedOldOriginHostsCount: map[string]int{"dc1": 11},
+			expectedNewOriginHostsCount: map[string]int{"dc1": 12},
+			expectedOldTargetHostsCount: map[string]int{"dc2": 6},
+			expectedNewTargetHostsCount: map[string]int{"dc2": 7},
 		},
 		{
-			oldOriginPeersCount: 6,
-			newOriginPeersCount: 5,
-			oldTargetPeersCount: 3,
-			newTargetPeersCount: 2,
+			name:                        "single_dc_remove_peer",
+			originDcConf:                "",
+			targetDcConf:                "",
+			oldOriginLocalHostDc:        "dc1",
+			newOriginLocalHostDc:        "dc1",
+			oldTargetLocalHostDc:        "dc2",
+			newTargetLocalHostDc:        "dc2",
+			oldOriginPeersCount:         map[string]int{"dc1": 6},
+			newOriginPeersCount:         map[string]int{"dc1": 5},
+			oldTargetPeersCount:         map[string]int{"dc2": 3},
+			newTargetPeersCount:         map[string]int{"dc2": 2},
+			expectedOldOriginHostsCount: map[string]int{"dc1": 7},
+			expectedNewOriginHostsCount: map[string]int{"dc1": 6},
+			expectedOldTargetHostsCount: map[string]int{"dc2": 4},
+			expectedNewTargetHostsCount: map[string]int{"dc2": 3},
 		},
 		{
-			oldOriginPeersCount: 1,
-			newOriginPeersCount: 0,
-			oldTargetPeersCount: 0,
-			newTargetPeersCount: 1,
+			name:                        "single_dc_remove_all_peers",
+			originDcConf:                "",
+			targetDcConf:                "",
+			oldOriginLocalHostDc:        "dc1",
+			newOriginLocalHostDc:        "dc1",
+			oldTargetLocalHostDc:        "dc2",
+			newTargetLocalHostDc:        "dc2",
+			oldOriginPeersCount:         map[string]int{"dc1": 1},
+			newOriginPeersCount:         map[string]int{"dc1": 0},
+			oldTargetPeersCount:         map[string]int{"dc2": 0},
+			newTargetPeersCount:         map[string]int{"dc2": 1},
+			expectedOldOriginHostsCount: map[string]int{"dc1": 2},
+			expectedNewOriginHostsCount: map[string]int{"dc1": 1},
+			expectedOldTargetHostsCount: map[string]int{"dc2": 1},
+			expectedNewTargetHostsCount: map[string]int{"dc2": 2},
+		},
+		{
+			name:                        "two_dcs_add_remote_peer",
+			originDcConf:                "",
+			targetDcConf:                "",
+			oldOriginLocalHostDc:        "dc1",
+			newOriginLocalHostDc:        "dc1",
+			oldTargetLocalHostDc:        "dc2",
+			newTargetLocalHostDc:        "dc2",
+			oldOriginPeersCount:         map[string]int{"dc1": 10, "dc11": 20},
+			newOriginPeersCount:         map[string]int{"dc1": 10, "dc11": 21},
+			oldTargetPeersCount:         map[string]int{"dc2": 5, "dc21": 15},
+			newTargetPeersCount:         map[string]int{"dc2": 5, "dc21": 16},
+			expectedOldOriginHostsCount: map[string]int{"dc1": 11},
+			expectedNewOriginHostsCount: map[string]int{"dc1": 11},
+			expectedOldTargetHostsCount: map[string]int{"dc2": 6},
+			expectedNewTargetHostsCount: map[string]int{"dc2": 6},
+		},
+		{
+			name:                        "two_dcs_add_local_peer",
+			originDcConf:                "",
+			targetDcConf:                "",
+			oldOriginLocalHostDc:        "dc1",
+			newOriginLocalHostDc:        "dc1",
+			oldTargetLocalHostDc:        "dc2",
+			newTargetLocalHostDc:        "dc2",
+			oldOriginPeersCount:         map[string]int{"dc1": 12, "dc11": 20},
+			newOriginPeersCount:         map[string]int{"dc1": 13, "dc11": 20},
+			oldTargetPeersCount:         map[string]int{"dc2": 6, "dc21": 15},
+			newTargetPeersCount:         map[string]int{"dc2": 7, "dc21": 15},
+			expectedOldOriginHostsCount: map[string]int{"dc1": 13},
+			expectedNewOriginHostsCount: map[string]int{"dc1": 14},
+			expectedOldTargetHostsCount: map[string]int{"dc2": 7},
+			expectedNewTargetHostsCount: map[string]int{"dc2": 8},
+		},
+		{
+			name:                        "two_dcs_local_dc_different_than_conf_dc_add_peer",
+			originDcConf:                "dc11",
+			targetDcConf:                "dc21",
+			oldOriginLocalHostDc:        "dc1",
+			newOriginLocalHostDc:        "dc1",
+			oldTargetLocalHostDc:        "dc2",
+			newTargetLocalHostDc:        "dc2",
+			oldOriginPeersCount:         map[string]int{"dc1": 12, "dc11": 20},
+			newOriginPeersCount:         map[string]int{"dc1": 12, "dc11": 21},
+			oldTargetPeersCount:         map[string]int{"dc2": 6, "dc21": 15},
+			newTargetPeersCount:         map[string]int{"dc2": 6, "dc21": 16},
+			expectedOldOriginHostsCount: map[string]int{"dc11": 20},
+			expectedNewOriginHostsCount: map[string]int{"dc11": 21},
+			expectedOldTargetHostsCount: map[string]int{"dc21": 15},
+			expectedNewTargetHostsCount: map[string]int{"dc21": 16},
 		},
 	}
 
 	for _, tt := range tests {
-		t.Run(fmt.Sprintf("oldOrigin %v newOrigin %v oldTarget %v newTarget %v",
-			tt.oldOriginPeersCount, tt.newOriginPeersCount, tt.oldTargetPeersCount, tt.newTargetPeersCount), func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			conf := setup.NewTestConfig("127.0.1.1", "127.0.1.2")
+			conf.OriginDatacenter = tt.originDcConf
+			conf.TargetDatacenter = tt.targetDcConf
 
 			originHandler := &atomic.Value{}
-			originHandler.Store(newRefreshTopologyTestHandler("cluster1", "dc1", "127.0.1.1", tt.oldOriginPeersCount))
+			originHandler.Store(newRefreshTopologyTestHandler("cluster1", tt.oldOriginLocalHostDc, "127.0.1.1", tt.oldOriginPeersCount))
 
 			targetHandler := &atomic.Value{}
-			targetHandler.Store(newRefreshTopologyTestHandler("cluster2", "dc2", "127.0.1.2", tt.oldTargetPeersCount))
+			targetHandler.Store(newRefreshTopologyTestHandler("cluster2", tt.oldTargetLocalHostDc, "127.0.1.2", tt.oldTargetPeersCount))
 
 			createMutableHandler := func(handler *atomic.Value) func(request *frame.Frame, conn *client.CqlServerConnection, ctx client.RequestHandlerContext) (response *frame.Frame) {
 				return func(request *frame.Frame, conn *client.CqlServerConnection, ctx client.RequestHandlerContext) (response *frame.Frame) {
@@ -612,27 +746,35 @@ func TestRefreshTopologyEventHandler(t *testing.T) {
 			err = testSetup.Start(conf, false, primitive.ProtocolVersion4)
 			require.Nil(t, err)
 			proxy := testSetup.Proxy
-			beforeSleepTestFunc(t, proxy.GetOriginControlConn(), originHandler, "cluster1", "dc1", "127.0.1.1", tt.oldOriginPeersCount, tt.newOriginPeersCount)
-			beforeSleepTestFunc(t, proxy.GetTargetControlConn(), targetHandler, "cluster2", "dc2", "127.0.1.2", tt.oldTargetPeersCount, tt.newTargetPeersCount)
+			beforeSleepTestFunc(t, proxy.GetOriginControlConn(), originHandler, "cluster1", tt.oldOriginLocalHostDc, tt.newOriginLocalHostDc, "127.0.1.1", tt.oldOriginPeersCount, tt.newOriginPeersCount, tt.expectedOldOriginHostsCount)
+			beforeSleepTestFunc(t, proxy.GetTargetControlConn(), targetHandler, "cluster2", tt.oldTargetLocalHostDc, tt.newTargetLocalHostDc, "127.0.1.2", tt.oldTargetPeersCount, tt.newTargetPeersCount, tt.expectedOldTargetHostsCount)
 			time.Sleep(5 * time.Second)
-			afterSleepTestFunc(t, proxy.GetOriginControlConn(), originHandler, testSetup.Origin.CqlServer, "cluster1", "dc1", "127.0.1.1", tt.oldOriginPeersCount, tt.newOriginPeersCount)
-			afterSleepTestFunc(t, proxy.GetTargetControlConn(), targetHandler, testSetup.Target.CqlServer, "cluster2", "dc2", "127.0.1.2", tt.oldTargetPeersCount, tt.newTargetPeersCount)
+			afterSleepTestFunc(t, proxy.GetOriginControlConn(), originHandler, testSetup.Origin.CqlServer, "cluster1", tt.oldOriginLocalHostDc, tt.newOriginLocalHostDc, "127.0.1.1", tt.oldOriginPeersCount, tt.newOriginPeersCount, tt.expectedOldOriginHostsCount, tt.expectedNewOriginHostsCount)
+			afterSleepTestFunc(t, proxy.GetTargetControlConn(), targetHandler, testSetup.Target.CqlServer, "cluster2", tt.oldTargetLocalHostDc, tt.newTargetLocalHostDc, "127.0.1.2", tt.oldTargetPeersCount, tt.newTargetPeersCount, tt.expectedOldTargetHostsCount, tt.expectedNewTargetHostsCount)
 		})
 	}
 }
 
-func newRefreshTopologyTestHandler(cluster string, datacenter string, peersIpPrefix string, peersCount int) client.RequestHandler {
+func groupHostsPerDc(hosts []*cloudgateproxy.Host) map[string][]*cloudgateproxy.Host {
+	hostsPerDc := make(map[string][]*cloudgateproxy.Host)
+	for _, h := range hosts {
+		hostsPerDc[h.Datacenter] = append(hostsPerDc[h.Datacenter], h)
+	}
+	return hostsPerDc
+}
+
+func newRefreshTopologyTestHandler(cluster string, localHostDc string, peersIpPrefix string, peersCount map[string]int) client.RequestHandler {
 	return client.NewCompositeRequestHandler(
 		client.HeartbeatHandler,
 		client.HandshakeHandler,
 		client.NewSetKeyspaceHandler(func(_ string) { }),
 		client.RegisterHandler,
-		newSystemTablesHandler(cluster, datacenter, peersIpPrefix, peersCount),
+		newSystemTablesHandler(cluster, localHostDc, peersIpPrefix, peersCount),
 	)
 }
 
 // Creates a new RequestHandler to handle queries to system tables (system.local and system.peers).
-func newSystemTablesHandler(cluster string, datacenter string, peersIpPrefix string, peersCount int) client.RequestHandler {
+func newSystemTablesHandler(cluster string, datacenter string, peersIpPrefix string, peersCount map[string]int) client.RequestHandler {
 	return func(request *frame.Frame, conn *client.CqlServerConnection, _ client.RequestHandlerContext) (response *frame.Frame) {
 		if query, ok := request.Body.Message.(*message.Query); ok {
 			q := strings.TrimSpace(strings.ToLower(query.Query))
@@ -648,7 +790,7 @@ func newSystemTablesHandler(cluster string, datacenter string, peersIpPrefix str
 				response = clusterName(cluster, request)
 			} else if strings.Contains(q, "from system.peers") {
 				log.Debugf("%v: [system tables handler]: returning empty system.peers", conn)
-				response = fullSystemPeers(datacenter, request, conn, peersIpPrefix, peersCount)
+				response = fullSystemPeers(request, conn, peersIpPrefix, peersCount)
 			}
 		}
 		return
@@ -806,18 +948,29 @@ func systemPeersRow(datacenter string, addr net.Addr, version primitive.Protocol
 }
 
 func fullSystemPeers(
-	datacenter string, request *frame.Frame, localConn *client.CqlServerConnection, ipPrefix string, peersCount int) *frame.Frame {
-	systemLocalRows := make(message.RowSet, peersCount)
+	request *frame.Frame, localConn *client.CqlServerConnection, ipPrefix string, peersCount map[string]int) *frame.Frame {
+	systemLocalRows := message.RowSet{}
 	localAddr := localConn.LocalAddr().(*net.TCPAddr)
-	for i := 0; i < peersCount; i++ {
-		systemLocalRows[i] = systemPeersRow(
-			datacenter,
-			&net.TCPAddr{
-				IP:   net.ParseIP(fmt.Sprintf("%s%d", ipPrefix, i+1)),
-				Port: localAddr.Port,
-				Zone: localAddr.Zone,
-			},
-			request.Header.Version)
+	totalCount := 0
+	peersKeys := make([]string, 0)
+	for key, _ := range peersCount {
+		peersKeys = append(peersKeys, key)
+	}
+	sort.Strings(peersKeys)
+	for _, dc := range peersKeys {
+		count := peersCount[dc]
+		for i := 0; i < count; i++ {
+			newRow := systemPeersRow(
+				dc,
+				&net.TCPAddr{
+					IP:   net.ParseIP(fmt.Sprintf("%s%d", ipPrefix, totalCount + i + 1)),
+					Port: localAddr.Port,
+					Zone: localAddr.Zone,
+				},
+				request.Header.Version)
+			systemLocalRows = append(systemLocalRows, newRow)
+		}
+		totalCount+=count
 	}
 	msg := &message.RowsResult{
 		Metadata: &message.RowsMetadata{

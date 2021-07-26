@@ -92,10 +92,8 @@ func CleanUpClusters() {
 		return
 	}
 
-	globalCcmClusterTarget.SwitchToThis()
-	ccm.RemoveCurrent()
-	globalCcmClusterOrigin.SwitchToThis()
-	ccm.RemoveCurrent()
+	globalCcmClusterTarget.Remove()
+	globalCcmClusterOrigin.Remove()
 }
 
 type SimulacronTestSetup struct {

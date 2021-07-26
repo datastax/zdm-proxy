@@ -96,7 +96,7 @@ func TestVirtualizationNumberOfConnections(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			proxies := make([]*cloudgateproxy.CloudgateProxy, tt.proxyInstanceCreationCount)
 			for i := 0; i < tt.proxyInstanceCreationCount; i++ {
-				proxies[i], err = LaunchProxyWithVirtualizationConfig(
+				proxies[i], err = LaunchProxyWithTopologyConfig(
 					strings.Join(tt.proxyAddresses[i], ","), tt.proxyIndexes[i], tt.proxyInstanceCount,
 					fmt.Sprintf("%s%d", "127.0.0.", i+1), 8, testSetup.Origin, testSetup.Target)
 				j := i
@@ -264,7 +264,7 @@ func TestVirtualizationTokenAwareness(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			proxies := make([]*cloudgateproxy.CloudgateProxy, tt.proxyInstanceCreationCount)
 			for i := 0; i < tt.proxyInstanceCreationCount; i++ {
-				proxies[i], err = LaunchProxyWithVirtualizationConfig(
+				proxies[i], err = LaunchProxyWithTopologyConfig(
 					strings.Join(tt.proxyAddresses[i], ","), tt.proxyIndexes[i], tt.proxyInstanceCount,
 					fmt.Sprintf("%s%d", "127.0.0.", i+1), tt.numTokens, origin, target)
 				j := i
@@ -326,7 +326,7 @@ func TestVirtualizationTokenAwareness(t *testing.T) {
 	}
 }
 
-func LaunchProxyWithVirtualizationConfig(
+func LaunchProxyWithTopologyConfig(
 	proxyAddresses string, proxyIndex int, instanceCount int, listenAddress string, numTokens int,
 	origin setup.TestCluster, target setup.TestCluster) (*cloudgateproxy.CloudgateProxy, error) {
 	conf := setup.NewTestConfig(origin.GetInitialContactPoint(), target.GetInitialContactPoint())

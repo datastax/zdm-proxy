@@ -23,7 +23,7 @@ import (
 
 type ControlConn struct {
 	conf                     *config.Config
-	virtualConfig            *config.TopologyConfig
+	topologyConfig           *config.TopologyConfig
 	cqlConn                  CqlConnection
 	retryBackoffPolicy       *backoff.Backoff
 	heartbeatPeriod          time.Duration
@@ -41,7 +41,8 @@ type ControlConn struct {
 	cqlConnLock              *sync.Mutex
 	genericTypeCodec         *GenericTypeCodec
 	topologyLock             *sync.RWMutex
-	hosts                    []*Host
+	datacenter               string
+	hostsInLocalDc           []*Host
 	assignedHosts            []*Host
 	currentAssignment        int64
 	refreshHostsDebouncer    chan bool
@@ -51,16 +52,17 @@ type ControlConn struct {
 	proxyRand                *rand.Rand
 }
 
+const ProxyVirtualRack = "rack0"
 const ccProtocolVersion = primitive.ProtocolVersion3
 const ccWriteTimeout = 5 * time.Second
 const ccReadTimeout = 10 * time.Second
 
 func NewControlConn(ctx context.Context, defaultPort int, connConfig *ConnectionConfig, contactPoints []Endpoint,
-	username string, password string, conf *config.Config, virtualConf *config.TopologyConfig, proxyRand *rand.Rand) *ControlConn {
+	username string, password string, conf *config.Config, topologyConfig *config.TopologyConfig, proxyRand *rand.Rand) *ControlConn {
 	return &ControlConn{
-		conf:          conf,
-		virtualConfig: virtualConf,
-		cqlConn:       nil,
+		conf:           conf,
+		topologyConfig: topologyConfig,
+		cqlConn:        nil,
 		retryBackoffPolicy: &backoff.Backoff{
 			Factor: conf.HeartbeatRetryBackoffFactor,
 			Jitter: true,
@@ -82,7 +84,7 @@ func NewControlConn(ctx context.Context, defaultPort int, connConfig *Connection
 		cqlConnLock:              &sync.Mutex{},
 		genericTypeCodec:         NewDefaultGenericTypeCodec(ccProtocolVersion),
 		topologyLock:             &sync.RWMutex{},
-		hosts:                    nil,
+		hostsInLocalDc:           nil,
 		assignedHosts:            nil,
 		currentAssignment:        0,
 		refreshHostsDebouncer:    make(chan bool, 1),
@@ -107,7 +109,7 @@ func (cc *ControlConn) Start(wg *sync.WaitGroup, ctx context.Context, firstConta
 		}
 
 		cqlConn := NewCqlConnection(conn, cc.username, cc.password, ccReadTimeout, ccWriteTimeout)
-		newConn, newContactPoint, err := cc.Open(cqlConn, endpoint, ctx)
+		newConn, newContactPoint, err := cc.Open(true, cqlConn, endpoint, ctx)
 		if err != nil {
 			connCloseErr := conn.Close()
 			if connCloseErr != nil {
@@ -165,7 +167,7 @@ func (cc *ControlConn) Start(wg *sync.WaitGroup, ctx context.Context, firstConta
 			conn, contactPoint := cc.getConnAndContactPoint()
 			if conn == nil || !conn.IsInitialized() {
 				log.Infof("Reopening control connection to %v.", cc.connConfig.clusterType)
-				newConn, newContactPoint, err := cc.Open(conn, contactPoint, nil)
+				newConn, newContactPoint, err := cc.Open(false, conn, contactPoint, nil)
 				if err != nil {
 					cc.setConn(conn, nil, nil)
 					timeUntilRetry := cc.retryBackoffPolicy.Duration()
@@ -251,7 +253,7 @@ func (cc *ControlConn) ReadFailureCounter() int {
 	return cc.consecutiveFailures
 }
 
-func (cc *ControlConn) Open(conn CqlConnection, contactPoint Endpoint, ctx context.Context) (CqlConnection, Endpoint, error) {
+func (cc *ControlConn) Open(start bool, conn CqlConnection, contactPoint Endpoint, ctx context.Context) (CqlConnection, Endpoint, error) {
 	if ctx == nil {
 		ctx = cc.context
 	}
@@ -268,6 +270,11 @@ func (cc *ControlConn) Open(conn CqlConnection, contactPoint Endpoint, ctx conte
 	err := conn.InitializeContext(ccProtocolVersion, ctx)
 	if err == nil {
 		_, err = cc.RefreshHosts(conn)
+		if err != nil && start == false {
+			log.Warnf("Error occured while refreshing hosts: %v. " +
+				"Ignoring this error because the control connection was already initialized.", err)
+			err = nil
+		}
 	}
 
 	conn.SetEventHandler(func(f *frame.Frame) {
@@ -322,7 +329,7 @@ func (cc *ControlConn) RefreshHosts(conn CqlConnection) ([]*Host, error) {
 	}
 
 	partitioner := localInfo.partitioner.AsNillableString()
-	if partitioner != nil && !strings.Contains(*partitioner, "Murmur3Partitioner") && cc.virtualConfig.VirtualizationEnabled {
+	if partitioner != nil && !strings.Contains(*partitioner, "Murmur3Partitioner") && cc.topologyConfig.VirtualizationEnabled {
 		return nil, fmt.Errorf("virtualization is enabled and partitioner is not Murmur3 but instead %v", *partitioner)
 	}
 
@@ -331,23 +338,33 @@ func (cc *ControlConn) RefreshHosts(conn CqlConnection) ([]*Host, error) {
 		return nil, fmt.Errorf("could not fetch information from system.peers table: %w", err)
 	}
 
-	orderedHosts, preferredIpExists := ParseSystemPeersResult(peersQuery, cc.defaultPort, false)
+	orderedLocalHosts, preferredIpExists := ParseSystemPeersResult(peersQuery, cc.defaultPort, false)
 
-	orderedHosts = append([]*Host{localHost}, orderedHosts...)
-	sort.Slice(orderedHosts, func(i, j int) bool {
-		if orderedHosts[i].Rack == orderedHosts[j].Rack {
-			return orderedHosts[i].HostId.String() < orderedHosts[j].HostId.String()
+	orderedLocalHosts = append([]*Host{localHost}, orderedLocalHosts...)
+
+	cc.topologyLock.RLock()
+	currentDc := cc.datacenter
+	cc.topologyLock.RUnlock()
+
+	orderedLocalHosts, currentDc, err = filterHosts(orderedLocalHosts, currentDc, cc.connConfig, localHost)
+	if err != nil {
+		return nil, err
+	}
+
+	sort.Slice(orderedLocalHosts, func(i, j int) bool {
+		if orderedLocalHosts[i].Rack == orderedLocalHosts[j].Rack {
+			return orderedLocalHosts[i].HostId.String() < orderedLocalHosts[j].HostId.String()
 		}
 
-		return orderedHosts[i].Rack < orderedHosts[j].Rack
+		return orderedLocalHosts[i].Rack < orderedLocalHosts[j].Rack
 	})
 
-	assignedHosts := computeAssignedHosts(cc.virtualConfig.Index, cc.virtualConfig.Count, orderedHosts)
+	assignedHosts := computeAssignedHosts(cc.topologyConfig.Index, cc.topologyConfig.Count, orderedLocalHosts)
 	shuffleHosts(cc.proxyRand, assignedHosts)
 
 	var virtualHosts []*VirtualHost
-	if cc.virtualConfig.VirtualizationEnabled {
-		virtualHosts, err = computeVirtualHosts(cc.virtualConfig.Addresses, orderedHosts, cc.virtualConfig.NumTokens)
+	if cc.topologyConfig.VirtualizationEnabled {
+		virtualHosts, err = computeVirtualHosts(cc.topologyConfig, orderedLocalHosts)
 		if err != nil {
 			return nil, err
 		}
@@ -355,36 +372,39 @@ func (cc *ControlConn) RefreshHosts(conn CqlConnection) ([]*Host, error) {
 		virtualHosts = make([]*VirtualHost, 0)
 	}
 
-	log.Infof("Refreshed %v hosts. Assigned Hosts: %v, VirtualHosts: %v, ProxyIndex: %v",
-		cc.connConfig.clusterType, assignedHosts, virtualHosts, cc.virtualConfig.Index)
+	log.Infof("Refreshed %v hostsInLocalDc. Assigned Hosts: %v, VirtualHosts: %v, ProxyIndex: %v",
+		cc.connConfig.clusterType, assignedHosts, virtualHosts, cc.topologyConfig.Index)
 
 	cc.topologyLock.Lock()
-	cc.hosts = orderedHosts
+	if cc.datacenter == "" {
+		cc.datacenter = currentDc
+	}
+	cc.hostsInLocalDc = orderedLocalHosts
 	cc.assignedHosts = assignedHosts
 	cc.systemLocalInfo = localInfo
 	cc.preferredIpColumnExists = preferredIpExists
 	cc.virtualHosts = virtualHosts
 	cc.topologyLock.Unlock()
 
-	return orderedHosts, nil
+	return orderedLocalHosts, nil
 }
 
-func (cc *ControlConn) GetHosts() ([]*Host, error) {
+func (cc *ControlConn) GetHostsInLocalDatacenter() ([]*Host, error) {
 	cc.topologyLock.RLock()
 	defer cc.topologyLock.RUnlock()
 
-	if cc.hosts == nil {
-		return nil, fmt.Errorf("could not get hosts because topology information has not been retrieved yet")
+	if cc.hostsInLocalDc == nil {
+		return nil, fmt.Errorf("could not get hostsInLocalDc because topology information has not been retrieved yet")
 	}
 
-	return cc.hosts, nil
+	return cc.hostsInLocalDc, nil
 }
 
 func (cc *ControlConn) GetVirtualHosts() ([]*VirtualHost, error) {
 	cc.topologyLock.RLock()
 	defer cc.topologyLock.RUnlock()
 
-	if !cc.virtualConfig.VirtualizationEnabled {
+	if !cc.topologyConfig.VirtualizationEnabled {
 		return nil, fmt.Errorf("could not get virtual hosts because virtualization is not enabled")
 	}
 
@@ -396,7 +416,7 @@ func (cc *ControlConn) GetVirtualHosts() ([]*VirtualHost, error) {
 }
 
 func (cc *ControlConn) GetLocalVirtualHostIndex() int {
-	return cc.virtualConfig.Index
+	return cc.topologyConfig.Index
 }
 
 func (cc *ControlConn) GetAssignedHosts() ([]*Host, error) {
@@ -534,7 +554,9 @@ func shuffleHosts(rnd *rand.Rand, hosts []*Host) {
 	})
 }
 
-func computeVirtualHosts(proxyAddresses []net.IP, orderedHosts []*Host, numTokens int) ([]*VirtualHost, error) {
+func computeVirtualHosts(topologyConfig *config.TopologyConfig, orderedHosts []*Host) ([]*VirtualHost, error) {
+	proxyAddresses := topologyConfig.Addresses
+	numTokens := topologyConfig.NumTokens
 	twoPow64 := new(big.Int).Exp(big.NewInt(2), big.NewInt(64), nil)
 	twoPow63 := new(big.Int).Exp(big.NewInt(2), big.NewInt(63), nil)
 	proxyAddressesCount := len(proxyAddresses)
@@ -559,20 +581,66 @@ func computeVirtualHosts(proxyAddresses []net.IP, orderedHosts []*Host, numToken
 			token := fmt.Sprintf("%d", tokenInt)
 			tokens[t] = token
 		}
-		//tokenInt := int((maxUint65/uint64(proxyAddressesCount))*uint64(i) - twoPow63)
 		hostId := uuid.NewSHA1(uuid.Nil, proxyAddresses[i])
 		primitiveHostId, err := primitive.ParseUuid(hostId.String())
 		if err != nil {
 			return nil, fmt.Errorf("could not compute virtual hosts due to proxy host id parsing error: %w", err)
 		}
+
+		host := assignedHostsForVirtualization[i]
+		dc := topologyConfig.VirtualDatacenter
+		if dc == "" {
+			dc = host.Datacenter
+		}
+
 		virtualHosts[i] = &VirtualHost{
-			Tokens: tokens,
-			Addr:   proxyAddresses[i],
-			Host:   assignedHostsForVirtualization[i],
-			HostId: primitiveHostId,
+			Tokens:     tokens,
+			Addr:       proxyAddresses[i],
+			Host:       host,
+			HostId:     primitiveHostId,
+			Datacenter: dc,
+			Rack:       ProxyVirtualRack,
 		}
 	}
 	return virtualHosts, nil
+}
+
+func filterHostsByDatacenter(datacenter string, hosts []*Host) []*Host {
+	filteredHosts := make([]*Host, 0, len(hosts))
+	for _, h := range hosts {
+		if h.Datacenter == datacenter {
+			filteredHosts = append(filteredHosts, h)
+		}
+	}
+	return filteredHosts
+}
+
+func filterHosts(hosts []*Host, currentDc string, connConfig *ConnectionConfig, localHost *Host) ([]*Host, string, error) {
+	if currentDc != "" {
+		filteredOrderedHosts := filterHostsByDatacenter(currentDc, hosts)
+		if len(filteredOrderedHosts) == 0 {
+			return nil, "", fmt.Errorf("current DC was already set to '%v' but no hosts with this DC were found: %v",
+				currentDc, hosts)
+		}
+		return filteredOrderedHosts, currentDc, nil
+	}
+
+	if connConfig.datacenter != "" {
+		filteredOrderedHosts := filterHostsByDatacenter(connConfig.datacenter, hosts)
+		if len(filteredOrderedHosts) == 0 {
+			log.Warnf("datacenter was set to '%v' but no hosts were found with that DC " +
+				"so falling back to local host's DC '%v' (hosts=%v)",
+				connConfig.datacenter, localHost.Datacenter, hosts)
+		} else {
+			return filteredOrderedHosts, connConfig.datacenter, nil
+		}
+	}
+
+	filteredOrderedHosts := filterHostsByDatacenter(localHost.Datacenter, hosts)
+	if len(filteredOrderedHosts) == 0 {
+		return nil, "", fmt.Errorf("no hosts found with inferred local DC '%v': %v", localHost.Datacenter, hosts)
+	}
+	return filteredOrderedHosts, localHost.Datacenter, nil
 }
 
 func computeAssignedHostsForVirtualization(count int, orderedHosts []*Host) []*Host {
@@ -586,16 +654,20 @@ func computeAssignedHostsForVirtualization(count int, orderedHosts []*Host) []*H
 }
 
 type VirtualHost struct {
-	Tokens []string
-	Addr   net.IP
-	Host   *Host
-	HostId *primitive.UUID
+	Tokens     []string
+	Addr       net.IP
+	Host       *Host
+	HostId     *primitive.UUID
+	Datacenter string
+	Rack       string
 }
 
 func (recv *VirtualHost) String() string {
-	return fmt.Sprintf("VirtualHost{addr: %v, host_id: %v, tokens: %v, host: %v}",
+	return fmt.Sprintf("VirtualHost{addr: %v, host_id: %v, datacenter: %v, rack: %v, tokens: %v, host: %v}",
 		recv.Addr,
 		recv.HostId,
+		recv.Datacenter,
+		recv.Rack,
 		recv.Tokens,
 		recv.Host)
 }

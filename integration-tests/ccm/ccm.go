@@ -67,8 +67,8 @@ func Add(seed bool, address string, remoteDebugPort int, jmxPort int, name strin
 	}
 }
 
-func RemoveCurrent() (string, error) {
-	return execCcm("remove")
+func StopCurrent() (string, error) {
+	return execCcm("stop")
 }
 
 func Remove(name string) (string, error) {

@@ -26,8 +26,6 @@ func TestMain(m *testing.M) {
 	}
 
 	if env.UseCcm {
-		ccm.RemoveCurrent()
-		ccm.RemoveCurrent()
 		var err error
 		originCluster, err = setup.GetGlobalTestClusterOrigin()
 

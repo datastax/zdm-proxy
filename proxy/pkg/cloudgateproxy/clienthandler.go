@@ -79,8 +79,8 @@ type ClientHandler struct {
 	clientConnectorScheduler  *Scheduler
 	clusterConnectorScheduler *Scheduler
 
-	conf *config.Config
-	virtualizationConfig *config.TopologyConfig
+	conf           *config.Config
+	topologyConfig *config.TopologyConfig
 
 	requestLoopWaitGroup *sync.WaitGroup
 }
@@ -92,7 +92,7 @@ func NewClientHandler(
 	originControlConn *ControlConn,
 	targetControlConn *ControlConn,
 	conf *config.Config,
-	virtualizationConfig *config.TopologyConfig,
+	topologyConfig *config.TopologyConfig,
 	originUsername string,
 	originPassword string,
 	psCache *PreparedStatementCache,
@@ -190,7 +190,7 @@ func NewClientHandler(
 		requestResponseScheduler: requestResponseScheduler,
 		conf:                     conf,
 		requestLoopWaitGroup:     requestLoopWaitGroup,
-		virtualizationConfig:     virtualizationConfig,
+		topologyConfig:           topologyConfig,
 	}, nil
 }
 
@@ -342,7 +342,7 @@ func (ch *ClientHandler) listenForEventMessages() {
 					continue
 				}
 			case *message.StatusChangeEvent:
-				if ch.virtualizationConfig.VirtualizationEnabled {
+				if ch.topologyConfig.VirtualizationEnabled {
 					log.Infof("Received status change event (fromTarget=%v) but virtualization is enabled, skipping: %v", fromTarget, msgType)
 					continue
 				}
@@ -351,7 +351,7 @@ func (ch *ClientHandler) listenForEventMessages() {
 					continue
 				}
 			case *message.TopologyChangeEvent:
-				if ch.virtualizationConfig.VirtualizationEnabled {
+				if ch.topologyConfig.VirtualizationEnabled {
 					log.Infof("Received topology change event (fromTarget=%v) but virtualization is enabled, skipping: %v", fromTarget, msgType)
 					continue
 				}
@@ -848,7 +848,7 @@ func (ch *ClientHandler) forwardRequest(request *frame.RawFrame, customResponseC
 	context, err = modifyFrame(context)
 	stmtInfo, err := parseStatement(
 		context, ch.preparedStatementCache, ch.metricHandler, ch.currentKeyspaceName, ch.conf.ForwardReadsToTarget,
-		ch.conf.ForwardSystemQueriesToTarget, ch.virtualizationConfig.VirtualizationEnabled)
+		ch.conf.ForwardSystemQueriesToTarget, ch.topologyConfig.VirtualizationEnabled)
 	if err != nil {
 		if errVal, ok := err.(*UnpreparedExecuteError); ok {
 			unpreparedFrame, err := createUnpreparedFrame(errVal)

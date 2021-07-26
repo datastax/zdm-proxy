@@ -13,13 +13,17 @@ import (
 
 // Config holds the values of environment variables necessary for proper Proxy function.
 type Config struct {
-	ProxyIndex         int    `default:"0" split_words:"true"`
-	ProxyInstanceCount int    `default:"-1" split_words:"true"` // Overridden by length of ProxyAddresses (after split) if set
-	ProxyAddresses     string `split_words:"true"`
-	ProxyNumTokens     int    `default:"8" split_words:"true"`
+	ProxyIndex             int    `default:"0" split_words:"true"`
+	ProxyInstanceCount     int    `default:"-1" split_words:"true"` // Overridden by length of ProxyAddresses (after split) if set
+	ProxyAddresses         string `split_words:"true"`
+	ProxyNumTokens         int    `default:"8" split_words:"true"`
+	ProxyVirtualDatacenter string `split_words:"true"`
 
 	OriginEnableHostAssignment bool `default:"true" split_words:"true"`
 	TargetEnableHostAssignment bool `default:"true" split_words:"true"`
+
+	OriginDatacenter string `split_words:"true"`
+	TargetDatacenter string `split_words:"true"`
 
 	OriginCassandraUsername string `required:"true" split_words:"true"`
 	OriginCassandraPassword string `required:"true" split_words:"true"`
@@ -117,7 +121,7 @@ func (c *Config) ParseEnvVars() (*Config, error) {
 	return c, nil
 }
 
-func (c *Config) ParseVirtualizationConfig() (*TopologyConfig, error) {
+func (c *Config) ParseTopologyConfig() (*TopologyConfig, error) {
 	virtualizationEnabled := true
 	proxyInstanceCount := c.ProxyInstanceCount
 	proxyAddressesTyped := []net.IP{net.ParseIP("127.0.0.1")}
@@ -159,11 +163,12 @@ func (c *Config) ParseVirtualizationConfig() (*TopologyConfig, error) {
 	}
 
 	return &TopologyConfig{
-		VirtualizationEnabled:    virtualizationEnabled,
-		Addresses:                proxyAddressesTyped,
-		Index:                    proxyIndex,
-		Count:                    proxyInstanceCount,
-		NumTokens:                c.ProxyNumTokens,
+		VirtualizationEnabled: virtualizationEnabled,
+		Addresses:             proxyAddressesTyped,
+		Index:                 proxyIndex,
+		Count:                 proxyInstanceCount,
+		NumTokens:             c.ProxyNumTokens,
+		VirtualDatacenter:     c.ProxyVirtualDatacenter,
 	}, nil
 }
 
@@ -188,7 +193,7 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("could not parse target buckets: %v", err)
 	}
 
-	_, err = c.ParseVirtualizationConfig()
+	_, err = c.ParseTopologyConfig()
 	if err != nil {
 		return err
 	}
@@ -226,12 +231,20 @@ func (c* Config) ParseOriginContactPoints() ([]string, error) {
 		return nil, fmt.Errorf("OriginCassandraSecureConnectBundlePath and OriginCassandraContactPoints are mutually exclusive. Please specify only one of them.")
 	}
 
+	if c.OriginCassandraSecureConnectBundlePath != "" && c.OriginDatacenter != "" {
+		return nil, fmt.Errorf("OriginCassandraSecureConnectBundlePath and OriginDatacenter are mutually exclusive. Please specify only one of them.")
+	}
+
 	if c.OriginCassandraSecureConnectBundlePath == "" && c.OriginCassandraContactPoints == "" {
 		return nil, fmt.Errorf("Both OriginCassandraSecureConnectBundlePath and OriginCassandraContactPoints are empty. Please specify either one of them.")
 	}
 
 	if (c.OriginCassandraContactPoints != "") && (c.OriginCassandraPort == 0) {
 		return nil, fmt.Errorf("OriginCassandraContactPoints was specified but the port is missing. Please provide OriginCassandraPort")
+	}
+
+	if (c.OriginEnableHostAssignment == false) && (c.OriginDatacenter != "") {
+		return nil, fmt.Errorf("OriginDatacenter was specified but OriginEnableHostAssignment is false. Please enable host assignment or don't set the datacenter.")
 	}
 
 	if c.OriginCassandraSecureConnectBundlePath == "" {
@@ -251,12 +264,20 @@ func (c* Config) ParseTargetContactPoints() ([]string, error) {
 		return nil, fmt.Errorf("TargetCassandraSecureConnectBundlePath and TargetCassandraContactPoints are mutually exclusive. Please specify only one of them.")
 	}
 
+	if c.TargetCassandraSecureConnectBundlePath != "" && c.TargetDatacenter != "" {
+		return nil, fmt.Errorf("TargetCassandraSecureConnectBundlePath and TargetDatacenter are mutually exclusive. Please specify only one of them.")
+	}
+
 	if c.TargetCassandraSecureConnectBundlePath == "" && c.TargetCassandraContactPoints == "" {
 		return nil, fmt.Errorf("Both TargetCassandraSecureConnectBundlePath and TargetCassandraContactPoints are empty. Please specify either one of them.")
 	}
 
 	if (c.TargetCassandraContactPoints != "") && (c.TargetCassandraPort == 0) {
 		return nil, fmt.Errorf("TargetCassandraContactPoints was specified but the port is missing. Please provide TargetCassandraPort")
+	}
+
+	if (c.TargetEnableHostAssignment == false) && (c.TargetDatacenter != "") {
+		return nil, fmt.Errorf("TargetDatacenter was specified but TargetEnableHostAssignment is false. Please enable host assignment or don't set the datacenter.")
 	}
 
 	if c.TargetCassandraSecureConnectBundlePath == "" {
@@ -285,9 +306,10 @@ type TopologyConfig struct {
 	Count                 int      // comes from PROXY_INSTANCE_COUNT unless PROXY_ADDRESSES is set
 	Index                 int      // comes from PROXY_INDEX
 	NumTokens             int      // comes from PROXY_NUM_TOKENS
+	VirtualDatacenter     string   // comes from PROXY_VIRTUAL_DATACENTER
 }
 
 func (recv *TopologyConfig) String() string {
-	return fmt.Sprintf("TopologyConfig{VirtualizationEnabled=%v, Addresses=%v, Count=%v, Index=%v, NumTokens=%v",
-		recv.VirtualizationEnabled, recv.Addresses, recv.Count, recv.Index, recv.NumTokens)
+	return fmt.Sprintf("TopologyConfig{VirtualizationEnabled=%v, Addresses=%v, Count=%v, Index=%v, NumTokens=%v, VirtualDc=%v",
+		recv.VirtualizationEnabled, recv.Addresses, recv.Count, recv.Index, recv.NumTokens, recv.VirtualDatacenter)
 }

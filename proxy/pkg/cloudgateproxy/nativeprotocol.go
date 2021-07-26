@@ -412,7 +412,7 @@ func NewSystemLocalRowsResult(
 	addValueAndColumn(&row, &columns, broadcastAddressColumn, virtualHost.Addr)
 	addValueAndColumnIfExists(&row, &columns, clusterNameColumn, systemLocalInfo.clusterName)
 	addValueAndColumnIfExists(&row, &columns, cqlVersionColumn, systemLocalInfo.cqlVersion)
-	addValueAndColumn(&row, &columns, datacenterColumn, virtualHost.Host.Datacenter)
+	addValueAndColumn(&row, &columns, datacenterColumn, virtualHost.Datacenter)
 	addValueAndColumnIfExists(&row, &columns, dseVersionColumn, virtualHost.Host.DseVersion)
 	addValueAndColumnIfExists(&row, &columns, gossipGenerationColumn, systemLocalInfo.gossipGeneration)
 	addValueAndColumnIfExists(&row, &columns, graphColumn, virtualHost.Host.Graph)
@@ -425,7 +425,7 @@ func NewSystemLocalRowsResult(
 	overrideValueAndColumnIfExists(&row, &columns, nativeTransportPortColumn, virtualHost.Host.NativeTransportPort, proxyPort)
 	overrideValueAndColumnIfExists(&row, &columns, nativeTransportPortSslColumn, virtualHost.Host.NativeTransportPortSsl, proxyPort)
 	addValueAndColumnIfExists(&row, &columns, partitionerColumn, systemLocalInfo.partitioner)
-	addValueAndColumn(&row, &columns, rackColumn, "rack0")
+	addValueAndColumn(&row, &columns, rackColumn, virtualHost.Rack)
 	addValueAndColumn(&row, &columns, releaseVersionColumn, virtualHost.Host.ReleaseVersion)
 	addValueAndColumn(&row, &columns, rpcAddressColumn, virtualHost.Addr)
 	if virtualHost.Host.SchemaVersion == nil {
@@ -578,7 +578,7 @@ func NewSystemPeersRowsResult(
 		row := make([]interface{}, 0, len(columns))
 
 		addPeerColumn(first, &row, &columns, addedColumns, peerColumn, proxyAddress, &errors)
-		addPeerColumn(first, &row, &columns, addedColumns, datacenterPeersColumn, host.Datacenter, &errors)
+		addPeerColumn(first, &row, &columns, addedColumns, datacenterPeersColumn, virtualHost.Datacenter, &errors)
 		addPeerColumnIfExists(first, &row, &columns, addedColumns, dseVersionPeersColumn, host.DseVersion, &errors)
 		addPeerColumnIfExists(first, &row, &columns, addedColumns, graphPeersColumn, host.Graph, &errors)
 		addPeerColumn(first, &row, &columns, addedColumns, hostIdPeersColumn, virtualHost.HostId, &errors)
@@ -589,7 +589,7 @@ func NewSystemPeersRowsResult(
 		if preferredIpColExists {
 			addPeerColumn(first, &row, &columns, addedColumns, preferredIpPeersColumn, proxyAddress, &errors)
 		}
-		addPeerColumn(first, &row, &columns, addedColumns, rackPeersColumn, "rack0", &errors)
+		addPeerColumn(first, &row, &columns, addedColumns, rackPeersColumn, virtualHost.Rack, &errors)
 		addPeerColumn(first, &row, &columns, addedColumns, releaseVersionPeersColumn, host.ReleaseVersion, &errors)
 		addPeerColumn(first, &row, &columns, addedColumns, rpcAddressPeersColumn, proxyAddress, &errors)
 		if host.SchemaVersion == nil {
