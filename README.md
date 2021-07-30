@@ -228,3 +228,7 @@ Also note that any of the test flags can also be provided via environment variab
 [simulacronrepo]: https://github.com/datastax/simulacron
 [simulacronreleases]: https://github.com/datastax/simulacron/releases
 [ccm-windows-blog]: https://www.datastax.com/blog/2015/01/ccm-20-and-windows
+
+## Project Dependencies
+
+For information on the packaged dependencies of the Zero Downtime Migration (Cloud-Gate) Proxy and their licenses, check out our [open source report](https://app.fossa.com/reports/910065e9-5620-4ed7-befb-b69c45ebce6e).
