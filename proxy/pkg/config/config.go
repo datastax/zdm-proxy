@@ -47,7 +47,7 @@ type Config struct {
 	ClusterConnectionTimeoutMs int `default:"30000" split_words:"true"`
 	HeartbeatIntervalMs        int `default:"30000" split_words:"true"`
 
-	HeartbeatRetryIntervalMinMs int     `default:"100" split_words:"true"`
+	HeartbeatRetryIntervalMinMs int     `default:"250" split_words:"true"`
 	HeartbeatRetryIntervalMaxMs int     `default:"30000" split_words:"true"`
 	HeartbeatRetryBackoffFactor float64 `default:"2" split_words:"true"`
 	HeartbeatFailureThreshold   int     `default:"1" split_words:"true"`

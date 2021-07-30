@@ -23,11 +23,8 @@ type CloudgateProxy struct {
 	Conf           *config.Config
 	TopologyConfig *config.TopologyConfig
 
-	originConnectionConfig *ConnectionConfig
-	originContactPoints    []Endpoint
-
-	targetConnectionConfig *ConnectionConfig
-	targetContactPoints    []Endpoint
+	originConnectionConfig ConnectionConfig
+	targetConnectionConfig ConnectionConfig
 
 	proxyRand *rand.Rand
 
@@ -170,7 +167,7 @@ func (p *CloudgateProxy) initializeControlConnections(ctx context.Context) error
 	}
 
 	// Initialize origin connection configuration and control connection endpoint configuration
-	originConnectionConfig, originContactPoints, err := initializeConnectionConfig(p.Conf.OriginCassandraSecureConnectBundlePath,
+	originConnectionConfig, err := InitializeConnectionConfig(p.Conf.OriginCassandraSecureConnectBundlePath,
 		parsedOriginContactPoints,
 		p.Conf.OriginCassandraPort,
 		p.Conf.ClusterConnectionTimeoutMs,
@@ -182,11 +179,10 @@ func (p *CloudgateProxy) initializeControlConnections(ctx context.Context) error
 
 	p.lock.Lock()
 	p.originConnectionConfig = originConnectionConfig
-	p.originContactPoints = originContactPoints
 	p.lock.Unlock()
 
 	// Initialize target connection configuration and control connection endpoint configuration
-	targetConnectionConfig, targetContactPoints, err := initializeConnectionConfig(p.Conf.TargetCassandraSecureConnectBundlePath,
+	targetConnectionConfig, err := InitializeConnectionConfig(p.Conf.TargetCassandraSecureConnectBundlePath,
 		parsedTargetContactPoints,
 		p.Conf.TargetCassandraPort,
 		p.Conf.ClusterConnectionTimeoutMs,
@@ -197,16 +193,14 @@ func (p *CloudgateProxy) initializeControlConnections(ctx context.Context) error
 	}
 	p.lock.Lock()
 	p.targetConnectionConfig = targetConnectionConfig
-	p.targetContactPoints = targetContactPoints
 	p.lock.Unlock()
 
-	firstContactPointIndex := p.proxyRand.Intn(len(p.originContactPoints))
 
 	originControlConn := NewControlConn(
-		p.shutdownContext, p.Conf.OriginCassandraPort, p.originConnectionConfig, p.originContactPoints,
+		p.shutdownContext, p.Conf.OriginCassandraPort, p.originConnectionConfig,
 		p.Conf.OriginCassandraUsername, p.Conf.OriginCassandraPassword, p.Conf, topologyConfig, p.proxyRand)
 
-	if err := originControlConn.Start(p.shutdownWaitGroup, ctx, firstContactPointIndex); err != nil {
+	if err := originControlConn.Start(p.shutdownWaitGroup, ctx); err != nil {
 		return fmt.Errorf("failed to initialize origin control connection: %w", err)
 	}
 
@@ -215,11 +209,10 @@ func (p *CloudgateProxy) initializeControlConnections(ctx context.Context) error
 	p.lock.Unlock()
 
 	targetControlConn := NewControlConn(
-		p.shutdownContext, p.Conf.TargetCassandraPort, p.targetConnectionConfig, p.targetContactPoints,
+		p.shutdownContext, p.Conf.TargetCassandraPort, p.targetConnectionConfig,
 		p.Conf.TargetCassandraUsername, p.Conf.TargetCassandraPassword, p.Conf, topologyConfig, p.proxyRand)
 
-	firstContactPointIndex = p.proxyRand.Intn(len(p.targetContactPoints))
-	if err := targetControlConn.Start(p.shutdownWaitGroup, ctx, firstContactPointIndex); err != nil {
+	if err := targetControlConn.Start(p.shutdownWaitGroup, ctx); err != nil {
 		return fmt.Errorf("failed to initialize target control connection: %w", err)
 	}
 
@@ -418,13 +411,13 @@ func (p *CloudgateProxy) handleNewConnection(clientConn net.Conn) {
 			errFunc(err)
 			return
 		}
-		originEndpoint = p.originConnectionConfig.endpointFactory(originHost)
+		originEndpoint = p.originConnectionConfig.CreateEndpoint(originHost)
 	} else {
 		originEndpoint = p.originControlConn.GetCurrentContactPoint()
 		if originEndpoint == nil {
 			log.Warnf("Origin ControlConnection current endpoint is nil, " +
 				"falling back to first origin contact point (%v) for client connection %v.",
-				p.originContactPoints[0].String(), clientConn.RemoteAddr().String())
+				p.originConnectionConfig.GetContactPoints()[0].String(), clientConn.RemoteAddr().String())
 		}
 	}
 
@@ -435,13 +428,13 @@ func (p *CloudgateProxy) handleNewConnection(clientConn net.Conn) {
 			errFunc(err)
 			return
 		}
-		targetEndpoint = p.targetConnectionConfig.endpointFactory(targetHost)
+		targetEndpoint = p.targetConnectionConfig.CreateEndpoint(targetHost)
 	} else {
 		targetEndpoint = p.targetControlConn.GetCurrentContactPoint()
 		if targetEndpoint == nil {
 			log.Warnf("Target ControlConnection current endpoint is nil, " +
 				"falling back to first target contact point (%v) for client connection %v.",
-				p.targetContactPoints[0].String(), clientConn.RemoteAddr().String())
+				p.targetConnectionConfig.GetContactPoints()[0].String(), clientConn.RemoteAddr().String())
 		}
 	}
 

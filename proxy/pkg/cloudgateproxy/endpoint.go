@@ -39,29 +39,25 @@ func (recv *DefaultEndpoint) GetEndpointIdentifier() string {
 }
 
 func (recv *DefaultEndpoint) String() string {
-	return recv.GetEndpointIdentifier()
+	return recv.socketEndpoint
 }
 
 type AstraEndpoint struct {
-	proxyEndpoint string
-	proxyAddr     string
-	baseTlsConfig *tls.Config
-	hostId        string
-	friendlyName  string
+	astraConnConfig AstraConnectionConfig
+	baseTlsConfig   *tls.Config
+	hostId          string
 }
 
-func NewAstraEndpoint(proxyEndpoint string, proxyAddr string, hostId string, baseTlsConfig *tls.Config) *AstraEndpoint {
+func NewAstraEndpoint(astraConnConfig AstraConnectionConfig, hostId string, baseTlsConfig *tls.Config) *AstraEndpoint {
 	return &AstraEndpoint{
-		proxyEndpoint: proxyEndpoint,
-		proxyAddr:     proxyAddr,
-		baseTlsConfig: baseTlsConfig,
-		hostId:        hostId,
-		friendlyName:  fmt.Sprintf("%s-%s", proxyEndpoint, hostId),
+		astraConnConfig: astraConnConfig,
+		baseTlsConfig:   baseTlsConfig,
+		hostId:          hostId,
 	}
 }
 
 func (recv *AstraEndpoint) GetSocketEndpoint() string {
-	return recv.proxyEndpoint
+	return recv.astraConnConfig.GetSniProxyEndpoint()
 }
 
 func (recv *AstraEndpoint) GetTlsConfig() *tls.Config {
@@ -79,7 +75,7 @@ func (recv *AstraEndpoint) GetEndpointIdentifier() string {
 }
 
 func (recv *AstraEndpoint) String() string {
-	return recv.GetEndpointIdentifier()
+	return fmt.Sprintf("%s-%s", recv.astraConnConfig.GetSniProxyEndpoint(), recv.hostId)
 }
 
 func (recv *AstraEndpoint) verifyCerts(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
@@ -96,7 +92,7 @@ func (recv *AstraEndpoint) verifyCerts(rawCerts [][]byte, verifiedChains [][]*x5
 	opts := x509.VerifyOptions{
 		Roots:         recv.baseTlsConfig.RootCAs,
 		CurrentTime:   time.Now(),
-		DNSName:       recv.proxyAddr,
+		DNSName:       recv.astraConnConfig.GetSniProxyAddr(),
 		Intermediates: x509.NewCertPool(),
 	}
 	for _, cert := range certs[1:] {

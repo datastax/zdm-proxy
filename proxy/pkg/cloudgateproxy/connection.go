@@ -10,103 +10,14 @@ import (
 	"time"
 )
 
-type ConnectionConfig struct {
-	tlsConfig           *tls.Config
-	connectionTimeoutMs int
-	sniProxyEndpoint    string
-	sniProxyAddr        string
-	clusterType         ClusterType
-	datacenter          string
-	endpointFactory     func(*Host) Endpoint
-}
-
-func NewConnectionConfig(tlsConfig *tls.Config, connectionTimeoutMs int, sniProxyEndpoint string, sniProxyAddr string,
-	clusterType ClusterType, datacenter string, endpointFactory func(*Host) Endpoint) *ConnectionConfig {
-	return &ConnectionConfig{
-		tlsConfig:           tlsConfig,
-		connectionTimeoutMs: connectionTimeoutMs,
-		sniProxyEndpoint:    sniProxyEndpoint,
-		sniProxyAddr:        sniProxyAddr,
-		clusterType:         clusterType,
-		datacenter:          datacenter,
-		endpointFactory:     endpointFactory,
-	}
-}
-
-// version from zipped bundle
-func initializeConnectionConfig(secureConnectBundlePath string, contactPointsFromConfig []string, port int,
-	connTimeoutInMs int, clusterType ClusterType, datacenterFromConfig string) (*ConnectionConfig, []Endpoint, error){
-	var connConfig *ConnectionConfig
-	controlConnEndpointConfigs := make([]Endpoint, 0)
-
-	if secureConnectBundlePath != "" {
-
-		fileMap, err := extractFilesFromZipArchive(secureConnectBundlePath)
-		if err != nil {
-			return nil, nil, err
-		}
-
-		metadataServiceHostName, metadataServicePort, err := parseHostAndPortFromSCBConfig(fileMap["config.json"])
-		if err != nil {
-			return nil, nil, err
-		}
-
-		if metadataServiceHostName == "" || metadataServicePort == "" {
-			return nil, nil, fmt.Errorf("incomplete metadata service contact information. hostname: %v, port: %v", metadataServiceHostName, metadataServicePort)
-		}
-
-		tlsConfig, err := initializeTLSConfiguration(fileMap["ca.crt"], fileMap["cert"], fileMap["key"], metadataServiceHostName)
-		if err != nil {
-			return nil, nil, err
-		}
-
-		metadata, err := retrieveAstraMetadata(metadataServiceHostName, metadataServicePort, tlsConfig)
-		if err != nil {
-			return nil, nil, err
-		}
-		log.Debugf("Astra metadata parsed to: %v", metadata)
-
-		sniProxyHostname, _, err := net.SplitHostPort(metadata.ContactInfo.SniProxyAddress)
-		if err != nil {
-			return nil, nil, fmt.Errorf("could not split sni proxy hostname and port: %w", err)
-		}
-
-		endpointFactory := func(h *Host) Endpoint {
-			return NewAstraEndpoint(metadata.ContactInfo.SniProxyAddress, sniProxyHostname, h.HostId.String(), tlsConfig)
-		}
-
-		connConfig = NewConnectionConfig(tlsConfig, connTimeoutInMs, metadata.ContactInfo.SniProxyAddress, sniProxyHostname, clusterType, metadata.ContactInfo.LocalDc, endpointFactory)
-
-		// save all contact points as potential control connection endpoints so that if connecting to one fails it is possible to retry with the next one
-		for _, hostIdContactPoint := range metadata.ContactInfo.ContactPoints {
-			controlConnEndpointConfigs = append(controlConnEndpointConfigs, NewAstraEndpoint(connConfig.sniProxyEndpoint, connConfig.sniProxyAddr, hostIdContactPoint, connConfig.tlsConfig))
-		}
-
-	} else {
-		endpointFactory := func(h *Host) Endpoint {
-			return NewDefaultEndpoint(h.Address.String(), h.Port)
-		}
-
-		connConfig = NewConnectionConfig(nil, connTimeoutInMs, "", "", clusterType, datacenterFromConfig, endpointFactory)
-		for _, contactPoint := range contactPointsFromConfig {
-			controlConnEndpointConfigs = append(controlConnEndpointConfigs, NewDefaultEndpoint(contactPoint, port))
-		}
-	}
-	return connConfig, controlConnEndpointConfigs, nil
-}
-
-func (cc *ConnectionConfig) usesSNI() bool {
-	return cc.sniProxyEndpoint != ""
-}
-
-func openConnection(cc *ConnectionConfig, ec Endpoint, ctx context.Context, useBackoff bool) (net.Conn, context.Context, error){
+func openConnection(cc ConnectionConfig, ec Endpoint, ctx context.Context, useBackoff bool) (net.Conn, context.Context, error){
 	var connection net.Conn
 	var err error
 
-	timeout := time.Duration(cc.connectionTimeoutMs) * time.Millisecond
+	timeout := time.Duration(cc.GetConnectionTimeoutMs()) * time.Millisecond
 	openConnectionTimeoutCtx, _ := context.WithTimeout(ctx, timeout)
 
-	if cc.tlsConfig != nil {
+	if cc.GetTlsConfig() != nil {
 		// open connection using TLS
 		connection, err = openTLSConnection(ec, openConnectionTimeoutCtx, useBackoff)
 		if err != nil {

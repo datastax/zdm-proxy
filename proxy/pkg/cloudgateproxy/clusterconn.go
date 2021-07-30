@@ -16,7 +16,7 @@ import (
 )
 
 type ClusterConnectionInfo struct {
-	connConfig        *ConnectionConfig
+	connConfig        ConnectionConfig
 	endpoint          Endpoint
 	isOriginCassandra bool
 }
@@ -46,7 +46,7 @@ type ClusterConnector struct {
 	readScheduler *Scheduler
 }
 
-func NewClusterConnectionInfo(connConfig *ConnectionConfig, endpointConfig Endpoint, isOriginCassandra bool) *ClusterConnectionInfo {
+func NewClusterConnectionInfo(connConfig ConnectionConfig, endpointConfig Endpoint, isOriginCassandra bool) *ClusterConnectionInfo {
 	return &ClusterConnectionInfo{
 		connConfig:        connConfig,
 		endpoint:          endpointConfig,

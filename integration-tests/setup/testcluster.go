@@ -370,7 +370,7 @@ func NewTestConfig(originHost string, targetHost string) *config.Config {
 	conf.HeartbeatIntervalMs = 30000
 
 	conf.HeartbeatRetryIntervalMaxMs = 30000
-	conf.HeartbeatRetryIntervalMinMs = 100
+	conf.HeartbeatRetryIntervalMinMs = 250
 	conf.HeartbeatRetryBackoffFactor = 2
 	conf.HeartbeatFailureThreshold = 1
 
