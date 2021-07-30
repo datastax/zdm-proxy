@@ -1,6 +1,7 @@
 package cloudgateproxy
 
 import (
+	"encoding/hex"
 	"fmt"
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
@@ -120,11 +121,11 @@ func parseStatement(
 			return nil, fmt.Errorf("expected Execute but got %v instead", decodedFrame.Body.Message.GetOpCode())
 		}
 		if preparedData, ok := psCache.Get(executeMsg.QueryId); ok {
-			log.Debugf("Execute with prepared-id = '%s' has prepared-data = %v", executeMsg.QueryId, preparedData)
+			log.Debugf("Execute with prepared-id = '%s' has prepared-data = %v", hex.EncodeToString(executeMsg.QueryId), preparedData)
 			// The forward decision was set in the cache when handling the corresponding PREPARE request
 			return NewBoundStatementInfo(preparedData), nil
 		} else {
-			log.Warnf("No cached entry for prepared-id = '%s'", executeMsg.QueryId)
+			log.Warnf("No cached entry for prepared-id = '%s'", hex.EncodeToString(executeMsg.QueryId))
 			mh.GetProxyMetrics().PSCacheMissCount.Add(1)
 			// return meaningful error to caller so it can generate an unprepared response
 			return nil, &UnpreparedExecuteError{Header: f.Header, Body: decodedFrame.Body, preparedId: executeMsg.QueryId}

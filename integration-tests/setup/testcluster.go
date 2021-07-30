@@ -374,8 +374,8 @@ func NewTestConfig(originHost string, targetHost string) *config.Config {
 	conf.HeartbeatRetryBackoffFactor = 2
 	conf.HeartbeatFailureThreshold = 1
 
-	conf.OriginBucketsMs = "10, 25, 50, 75, 100, 150, 200, 300, 500, 750, 1000, 2500, 5000"
-	conf.TargetBucketsMs = "5, 10, 25, 50, 75, 100, 150, 300, 500, 1000, 2000"
+	conf.OriginBucketsMs = "1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000"
+	conf.TargetBucketsMs = "1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000"
 
 	conf.EnableMetrics = true
 

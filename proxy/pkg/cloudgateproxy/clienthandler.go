@@ -474,8 +474,9 @@ func (ch *ClientHandler) finishRequest(holder *requestContextHolder, reqCtx *Req
 	}
 
 	aggregatedResponse, err := ch.computeAggregatedResponse(reqCtx)
+	finalResponse := aggregatedResponse
 	if err == nil {
-		err = ch.processAggregatedResponse(aggregatedResponse, reqCtx)
+		finalResponse, err = ch.processAggregatedResponse(aggregatedResponse, reqCtx)
 	}
 
 	if err != nil {
@@ -496,10 +497,10 @@ func (ch *ClientHandler) finishRequest(holder *requestContextHolder, reqCtx *Req
 		reqCtx.customResponseChannel <- &customResponse{
 			originResponse:     originResponse,
 			targetResponse:     targetResponse,
-			aggregatedResponse: aggregatedResponse,
+			aggregatedResponse: finalResponse,
 		}
 	} else {
-		ch.clientConnector.sendResponseToClient(aggregatedResponse)
+		ch.clientConnector.sendResponseToClient(finalResponse)
 	}
 }
 
@@ -568,19 +569,19 @@ func (ch *ClientHandler) computeAggregatedResponse(requestContext *RequestContex
 }
 
 // Modifies internal state based on the provided aggregated response (e.g. storing prepared IDs)
-func (ch *ClientHandler) processAggregatedResponse(response *frame.RawFrame, reqCtx *RequestContext) error {
+func (ch *ClientHandler) processAggregatedResponse(response *frame.RawFrame, reqCtx *RequestContext) (*frame.RawFrame, error) {
 	switch response.Header.OpCode {
-	case primitive.OpCodeResult:
-		body, err := defaultCodec.DecodeBody(response.Header, bytes.NewReader(response.Body))
+	case primitive.OpCodeResult, primitive.OpCodeError:
+		decodedFrame, err := defaultCodec.ConvertFromRawFrame(response)
 		if err != nil {
-			return fmt.Errorf("error decoding result response: %w", err)
+			return nil, fmt.Errorf("error decoding response: %w", err)
 		}
 
-		switch bodyMsg := body.Message.(type) {
+		switch bodyMsg := decodedFrame.Body.Message.(type) {
 		case *message.PreparedResult:
 			err = ch.processPreparedResponse(bodyMsg, reqCtx)
 			if err != nil {
-				return fmt.Errorf("failed to handle prepared result: %w", err)
+				return nil, fmt.Errorf("failed to handle prepared result: %w", err)
 			}
 		case *message.SetKeyspaceResult:
 			if bodyMsg.Keyspace == "" {
@@ -588,9 +589,32 @@ func (ch *ClientHandler) processAggregatedResponse(response *frame.RawFrame, req
 			} else {
 				ch.currentKeyspaceName.Store(bodyMsg.Keyspace)
 			}
+		case *message.Unprepared:
+			executeBody, err := defaultCodec.DecodeBody(reqCtx.request.Header, bytes.NewReader(reqCtx.request.Body))
+			if err != nil {
+				return nil, fmt.Errorf("could not decode request body after receiving UNPREPARED: %w", err)
+			}
+			bs, ok := executeBody.Message.(*message.Execute)
+			if !ok {
+				return nil, fmt.Errorf("received UNPREPARED but request message is %v instead of EXECUTE", executeBody.Message)
+			}
+			newFrame := decodedFrame.Clone()
+			newUnprepared := &message.Unprepared{
+				ErrorMessage: fmt.Sprintf("Prepared query with ID %s not found (either the query was not prepared "+
+					"on this host (maybe the host has been restarted?) or you have prepared too many queries and it has "+
+					"been evicted from the internal cache)", hex.EncodeToString(bs.QueryId)),
+				Id: bs.QueryId,
+			}
+			newFrame.Body.Message = newUnprepared
+			newRawFrame, err := defaultCodec.ConvertToRawFrame(newFrame)
+			if err != nil {
+				return nil, fmt.Errorf("could not convert response after receiving UNPREPARED: %w", err)
+			}
+			log.Infof("Replacing prepared ID in UNPREPARED %s with %s. Original error: %v", hex.EncodeToString(bodyMsg.Id), hex.EncodeToString(bs.QueryId), bodyMsg.ErrorMessage)
+			return newRawFrame, nil
 		}
 	}
-	return nil
+	return response, nil
 }
 
 func (ch *ClientHandler) processPreparedResponse(bodyMsg *message.PreparedResult, reqCtx *RequestContext) error {
@@ -948,7 +972,7 @@ func (ch *ClientHandler) executeStatement(
 			}
 			originalQueryId := executeMsg.QueryId
 			executeMsg.QueryId = castedStmtInfo.GetPreparedData().GetTargetPreparedId()
-			log.Debugf("Replacing prepared ID %s with %s for target cluster.", originalQueryId, executeMsg.QueryId)
+			log.Debugf("Replacing prepared ID %s with %s for target cluster.", hex.EncodeToString(originalQueryId), hex.EncodeToString(executeMsg.QueryId))
 			targetExecuteRequest, err := defaultCodec.ConvertToRawFrame(decodedFrame)
 			if err != nil {
 				return fmt.Errorf("could not convert target EXECUTE response to raw frame: %w", err)

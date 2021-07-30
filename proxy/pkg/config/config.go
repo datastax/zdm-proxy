@@ -52,8 +52,8 @@ type Config struct {
 	HeartbeatRetryBackoffFactor float64 `default:"2" split_words:"true"`
 	HeartbeatFailureThreshold   int     `default:"1" split_words:"true"`
 
-	OriginBucketsMs string `default:"10, 25, 50, 75, 100, 150, 200, 300, 500, 750, 1000, 2500, 5000" split_words:"true"`
-	TargetBucketsMs string `default:"5, 10, 25, 50, 75, 100, 150, 300, 500, 1000, 2000" split_words:"true"`
+	OriginBucketsMs string `default:"1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000" split_words:"true"`
+	TargetBucketsMs string `default:"1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000" split_words:"true"`
 
 	EnableMetrics bool `default:"true" split_words:"true"`
 

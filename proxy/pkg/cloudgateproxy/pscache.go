@@ -1,6 +1,8 @@
 package cloudgateproxy
 
 import (
+	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	log "github.com/sirupsen/logrus"
 	"sync"
@@ -28,14 +30,14 @@ func (psc PreparedStatementCache) GetPreparedStatementCacheSize() float64{
 
 func (psc *PreparedStatementCache) Store(
 	originPreparedId []byte, targetPreparedId []byte, preparedStmtInfo *PreparedStatementInfo) {
-	log.Tracef("PreparedID: %s, TargetPreparedID: %s", originPreparedId, targetPreparedId)
+	log.Tracef("PreparedID: %s, TargetPreparedID: %s", base64.StdEncoding.EncodeToString(originPreparedId), hex.EncodeToString(targetPreparedId))
 
 	psc.lock.Lock()
 	defer psc.lock.Unlock()
 
 	psc.cache[string(originPreparedId)] = NewPreparedData(targetPreparedId, preparedStmtInfo)
 
-	log.Tracef("PSInfo set in map for OriginPreparedID: %s", originPreparedId)
+	log.Tracef("PSInfo set in map for OriginPreparedID: %s", hex.EncodeToString(originPreparedId))
 }
 
 func (psc *PreparedStatementCache) Get(originPreparedId []byte) (PreparedData, bool) {
@@ -71,5 +73,6 @@ func (recv *preparedDataImpl) GetPreparedStatementInfo() *PreparedStatementInfo 
 }
 
 func (recv *preparedDataImpl) String() string {
-	return fmt.Sprintf("PreparedData={TargetPreparedId=%s, PreparedStatementInfo=%v}", recv.targetPreparedId, recv.stmtInfo)
+	return fmt.Sprintf("PreparedData={TargetPreparedId=%s, PreparedStatementInfo=%v}",
+		hex.EncodeToString(recv.targetPreparedId), recv.stmtInfo)
 }
