@@ -16,3 +16,7 @@ analyze:
     type: go
     target: github.com/riptano/cloud-gate/proxy
     path: proxy
+  - name: github.com/riptano/cloud-gate/utils
+    type: go
+    target: github.com/riptano/cloud-gate/utils
+    path: utils
