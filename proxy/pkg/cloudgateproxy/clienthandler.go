@@ -1216,6 +1216,7 @@ func (ch *ClientHandler) trackClusterErrorMetrics(response *frame.RawFrame, clus
 			case primitive.ErrorCodeWriteTimeout:
 				ch.nodeMetrics.OriginMetrics.OriginWriteTimeouts.Add(1)
 			default:
+				log.Debugf("Recording origin other error: %v", errorMsg)
 				ch.nodeMetrics.OriginMetrics.OriginOtherErrors.Add(1)
 			}
 		case TargetCassandra:
@@ -1227,6 +1228,7 @@ func (ch *ClientHandler) trackClusterErrorMetrics(response *frame.RawFrame, clus
 				case primitive.ErrorCodeWriteTimeout:
 				ch.nodeMetrics.TargetMetrics.TargetWriteTimeouts.Add(1)
 				default:
+					log.Debugf("Recording target other error: %v", errorMsg)
 				ch.nodeMetrics.TargetMetrics.TargetOtherErrors.Add(1)
 				}
 		default:
