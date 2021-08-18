@@ -3,7 +3,7 @@ package integration_tests
 import (
 	"github.com/riptano/cloud-gate/integration-tests/setup"
 	"github.com/riptano/cloud-gate/integration-tests/simulacron"
-	"github.com/riptano/cloud-gate/utils"
+	"github.com/riptano/cloud-gate/integration-tests/utils"
 	"github.com/stretchr/testify/require"
 	"net"
 	"testing"
