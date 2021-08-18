@@ -9,7 +9,7 @@ import (
 func NewThreadSafeRand() *rand.Rand {
 	return rand.New(&lockedSource{
 		lk:  sync.Mutex{},
-		src: rand.NewSource(time.Now().Unix()),
+		src: rand.NewSource(time.Now().UnixNano()),
 	})
 }
 
