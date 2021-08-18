@@ -8,15 +8,7 @@ cli:
   project: cloud-gate
 analyze:
   modules:
-  - name: github.com/riptano/cloud-gate/datadump
-    type: go
-    target: github.com/riptano/cloud-gate/datadump
-    path: datadump
   - name: github.com/riptano/cloud-gate/proxy
     type: go
     target: github.com/riptano/cloud-gate/proxy
     path: proxy
-  - name: github.com/riptano/cloud-gate/utils
-    type: go
-    target: github.com/riptano/cloud-gate/utils
-    path: utils
