@@ -121,7 +121,7 @@ func parseStatement(
 			return nil, fmt.Errorf("expected Execute but got %v instead", decodedFrame.Body.Message.GetOpCode())
 		}
 		if preparedData, ok := psCache.Get(executeMsg.QueryId); ok {
-			log.Debugf("Execute with prepared-id = '%s' has prepared-data = %v", hex.EncodeToString(executeMsg.QueryId), preparedData)
+			log.Tracef("Execute with prepared-id = '%s' has prepared-data = %v", hex.EncodeToString(executeMsg.QueryId), preparedData)
 			// The forward decision was set in the cache when handling the corresponding PREPARE request
 			return NewBoundStatementInfo(preparedData), nil
 		} else {

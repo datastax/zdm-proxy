@@ -182,7 +182,7 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 			wg.Add(1)
 			cc.readScheduler.Schedule(func() {
 				defer wg.Done()
-				log.Debugf("Received response from %v (%v): %v",
+				log.Tracef("Received response from %v (%v): %v",
 					cc.clusterType, connectionAddr, response.Header)
 
 				if response.Header.OpCode == primitive.OpCodeEvent {

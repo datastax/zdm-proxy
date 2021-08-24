@@ -40,6 +40,8 @@ type ClientHandler struct {
 	originControlConn *ControlConn
 	targetControlConn *ControlConn
 
+	typeCodecManager TypeCodecManager
+
 	preparedStatementCache *PreparedStatementCache
 
 	metricHandler   *metrics.MetricHandler
@@ -89,6 +91,7 @@ func NewClientHandler(
 	clientTcpConn net.Conn,
 	originCassandraConnInfo *ClusterConnectionInfo,
 	targetCassandraConnInfo *ClusterConnectionInfo,
+	typeCodecManager TypeCodecManager,
 	originControlConn *ControlConn,
 	targetControlConn *ControlConn,
 	conf *config.Config,
@@ -167,6 +170,7 @@ func NewClientHandler(
 		targetCassandraConnector: targetConnector,
 		originControlConn:        originControlConn,
 		targetControlConn:        targetControlConn,
+		typeCodecManager:         typeCodecManager,
 		preparedStatementCache:   psCache,
 		metricHandler:            metricHandler,
 		nodeMetrics:              nodeMetrics,
@@ -237,7 +241,7 @@ func (ch *ClientHandler) requestLoop() {
 				break
 			}
 
-			log.Debugf("Request received on client handler: %v", f.Header)
+			log.Tracef("Request received on client handler: %v", f.Header)
 			if !ready {
 				log.Tracef("not ready")
 				// Handle client authentication
@@ -538,7 +542,7 @@ func (ch *ClientHandler) computeAggregatedResponse(requestContext *RequestContex
 		if requestContext.originResponse == nil {
 			return nil, fmt.Errorf("did not receive response from origin cassandra channel, stream: %d", requestContext.request.Header.StreamId)
 		}
-		log.Debugf("Forward to origin: just returning the response received from OC: %d", requestContext.originResponse.Header.OpCode)
+		log.Tracef("Forward to origin: just returning the response received from OC: %d", requestContext.originResponse.Header.OpCode)
 		if !isResponseSuccessful(requestContext.originResponse) {
 			ch.metricHandler.GetProxyMetrics().FailedRequestsOrigin.Add(1)
 		}
@@ -548,7 +552,7 @@ func (ch *ClientHandler) computeAggregatedResponse(requestContext *RequestContex
 		if requestContext.targetResponse == nil {
 			return nil, fmt.Errorf("did not receive response from target cassandra channel, stream: %d", requestContext.request.Header.StreamId)
 		}
-		log.Debugf("Forward to target: just returning the response received from TC: %d", requestContext.targetResponse.Header.OpCode)
+		log.Tracef("Forward to target: just returning the response received from TC: %d", requestContext.targetResponse.Header.OpCode)
 		if !isResponseSuccessful(requestContext.targetResponse) {
 			ch.metricHandler.GetProxyMetrics().FailedRequestsTarget.Add(1)
 		}
@@ -921,30 +925,44 @@ func (ch *ClientHandler) executeStatement(
 		} else {
 			controlConn = ch.originControlConn
 		}
+		virtualHosts, err := controlConn.GetVirtualHosts()
+		if err != nil {
+			return err
+		}
+
+		var dcName string
+		if ch.topologyConfig.VirtualDatacenterFromOrigin {
+			originVirtualHosts, err := ch.originControlConn.GetVirtualHosts()
+			if err != nil {
+				return err
+			}
+			dcName = originVirtualHosts[ch.originControlConn.GetLocalVirtualHostIndex()].Host.Datacenter
+		} else {
+			targetVirtualHosts, err := ch.targetControlConn.GetVirtualHosts()
+			if err != nil {
+				return err
+			}
+			dcName = targetVirtualHosts[ch.targetControlConn.GetLocalVirtualHostIndex()].Host.Datacenter
+		}
+
+		typeCodec := ch.typeCodecManager.GetOrCreate(f.Header.Version)
+
 		switch interceptedQueryType {
 		case peersV2:
 			interceptedQueryResponse = &message.Invalid {
 				ErrorMessage: "unconfigured table peers_v2",
 			}
 		case peersV1:
-			virtualHosts, err := controlConn.GetVirtualHosts()
-			if err != nil {
-				return err
-			}
 			interceptedQueryResponse, err = NewSystemPeersRowsResult(
-				controlConn.GetGenericTypeCodec(), virtualHosts, controlConn.GetLocalVirtualHostIndex(),
+				typeCodec, dcName, virtualHosts, controlConn.GetLocalVirtualHostIndex(),
 				ch.conf.ProxyQueryPort, controlConn.PreferredIpColumnExists())
 			if err != nil {
 				return err
 			}
 		case local:
-			virtualHosts, err := controlConn.GetVirtualHosts()
-			if err != nil {
-				return err
-			}
 			localVirtualHost := virtualHosts[controlConn.GetLocalVirtualHostIndex()]
 			interceptedQueryResponse, err = NewSystemLocalRowsResult(
-				controlConn.GetGenericTypeCodec(), controlConn.GetSystemLocalInfo(), localVirtualHost, ch.conf.ProxyQueryPort)
+				typeCodec, controlConn.GetSystemLocalInfo(), dcName, localVirtualHost, ch.conf.ProxyQueryPort)
 			if err != nil {
 				return err
 			}
@@ -972,7 +990,7 @@ func (ch *ClientHandler) executeStatement(
 			}
 			originalQueryId := executeMsg.QueryId
 			executeMsg.QueryId = castedStmtInfo.GetPreparedData().GetTargetPreparedId()
-			log.Debugf("Replacing prepared ID %s with %s for target cluster.", hex.EncodeToString(originalQueryId), hex.EncodeToString(executeMsg.QueryId))
+			log.Tracef("Replacing prepared ID %s with %s for target cluster.", hex.EncodeToString(originalQueryId), hex.EncodeToString(executeMsg.QueryId))
 			targetExecuteRequest, err := defaultCodec.ConvertToRawFrame(decodedFrame)
 			if err != nil {
 				return fmt.Errorf("could not convert target EXECUTE response to raw frame: %w", err)
@@ -1030,14 +1048,14 @@ func (ch *ClientHandler) executeStatement(
 
 	switch forwardDecision {
 	case forwardToBoth:
-		log.Debugf("Forwarding request with opcode %v for stream %v to OC and TC", f.Header.OpCode, f.Header.StreamId)
+		log.Tracef("Forwarding request with opcode %v for stream %v to OC and TC", f.Header.OpCode, f.Header.StreamId)
 		ch.originCassandraConnector.sendRequestToCluster(originRequest)
 		ch.targetCassandraConnector.sendRequestToCluster(targetRequest)
 	case forwardToOrigin:
-		log.Debugf("Forwarding request with opcode %v for stream %v to OC", f.Header.OpCode, f.Header.StreamId)
+		log.Tracef("Forwarding request with opcode %v for stream %v to OC", f.Header.OpCode, f.Header.StreamId)
 		ch.originCassandraConnector.sendRequestToCluster(originRequest)
 	case forwardToTarget:
-		log.Debugf("Forwarding request with opcode %v for stream %v to TC", f.Header.OpCode, f.Header.StreamId)
+		log.Tracef("Forwarding request with opcode %v for stream %v to TC", f.Header.OpCode, f.Header.StreamId)
 		ch.targetCassandraConnector.sendRequestToCluster(targetRequest)
 	default:
 		return fmt.Errorf("unknown forward decision %v, stream: %d", forwardDecision, f.Header.StreamId)
@@ -1055,19 +1073,24 @@ func (ch *ClientHandler) aggregateAndTrackResponses(
 	request *frame.RawFrame, responseFromOriginCassandra *frame.RawFrame, responseFromTargetCassandra *frame.RawFrame) *frame.RawFrame {
 
 	originOpCode := responseFromOriginCassandra.Header.OpCode
-	log.Debugf("Aggregating responses. OC opcode %d, TargetCassandra opcode %d", originOpCode, responseFromTargetCassandra.Header.OpCode)
+	log.Tracef("Aggregating responses. OC opcode %d, TargetCassandra opcode %d", originOpCode, responseFromTargetCassandra.Header.OpCode)
 
 	// aggregate responses and update relevant aggregate metrics for general failed or successful responses
 	if isResponseSuccessful(responseFromOriginCassandra) && isResponseSuccessful(responseFromTargetCassandra) {
 		if originOpCode == primitive.OpCodeSupported {
-			log.Debugf("Aggregated response: both successes, sending back TC's response with opcode %d", originOpCode)
+			log.Tracef("Aggregated response: both successes, sending back TC's response with opcode %d", originOpCode)
 			return responseFromTargetCassandra
 		} else if request.Header.OpCode == primitive.OpCodePrepare {
 			// special case for PREPARE requests to always return ORIGIN, even though the default handling for "BOTH" requests would be enough
 			return responseFromOriginCassandra
 		} else {
-			log.Debugf("Aggregated response: both successes, sending back OC's response with opcode %d", originOpCode)
-			return responseFromOriginCassandra
+			if ch.conf.ForwardReadsToTarget {
+				log.Tracef("Aggregated response: both successes, sending back TC's response with opcode %d", responseFromTargetCassandra.Header.OpCode)
+				return responseFromTargetCassandra
+			} else {
+				log.Tracef("Aggregated response: both successes, sending back OC's response with opcode %d", originOpCode)
+				return responseFromOriginCassandra
+			}
 		}
 	}
 

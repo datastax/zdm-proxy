@@ -347,6 +347,7 @@ func NewTestConfig(originHost string, targetHost string) *config.Config {
 	conf.ProxyInstanceCount = -1
 	conf.ProxyAddresses = ""
 	conf.ProxyNumTokens = 8
+	conf.ProxyVirtualDatacenterFromOrigin = true
 
 	conf.OriginEnableHostAssignment = true
 	conf.TargetEnableHostAssignment = true
@@ -401,7 +402,7 @@ func NewTestConfig(originHost string, targetHost string) *config.Config {
 
 	conf.RequestTimeoutMs = 10000
 
-	conf.Debug = false
+	conf.LogLevel = "INFO"
 
 	return conf
 }

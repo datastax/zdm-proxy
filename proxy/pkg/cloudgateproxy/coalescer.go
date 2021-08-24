@@ -125,7 +125,7 @@ func (recv *writeCoalescer) RunWriteQueueLoop() {
 						ok = true
 					}
 
-					log.Debugf("[%v] Writing %v on %v", recv.logPrefix, f.Header, connectionAddr)
+					log.Tracef("[%v] Writing %v on %v", recv.logPrefix, f.Header, connectionAddr)
 					err := writeRawFrame(tempBuffer, connectionAddr, recv.clientHandlerContext, f)
 					if err != nil {
 						tempDraining = true

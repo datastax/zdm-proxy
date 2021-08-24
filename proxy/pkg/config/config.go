@@ -13,11 +13,11 @@ import (
 
 // Config holds the values of environment variables necessary for proper Proxy function.
 type Config struct {
-	ProxyIndex             int    `default:"0" split_words:"true"`
-	ProxyInstanceCount     int    `default:"-1" split_words:"true"` // Overridden by length of ProxyAddresses (after split) if set
-	ProxyAddresses         string `split_words:"true"`
-	ProxyNumTokens         int    `default:"8" split_words:"true"`
-	ProxyVirtualDatacenter string `split_words:"true"`
+	ProxyIndex                       int    `default:"0" split_words:"true"`
+	ProxyInstanceCount               int    `default:"-1" split_words:"true"` // Overridden by length of ProxyAddresses (after split) if set
+	ProxyAddresses                   string `split_words:"true"`
+	ProxyNumTokens                   int    `default:"8" split_words:"true"`
+	ProxyVirtualDatacenterFromOrigin bool   `default:"true" split_words:"true"`
 
 	OriginEnableHostAssignment bool `default:"true" split_words:"true"`
 	TargetEnableHostAssignment bool `default:"true" split_words:"true"`
@@ -79,7 +79,7 @@ type Config struct {
 
 	RequestTimeoutMs int `default:"10000" split_words:"true"`
 
-	Debug bool
+	LogLevel string `default:"INFO" split_words:"true"`
 }
 
 func (c *Config) String() string {
@@ -163,17 +163,22 @@ func (c *Config) ParseTopologyConfig() (*TopologyConfig, error) {
 	}
 
 	return &TopologyConfig{
-		VirtualizationEnabled: virtualizationEnabled,
-		Addresses:             proxyAddressesTyped,
-		Index:                 proxyIndex,
-		Count:                 proxyInstanceCount,
-		NumTokens:             c.ProxyNumTokens,
-		VirtualDatacenter:     c.ProxyVirtualDatacenter,
+		VirtualizationEnabled:       virtualizationEnabled,
+		Addresses:                   proxyAddressesTyped,
+		Index:                       proxyIndex,
+		Count:                       proxyInstanceCount,
+		NumTokens:                   c.ProxyNumTokens,
+		VirtualDatacenterFromOrigin: c.ProxyVirtualDatacenterFromOrigin,
 	}, nil
 }
 
 func (c *Config) Validate() error {
-	_, err := c.ParseTargetContactPoints()
+	_, err := c.ParseLogLevel()
+	if err != nil {
+		return fmt.Errorf("invalid log level: %w", err)
+	}
+
+	_, err = c.ParseTargetContactPoints()
 	if err != nil {
 		return fmt.Errorf("invalid target configuration: %w", err)
 	}
@@ -199,6 +204,17 @@ func (c *Config) Validate() error {
 	}
 
 	return nil
+}
+
+func (c *Config) ParseLogLevel() (log.Level, error) {
+	level, err := log.ParseLevel(strings.TrimSpace(c.LogLevel))
+	if err != nil {
+		var lvl log.Level
+		return lvl, fmt.Errorf("invalid log level, valid log levels are " +
+			"PANIC, FATAL, ERROR, WARN or WARNING, INFO, DEBUG and TRACE; original err: %w", err)
+	}
+
+	return level, nil
 }
 
 func (c *Config) ParseOriginBuckets() ([]float64, error) {
@@ -301,15 +317,15 @@ func parseContactPoints(setting string) []string {
 //   - Assignment of C* hosts per proxy instance for request connections
 //
 type TopologyConfig struct {
-	VirtualizationEnabled bool     // enabled if PROXY_ADDRESSES is not empty
-	Addresses             []net.IP // comes from PROXY_ADDRESSES
-	Count                 int      // comes from PROXY_INSTANCE_COUNT unless PROXY_ADDRESSES is set
-	Index                 int      // comes from PROXY_INDEX
-	NumTokens             int      // comes from PROXY_NUM_TOKENS
-	VirtualDatacenter     string   // comes from PROXY_VIRTUAL_DATACENTER
+	VirtualizationEnabled       bool     // enabled if PROXY_ADDRESSES is not empty
+	Addresses                   []net.IP // comes from PROXY_ADDRESSES
+	Count                       int      // comes from PROXY_INSTANCE_COUNT unless PROXY_ADDRESSES is set
+	Index                       int      // comes from PROXY_INDEX
+	NumTokens                   int      // comes from PROXY_NUM_TOKENS
+	VirtualDatacenterFromOrigin bool     // comes from PROXY_VIRTUAL_DATACENTER_FROM_ORIGIN
 }
 
 func (recv *TopologyConfig) String() string {
-	return fmt.Sprintf("TopologyConfig{VirtualizationEnabled=%v, Addresses=%v, Count=%v, Index=%v, NumTokens=%v, VirtualDc=%v",
-		recv.VirtualizationEnabled, recv.Addresses, recv.Count, recv.Index, recv.NumTokens, recv.VirtualDatacenter)
+	return fmt.Sprintf("TopologyConfig{VirtualizationEnabled=%v, Addresses=%v, Count=%v, Index=%v, NumTokens=%v, VirtualDcFromOrigin=%v",
+		recv.VirtualizationEnabled, recv.Addresses, recv.Count, recv.Index, recv.NumTokens, recv.VirtualDatacenterFromOrigin)
 }

@@ -17,9 +17,12 @@ func main() {
 		os.Exit(-1)
 	}
 
-	if conf.Debug {
-		log.SetLevel(log.DebugLevel)
+	logLevel, err := conf.ParseLogLevel()
+	if err != nil {
+		log.Errorf("Error loading log level configuration: %v. Aborting startup.", err)
+		os.Exit(-1)
 	}
+	log.SetLevel(logLevel)
 
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	runSignalListener(cancelFunc)

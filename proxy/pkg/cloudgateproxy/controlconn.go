@@ -439,13 +439,6 @@ func (cc *ControlConn) GetSystemLocalInfo() *systemLocalInfo {
 	return cc.systemLocalInfo
 }
 
-func (cc *ControlConn) GetGenericTypeCodec() *GenericTypeCodec {
-	cc.topologyLock.RLock()
-	defer cc.topologyLock.RUnlock()
-
-	return cc.genericTypeCodec
-}
-
 func (cc *ControlConn) GetCurrentContactPoint() Endpoint {
 	cc.cqlConnLock.Lock()
 	contactPoint := cc.currentContactPoint
@@ -553,17 +546,11 @@ func computeVirtualHosts(topologyConfig *config.TopologyConfig, orderedHosts []*
 		}
 
 		host := assignedHostsForVirtualization[i]
-		dc := topologyConfig.VirtualDatacenter
-		if dc == "" {
-			dc = host.Datacenter
-		}
-
 		virtualHosts[i] = &VirtualHost{
 			Tokens:     tokens,
 			Addr:       proxyAddresses[i],
 			Host:       host,
 			HostId:     primitiveHostId,
-			Datacenter: dc,
 			Rack:       ProxyVirtualRack,
 		}
 	}
@@ -624,15 +611,13 @@ type VirtualHost struct {
 	Addr       net.IP
 	Host       *Host
 	HostId     *primitive.UUID
-	Datacenter string
 	Rack       string
 }
 
 func (recv *VirtualHost) String() string {
-	return fmt.Sprintf("VirtualHost{addr: %v, host_id: %v, datacenter: %v, rack: %v, tokens: %v, host: %v}",
+	return fmt.Sprintf("VirtualHost{addr: %v, host_id: %v, rack: %v, tokens: %v, host: %v}",
 		recv.Addr,
 		recv.HostId,
-		recv.Datacenter,
 		recv.Rack,
 		recv.Tokens,
 		recv.Host)

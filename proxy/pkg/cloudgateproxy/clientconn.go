@@ -157,7 +157,7 @@ func (cc *ClientConnector) listenForRequests() {
 			wg.Add(1)
 			cc.readScheduler.Schedule(func() {
 				defer wg.Done()
-				log.Debugf("Received request on client connector: %v", f.Header)
+				log.Tracef("Received request on client connector: %v", f.Header)
 				lock.Lock()
 				if closed {
 					lock.Unlock()
