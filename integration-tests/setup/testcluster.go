@@ -103,10 +103,18 @@ type SimulacronTestSetup struct {
 }
 
 func NewSimulacronTestSetupWithSession(createProxy bool, createSession bool) (*SimulacronTestSetup, error) {
-	return NewSimulacronTestSetupWithSessionAndNodes(createProxy, createSession, 1)
+	return NewSimulacronTestSetupWithSessionAndConfig(createProxy, createSession, nil)
+}
+
+func NewSimulacronTestSetupWithSessionAndConfig(createProxy bool, createSession bool, config *config.Config) (*SimulacronTestSetup, error) {
+	return NewSimulacronTestSetupWithSessionAndNodesAndConfig(createProxy, createSession, 1, config)
 }
 
 func NewSimulacronTestSetupWithSessionAndNodes(createProxy bool, createSession bool, nodes int) (*SimulacronTestSetup, error) {
+	return NewSimulacronTestSetupWithSessionAndNodesAndConfig(createProxy, createSession, nodes, nil)
+}
+
+func NewSimulacronTestSetupWithSessionAndNodesAndConfig(createProxy bool, createSession bool, nodes int, config *config.Config) (*SimulacronTestSetup, error) {
 	origin, err := simulacron.GetNewCluster(createSession, nodes)
 	if err != nil {
 		log.Panic("simulacron origin startup failed: ", err)
@@ -117,7 +125,13 @@ func NewSimulacronTestSetupWithSessionAndNodes(createProxy bool, createSession b
 	}
 	var proxyInstance *cloudgateproxy.CloudgateProxy
 	if createProxy {
-		proxyInstance, err = NewProxyInstance(origin, target)
+		if config == nil {
+			config = NewTestConfig(origin.GetInitialContactPoint(), target.GetInitialContactPoint())
+		} else {
+			config.OriginCassandraContactPoints = origin.GetInitialContactPoint()
+			config.TargetCassandraContactPoints = target.GetInitialContactPoint()
+		}
+		proxyInstance, err = NewProxyInstanceWithConfig(config)
 		if err != nil {
 			return nil, err
 		}
@@ -133,6 +147,10 @@ func NewSimulacronTestSetupWithSessionAndNodes(createProxy bool, createSession b
 
 func NewSimulacronTestSetup() (*SimulacronTestSetup, error) {
 	return NewSimulacronTestSetupWithSession(true, false)
+}
+
+func NewSimulacronTestSetupWithConfig(c *config.Config) (*SimulacronTestSetup, error) {
+	return NewSimulacronTestSetupWithSessionAndConfig(true, false, c)
 }
 
 func (setup *SimulacronTestSetup) Cleanup() {
@@ -347,7 +365,6 @@ func NewTestConfig(originHost string, targetHost string) *config.Config {
 	conf.ProxyInstanceCount = -1
 	conf.ProxyAddresses = ""
 	conf.ProxyNumTokens = 8
-	conf.ProxyVirtualDatacenterFromOrigin = true
 
 	conf.OriginEnableHostAssignment = true
 	conf.TargetEnableHostAssignment = true
@@ -398,7 +415,7 @@ func NewTestConfig(originHost string, targetHost string) *config.Config {
 	conf.EventQueueSizeFrames = 12
 
 	conf.ForwardReadsToTarget = false
-	conf.ForwardSystemQueriesToTarget = true
+	conf.ForwardSystemQueriesToTarget = false
 
 	conf.RequestTimeoutMs = 10000
 

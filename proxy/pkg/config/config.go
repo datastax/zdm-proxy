@@ -17,7 +17,6 @@ type Config struct {
 	ProxyInstanceCount               int    `default:"-1" split_words:"true"` // Overridden by length of ProxyAddresses (after split) if set
 	ProxyAddresses                   string `split_words:"true"`
 	ProxyNumTokens                   int    `default:"8" split_words:"true"`
-	ProxyVirtualDatacenterFromOrigin bool   `default:"true" split_words:"true"`
 
 	OriginEnableHostAssignment bool `default:"true" split_words:"true"`
 	TargetEnableHostAssignment bool `default:"true" split_words:"true"`
@@ -75,7 +74,7 @@ type Config struct {
 	EventQueueSizeFrames int `default:"12" split_words:"true"`
 
 	ForwardReadsToTarget         bool `default:"false" split_words:"true"`
-	ForwardSystemQueriesToTarget bool `default:"true" split_words:"true"`
+	ForwardSystemQueriesToTarget bool `default:"false" split_words:"true"`
 
 	RequestTimeoutMs int `default:"10000" split_words:"true"`
 
@@ -168,7 +167,6 @@ func (c *Config) ParseTopologyConfig() (*TopologyConfig, error) {
 		Index:                       proxyIndex,
 		Count:                       proxyInstanceCount,
 		NumTokens:                   c.ProxyNumTokens,
-		VirtualDatacenterFromOrigin: c.ProxyVirtualDatacenterFromOrigin,
 	}, nil
 }
 
@@ -322,10 +320,9 @@ type TopologyConfig struct {
 	Count                       int      // comes from PROXY_INSTANCE_COUNT unless PROXY_ADDRESSES is set
 	Index                       int      // comes from PROXY_INDEX
 	NumTokens                   int      // comes from PROXY_NUM_TOKENS
-	VirtualDatacenterFromOrigin bool     // comes from PROXY_VIRTUAL_DATACENTER_FROM_ORIGIN
 }
 
 func (recv *TopologyConfig) String() string {
-	return fmt.Sprintf("TopologyConfig{VirtualizationEnabled=%v, Addresses=%v, Count=%v, Index=%v, NumTokens=%v, VirtualDcFromOrigin=%v",
-		recv.VirtualizationEnabled, recv.Addresses, recv.Count, recv.Index, recv.NumTokens, recv.VirtualDatacenterFromOrigin)
+	return fmt.Sprintf("TopologyConfig{VirtualizationEnabled=%v, Addresses=%v, Count=%v, Index=%v, NumTokens=%v",
+		recv.VirtualizationEnabled, recv.Addresses, recv.Count, recv.Index, recv.NumTokens)
 }

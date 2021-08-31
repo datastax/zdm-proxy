@@ -930,21 +930,6 @@ func (ch *ClientHandler) executeStatement(
 			return err
 		}
 
-		var dcName string
-		if ch.topologyConfig.VirtualDatacenterFromOrigin {
-			originVirtualHosts, err := ch.originControlConn.GetVirtualHosts()
-			if err != nil {
-				return err
-			}
-			dcName = originVirtualHosts[ch.originControlConn.GetLocalVirtualHostIndex()].Host.Datacenter
-		} else {
-			targetVirtualHosts, err := ch.targetControlConn.GetVirtualHosts()
-			if err != nil {
-				return err
-			}
-			dcName = targetVirtualHosts[ch.targetControlConn.GetLocalVirtualHostIndex()].Host.Datacenter
-		}
-
 		typeCodec := ch.typeCodecManager.GetOrCreate(f.Header.Version)
 
 		switch interceptedQueryType {
@@ -954,7 +939,7 @@ func (ch *ClientHandler) executeStatement(
 			}
 		case peersV1:
 			interceptedQueryResponse, err = NewSystemPeersRowsResult(
-				typeCodec, dcName, virtualHosts, controlConn.GetLocalVirtualHostIndex(),
+				typeCodec, virtualHosts, controlConn.GetLocalVirtualHostIndex(),
 				ch.conf.ProxyQueryPort, controlConn.PreferredIpColumnExists())
 			if err != nil {
 				return err
@@ -962,7 +947,7 @@ func (ch *ClientHandler) executeStatement(
 		case local:
 			localVirtualHost := virtualHosts[controlConn.GetLocalVirtualHostIndex()]
 			interceptedQueryResponse, err = NewSystemLocalRowsResult(
-				typeCodec, controlConn.GetSystemLocalInfo(), dcName, localVirtualHost, ch.conf.ProxyQueryPort)
+				typeCodec, controlConn.GetSystemLocalInfo(), localVirtualHost, ch.conf.ProxyQueryPort)
 			if err != nil {
 				return err
 			}

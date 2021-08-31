@@ -311,7 +311,7 @@ func (recv *optionalColumn) AsNillableInt() *int {
 }
 
 func NewSystemLocalRowsResult(
-	genericTypeCodec *GenericTypeCodec, systemLocalInfo *systemLocalInfo, dcName string,
+	genericTypeCodec *GenericTypeCodec, systemLocalInfo *systemLocalInfo,
 	virtualHost *VirtualHost, proxyPort int) (*message.RowsResult, error) {
 
 	columns := make([]*message.ColumnMetadata, 0, len(systemLocalColumns))
@@ -321,7 +321,7 @@ func NewSystemLocalRowsResult(
 	addValueAndColumn(&row, &columns, broadcastAddressColumn, virtualHost.Addr)
 	addValueAndColumnIfExists(&row, &columns, clusterNameColumn, systemLocalInfo.clusterName)
 	addValueAndColumnIfExists(&row, &columns, cqlVersionColumn, systemLocalInfo.cqlVersion)
-	addValueAndColumn(&row, &columns, datacenterColumn, dcName)
+	addValueAndColumn(&row, &columns, datacenterColumn, virtualHost.Host.Datacenter)
 	addValueAndColumnIfExists(&row, &columns, dseVersionColumn, virtualHost.Host.DseVersion)
 	addValueAndColumnIfExists(&row, &columns, gossipGenerationColumn, systemLocalInfo.gossipGeneration)
 	addValueAndColumnIfExists(&row, &columns, graphColumn, virtualHost.Host.Graph)
@@ -465,7 +465,7 @@ var systemPeersColumns = []*message.ColumnMetadata{
 }
 
 func NewSystemPeersRowsResult(
-	genericTypeCodec *GenericTypeCodec, dcName string, virtualHosts []*VirtualHost,
+	genericTypeCodec *GenericTypeCodec, virtualHosts []*VirtualHost,
 	localVirtualHostIndex int, proxyPort int, preferredIpColExists bool) (*message.RowsResult, error) {
 
 	columns := make([]*message.ColumnMetadata, 0, len(systemPeersColumns))
@@ -488,7 +488,7 @@ func NewSystemPeersRowsResult(
 		row := make([]interface{}, 0, len(columns))
 
 		addPeerColumn(first, &row, &columns, addedColumns, peerColumn, proxyAddress, &errors)
-		addPeerColumn(first, &row, &columns, addedColumns, datacenterPeersColumn, dcName, &errors)
+		addPeerColumn(first, &row, &columns, addedColumns, datacenterPeersColumn, host.Datacenter, &errors)
 		addPeerColumnIfExists(first, &row, &columns, addedColumns, dseVersionPeersColumn, host.DseVersion, &errors)
 		addPeerColumnIfExists(first, &row, &columns, addedColumns, graphPeersColumn, host.Graph, &errors)
 		addPeerColumn(first, &row, &columns, addedColumns, hostIdPeersColumn, virtualHost.HostId, &errors)
