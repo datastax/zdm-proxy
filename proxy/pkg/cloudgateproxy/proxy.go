@@ -174,7 +174,8 @@ func (p *CloudgateProxy) initializeControlConnections(ctx context.Context) error
 		p.Conf.OriginCassandraPort,
 		p.Conf.ClusterConnectionTimeoutMs,
 		OriginCassandra,
-		p.Conf.OriginDatacenter)
+		p.Conf.OriginDatacenter,
+		ctx)
 	if err != nil {
 		return fmt.Errorf("error initializing the connection configuration or control connection for Origin: %w", err)
 	}
@@ -189,7 +190,8 @@ func (p *CloudgateProxy) initializeControlConnections(ctx context.Context) error
 		p.Conf.TargetCassandraPort,
 		p.Conf.ClusterConnectionTimeoutMs,
 		TargetCassandra,
-		p.Conf.TargetDatacenter)
+		p.Conf.TargetDatacenter,
+		ctx)
 	if err != nil {
 		return fmt.Errorf("error initializing the connection configuration or control connection for Target: %w", err)
 	}

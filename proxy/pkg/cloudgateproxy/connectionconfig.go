@@ -1,6 +1,7 @@
 package cloudgateproxy
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	log "github.com/sirupsen/logrus"
@@ -15,14 +16,14 @@ type ConnectionConfig interface {
 	UsesSNI() bool
 	GetConnectionTimeoutMs() int
 	GetContactPoints() []Endpoint
-	RefreshContactPoints() ([]Endpoint, error)
+	RefreshContactPoints(ctx context.Context) ([]Endpoint, error)
 	CreateEndpoint(h *Host) Endpoint
 }
 
 func InitializeConnectionConfig(secureConnectBundlePath string, contactPointsFromConfig []string, port int,
-	connTimeoutInMs int, clusterType ClusterType, datacenterFromConfig string) (ConnectionConfig, error){
+	connTimeoutInMs int, clusterType ClusterType, datacenterFromConfig string, ctx context.Context) (ConnectionConfig, error){
 	if secureConnectBundlePath != "" {
-		return initializeAstraConnectionConfig(connTimeoutInMs, clusterType, secureConnectBundlePath)
+		return initializeAstraConnectionConfig(connTimeoutInMs, clusterType, secureConnectBundlePath, ctx)
 	} else {
 		contactPoints := make([]Endpoint, 0)
 		for _, contactPoint := range contactPointsFromConfig {
@@ -86,7 +87,7 @@ func (cc *genericConnectionConfig) GetContactPoints() []Endpoint {
 	return cc.contactPoints
 }
 
-func (cc *genericConnectionConfig) RefreshContactPoints() ([]Endpoint, error) {
+func (cc *genericConnectionConfig) RefreshContactPoints(ctx context.Context) ([]Endpoint, error) {
 	return cc.contactPoints, nil
 }
 
@@ -113,7 +114,7 @@ type astraConnectionConfigImpl struct {
 }
 
 func initializeAstraConnectionConfig(
-	connectionTimeoutMs int, clusterType ClusterType, secureConnectBundlePath string) (*astraConnectionConfigImpl, error) {
+	connectionTimeoutMs int, clusterType ClusterType, secureConnectBundlePath string, ctx context.Context) (*astraConnectionConfigImpl, error) {
 	fileMap, err := extractFilesFromZipArchive(secureConnectBundlePath)
 	if err != nil {
 		return nil, err
@@ -144,7 +145,7 @@ func initializeAstraConnectionConfig(
 		contactInfoLock:      &sync.RWMutex{},
 	}
 
-	metadata, _, err := connConfig.refreshMetadata()
+	metadata, _, err := connConfig.refreshMetadata(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -179,8 +180,8 @@ func (cc *astraConnectionConfigImpl) GetContactPoints() []Endpoint {
 	return cc.contactPoints
 }
 
-func (cc *astraConnectionConfigImpl) RefreshContactPoints() ([]Endpoint, error) {
-	_, contactPoints, err := cc.refreshMetadata()
+func (cc *astraConnectionConfigImpl) RefreshContactPoints(ctx context.Context) ([]Endpoint, error) {
+	_, contactPoints, err := cc.refreshMetadata(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -196,8 +197,8 @@ func (cc *astraConnectionConfigImpl) createEndpointFromString(hostId string) End
 	return NewAstraEndpoint(cc, hostId, cc.GetTlsConfig())
 }
 
-func (cc *astraConnectionConfigImpl) refreshMetadata() (*AstraMetadata, []Endpoint, error) {
-	metadata, err := retrieveAstraMetadata(cc.metadataServiceName, cc.metadataServicePort, cc.GetTlsConfig())
+func (cc *astraConnectionConfigImpl) refreshMetadata(ctx context.Context) (*AstraMetadata, []Endpoint, error) {
+	metadata, err := retrieveAstraMetadata(cc.metadataServiceName, cc.metadataServicePort, cc.GetTlsConfig(), ctx)
 	if err != nil {
 		return nil, nil, err
 	}

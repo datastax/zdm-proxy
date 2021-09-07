@@ -132,7 +132,7 @@ func (cc *ControlConn) Start(wg *sync.WaitGroup, ctx context.Context) error {
 			if conn == nil {
 				if !lastOpenSuccessful {
 					log.Infof("Refreshing contact points and reopening control connection to %v.", cc.connConfig.GetClusterType())
-					_, err = cc.connConfig.RefreshContactPoints()
+					_, err = cc.connConfig.RefreshContactPoints(cc.context)
 					if err != nil {
 						log.Warnf("Failed to refresh contact points, reopening control connection to %v with old contact points.", cc.connConfig.GetClusterType())
 					}
