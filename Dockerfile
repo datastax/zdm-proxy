@@ -32,6 +32,7 @@ RUN cp /build/main .
 FROM scratch
 
 COPY --from=builder /dist/main /
+COPY LICENSE /
 
 ENV PROXY_QUERY_ADDRESS="0.0.0.0"
 ENV PROXY_METRICS_ADDRESS="0.0.0.0"
