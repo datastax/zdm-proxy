@@ -174,6 +174,23 @@ Then build and push the image. This will tag the image with the current git comm
 make build push
 ```
 
+This doesn't tag the image with `latest` or any version tag like `1.x`. To do that you need to copy the image tag that was printed to the console by `make push` or run `make get_current_tag` to get the tag based on the current git commit hash. Then you run `docker tag <NAME:GIT_COMMIT_HASH_TAG> <NAME:NEW_TAG>` followed by `docker push <NAME:NEW_TAG>`. 
+
+For example, if you want to tag and push the image tagged by the current git commit hash with `1.x`, `1.0.1` and `latest`:
+
+```shell
+> make get_current_tag
+datastax/cloudgate-proxy:d046148f606b65b536bb0cc2bd63daf1d556e778
+> docker tag datastax/cloudgate-proxy:d046148f606b65b536bb0cc2bd63daf1d556e778 datastax/cloudgate-proxy:1.x
+> docker tag datastax/cloudgate-proxy:d046148f606b65b536bb0cc2bd63daf1d556e778 datastax/cloudgate-proxy:1.0.1
+> docker tag datastax/cloudgate-proxy:d046148f606b65b536bb0cc2bd63daf1d556e778 datastax/cloudgate-proxy:latest
+> docker push datastax/cloudgate-proxy:1.x
+> docker push datastax/cloudgate-proxy:1.0.1
+> docker push datastax/cloudgate-proxy:latest
+```
+
+
+
 ## Integration tests
 
 The `integration-tests` module contains integration tests that use `CCM` and `Simulacron`.
