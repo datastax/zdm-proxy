@@ -17,6 +17,14 @@ github.com/cespare/xxhash/v2 v2.1.1/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XL
 github.com/coreos/go-systemd v0.0.0-20190321100706-95778dfbb74e/go.mod h1:F5haX7vjVVG0kc13fIWeqUViNPyEJxv/OmvnBo0Yme4=
 github.com/datastax/go-cassandra-native-protocol v0.0.0-20210625183157-078df009bd1b h1:WBfvDQmaVUrkInvOEgvk+P7rr5/poPloZRwjmYei1rE=
 github.com/datastax/go-cassandra-native-protocol v0.0.0-20210625183157-078df009bd1b/go.mod h1:n6F7IFlMxffEUMfTBvNqwaxwpJMvMnRT5L93km1qeNc=
+github.com/datastax/go-cassandra-native-protocol v0.0.0-20210913135133-5fb5bfbe1ecd h1:ci9wTpAw9++AHYZEkbbtNbl6cCruzBCBXlCacvWqnLE=
+github.com/datastax/go-cassandra-native-protocol v0.0.0-20210913135133-5fb5bfbe1ecd/go.mod h1:n6F7IFlMxffEUMfTBvNqwaxwpJMvMnRT5L93km1qeNc=
+github.com/datastax/go-cassandra-native-protocol v0.0.0-20210913141732-75c86613a1b3 h1:HeXAJwhX91/y2F7/7JY+nWSBLQHhsWDJjvgNkV9uwEQ=
+github.com/datastax/go-cassandra-native-protocol v0.0.0-20210913141732-75c86613a1b3/go.mod h1:n6F7IFlMxffEUMfTBvNqwaxwpJMvMnRT5L93km1qeNc=
+github.com/datastax/go-cassandra-native-protocol v0.0.0-20210913162423-ce1d16d7afb0 h1:Z1pP3HvRo6DXuNdbM7IwG/ZCn8kMLPFAbEiG4Lqlcgg=
+github.com/datastax/go-cassandra-native-protocol v0.0.0-20210913162423-ce1d16d7afb0/go.mod h1:n6F7IFlMxffEUMfTBvNqwaxwpJMvMnRT5L93km1qeNc=
+github.com/datastax/go-cassandra-native-protocol v0.0.0-20210914123502-a9269e2fbd05 h1:PyTjJQTHF8SBaoxW5i1jfLgooG9CnDUBKeKuND8pFbY=
+github.com/datastax/go-cassandra-native-protocol v0.0.0-20210914123502-a9269e2fbd05/go.mod h1:n6F7IFlMxffEUMfTBvNqwaxwpJMvMnRT5L93km1qeNc=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=

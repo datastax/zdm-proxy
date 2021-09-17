@@ -1,6 +1,11 @@
 package integration_tests
 
 import (
+	"bytes"
+	"github.com/datastax/go-cassandra-native-protocol/frame"
+	"github.com/datastax/go-cassandra-native-protocol/message"
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/riptano/cloud-gate/integration-tests/client"
 	"github.com/riptano/cloud-gate/integration-tests/setup"
 	"github.com/riptano/cloud-gate/integration-tests/utils"
 	"github.com/stretchr/testify/require"
@@ -66,4 +71,28 @@ func TestMaxClientsThreshold(t *testing.T) {
 	}
 
 	t.Fatal("Expected failure in last session connection but it was successful.")
+}
+
+func TestUnsupportedProtocolVersion(t *testing.T) {
+	testSetup, err := setup.NewSimulacronTestSetupWithSession(true, false)
+	require.Nil(t, err)
+	defer testSetup.Cleanup()
+
+	testClient, err := client.NewTestClient("127.0.0.1:14002")
+	require.True(t, err == nil, "testClient setup failed: %s", err)
+	defer testClient.Shutdown()
+
+	startup := message.NewStartup()
+	f := frame.NewFrame(primitive.ProtocolVersion5, 0, startup)
+	codec := frame.NewCodec()
+	buf := bytes.Buffer{}
+	codec.EncodeFrame(f, &buf)
+	bytes := buf.Bytes()
+	bytes[1] = 0
+	rsp, err := testClient.SendRawRequest(0, bytes)
+	protocolErr, ok := rsp.Body.Message.(*message.ProtocolError)
+	require.True(t, ok)
+	require.Equal(t, "Beta version of the protocol used (5/v5-beta), but USE_BETA flag is unset", protocolErr.ErrorMessage)
+	require.Equal(t, int16(0), rsp.Header.StreamId)
+	require.Equal(t, primitive.ProtocolVersion4, rsp.Header.Version)
 }

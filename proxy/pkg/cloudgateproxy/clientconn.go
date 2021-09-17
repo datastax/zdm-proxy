@@ -3,8 +3,11 @@ package cloudgateproxy
 import (
 	"bufio"
 	"context"
+	"errors"
+	"fmt"
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
 	"github.com/riptano/cloud-gate/proxy/pkg/config"
 	log "github.com/sirupsen/logrus"
 	"net"
@@ -146,12 +149,50 @@ func (cc *ClientConnector) listenForRequests() {
 		wg := &sync.WaitGroup{}
 		defer wg.Wait()
 		defer log.Debugf("[ClientConnector] Shutting down request listener, waiting until request listener tasks are done...")
+		protocolErrOccurred := false
 		for cc.clientHandlerContext.Err() == nil {
 			f, err := readRawFrame(bufferedReader, connectionAddr, cc.clientHandlerContext)
-			if err != nil {
-				handleConnectionError(
-					err, cc.clientHandlerCancelFunc, "ClientConnector", "reading", connectionAddr)
+
+			if protocolErrOccurred {
+				log.Infof("Request received after a protocol error occured, forcibly closing the client connection.")
+				cc.clientHandlerCancelFunc()
 				break
+			}
+
+			if err != nil {
+				protocolVersionErr := &frame.ProtocolVersionErr{}
+				if errors.As(err, &protocolVersionErr) {
+					var protocolErrMsg *message.ProtocolError
+					if protocolVersionErr.Version == primitive.ProtocolVersion5 && !protocolVersionErr.UseBeta {
+						protocolErrMsg = &message.ProtocolError{
+							ErrorMessage: "Beta version of the protocol used (5/v5-beta), but USE_BETA flag is unset"}
+					} else {
+						protocolErrMsg = &message.ProtocolError{
+							ErrorMessage: fmt.Sprintf("Invalid or unsupported protocol version (%d); " +
+								"supported versions are (3/v3, 4/v4, 5/v5-beta))", protocolVersionErr.Version)}
+					}
+					protocolErrOccurred = true
+
+					var responseVersion primitive.ProtocolVersion
+					if primitive.IsValidProtocolVersion(protocolVersionErr.Version) && !protocolVersionErr.Version.IsBeta() {
+						responseVersion = protocolVersionErr.Version
+					} else {
+						responseVersion = primitive.ProtocolVersion4
+					}
+					response := frame.NewFrame(responseVersion, 0, protocolErrMsg)
+					rawResponse, err := defaultCodec.ConvertToRawFrame(response)
+					if err != nil {
+						log.Errorf("Could not convert frame (%v) to raw frame: %v", response, err)
+					}
+					log.Infof("Protocol error detected while decoding a frame: %v. " +
+						"Returning a protocol error to the client: %v.", protocolVersionErr, protocolErrMsg)
+					cc.sendResponseToClient(rawResponse)
+					continue
+				} else {
+					handleConnectionError(
+						err, cc.clientHandlerCancelFunc, "ClientConnector", "reading", connectionAddr)
+					break
+				}
 			}
 
 			wg.Add(1)
