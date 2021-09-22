@@ -35,7 +35,7 @@ func TestGetHosts(t *testing.T) {
 		clusterName := cc.GetClusterName()
 		require.Equal(t, cluster.Name, clusterName)
 
-		hosts, err := cc.GetHostsInLocalDatacenter()
+		hosts, err := cc.GetOrderedHostsInLocalDatacenter()
 		require.Nil(t, err)
 		require.Equal(t, 3, len(hosts))
 		nodesByAddress := make(map[string]*simulacron.Node, 3)
@@ -130,7 +130,7 @@ func TestGetAssignedHosts(t *testing.T) {
 
 	checkAssignedHostsFunc := func(t *testing.T, cc *cloudgateproxy.ControlConn, cluster *simulacron.Cluster, tt test) {
 
-		hosts, err := cc.GetHostsInLocalDatacenter()
+		hosts, err := cc.GetOrderedHostsInLocalDatacenter()
 		require.Nil(t, err)
 		require.Equal(t, 3, len(hosts))
 
@@ -226,7 +226,7 @@ func TestNextAssignedHost(t *testing.T) {
 
 	checkAssignedHostsCounterFunc := func(t *testing.T, cc *cloudgateproxy.ControlConn, cluster *simulacron.Cluster, tt test) {
 
-		hosts, err := cc.GetHostsInLocalDatacenter()
+		hosts, err := cc.GetOrderedHostsInLocalDatacenter()
 		require.Nil(t, err)
 		require.Equal(t, 3, len(hosts))
 
@@ -391,7 +391,7 @@ func TestConnectionAssignment(t *testing.T) {
 
 	checkRequestsPerNode := func(t *testing.T, cc *cloudgateproxy.ControlConn, cluster *simulacron.Cluster, tt test, queryString string) {
 
-		hosts, err := cc.GetHostsInLocalDatacenter()
+		hosts, err := cc.GetOrderedHostsInLocalDatacenter()
 		require.Nil(t, err)
 		require.Equal(t, 3, len(hosts))
 
@@ -483,7 +483,7 @@ func TestConnectionAssignment(t *testing.T) {
 func TestRefreshTopologyEventHandler(t *testing.T) {
 	checkHosts := func (t *testing.T, controlConn *cloudgateproxy.ControlConn, localHostDc string, peersIpPrefix string,
 		peersCount map[string] int, expectedHostsCountPerDc map[string]int) (err error, fatal bool) {
-		hosts, err := controlConn.GetHostsInLocalDatacenter()
+		hosts, err := controlConn.GetOrderedHostsInLocalDatacenter()
 		if err != nil {
 			return fmt.Errorf("err should be nil: %v", err), true
 		}
@@ -726,6 +726,11 @@ func TestRefreshTopologyEventHandler(t *testing.T) {
 			conf.OriginDatacenter = tt.originDcConf
 			conf.TargetDatacenter = tt.targetDcConf
 
+			originRegisterMessages := make([]*message.Register, 0)
+			originRegisterLock := &sync.Mutex{}
+			targetRegisterMessages := make([]*message.Register, 0)
+			targetRegisterLock := &sync.Mutex{}
+
 			originHandler := &atomic.Value{}
 			originHandler.Store(newRefreshTopologyTestHandler("cluster1", tt.oldOriginLocalHostDc, "127.0.1.1", tt.oldOriginPeersCount))
 
@@ -741,18 +746,32 @@ func TestRefreshTopologyEventHandler(t *testing.T) {
 			testSetup, err := setup.NewCqlServerTestSetup(conf, false, false, false)
 			require.Nil(t, err)
 			defer testSetup.Cleanup()
-			testSetup.Origin.CqlServer.RequestHandlers = []client.RequestHandler{createMutableHandler(originHandler)}
-			testSetup.Target.CqlServer.RequestHandlers = []client.RequestHandler{createMutableHandler(targetHandler)}
+			testSetup.Origin.CqlServer.RequestHandlers = []client.RequestHandler{
+				newRegisterHandler(&originRegisterMessages, originRegisterLock), createMutableHandler(originHandler)}
+			testSetup.Target.CqlServer.RequestHandlers = []client.RequestHandler{
+				newRegisterHandler(&targetRegisterMessages, targetRegisterLock), createMutableHandler(targetHandler)}
 			err = testSetup.Start(conf, false, primitive.ProtocolVersion4)
 			require.Nil(t, err)
+			checkRegisterMessages(t, originRegisterMessages, originRegisterLock)
+			checkRegisterMessages(t, targetRegisterMessages, targetRegisterLock)
 			proxy := testSetup.Proxy
 			beforeSleepTestFunc(t, proxy.GetOriginControlConn(), originHandler, "cluster1", tt.oldOriginLocalHostDc, tt.newOriginLocalHostDc, "127.0.1.1", tt.oldOriginPeersCount, tt.newOriginPeersCount, tt.expectedOldOriginHostsCount)
 			beforeSleepTestFunc(t, proxy.GetTargetControlConn(), targetHandler, "cluster2", tt.oldTargetLocalHostDc, tt.newTargetLocalHostDc, "127.0.1.2", tt.oldTargetPeersCount, tt.newTargetPeersCount, tt.expectedOldTargetHostsCount)
 			time.Sleep(5 * time.Second)
 			afterSleepTestFunc(t, proxy.GetOriginControlConn(), originHandler, testSetup.Origin.CqlServer, "cluster1", tt.oldOriginLocalHostDc, tt.newOriginLocalHostDc, "127.0.1.1", tt.oldOriginPeersCount, tt.newOriginPeersCount, tt.expectedOldOriginHostsCount, tt.expectedNewOriginHostsCount)
 			afterSleepTestFunc(t, proxy.GetTargetControlConn(), targetHandler, testSetup.Target.CqlServer, "cluster2", tt.oldTargetLocalHostDc, tt.newTargetLocalHostDc, "127.0.1.2", tt.oldTargetPeersCount, tt.newTargetPeersCount, tt.expectedOldTargetHostsCount, tt.expectedNewTargetHostsCount)
+			checkRegisterMessages(t, originRegisterMessages, originRegisterLock)
+			checkRegisterMessages(t, targetRegisterMessages, targetRegisterLock)
 		})
 	}
+}
+
+func checkRegisterMessages(t *testing.T, registerMessages []*message.Register, lock *sync.Mutex) {
+	lock.Lock()
+	defer lock.Unlock()
+	require.Equal(t, 1, len(registerMessages))
+	registerMsg := registerMessages[0]
+	require.Equal(t, []primitive.EventType{primitive.EventTypeTopologyChange}, registerMsg.EventTypes)
 }
 
 func groupHostsPerDc(hosts []*cloudgateproxy.Host) map[string][]*cloudgateproxy.Host {
@@ -771,6 +790,20 @@ func newRefreshTopologyTestHandler(cluster string, localHostDc string, peersIpPr
 		client.RegisterHandler,
 		newSystemTablesHandler(cluster, localHostDc, peersIpPrefix, peersCount),
 	)
+}
+
+// Creates a new RequestHandler to handle queries to system tables (system.local and system.peers).
+func newRegisterHandler(registerMessages *[]*message.Register, lock *sync.Mutex) client.RequestHandler {
+	return func(request *frame.Frame, conn *client.CqlServerConnection, handlerCtx client.RequestHandlerContext) (response *frame.Frame) {
+		if register, ok := request.Body.Message.(*message.Register); ok {
+			lock.Lock()
+			*registerMessages = append(*registerMessages, register)
+			lock.Unlock()
+			log.Debugf("%v: [custom register handler]: received REGISTER: %v", conn, register.EventTypes)
+			return frame.NewFrame(request.Header.Version, request.Header.StreamId, &message.Ready{})
+		}
+		return nil
+	}
 }
 
 // Creates a new RequestHandler to handle queries to system tables (system.local and system.peers).

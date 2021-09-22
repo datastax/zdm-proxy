@@ -25,6 +25,12 @@ func (h *HandlerWithFallback) SetHandler(handler http.Handler) {
 	h.rwMutex.Unlock()
 }
 
+func (h *HandlerWithFallback) ClearHandler() {
+	h.rwMutex.Lock()
+	h.handler = nil
+	h.rwMutex.Unlock()
+}
+
 func (h *HandlerWithFallback) Handler() http.Handler {
 	return http.HandlerFunc(func(rsp http.ResponseWriter, req *http.Request) {
 		h.rwMutex.RLock()

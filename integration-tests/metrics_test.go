@@ -89,8 +89,8 @@ func testMetrics(t *testing.T, metricsHandler *httpcloudgate.HandlerWithFallback
 	testSetup, err := setup.NewCqlServerTestSetup(conf, false, false, false)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
-	testSetup.Origin.CqlServer.RequestHandlers = []client.RequestHandler{client.HeartbeatHandler, client.HandshakeHandler, client.NewSystemTablesHandler("cluster1", "dc1"), handleReads, handleWrites}
-	testSetup.Target.CqlServer.RequestHandlers = []client.RequestHandler{client.HeartbeatHandler, client.HandshakeHandler, client.NewSystemTablesHandler("cluster2", "dc2"), handleWrites}
+	testSetup.Origin.CqlServer.RequestHandlers = []client.RequestHandler{client.RegisterHandler, client.HeartbeatHandler, client.HandshakeHandler, client.NewSystemTablesHandler("cluster1", "dc1"), handleReads, handleWrites}
+	testSetup.Target.CqlServer.RequestHandlers = []client.RequestHandler{client.RegisterHandler, client.HeartbeatHandler, client.HandshakeHandler, client.NewSystemTablesHandler("cluster2", "dc2"), handleWrites}
 
 	err = testSetup.Start(conf, false, primitive.ProtocolVersion4)
 	require.Nil(t, err)

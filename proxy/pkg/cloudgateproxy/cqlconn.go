@@ -10,6 +10,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"io"
 	"net"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -26,14 +27,14 @@ const (
 )
 type CqlConnection interface {
 	IsInitialized() bool
-	Initialize(version primitive.ProtocolVersion) error
 	InitializeContext(version primitive.ProtocolVersion, ctx context.Context) error
-	SendAndReceive(request *frame.Frame) (*frame.Frame, error)
-	SendAndReceiveContext(request *frame.Frame, ctx context.Context) (*frame.Frame, error)
+	SendAndReceive(request *frame.Frame, ctx context.Context) (*frame.Frame, error)
 	Close() error
-	Query(cql string, genericTypeCodec *GenericTypeCodec) (*ParsedRowSet, error)
+	Execute(msg message.Message, ctx context.Context) (message.Message, error)
+	Query(cql string, genericTypeCodec *GenericTypeCodec, ctx context.Context) (*ParsedRowSet, error)
 	SendHeartbeat(ctx context.Context) error
-	SetEventHandler(eventHandler func(f *frame.Frame))
+	SetEventHandler(eventHandler func(f *frame.Frame, conn CqlConnection))
+	SubscribeToProtocolEvents(ctx context.Context, eventTypes []primitive.EventType) error
 }
 
 // Not thread safe
@@ -53,7 +54,7 @@ type cqlConn struct {
 	pendingOperationsLock *sync.RWMutex
 	timedOutOperations    int
 	closed                bool
-	eventHandler          func(f *frame.Frame)
+	eventHandler          func(f *frame.Frame, conn CqlConnection)
 	eventHandlerLock      *sync.Mutex
 }
 
@@ -101,10 +102,24 @@ func NewCqlConnection(
 	return cqlConn
 }
 
-func (c *cqlConn) SetEventHandler(eventHandler func(f *frame.Frame)) {
+func (c *cqlConn) SetEventHandler(eventHandler func(f *frame.Frame, conn CqlConnection)) {
 	c.eventHandlerLock.Lock()
 	defer c.eventHandlerLock.Unlock()
 	c.eventHandler = eventHandler
+}
+
+func (c *cqlConn) SubscribeToProtocolEvents(ctx context.Context, eventTypes []primitive.EventType) error {
+	registerMsg := &message.Register{EventTypes: eventTypes}
+	responseMsg, err := c.Execute(registerMsg, ctx)
+	if err != nil {
+		return fmt.Errorf("could not register event handler: %w", err)
+	}
+
+	if _, ok := responseMsg.(*message.Ready); !ok {
+		return fmt.Errorf("expected Ready response when subscribing to server events but got: %v", responseMsg)
+	}
+
+	return nil
 }
 
 func (c *cqlConn) StartResponseLoop() {
@@ -194,7 +209,7 @@ func (c *cqlConn) StartEventLoop() {
 		for ; ok; event, ok = <- c.eventsQueue {
 			c.eventHandlerLock.Lock()
 			if c.eventHandler != nil {
-				c.eventHandler(event)
+				c.eventHandler(event, c)
 			}
 			c.eventHandlerLock.Unlock()
 		}
@@ -215,11 +230,10 @@ func (c *cqlConn) InitializeContext(version primitive.ProtocolVersion, ctx conte
 	return nil
 }
 
-func (c *cqlConn) Initialize(version primitive.ProtocolVersion) error {
-	return c.InitializeContext(version, context.Background())
-}
-
 func (c *cqlConn) Close() error {
+	c.pendingOperationsLock.Lock()
+	c.closed = true
+	c.pendingOperationsLock.Unlock()
 	c.cancelFn()
 	err := c.conn.Close()
 	if err != nil {
@@ -277,7 +291,7 @@ func (c *cqlConn) sendContext(request *frame.Frame, ctx context.Context) (chan *
 	return nil, err
 }
 
-func (c *cqlConn) SendAndReceiveContext(request *frame.Frame, ctx context.Context) (*frame.Frame, error) {
+func (c *cqlConn) SendAndReceive(request *frame.Frame, ctx context.Context) (*frame.Frame, error) {
 	respChan, err := c.sendContext(request, ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request frame: %w", err)
@@ -301,16 +315,13 @@ func (c *cqlConn) SendAndReceiveContext(request *frame.Frame, ctx context.Contex
 		return nil, fmt.Errorf("context finished before completing receiving frame on %v: %w", c, readTimeoutCtx.Err())
 	}
 }
-func (c *cqlConn) SendAndReceive(request *frame.Frame) (*frame.Frame, error) {
-	return c.SendAndReceiveContext(request, context.Background())
-}
 
 func (c *cqlConn) PerformHandshake(version primitive.ProtocolVersion, ctx context.Context) (err error) {
 	log.Debug("performing handshake")
 	startup := frame.NewFrame(version, -1, message.NewStartup())
 	var response *frame.Frame
 	authenticator := &DsePlainTextAuthenticator{c.credentials}
-	if response, err = c.SendAndReceiveContext(startup, ctx); err == nil {
+	if response, err = c.SendAndReceive(startup, ctx); err == nil {
 		switch response.Body.Message.(type) {
 		case *message.Ready:
 			log.Warnf("%v: expected AUTHENTICATE, got READY – is authentication required?", c)
@@ -319,12 +330,12 @@ func (c *cqlConn) PerformHandshake(version primitive.ProtocolVersion, ctx contex
 			var authResponse *frame.Frame
 			authResponse, err = performHandshakeStep(authenticator, version, -1, response)
 			if err == nil {
-				if response, err = c.SendAndReceiveContext(authResponse, ctx); err != nil {
+				if response, err = c.SendAndReceive(authResponse, ctx); err != nil {
 					err = fmt.Errorf("could not send AUTH RESPONSE: %w", err)
 				} else if _, authSuccess := response.Body.Message.(*message.AuthSuccess); !authSuccess {
 					authResponse, err = performHandshakeStep(authenticator, version, -1, response)
 					if err == nil {
-						if response, err = c.SendAndReceiveContext(authResponse, ctx); err != nil {
+						if response, err = c.SendAndReceive(authResponse, ctx); err != nil {
 							err = fmt.Errorf("could not send AUTH RESPONSE: %w", err)
 						} else if _, authSuccess := response.Body.Message.(*message.AuthSuccess); !authSuccess {
 							err = fmt.Errorf("expected AUTH_SUCCESS, got %v", response.Body.Message)
@@ -345,8 +356,7 @@ func (c *cqlConn) PerformHandshake(version primitive.ProtocolVersion, ctx contex
 	return err
 }
 
-
-func (c *cqlConn) Query(cql string, genericTypeCodec *GenericTypeCodec) (*ParsedRowSet, error) {
+func (c *cqlConn) Query(cql string, genericTypeCodec *GenericTypeCodec, ctx context.Context) (*ParsedRowSet, error) {
 	queryMsg := &message.Query{
 		Query:   cql,
 		Options: &message.QueryOptions{
@@ -357,7 +367,7 @@ func (c *cqlConn) Query(cql string, genericTypeCodec *GenericTypeCodec) (*Parsed
 	queryFrame := frame.NewFrame(ccProtocolVersion, -1, queryMsg)
 	var rowSet *ParsedRowSet
 	for {
-		localResponse, err := c.SendAndReceiveContext(queryFrame, context.Background())
+		localResponse, err := c.SendAndReceive(queryFrame, ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -407,12 +417,21 @@ func (c *cqlConn) Query(cql string, genericTypeCodec *GenericTypeCodec) (*Parsed
 	}
 }
 
+func (c *cqlConn) Execute(msg message.Message, ctx context.Context) (message.Message, error) {
+	queryFrame := frame.NewFrame(ccProtocolVersion, -1, msg)
+	localResponse, err := c.SendAndReceive(queryFrame, ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return localResponse.Body.Message, nil
+}
 
 func (c *cqlConn) SendHeartbeat(ctx context.Context) error {
 	optionsMsg := &message.Options{}
 	heartBeatFrame := frame.NewFrame(ccProtocolVersion, -1, optionsMsg)
 
-	response, err := c.SendAndReceiveContext(heartBeatFrame, ctx)
+	response, err := c.SendAndReceive(heartBeatFrame, ctx)
 	if err != nil {
 		return fmt.Errorf("failed to send heartbeat: %v", err)
 	}
@@ -429,4 +448,12 @@ func (c *cqlConn) SendHeartbeat(ctx context.Context) error {
 // go 1.16 should fix this
 func IsClosingErr(err error) bool {
 	return strings.Contains(err.Error(), "use of closed network connection")
+}
+
+func IsPeerDisconnect(err error) bool {
+	if runtime.GOOS == "windows" {
+		return strings.Contains(err.Error(), "forcibly closed by the remote host")
+	} else {
+		return strings.Contains(err.Error(), "connection reset by peer")
+	}
 }

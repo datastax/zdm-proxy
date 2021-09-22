@@ -20,7 +20,7 @@ type writeCoalescer struct {
 	conf             *config.Config
 
 	clientHandlerWaitGroup  *sync.WaitGroup
-	clientHandlerContext    context.Context
+	shutdownContext         context.Context
 	clientHandlerCancelFunc context.CancelFunc
 
 	writeQueue chan *frame.RawFrame
@@ -38,7 +38,7 @@ func NewWriteCoalescer(
 	conf *config.Config,
 	conn net.Conn,
 	clientHandlerWaitGroup *sync.WaitGroup,
-	clientHandlerContext context.Context,
+	shutdownContext context.Context,
 	clientHandlerCancelFunc context.CancelFunc,
 	logPrefix string,
 	isRequest bool,
@@ -57,7 +57,7 @@ func NewWriteCoalescer(
 		connection:              conn,
 		conf:                    conf,
 		clientHandlerWaitGroup:  clientHandlerWaitGroup,
-		clientHandlerContext:    clientHandlerContext,
+		shutdownContext:         shutdownContext,
 		clientHandlerCancelFunc: clientHandlerCancelFunc,
 		writeQueue:              make(chan *frame.RawFrame, writeQueueSizeFrames),
 		logPrefix:               logPrefix,
@@ -126,10 +126,10 @@ func (recv *writeCoalescer) RunWriteQueueLoop() {
 					}
 
 					log.Tracef("[%v] Writing %v on %v", recv.logPrefix, f.Header, connectionAddr)
-					err := writeRawFrame(tempBuffer, connectionAddr, recv.clientHandlerContext, f)
+					err := writeRawFrame(tempBuffer, connectionAddr, recv.shutdownContext, f)
 					if err != nil {
 						tempDraining = true
-						handleConnectionError(err, recv.clientHandlerCancelFunc, recv.logPrefix, "writing", connectionAddr)
+						handleConnectionError(err, recv.shutdownContext, recv.clientHandlerCancelFunc, recv.logPrefix, "writing", connectionAddr)
 					} else {
 						if tempBuffer.Len() >= recv.writeBufferSizeBytes {
 							t := &coalescerIterationResult{
@@ -155,7 +155,7 @@ func (recv *writeCoalescer) RunWriteQueueLoop() {
 				_, err := recv.connection.Write(bufferedWriter.Bytes())
 				bufferedWriter.Reset()
 				if err != nil {
-					handleConnectionError(err, recv.clientHandlerCancelFunc, recv.logPrefix, "writing", connectionAddr)
+					handleConnectionError(err, recv.shutdownContext, recv.clientHandlerCancelFunc, recv.logPrefix, "writing", connectionAddr)
 					draining = true
 				}
 			}

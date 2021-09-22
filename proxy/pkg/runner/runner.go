@@ -48,12 +48,14 @@ func RunMain(
 	if err == nil {
 		metricsHandler.SetHandler(cp.GetMetricHandler().GetHttpHandler())
 		readinessHandler.SetHandler(health.ReadinessHandler(cp))
-		log.Info("Proxy started. Waiting for SIGINT/SIGTERM to shutdown.")
 
+		log.Info("Proxy started. Waiting for SIGINT/SIGTERM to shutdown.")
 		<-ctx.Done()
 
 		cp.Shutdown()
-	} else if !errors.Is(err, cloudgateproxy.ShutdownErr){
+		metricsHandler.ClearHandler()
+		readinessHandler.ClearHandler()
+	} else if !errors.Is(err, cloudgateproxy.ShutdownErr) {
 		log.Errorf("Error launching proxy: %v", err)
 	}
 

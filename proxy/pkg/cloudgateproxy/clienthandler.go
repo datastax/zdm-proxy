@@ -44,9 +44,8 @@ type ClientHandler struct {
 
 	preparedStatementCache *PreparedStatementCache
 
-	metricHandler   *metrics.MetricHandler
-	nodeMetrics     *metrics.NodeMetrics
-	globalWaitGroup *sync.WaitGroup
+	metricHandler          *metrics.MetricHandler
+	nodeMetrics            *metrics.NodeMetrics
 
 	clientHandlerContext    context.Context
 	clientHandlerCancelFunc context.CancelFunc
@@ -68,14 +67,15 @@ type ClientHandler struct {
 	reqChannel  <-chan *frame.RawFrame
 	respChannel chan *Response
 
-	requestWaitGroup *sync.WaitGroup
+	clientHandlerRequestWaitGroup *sync.WaitGroup
 
 	closedRespChannel     bool
 	closedRespChannelLock *sync.RWMutex
 
 	responsesDoneChan chan<- bool
-	requestsDoneChan  chan<- bool
 	eventsDoneChan    chan<- bool
+
+	requestsDoneCancelFn context.CancelFunc
 
 	requestResponseScheduler  *Scheduler
 	clientConnectorScheduler  *Scheduler
@@ -84,7 +84,13 @@ type ClientHandler struct {
 	conf           *config.Config
 	topologyConfig *config.TopologyConfig
 
-	requestLoopWaitGroup *sync.WaitGroup
+	localClientHandlerWg *sync.WaitGroup
+
+	originHost *Host
+	targetHost *Host
+
+	originObserver *protocolEventObserverImpl
+	targetObserver *protocolEventObserverImpl
 }
 
 func NewClientHandler(
@@ -100,14 +106,14 @@ func NewClientHandler(
 	originPassword string,
 	psCache *PreparedStatementCache,
 	metricHandler *metrics.MetricHandler,
-	waitGroup *sync.WaitGroup,
-	globalContext context.Context,
+	globalClientHandlersWg *sync.WaitGroup,
 	requestResponseScheduler *Scheduler,
 	readScheduler *Scheduler,
 	writeScheduler *Scheduler,
 	numWorkers int,
-	shutdownRequestCtx context.Context,
-	requestLoopWaitGroup *sync.WaitGroup) (*ClientHandler, error) {
+	globalShutdownRequestCtx context.Context,
+	originHost *Host,
+	targetHost *Host) (*ClientHandler, error) {
 
 	nodeMetrics, err := metricHandler.GetNodeMetrics(
 		originCassandraConnInfo.endpoint.GetEndpointIdentifier(),
@@ -117,84 +123,97 @@ func NewClientHandler(
 	}
 
 	clientHandlerContext, clientHandlerCancelFunc := context.WithCancel(context.Background())
+	clientHandlerShutdownRequestContext, clientHandlerShutdownRequestCancelFn := context.WithCancel(globalShutdownRequestCtx)
+	requestsDoneCtx, requestsDoneCancelFn := context.WithCancel(context.Background())
 
+	localClientHandlerWg := &sync.WaitGroup{}
+	globalClientHandlersWg.Add(1)
 	go func() {
-		select {
-		case <-clientHandlerContext.Done():
-			return
-		case <-globalContext.Done():
-			clientHandlerCancelFunc()
-			return
-		}
+		defer globalClientHandlersWg.Done()
+		<-clientHandlerContext.Done()
+		clientHandlerShutdownRequestCancelFn()
+		requestsDoneCancelFn()
+		localClientHandlerWg.Wait()
+		log.Debugf("Client Handler is shutdown.")
 	}()
 
 	respChannel := make(chan *Response, numWorkers)
 
 	originConnector, err := NewClusterConnector(
-		originCassandraConnInfo, conf, nodeMetrics, waitGroup,
-		clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler)
+		originCassandraConnInfo, conf, nodeMetrics, localClientHandlerWg,
+		clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler, requestsDoneCtx)
 	if err != nil {
 		clientHandlerCancelFunc()
 		return nil, err
 	}
 
 	targetConnector, err := NewClusterConnector(
-		targetCassandraConnInfo, conf, nodeMetrics, waitGroup,
-		clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler)
+		targetCassandraConnInfo, conf, nodeMetrics, localClientHandlerWg,
+		clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler, requestsDoneCtx)
 	if err != nil {
 		clientHandlerCancelFunc()
 		return nil, err
 	}
 
 	responsesDoneChan := make(chan bool, 1)
-	requestsDoneChan := make(chan bool, 1)
 	eventsDoneChan := make(chan bool, 1)
 	requestsChannel := make(chan *frame.RawFrame, numWorkers)
+
+	var originObserver, targetObserver *protocolEventObserverImpl
+	if originHost != nil {
+		originObserver = NewProtocolEventObserver(clientHandlerShutdownRequestCancelFn, originHost)
+	}
+	if targetHost != nil {
+		targetObserver = NewProtocolEventObserver(clientHandlerShutdownRequestCancelFn, targetHost)
+	}
 
 	return &ClientHandler{
 		clientConnector: NewClientConnector(
 			clientTcpConn,
 			conf,
-			waitGroup,
+			localClientHandlerWg,
 			requestsChannel,
 			clientHandlerContext,
 			clientHandlerCancelFunc,
 			responsesDoneChan,
-			requestsDoneChan,
+			requestsDoneCtx,
 			eventsDoneChan,
 			readScheduler,
 			writeScheduler,
-			shutdownRequestCtx),
+			clientHandlerShutdownRequestContext),
 
-		originCassandraConnector: originConnector,
-		targetCassandraConnector: targetConnector,
-		originControlConn:        originControlConn,
-		targetControlConn:        targetControlConn,
-		typeCodecManager:         typeCodecManager,
-		preparedStatementCache:   psCache,
-		metricHandler:            metricHandler,
-		nodeMetrics:              nodeMetrics,
-		globalWaitGroup:          waitGroup,
-		clientHandlerContext:     clientHandlerContext,
-		clientHandlerCancelFunc:  clientHandlerCancelFunc,
-		currentKeyspaceName:      &atomic.Value{},
-		authErrorMessage:         nil,
-		startupFrame:             nil,
-		originUsername:           originUsername,
-		originPassword:           originPassword,
-		requestContextHolders:    &sync.Map{},
-		reqChannel:               requestsChannel,
-		respChannel:              respChannel,
-		requestWaitGroup:         &sync.WaitGroup{},
-		closedRespChannel:        false,
-		closedRespChannelLock:    &sync.RWMutex{},
-		requestsDoneChan:         requestsDoneChan,
-		responsesDoneChan:        responsesDoneChan,
-		eventsDoneChan:           eventsDoneChan,
-		requestResponseScheduler: requestResponseScheduler,
-		conf:                     conf,
-		requestLoopWaitGroup:     requestLoopWaitGroup,
-		topologyConfig:           topologyConfig,
+		originCassandraConnector:      originConnector,
+		targetCassandraConnector:      targetConnector,
+		originControlConn:             originControlConn,
+		targetControlConn:             targetControlConn,
+		typeCodecManager:              typeCodecManager,
+		preparedStatementCache:        psCache,
+		metricHandler:                 metricHandler,
+		nodeMetrics:                   nodeMetrics,
+		clientHandlerContext:          clientHandlerContext,
+		clientHandlerCancelFunc:       clientHandlerCancelFunc,
+		currentKeyspaceName:           &atomic.Value{},
+		authErrorMessage:              nil,
+		startupFrame:                  nil,
+		originUsername:                originUsername,
+		originPassword:                originPassword,
+		requestContextHolders:         &sync.Map{},
+		reqChannel:                    requestsChannel,
+		respChannel:                   respChannel,
+		clientHandlerRequestWaitGroup: &sync.WaitGroup{},
+		closedRespChannel:             false,
+		closedRespChannelLock:         &sync.RWMutex{},
+		responsesDoneChan:             responsesDoneChan,
+		eventsDoneChan:                eventsDoneChan,
+		requestsDoneCancelFn:          requestsDoneCancelFn,
+		requestResponseScheduler:      requestResponseScheduler,
+		conf:                          conf,
+		localClientHandlerWg:          localClientHandlerWg,
+		topologyConfig:                topologyConfig,
+		originHost:                    originHost,
+		targetHost:                    targetHost,
+		originObserver:                originObserver,
+		targetObserver:                targetObserver,
 	}, nil
 }
 
@@ -205,6 +224,13 @@ func (ch *ClientHandler) run(activeClients *int32) {
 	ch.clientConnector.run(activeClients)
 	ch.originCassandraConnector.run()
 	ch.targetCassandraConnector.run()
+	ch.requestLoop()
+	ch.listenForEventMessages()
+	ch.responseLoop()
+
+	addObserver(ch.originObserver, ch.originControlConn)
+	addObserver(ch.targetObserver, ch.targetControlConn)
+
 	go func() {
 		<- ch.originCassandraConnector.doneChan
 		<- ch.targetCassandraConnector.doneChan
@@ -212,27 +238,47 @@ func (ch *ClientHandler) run(activeClients *int32) {
 		defer ch.closedRespChannelLock.Unlock()
 		close(ch.respChannel)
 		ch.closedRespChannel = true
+
+		removeObserver(ch.originObserver, ch.originControlConn)
+		removeObserver(ch.targetObserver, ch.targetControlConn)
 	}()
-	ch.requestLoop()
-	ch.listenForEventMessages()
-	ch.responseLoop()
+}
+
+func addObserver(observer *protocolEventObserverImpl, controlConn *ControlConn) {
+	if observer != nil {
+		host := observer.GetHost()
+		controlConn.RegisterObserver(observer)
+		// check if host was possibly removed before observer was registered
+		hosts, err := controlConn.GetHostsInLocalDatacenter()
+		if err == nil {
+			if _, exists := hosts[host.HostId]; !exists {
+				observer.OnHostRemoved(host)
+			}
+		}
+	}
+}
+
+func removeObserver(observer *protocolEventObserverImpl, controlConn *ControlConn) {
+	if observer != nil {
+		controlConn.RemoveObserver(observer)
+	}
 }
 
 // Infinite loop that blocks on receiving from the requests channel.
 func (ch *ClientHandler) requestLoop() {
 	ready := false
 	var err error
-	ch.globalWaitGroup.Add(1)
-	ch.requestLoopWaitGroup.Add(1)
+	ch.localClientHandlerWg.Add(1)
 	log.Debugf("requestLoop starting now")
 	go func() {
-		defer ch.globalWaitGroup.Done()
-		defer ch.requestLoopWaitGroup.Done()
-		defer close(ch.requestsDoneChan)
-		defer ch.originCassandraConnector.writeCoalescer.Close()
-		defer ch.targetCassandraConnector.writeCoalescer.Close()
-
+		defer ch.localClientHandlerWg.Done()
 		connectionAddr := ch.clientConnector.connection.RemoteAddr().String()
+		defer log.Debugf("Client Handler request loop %v shutdown.", connectionAddr)
+		defer ch.requestsDoneCancelFn()
+		defer ch.originCassandraConnector.writeCoalescer.Close()
+		defer log.Debugf("Waiting for origin write coalescer to finish...")
+		defer ch.targetCassandraConnector.writeCoalescer.Close()
+		defer log.Debugf("Waiting for target write coalescer to finish...")
 
 		wg := &sync.WaitGroup{}
 		for {
@@ -263,9 +309,9 @@ func (ch *ClientHandler) requestLoop() {
 			}
 		}
 
-		wg.Wait()
-
 		log.Debugf("Shutting down client handler request listener %v.", connectionAddr)
+
+		wg.Wait()
 
 		go func() {
 			<-ch.clientHandlerContext.Done()
@@ -283,7 +329,8 @@ func (ch *ClientHandler) requestLoop() {
 			})
 		}()
 
-		ch.requestWaitGroup.Wait()
+		log.Debugf("Waiting for all in flight requests from %v to finish.", connectionAddr)
+		ch.clientHandlerRequestWaitGroup.Wait()
 	}()
 }
 
@@ -292,10 +339,10 @@ func (ch *ClientHandler) requestLoop() {
 // Event messages that come through will only be routed if
 //   - it's a schema change from origin
 func (ch *ClientHandler) listenForEventMessages() {
-	ch.globalWaitGroup.Add(1)
+	ch.localClientHandlerWg.Add(1)
 	log.Debugf("listenForEventMessages loop starting now")
 	go func() {
-		defer ch.globalWaitGroup.Done()
+		defer ch.localClientHandlerWg.Done()
 		defer close(ch.eventsDoneChan)
 		shutDownChannels := 0
 		targetChannel := ch.targetCassandraConnector.clusterConnEventsChan
@@ -378,10 +425,10 @@ func (ch *ClientHandler) listenForEventMessages() {
 // Infinite loop that blocks on receiving from the response channel
 // (which is written by both cluster connectors).
 func (ch *ClientHandler) responseLoop() {
-	ch.globalWaitGroup.Add(1)
+	ch.localClientHandlerWg.Add(1)
 	log.Debugf("responseLoop starting now")
 	go func() {
-		defer ch.globalWaitGroup.Done()
+		defer ch.localClientHandlerWg.Done()
 		defer close(ch.responsesDoneChan)
 
 		wg := &sync.WaitGroup{}
@@ -456,7 +503,7 @@ func (ch *ClientHandler) tryProcessProtocolError(response *Response) bool {
 
 // should only be called after SetTimeout or SetResponse returns true
 func (ch *ClientHandler) finishRequest(holder *requestContextHolder, reqCtx *RequestContext) {
-	defer ch.requestWaitGroup.Done()
+	defer ch.clientHandlerRequestWaitGroup.Done()
 	err := holder.Clear(reqCtx)
 	if err != nil {
 		log.Debugf("Could not free stream id: %v", err)
@@ -510,7 +557,7 @@ func (ch *ClientHandler) finishRequest(holder *requestContextHolder, reqCtx *Req
 
 // should only be called after Cancel returns true
 func (ch *ClientHandler) cancelRequest(holder *requestContextHolder, reqCtx *RequestContext) {
-	defer ch.requestWaitGroup.Done()
+	defer ch.clientHandlerRequestWaitGroup.Done()
 	err := holder.Clear(reqCtx)
 	if err != nil {
 		log.Debugf("Could not free stream id: %v", err)
@@ -845,9 +892,9 @@ func (ch *ClientHandler) startTargetHandshake() (chan error, error) {
 	}
 
 	channel := make(chan error)
-	ch.requestWaitGroup.Add(1)
+	ch.clientHandlerRequestWaitGroup.Add(1)
 	go func() {
-		defer ch.requestWaitGroup.Done()
+		defer ch.clientHandlerRequestWaitGroup.Done()
 		defer close(channel)
 		err := ch.handleTargetCassandraStartup(startupFrame, targetStartupResponse)
 		channel <- err
@@ -1016,7 +1063,7 @@ func (ch *ClientHandler) executeStatement(
 		log.Errorf("unexpected forwardDecision %v, unable to track proxy level metrics", forwardDecision)
 	}
 
-	ch.requestWaitGroup.Add(1)
+	ch.clientHandlerRequestWaitGroup.Add(1)
 	timer := time.AfterFunc(time.Duration(ch.conf.RequestTimeoutMs) * time.Millisecond, func() {
 		ch.closedRespChannelLock.RLock()
 		defer ch.closedRespChannelLock.RUnlock()
@@ -1249,4 +1296,27 @@ type customResponse struct {
 	originResponse     *frame.RawFrame
 	targetResponse     *frame.RawFrame
 	aggregatedResponse *frame.RawFrame
+}
+
+type protocolEventObserverImpl struct {
+	cancelFn       context.CancelFunc
+	connectionHost *Host
+}
+
+func NewProtocolEventObserver(cancelFunc context.CancelFunc, host *Host) *protocolEventObserverImpl {
+	return &protocolEventObserverImpl{
+		cancelFn:       cancelFunc,
+		connectionHost: host,
+	}
+}
+
+func (recv *protocolEventObserverImpl) OnHostRemoved(host *Host) {
+	if recv.connectionHost.HostId == host.HostId {
+		log.Infof("Host used in connection was removed, closing connection: %v", host)
+		recv.cancelFn()
+	}
+}
+
+func (recv *protocolEventObserverImpl) GetHost() *Host {
+	return recv.connectionHost
 }

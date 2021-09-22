@@ -16,8 +16,8 @@ func TestOptionsShouldComeFromTarget(t *testing.T) {
 	testSetup, err := setup.NewCqlServerTestSetup(conf, false, false, false)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
-	testSetup.Origin.CqlServer.RequestHandlers = []client.RequestHandler{newOptionsHandler("origin"), client.HandshakeHandler, client.NewSystemTablesHandler("cluster2", "dc2")}
-	testSetup.Target.CqlServer.RequestHandlers = []client.RequestHandler{newOptionsHandler("target"), client.HandshakeHandler, client.NewSystemTablesHandler("cluster1", "dc1")}
+	testSetup.Origin.CqlServer.RequestHandlers = []client.RequestHandler{client.RegisterHandler, newOptionsHandler("origin"), client.HandshakeHandler, client.NewSystemTablesHandler("cluster2", "dc2")}
+	testSetup.Target.CqlServer.RequestHandlers = []client.RequestHandler{client.RegisterHandler, newOptionsHandler("target"), client.HandshakeHandler, client.NewSystemTablesHandler("cluster1", "dc1")}
 
 	err = testSetup.Start(conf, true, primitive.ProtocolVersion4)
 	require.Nil(t, err)

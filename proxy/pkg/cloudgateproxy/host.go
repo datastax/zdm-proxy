@@ -129,8 +129,8 @@ func ParseSystemLocalResult(rs *ParsedRowSet, defaultPort int) (*systemLocalInfo
 	}, host, nil
 }
 
-func ParseSystemPeersResult(rs *ParsedRowSet, defaultPort int, isPeersV2 bool) (hosts []*Host, preferredIpColExists bool) {
-	hosts = make([]*Host, 0)
+func ParseSystemPeersResult(rs *ParsedRowSet, defaultPort int, isPeersV2 bool) (hosts map[uuid.UUID]*Host, preferredIpColExists bool) {
+	hosts = make(map[uuid.UUID]*Host)
 	first := true
 	for _, row := range rs.Rows {
 		addr, port, err := ParseRpcAddress(isPeersV2, row, defaultPort)
@@ -150,7 +150,11 @@ func ParseSystemPeersResult(rs *ParsedRowSet, defaultPort int, isPeersV2 bool) (
 			_, preferredIpColExists = row.GetByColumn("preferred_ip")
 		}
 
-		hosts = append(hosts, host)
+		oldHost, hostExists := hosts[host.HostId]
+		if hostExists {
+			log.Warnf("Duplicate host found: %v vs %v. Ignoring the former one.", oldHost, host)
+		}
+		hosts[host.HostId] = host
 	}
 
 	return hosts, preferredIpColExists
@@ -253,7 +257,7 @@ func ParseRpcAddress(isPeersV2 bool, row *ParsedRow, defaultPort int) (net.IP, i
 				"because of this, the proxy can not connect to this node")
 		}
 
-		log.Warnf("Found host with 0.0.0.0 as rpc_address, using listen_address (%v) to contact it instead. " +
+		log.Infof("Found host with 0.0.0.0 as rpc_address, using listen_address (%v) to contact it instead. " +
 			"If this is incorrect you should avoid the use of 0.0.0.0 server side.", addr)
 	}
 

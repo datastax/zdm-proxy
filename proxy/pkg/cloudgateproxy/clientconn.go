@@ -32,14 +32,14 @@ type ClientConnector struct {
 	// channel on which the ClientConnector sends requests as it receives them from the client
 	requestChannel chan<- *frame.RawFrame
 
-	waitGroup                 *sync.WaitGroup
-	clientHandlerContext      context.Context
-	clientHandlerCancelFunc   context.CancelFunc
+	clientHandlerWg         *sync.WaitGroup
+	clientHandlerContext    context.Context
+	clientHandlerCancelFunc context.CancelFunc
 
 	writeCoalescer *writeCoalescer
 
 	responsesDoneChan <-chan bool
-	requestsDoneChan <-chan bool
+	requestsDoneCtx   context.Context
 	eventsDoneChan    <-chan bool
 
 	clientConnectorRequestsDoneChan chan bool
@@ -52,12 +52,12 @@ type ClientConnector struct {
 func NewClientConnector(
 	connection net.Conn,
 	conf *config.Config,
-	waitGroup *sync.WaitGroup,
+	localClientHandlerWg *sync.WaitGroup,
 	requestsChan chan<- *frame.RawFrame,
 	clientHandlerContext context.Context,
 	clientHandlerCancelFunc context.CancelFunc,
 	responsesDoneChan <-chan bool,
-	requestsDoneChan <-chan bool,
+	requestsDoneCtx context.Context,
 	eventsDoneChan <-chan bool,
 	readScheduler *Scheduler,
 	writeScheduler *Scheduler,
@@ -66,20 +66,20 @@ func NewClientConnector(
 		connection:              connection,
 		conf:                    conf,
 		requestChannel:          requestsChan,
-		waitGroup:               waitGroup,
+		clientHandlerWg:         localClientHandlerWg,
 		clientHandlerContext:    clientHandlerContext,
 		clientHandlerCancelFunc: clientHandlerCancelFunc,
 		writeCoalescer: NewWriteCoalescer(
 			conf,
 			connection,
-			waitGroup,
+			localClientHandlerWg,
 			clientHandlerContext,
 			clientHandlerCancelFunc,
 			"ClientConnector",
 			false,
 			writeScheduler),
 		responsesDoneChan:               responsesDoneChan,
-		requestsDoneChan:                requestsDoneChan,
+		requestsDoneCtx:                 requestsDoneCtx,
 		eventsDoneChan:                  eventsDoneChan,
 		clientConnectorRequestsDoneChan: make(chan bool, 1),
 		readScheduler:                   readScheduler,
@@ -93,17 +93,17 @@ func NewClientConnector(
 func (cc *ClientConnector) run(activeClients *int32) {
 	cc.listenForRequests()
 	cc.writeCoalescer.RunWriteQueueLoop()
-	cc.waitGroup.Add(1)
+	cc.clientHandlerWg.Add(1)
 	go func() {
-		defer cc.waitGroup.Done()
+		defer cc.clientHandlerWg.Done()
 		<- cc.responsesDoneChan
-		<- cc.requestsDoneChan
+		<- cc.requestsDoneCtx.Done()
 		<- cc.eventsDoneChan
 
-		log.Debugf("[ClientConnector] Requesting shutdown of request listener %v", cc.connection.RemoteAddr())
+		log.Debugf("[ClientConnector] All in flight requests are done, requesting cluster connections of client handler %v to be terminated.", cc.connection.RemoteAddr())
 		cc.clientHandlerCancelFunc()
 
-		log.Infof("[ClientConnector] Shutting down connection to %v", cc.connection.RemoteAddr())
+		log.Infof("[ClientConnector] Shutting down client connection to %v", cc.connection.RemoteAddr())
 		err := cc.connection.Close()
 		if err != nil {
 			log.Warnf("[ClientConnector] Error received while closing connection to %v: %v", cc.connection.RemoteAddr(), err)
@@ -122,13 +122,21 @@ func (cc *ClientConnector) listenForRequests() {
 
 	log.Tracef("listenForRequests for client %v", cc.connection.RemoteAddr())
 
-	cc.waitGroup.Add(1)
-
+	cc.clientHandlerWg.Add(1)
 	go func() {
+		defer cc.clientHandlerWg.Done()
+		defer close(cc.clientConnectorRequestsDoneChan)
+
+		wg := &sync.WaitGroup{}
+		defer wg.Wait()
+		defer log.Debugf("[ClientConnector] Shutting down request listener, waiting until request listener tasks are done...")
+
 		lock := &sync.Mutex{}
 		closed := false
 
+		cc.clientHandlerWg.Add(1)
 		go func() {
+			defer cc.clientHandlerWg.Done()
 			select {
 			case <-cc.clientHandlerContext.Done():
 			case <-cc.shutdownRequestCtx.Done():
@@ -141,14 +149,8 @@ func (cc *ClientConnector) listenForRequests() {
 			lock.Unlock()
 		}()
 
-		defer cc.waitGroup.Done()
-		defer close(cc.clientConnectorRequestsDoneChan)
-
 		bufferedReader := bufio.NewReaderSize(cc.connection, cc.conf.RequestWriteBufferSizeBytes)
 		connectionAddr := cc.connection.RemoteAddr().String()
-		wg := &sync.WaitGroup{}
-		defer wg.Wait()
-		defer log.Debugf("[ClientConnector] Shutting down request listener, waiting until request listener tasks are done...")
 		protocolErrOccurred := false
 		for cc.clientHandlerContext.Err() == nil {
 			f, err := readRawFrame(bufferedReader, connectionAddr, cc.clientHandlerContext)
@@ -173,24 +175,29 @@ func (cc *ClientConnector) listenForRequests() {
 					}
 					protocolErrOccurred = true
 
+					log.Infof("Protocol error detected while decoding a frame: %v. " +
+						"Returning a protocol error to the client: %v.", protocolVersionErr, protocolErrMsg)
+
 					var responseVersion primitive.ProtocolVersion
 					if primitive.IsValidProtocolVersion(protocolVersionErr.Version) && !protocolVersionErr.Version.IsBeta() {
 						responseVersion = protocolVersionErr.Version
 					} else {
 						responseVersion = primitive.ProtocolVersion4
 					}
+
 					response := frame.NewFrame(responseVersion, 0, protocolErrMsg)
 					rawResponse, err := defaultCodec.ConvertToRawFrame(response)
 					if err != nil {
 						log.Errorf("Could not convert frame (%v) to raw frame: %v", response, err)
+						cc.clientHandlerCancelFunc()
+						break
 					}
-					log.Infof("Protocol error detected while decoding a frame: %v. " +
-						"Returning a protocol error to the client: %v.", protocolVersionErr, protocolErrMsg)
+
 					cc.sendResponseToClient(rawResponse)
 					continue
 				} else {
 					handleConnectionError(
-						err, cc.clientHandlerCancelFunc, "ClientConnector", "reading", connectionAddr)
+						err, cc.clientHandlerContext, cc.clientHandlerCancelFunc, "ClientConnector", "reading", connectionAddr)
 					break
 				}
 			}

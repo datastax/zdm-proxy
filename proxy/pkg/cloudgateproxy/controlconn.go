@@ -40,14 +40,17 @@ type ControlConn struct {
 	genericTypeCodec         *GenericTypeCodec
 	topologyLock             *sync.RWMutex
 	datacenter               string
-	hostsInLocalDc           []*Host
+	orderedHostsInLocalDc    []*Host
+	hostsInLocalDcById       map[uuid.UUID]*Host
 	assignedHosts            []*Host
 	currentAssignment        int64
-	refreshHostsDebouncer    chan bool
+	refreshHostsDebouncer    chan CqlConnection
 	systemLocalInfo          *systemLocalInfo
 	preferredIpColumnExists  bool
 	virtualHosts             []*VirtualHost
 	proxyRand                *rand.Rand
+	reconnectCh              chan bool
+	protocolEventSubscribers map[ProtocolEventObserver]interface{}
 }
 
 const ProxyVirtualRack = "rack0"
@@ -80,14 +83,17 @@ func NewControlConn(ctx context.Context, defaultPort int, connConfig ConnectionC
 		cqlConnLock:              &sync.Mutex{},
 		genericTypeCodec:         NewDefaultGenericTypeCodec(ccProtocolVersion),
 		topologyLock:             &sync.RWMutex{},
-		hostsInLocalDc:           nil,
+		orderedHostsInLocalDc:    nil,
+		hostsInLocalDcById:       map[uuid.UUID]*Host{},
 		assignedHosts:            nil,
 		currentAssignment:        0,
-		refreshHostsDebouncer:    make(chan bool, 1),
+		refreshHostsDebouncer:    make(chan CqlConnection, 1),
 		systemLocalInfo:          nil,
 		preferredIpColumnExists:  false,
 		virtualHosts:             nil,
 		proxyRand:                proxyRand,
+		reconnectCh:              make(chan bool, 1),
+		protocolEventSubscribers: map[ProtocolEventObserver]interface{}{},
 	}
 }
 
@@ -102,21 +108,29 @@ func (cc *ControlConn) Start(wg *sync.WaitGroup, ctx context.Context) error {
 		defer wg.Done()
 		defer log.Infof("Shutting down refresh topology debouncer of control connection %v.", cc.connConfig.GetClusterType())
 		for ; cc.context.Err() == nil; {
+			var eventConnection CqlConnection
 			select {
 			case <-cc.context.Done():
 				return
-			case <-cc.refreshHostsDebouncer:
+			case eventConnection = <-cc.refreshHostsDebouncer:
 			}
+
+			log.Infof("Received topology event from %v, refreshing topology.", cc.connConfig.GetClusterType())
 
 			conn, _ := cc.getConnAndContactPoint()
 			if conn == nil {
-				log.Debugf("Topology refresh scheduled but no connection available.")
-				continue
+				log.Debugf("Topology refresh scheduled but the control connection isn't open. " +
+					"Falling back to the connection where the event was received.")
+				conn = eventConnection
 			}
 
-			_, err = cc.RefreshHosts(conn)
-			if err != nil {
-				log.Warnf("Error refreshing topology (triggered by event): %v", err)
+			_, err = cc.RefreshHosts(conn, cc.context)
+			if err != nil && cc.context.Err() == nil {
+				log.Errorf("Error refreshing topology (triggered by event), triggering reconnection: %v", err)
+				select {
+				case cc.reconnectCh <- true:
+				default:
+				}
 			}
 		}
 	}()
@@ -127,26 +141,44 @@ func (cc *ControlConn) Start(wg *sync.WaitGroup, ctx context.Context) error {
 		defer cc.Close()
 		defer log.Infof("Shutting down control connection to %v,", cc.connConfig.GetClusterType())
 		lastOpenSuccessful := true
+		reconnect := false
 		for cc.context.Err() == nil {
+			select {
+			case <-cc.reconnectCh:
+				reconnect = true
+			default:
+			}
+
+			if reconnect {
+				reconnect = false
+				cc.Close()
+			}
+
 			conn, _ := cc.getConnAndContactPoint()
 			if conn == nil {
+				useContactPointsOnly := false
 				if !lastOpenSuccessful {
+					useContactPointsOnly = true
 					log.Infof("Refreshing contact points and reopening control connection to %v.", cc.connConfig.GetClusterType())
 					_, err = cc.connConfig.RefreshContactPoints(cc.context)
 					if err != nil {
 						log.Warnf("Failed to refresh contact points, reopening control connection to %v with old contact points.", cc.connConfig.GetClusterType())
+						useContactPointsOnly = false
 					}
 				} else {
 					log.Infof("Reopening control connection to %v.", cc.connConfig.GetClusterType())
 				}
-				newConn, err := cc.Open(false, nil)
+				newConn, err := cc.Open(useContactPointsOnly, cc.context)
+				if cc.context.Err() != nil {
+					continue
+				}
 				if err != nil {
 					lastOpenSuccessful = false
 					timeUntilRetry := cc.retryBackoffPolicy.Duration()
 					log.Errorf("Failed to open control connection to %v, retrying in %v: %v",
 						cc.connConfig.GetClusterType(), timeUntilRetry, err)
 					cc.IncrementFailureCounter()
-					sleepWithContext(timeUntilRetry, cc.context)
+					sleepWithContext(timeUntilRetry, cc.context, nil)
 					continue
 				} else {
 					lastOpenSuccessful = true
@@ -173,7 +205,7 @@ func (cc *ControlConn) Start(wg *sync.WaitGroup, ctx context.Context) error {
 				} else {
 					log.Debugf(logMsg, conn, cc.heartbeatPeriod)
 				}
-				sleepWithContext(cc.heartbeatPeriod, cc.context)
+				_, reconnect = sleepWithContext(cc.heartbeatPeriod, cc.context, cc.reconnectCh)
 			}
 		}
 	}()
@@ -201,20 +233,76 @@ func (cc *ControlConn) ReadFailureCounter() int {
 	return cc.consecutiveFailures
 }
 
-func (cc *ControlConn) Open(start bool, ctx context.Context) (CqlConnection, error) {
+func (cc *ControlConn) Open(contactPointsOnly bool, ctx context.Context) (CqlConnection, error) {
+	oldConn, _ := cc.getConnAndContactPoint()
+	if oldConn != nil {
+		cc.Close()
+		oldConn = nil
+	}
+
+	var conn CqlConnection
+	var endpoint Endpoint
+	var triedEndpoints []Endpoint
+
+	if contactPointsOnly {
+		contactPoints := cc.connConfig.GetContactPoints()
+		conn, endpoint = cc.openInternal(contactPoints, ctx)
+		triedEndpoints = contactPoints
+	} else {
+		allEndpointsById := make(map[string]Endpoint)
+		hostEndpoints := make([]Endpoint, 0)
+		hosts, err := cc.GetHostsInLocalDatacenter()
+		if err == nil {
+			for _, h := range hosts {
+				endpt := cc.connConfig.CreateEndpoint(h)
+				allEndpointsById[endpt.GetEndpointIdentifier()] = endpt
+				hostEndpoints = append(hostEndpoints, endpt)
+			}
+		}
+		contactPointsNotInHosts := make([]Endpoint, 0)
+		for _, contactPoint := range cc.connConfig.GetContactPoints() {
+			if _, exists := allEndpointsById[contactPoint.GetEndpointIdentifier()]; !exists {
+				allEndpointsById[contactPoint.GetEndpointIdentifier()] = contactPoint
+				contactPointsNotInHosts = append(contactPointsNotInHosts, contactPoint)
+			}
+		}
+
+		if len(hostEndpoints) > 0 {
+			conn, endpoint = cc.openInternal(hostEndpoints, ctx)
+			triedEndpoints = hostEndpoints
+		}
+
+		if conn == nil && len(contactPointsNotInHosts) > 0 {
+			conn, endpoint = cc.openInternal(contactPointsNotInHosts, ctx)
+			triedEndpoints = append(triedEndpoints, contactPointsNotInHosts...)
+		}
+	}
+
+	if conn == nil {
+		return nil, fmt.Errorf("could not open control connection to %v, tried endpoints: %v",
+			cc.connConfig.GetClusterType(), triedEndpoints)
+	}
+
+	conn, endpoint = cc.setConn(oldConn, conn, endpoint)
+	return conn, nil
+}
+
+func (cc *ControlConn) openInternal(endpoints []Endpoint, ctx context.Context) (CqlConnection, Endpoint) {
 	if ctx == nil {
 		ctx = cc.context
 	}
 
-	oldConn, _ := cc.getConnAndContactPoint()
-
 	var conn CqlConnection
 	var endpoint Endpoint
-	contactPoints := cc.connConfig.GetContactPoints()
-	firstContactPointIndex := cc.proxyRand.Intn(len(contactPoints))
-	for i := 0; i < len(contactPoints); i++ {
-		currentIndex := (firstContactPointIndex + i) % len(contactPoints)
-		endpoint = contactPoints[currentIndex]
+
+	firstEndpointIndex := cc.proxyRand.Intn(len(endpoints))
+	for i := 0; i < len(endpoints); i++ {
+		if ctx.Err() != nil {
+			break
+		}
+
+		currentIndex := (firstEndpointIndex + i) % len(endpoints)
+		endpoint = endpoints[currentIndex]
 		tcpConn, _, err := openConnection(cc.connConfig, endpoint, ctx, false)
 		if err != nil {
 			log.Warnf("Failed to open control connection to %v using endpoint %v: %v",
@@ -225,18 +313,31 @@ func (cc *ControlConn) Open(start bool, ctx context.Context) (CqlConnection, err
 		newConn := NewCqlConnection(tcpConn, cc.username, cc.password, ccReadTimeout, ccWriteTimeout)
 		err = newConn.InitializeContext(ccProtocolVersion, ctx)
 		if err == nil {
-			_, err = cc.RefreshHosts(newConn)
-			if err != nil && start == false {
-				log.Warnf("Error occured while refreshing hosts of %v: %v. " +
-					"Ignoring this error because the control connection was already initialized.",
-					cc.connConfig.GetClusterType(), err)
-				err = nil
+			newConn.SetEventHandler(func(f *frame.Frame, c CqlConnection) {
+				switch f.Body.Message.(type) {
+				case *message.TopologyChangeEvent:
+					select {
+					case cc.refreshHostsDebouncer <- c:
+					default:
+						log.Debugf("Discarding event %v in %v because a topology refresh is already scheduled.",
+							cc.connConfig.GetClusterType(), f.Body.Message)
+					}
+				default:
+					return
+				}
+			})
+
+			err = newConn.SubscribeToProtocolEvents(ctx, []primitive.EventType{primitive.EventTypeTopologyChange})
+			if err == nil {
+				_, err = cc.RefreshHosts(newConn, ctx)
 			}
 		}
 
 		if err != nil {
-			log.Warnf("Error while initializing a new cql connection for the control connection of %v: %v",
-				cc.connConfig.GetClusterType(), err)
+			if ctx.Err() == nil {
+				log.Warnf("Error while initializing a new cql connection for the control connection of %v: %v",
+					cc.connConfig.GetClusterType(), err)
+			}
 			err2 := newConn.Close()
 			if err2 != nil {
 				log.Errorf("Failed to close cql connection: %v", err2)
@@ -251,26 +352,7 @@ func (cc *ControlConn) Open(start bool, ctx context.Context) (CqlConnection, err
 		break
 	}
 
-	if conn == nil {
-		return nil, fmt.Errorf("could not open control connection to %v, tried endpoints: %v", cc.connConfig.GetClusterType(), contactPoints)
-	}
-
-	conn.SetEventHandler(func(f *frame.Frame) {
-		switch f.Body.Message.(type) {
-		case *message.TopologyChangeEvent:
-			select {
-			case cc.refreshHostsDebouncer <- true:
-			default:
-				log.Debugf("Discarding event %v in %v because a topology refresh is already scheduled.",
-					cc.connConfig.GetClusterType(), f.Body.Message)
-			}
-		default:
-			return
-		}
-	})
-
-	conn, endpoint = cc.setConn(oldConn, conn, endpoint)
-	return conn, nil
+	return conn, endpoint
 }
 
 func (cc *ControlConn) Close() {
@@ -287,8 +369,8 @@ func (cc *ControlConn) Close() {
 	}
 }
 
-func (cc *ControlConn) RefreshHosts(conn CqlConnection) ([]*Host, error) {
-	localQueryResult, err := conn.Query("SELECT * FROM system.local", cc.genericTypeCodec)
+func (cc *ControlConn) RefreshHosts(conn CqlConnection, ctx context.Context) ([]*Host, error) {
+	localQueryResult, err := conn.Query("SELECT * FROM system.local", cc.genericTypeCodec, ctx)
 	if err != nil {
 		return nil, fmt.Errorf("could not fetch information from system.local table: %w", err)
 	}
@@ -303,14 +385,22 @@ func (cc *ControlConn) RefreshHosts(conn CqlConnection) ([]*Host, error) {
 		return nil, fmt.Errorf("virtualization is enabled and partitioner is not Murmur3 but instead %v", *partitioner)
 	}
 
-	peersQuery, err := conn.Query("SELECT * FROM system.peers", cc.genericTypeCodec)
+	peersQuery, err := conn.Query("SELECT * FROM system.peers", cc.genericTypeCodec, ctx)
 	if err != nil {
 		return nil, fmt.Errorf("could not fetch information from system.peers table: %w", err)
 	}
 
-	orderedLocalHosts, preferredIpExists := ParseSystemPeersResult(peersQuery, cc.defaultPort, false)
+	hostsById, preferredIpExists := ParseSystemPeersResult(peersQuery, cc.defaultPort, false)
 
-	orderedLocalHosts = append([]*Host{localHost}, orderedLocalHosts...)
+	oldLocalhost, localHostExists := hostsById[localHost.HostId]
+	if localHostExists {
+		log.Warnf("Local host is also on the peers list: %v vs %v, ignoring the former one.", oldLocalhost, localHost)
+	}
+	hostsById[localHost.HostId] = localHost
+	orderedLocalHosts := make([]*Host, 0, len(hostsById))
+	for _, h := range hostsById {
+		orderedLocalHosts = append(orderedLocalHosts, h)
+	}
 
 	cc.topologyLock.RLock()
 	currentDc := cc.datacenter
@@ -342,32 +432,60 @@ func (cc *ControlConn) RefreshHosts(conn CqlConnection) ([]*Host, error) {
 		virtualHosts = make([]*VirtualHost, 0)
 	}
 
-	log.Infof("Refreshed %v hostsInLocalDc. Assigned Hosts: %v, VirtualHosts: %v, ProxyIndex: %v",
+	log.Infof("Refreshed %v orderedHostsInLocalDc. Assigned Hosts: %v, VirtualHosts: %v, ProxyIndex: %v",
 		cc.connConfig.GetClusterType(), assignedHosts, virtualHosts, cc.topologyConfig.Index)
 
 	cc.topologyLock.Lock()
 	if cc.datacenter == "" {
 		cc.datacenter = currentDc
 	}
-	cc.hostsInLocalDc = orderedLocalHosts
+	oldHosts := cc.hostsInLocalDcById
+	cc.orderedHostsInLocalDc = orderedLocalHosts
+	cc.hostsInLocalDcById = hostsById
 	cc.assignedHosts = assignedHosts
 	cc.systemLocalInfo = localInfo
 	cc.preferredIpColumnExists = preferredIpExists
 	cc.virtualHosts = virtualHosts
+
+	if oldHosts != nil && len(oldHosts) > 0 {
+		removedHosts := make([]*Host, 0)
+		for oldHostId, oldHost := range oldHosts {
+			if _, found := hostsById[oldHostId]; !found {
+				removedHosts = append(removedHosts, oldHost)
+			}
+		}
+
+		for _, removedHost := range removedHosts {
+			for observer, _ := range cc.protocolEventSubscribers {
+				observer.OnHostRemoved(removedHost)
+			}
+		}
+	}
 	cc.topologyLock.Unlock()
 
 	return orderedLocalHosts, nil
 }
 
-func (cc *ControlConn) GetHostsInLocalDatacenter() ([]*Host, error) {
+func (cc *ControlConn) GetHostsInLocalDatacenter() (map[uuid.UUID]*Host, error) {
 	cc.topologyLock.RLock()
 	defer cc.topologyLock.RUnlock()
 
-	if cc.hostsInLocalDc == nil {
-		return nil, fmt.Errorf("could not get hostsInLocalDc because topology information has not been retrieved yet")
+	if cc.hostsInLocalDcById == nil {
+		return nil, fmt.Errorf("could not get hostsInLocalDcById because topology information has not been retrieved yet")
 	}
 
-	return cc.hostsInLocalDc, nil
+	return cc.hostsInLocalDcById, nil
+}
+
+func (cc *ControlConn) GetOrderedHostsInLocalDatacenter() ([]*Host, error) {
+	cc.topologyLock.RLock()
+	defer cc.topologyLock.RUnlock()
+
+	if cc.orderedHostsInLocalDc == nil {
+		return nil, fmt.Errorf("could not get orderedHostsInLocalDc because topology information has not been retrieved yet")
+	}
+
+	return cc.orderedHostsInLocalDc, nil
 }
 
 func (cc *ControlConn) GetVirtualHosts() ([]*VirtualHost, error) {
@@ -487,6 +605,22 @@ func (cc *ControlConn) incCurrentAssignmentCounter(assignedHostsLength int) int6
 		atomic.AddInt64(&cc.currentAssignment, int64(-assignedHostsLength))
 	}
 	return value
+}
+
+func (cc *ControlConn) RegisterObserver(observer ProtocolEventObserver) {
+	cc.topologyLock.Lock()
+	defer cc.topologyLock.Unlock()
+	_, ok := cc.protocolEventSubscribers[observer]
+	if ok {
+		log.Warnf("Duplicate observer found while registering protocol event observer.")
+	}
+	cc.protocolEventSubscribers[observer] = nil
+}
+
+func (cc *ControlConn) RemoveObserver(observer ProtocolEventObserver) {
+	cc.topologyLock.Lock()
+	defer cc.topologyLock.Unlock()
+	delete(cc.protocolEventSubscribers, observer)
 }
 
 func computeAssignedHosts(index int, count int, orderedHosts []*Host) []*Host {
@@ -621,4 +755,8 @@ func (recv *VirtualHost) String() string {
 		recv.Rack,
 		recv.Tokens,
 		recv.Host)
+}
+
+type ProtocolEventObserver interface {
+	OnHostRemoved(host *Host)
 }

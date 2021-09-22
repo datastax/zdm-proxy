@@ -39,9 +39,10 @@ type CloudgateProxy struct {
 
 	PreparedStatementCache *PreparedStatementCache
 
-	shutdownContext            context.Context
-	cancelFunc                 context.CancelFunc
-	shutdownWaitGroup          *sync.WaitGroup
+	controlConnShutdownCtx     context.Context
+	controlConnCancelFn        context.CancelFunc
+	controlConnShutdownWg      *sync.WaitGroup
+	listenerShutdownWg         *sync.WaitGroup
 	shutdownClientListenerChan chan bool
 
 	targetControlConn *ControlConn
@@ -62,9 +63,9 @@ type CloudgateProxy struct {
 	readScheduler            *Scheduler
 	listenerScheduler        *Scheduler
 
-	shutdownRequestCtx      context.Context
-	shutdownRequestCancelFn context.CancelFunc
-	requestLoopWaitGroup    *sync.WaitGroup
+	clientHandlersShutdownRequestCtx      context.Context
+	clientHandlersShutdownRequestCancelFn context.CancelFunc
+	globalClientHandlersWg                *sync.WaitGroup
 
 	metricHandler    *metrics.MetricHandler
 }
@@ -98,7 +99,7 @@ func (p *CloudgateProxy) Start(ctx context.Context) error {
 
 	originHosts, err := p.originControlConn.GetHostsInLocalDatacenter()
 	if err != nil {
-		return fmt.Errorf("failed to initialize proxy, could not get origin hostsInLocalDc: %w", err)
+		return fmt.Errorf("failed to initialize proxy, could not get origin orderedHostsInLocalDc: %w", err)
 	}
 
 	originAssignedHosts, err := p.originControlConn.GetAssignedHosts()
@@ -111,7 +112,7 @@ func (p *CloudgateProxy) Start(ctx context.Context) error {
 
 	targetHosts, err := p.targetControlConn.GetHostsInLocalDatacenter()
 	if err != nil {
-		return fmt.Errorf("failed to initialize proxy, could not get target hostsInLocalDc: %w", err)
+		return fmt.Errorf("failed to initialize proxy, could not get target orderedHostsInLocalDc: %w", err)
 	}
 
 	targetAssignedHosts, err := p.targetControlConn.GetAssignedHosts()
@@ -201,10 +202,10 @@ func (p *CloudgateProxy) initializeControlConnections(ctx context.Context) error
 
 
 	originControlConn := NewControlConn(
-		p.shutdownContext, p.Conf.OriginCassandraPort, p.originConnectionConfig,
+		p.controlConnShutdownCtx, p.Conf.OriginCassandraPort, p.originConnectionConfig,
 		p.Conf.OriginCassandraUsername, p.Conf.OriginCassandraPassword, p.Conf, topologyConfig, p.proxyRand)
 
-	if err := originControlConn.Start(p.shutdownWaitGroup, ctx); err != nil {
+	if err := originControlConn.Start(p.controlConnShutdownWg, ctx); err != nil {
 		return fmt.Errorf("failed to initialize origin control connection: %w", err)
 	}
 
@@ -213,10 +214,10 @@ func (p *CloudgateProxy) initializeControlConnections(ctx context.Context) error
 	p.lock.Unlock()
 
 	targetControlConn := NewControlConn(
-		p.shutdownContext, p.Conf.TargetCassandraPort, p.targetConnectionConfig,
+		p.controlConnShutdownCtx, p.Conf.TargetCassandraPort, p.targetConnectionConfig,
 		p.Conf.TargetCassandraUsername, p.Conf.TargetCassandraPassword, p.Conf, topologyConfig, p.proxyRand)
 
-	if err := targetControlConn.Start(p.shutdownWaitGroup, ctx); err != nil {
+	if err := targetControlConn.Start(p.controlConnShutdownWg, ctx); err != nil {
 		return fmt.Errorf("failed to initialize target control connection: %w", err)
 	}
 
@@ -256,6 +257,7 @@ func (p *CloudgateProxy) initializeMetricHandler() error {
 
 func (p *CloudgateProxy) initializeGlobalStructures() {
 	p.lock = &sync.RWMutex{}
+
 	p.typeCodecManager = NewTypeCodecManager()
 	p.listenerLock = &sync.Mutex{}
 	p.listenerClosed = false
@@ -306,13 +308,14 @@ func (p *CloudgateProxy) initializeGlobalStructures() {
 
 	p.lock.Lock()
 
-	p.requestLoopWaitGroup = &sync.WaitGroup{}
-	p.shutdownRequestCtx, p.shutdownRequestCancelFn = context.WithCancel(context.Background())
+	p.globalClientHandlersWg = &sync.WaitGroup{}
+	p.clientHandlersShutdownRequestCtx, p.clientHandlersShutdownRequestCancelFn = context.WithCancel(context.Background())
 
 	p.PreparedStatementCache = NewPreparedStatementCache()
 
-	p.shutdownContext, p.cancelFunc = context.WithCancel(context.Background())
-	p.shutdownWaitGroup = &sync.WaitGroup{}
+	p.controlConnShutdownCtx, p.controlConnCancelFn = context.WithCancel(context.Background())
+	p.controlConnShutdownWg = &sync.WaitGroup{}
+	p.listenerShutdownWg = &sync.WaitGroup{}
 	p.shutdownClientListenerChan = make(chan bool)
 
 	var err error
@@ -346,10 +349,10 @@ func (p *CloudgateProxy) acceptConnectionsFromClients(address string, port int) 
 	p.clientListener = l
 	p.listenerLock.Unlock()
 
-	p.shutdownWaitGroup.Add(1)
+	p.listenerShutdownWg.Add(1)
 
 	go func() {
-		defer p.shutdownWaitGroup.Done()
+		defer p.listenerShutdownWg.Done()
 		defer func() {
 			p.listenerLock.Lock()
 			defer p.listenerLock.Unlock()
@@ -365,7 +368,7 @@ func (p *CloudgateProxy) acceptConnectionsFromClients(address string, port int) 
 				listenerClosed := p.listenerClosed
 				p.listenerLock.Unlock()
 
-				if listenerClosed || p.shutdownContext.Err() != nil || p.shutdownRequestCtx.Err() != nil {
+				if listenerClosed {
 					log.Debugf("Shutting down client listener on port %d", port)
 					return
 				}
@@ -410,8 +413,10 @@ func (p *CloudgateProxy) handleNewConnection(clientConn net.Conn) {
 	// there is a ClientHandler for each connection made by a client
 
 	var originEndpoint Endpoint
+	var originHost *Host
+	var err error
 	if p.Conf.OriginEnableHostAssignment {
-		originHost, err := p.originControlConn.NextAssignedHost()
+		originHost, err = p.originControlConn.NextAssignedHost()
 		if err != nil {
 			errFunc(err)
 			return
@@ -427,8 +432,9 @@ func (p *CloudgateProxy) handleNewConnection(clientConn net.Conn) {
 	}
 
 	var targetEndpoint Endpoint
+	var targetHost *Host
 	if p.Conf.TargetEnableHostAssignment {
-		targetHost, err := p.targetControlConn.NextAssignedHost()
+		targetHost, err = p.targetControlConn.NextAssignedHost()
 		if err != nil {
 			errFunc(err)
 			return
@@ -458,14 +464,14 @@ func (p *CloudgateProxy) handleNewConnection(clientConn net.Conn) {
 		p.Conf.OriginCassandraPassword,
 		p.PreparedStatementCache,
 		p.metricHandler,
-		p.shutdownWaitGroup,
-		p.shutdownContext,
+		p.globalClientHandlersWg,
 		p.requestResponseScheduler,
 		p.readScheduler,
 		p.writeScheduler,
 		p.requestResponseNumWorkers,
-		p.shutdownRequestCtx,
-		p.requestLoopWaitGroup)
+		p.clientHandlersShutdownRequestCtx,
+		originHost,
+		targetHost)
 
 	if err != nil {
 		errFunc(err)
@@ -489,24 +495,21 @@ func (p *CloudgateProxy) Shutdown() {
 	}
 	p.listenerLock.Unlock()
 
-	log.Debug("Requesting shutdown of the request loop...")
-	p.shutdownRequestCancelFn()
+	p.listenerShutdownWg.Wait()
 
-	log.Debug("Waiting until all in flight requests are done...")
-	p.requestLoopWaitGroup.Wait()
+	log.Debug("Requesting shutdown of the client handlers...")
+	p.clientHandlersShutdownRequestCancelFn()
 
-	log.Debug("Requesting shutdown of the cluster connectors (which will trigger a complete shutdown)...")
-	p.lock.Lock()
-	p.cancelFunc()
-	p.originControlConn = nil
-	p.targetControlConn = nil
-	p.lock.Unlock()
+	log.Debug("Waiting until all client handlers are done...")
+	p.globalClientHandlersWg.Wait()
 
-	log.Debug("Waiting until all loops are done...")
-	p.shutdownWaitGroup.Wait()
+	log.Debug("Requesting shutdown of the control connections...")
+	p.controlConnCancelFn()
 
-	log.Debug("Shutting down the scheduler and metrics handler...")
+	log.Debug("Waiting until control connections done...")
+	p.controlConnShutdownWg.Wait()
 
+	log.Debug("Shutting down the schedulers and metrics handler...")
 	p.requestResponseScheduler.Shutdown()
 	p.writeScheduler.Shutdown()
 	p.readScheduler.Shutdown()
@@ -563,7 +566,8 @@ func RunWithRetries(conf *config.Config, ctx context.Context, b *backoff.Backoff
 		if !errors.Is(err, ShutdownErr) {
 			log.Errorf("Couldn't start proxy, retrying in %v: %v.", nextDuration, err)
 		}
-		if !sleepWithContext(nextDuration, ctx) {
+		timedOut, _ := sleepWithContext(nextDuration, ctx, nil)
+		if !timedOut {
 			log.Info("Cancellation detected. Aborting proxy startup...")
 			return nil, ShutdownErr
 		}
@@ -571,12 +575,14 @@ func RunWithRetries(conf *config.Config, ctx context.Context, b *backoff.Backoff
 }
 
 // sleepWithContext returns false if context Done() returns
-func sleepWithContext(d time.Duration, ctx context.Context) bool {
+func sleepWithContext(d time.Duration, ctx context.Context, reconnectCh chan bool) (timedOut bool, reconnect bool) {
 	select {
 	case <-time.After(d):
-		return true
+		return true, false
 	case <-ctx.Done():
-		return false
+		return false, false
+	case <-reconnectCh:
+		return false, true
 	}
 }
 
