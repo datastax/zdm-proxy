@@ -129,19 +129,22 @@ func TestPreparedIdPreparationMismatch(t *testing.T) {
 
 func TestPreparedIdReplacement(t *testing.T) {
 	type test struct {
-		name  string
-		query string
-		read  bool
+		name       string
+		query      string
+		batchQuery string
+		read       bool
 	}
 	tests := []test{
 		{
 			"reads",
 			"SELECT * FROM ks1.tb1",
+			"",
 			true,
 		},
 		{
 			"writes",
 			"INSERT INTO ks1.tb1 (key, value) VALUES ('key', 'value')",
+			"INSERT INTO ks1.tb1 (key, value) VALUES ('key', 'value2')",
 			false,
 		}}
 
@@ -154,15 +157,20 @@ func TestPreparedIdReplacement(t *testing.T) {
 
 			originPreparedId := []byte{143, 7, 36, 50, 225, 104, 157, 89, 199, 177, 239, 231, 82, 201, 142, 253}
 			targetPreparedId := []byte{142, 8, 36, 51, 225, 104, 157, 89, 199, 177, 239, 231, 82, 201, 142, 253}
+			originBatchPreparedId := []byte{141, 7, 36, 50, 225, 104, 157, 89, 199, 177, 239, 231, 82, 201, 142, 253}
+			targetBatchPreparedId := []byte{140, 8, 36, 51, 225, 104, 157, 89, 199, 177, 239, 231, 82, 201, 142, 253}
 			require.NotEqual(t, originPreparedId, targetPreparedId)
+			require.NotEqual(t, originBatchPreparedId, targetBatchPreparedId)
 
 			originLock := &sync.Mutex{}
+			originBatchMessages := make([]*message.Batch, 0)
 			originExecuteMessages := make([]*message.Execute, 0)
 			originPrepareMessages := make([]*message.Prepare, 0)
 			originKey := message.Column{0, 1}
 			originValue := message.Column{24, 51, 2}
 
 			targetLock := &sync.Mutex{}
+			targetBatchMessages := make([]*message.Batch, 0)
 			targetExecuteMessages := make([]*message.Execute, 0)
 			targetPrepareMessages := make([]*message.Prepare, 0)
 			targetKey := message.Column{2, 3, 4}
@@ -170,12 +178,12 @@ func TestPreparedIdReplacement(t *testing.T) {
 
 			testSetup.Origin.CqlServer.RequestHandlers = []client2.RequestHandler{
 				client2.NewDriverConnectionInitializationHandler("origin", "dc1", func(_ string) {}),
-				NewPreparedTestHandler(originLock, &originPrepareMessages, &originExecuteMessages,
-					originPreparedId, originKey, originValue, map[string]interface{}{}, false)}
+				NewPreparedTestHandler(originLock, &originPrepareMessages, &originExecuteMessages, &originBatchMessages,
+					test.batchQuery, originPreparedId, originBatchPreparedId, originKey, originValue, map[string]interface{}{}, false)}
 			testSetup.Target.CqlServer.RequestHandlers = []client2.RequestHandler{
 				client2.NewDriverConnectionInitializationHandler("target", "dc1", func(_ string) {}),
-				NewPreparedTestHandler(targetLock, &targetPrepareMessages, &targetExecuteMessages,
-					targetPreparedId, targetKey, targetValue, map[string]interface{}{}, false)}
+				NewPreparedTestHandler(targetLock, &targetPrepareMessages, &targetExecuteMessages, &targetBatchMessages,
+					test.batchQuery, targetPreparedId, targetBatchPreparedId, targetKey, targetValue, map[string]interface{}{}, false)}
 
 			err = testSetup.Start(conf, true, primitive.ProtocolVersion4)
 			require.Nil(t, err)
@@ -193,6 +201,20 @@ func TestPreparedIdReplacement(t *testing.T) {
 			require.True(t, ok, "prepared result was type %T", preparedResult)
 
 			require.Equal(t, originPreparedId, preparedResult.PreparedQueryId)
+
+			var batchPrepareMsg *message.Prepare
+			if test.batchQuery != "" {
+				batchPrepareMsg = prepareMsg.Clone().(*message.Prepare)
+				batchPrepareMsg.Query = test.batchQuery
+				prepareResp, err = testSetup.Client.CqlConnection.SendAndReceive(
+					frame.NewFrame(primitive.ProtocolVersion4, 10, batchPrepareMsg))
+				require.Nil(t, err)
+
+				preparedResult, ok = prepareResp.Body.Message.(*message.PreparedResult)
+				require.True(t, ok, "prepared result was type %T", preparedResult)
+
+				require.Equal(t, originBatchPreparedId, preparedResult.PreparedQueryId)
+			}
 
 			executeMsg := &message.Execute{
 				QueryId:          originPreparedId,
@@ -212,11 +234,52 @@ func TestPreparedIdReplacement(t *testing.T) {
 			require.Equal(t, message.Row{originKey, originValue}, rowsResult.Data[0])
 			require.NotEqual(t, message.Row{targetKey, targetValue}, rowsResult.Data[0])
 
+			var batchMsg *message.Batch
+			if test.batchQuery != "" {
+				batchMsg = &message.Batch{
+					Type:              primitive.BatchTypeLogged,
+					Children:          []*message.BatchChild{
+						{
+							QueryOrId: test.query,
+
+							// the decoder uses empty slices instead of nil so this has to be initialized this way
+							// so that the equality assertions work later in this test
+							Values:    make([]*primitive.Value, 0),
+						},
+						{
+							QueryOrId: originBatchPreparedId,
+							Values:    make([]*primitive.Value, 0),
+						},
+					},
+					Consistency:       primitive.ConsistencyLevelLocalQuorum,
+					SerialConsistency: nil,
+					DefaultTimestamp:  nil,
+					Keyspace:          "",
+					NowInSeconds:      nil,
+				}
+
+				batchResp, err := testSetup.Client.CqlConnection.SendAndReceive(
+					frame.NewFrame(primitive.ProtocolVersion4, 30, batchMsg))
+				require.Nil(t, err)
+
+				batchResult, ok := batchResp.Body.Message.(*message.VoidResult)
+				require.True(t, ok, "batch result was type %T", batchResult)
+			}
+
 			originLock.Lock()
 			defer originLock.Unlock()
 			require.Equal(t, 1, len(originExecuteMessages))
-			require.Equal(t, 1, len(originPrepareMessages))
+			if test.batchQuery != "" {
+				require.Equal(t, 2, len(originPrepareMessages))
+			} else {
+				require.Equal(t, 1, len(originPrepareMessages))
+			}
 			require.Equal(t, originPreparedId, originExecuteMessages[0].QueryId)
+			if test.batchQuery != "" {
+				require.Equal(t, 1, len(originBatchMessages))
+				require.Equal(t, 2, len(originBatchMessages[0].Children))
+				require.Equal(t, originBatchPreparedId, originBatchMessages[0].Children[1].QueryOrId)
+			}
 
 			targetLock.Lock()
 			defer targetLock.Unlock()
@@ -224,23 +287,40 @@ func TestPreparedIdReplacement(t *testing.T) {
 				require.Equal(t, 1, len(targetExecuteMessages))
 				require.Equal(t, targetPreparedId, targetExecuteMessages[0].QueryId)
 				require.NotEqual(t, executeMsg, targetExecuteMessages[0])
+				if test.batchQuery != "" {
+					require.Equal(t, 1, len(targetBatchMessages))
+					require.Equal(t, 2, len(targetBatchMessages[0].Children))
+					require.Equal(t, targetBatchPreparedId, targetBatchMessages[0].Children[1].QueryOrId)
+					require.NotEqual(t, batchMsg, targetBatchMessages[0])
+				}
 			} else {
 				require.Equal(t, 0, len(targetExecuteMessages))
+				require.Equal(t, 0, len(targetBatchMessages))
 			}
-			require.Equal(t, 1, len(targetPrepareMessages))
+			if test.batchQuery != "" {
+				require.Equal(t, 2, len(targetPrepareMessages))
+			} else {
+				require.Equal(t, 1, len(targetPrepareMessages))
+			}
 
 			require.Equal(t, prepareMsg, targetPrepareMessages[0])
 			require.Equal(t, prepareMsg, originPrepareMessages[0])
 			require.Equal(t, executeMsg, originExecuteMessages[0])
+			if test.batchQuery != "" {
+				require.Equal(t, batchPrepareMsg, targetPrepareMessages[1])
+				require.Equal(t, batchPrepareMsg, originPrepareMessages[1])
+				require.Equal(t, batchMsg, originBatchMessages[0])
+			}
 		})
 	}
 }
 
 func TestUnpreparedIdReplacement(t *testing.T) {
 	type test struct {
-		name  string
-		query string
-		read  bool
+		name             string
+		query            string
+		batchQuery       string
+		read             bool
 		originUnprepared bool
 		targetUnprepared bool
 	}
@@ -248,6 +328,7 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 		{
 			"reads_origin_unprepared",
 			"SELECT * FROM ks1.tb1",
+			"",
 			true,
 			true,
 			false,
@@ -255,6 +336,7 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 		{
 			"writes_origin_unprepared",
 			"INSERT INTO ks1.tb1 (key, value) VALUES ('key', 'value')",
+			"INSERT INTO ks1.tb1 (key, value) VALUES ('key', 'value2')",
 			false,
 			true,
 			false,
@@ -262,6 +344,7 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 		{
 			"writes_target_unprepared",
 			"INSERT INTO ks1.tb1 (key, value) VALUES ('key', 'value')",
+			"INSERT INTO ks1.tb1 (key, value) VALUES ('key', 'value2')",
 			false,
 			false,
 			true,
@@ -269,6 +352,7 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 		{
 			"writes_both_unprepared",
 			"INSERT INTO ks1.tb1 (key, value) VALUES ('key', 'value')",
+			"INSERT INTO ks1.tb1 (key, value) VALUES ('key', 'value2')",
 			false,
 			true,
 			true,
@@ -283,15 +367,20 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 
 			originPreparedId := []byte{153, 7, 36, 50, 225, 104, 157, 89, 199, 177, 239, 231, 82, 201, 142, 253}
 			targetPreparedId := []byte{162, 8, 36, 51, 225, 104, 157, 89, 199, 177, 239, 231, 82, 201, 142, 253}
+			originBatchPreparedId := []byte{141, 7, 36, 50, 225, 104, 157, 89, 199, 177, 239, 231, 82, 201, 142, 253}
+			targetBatchPreparedId := []byte{140, 8, 36, 51, 225, 104, 157, 89, 199, 177, 239, 231, 82, 201, 142, 253}
 			require.NotEqual(t, originPreparedId, targetPreparedId)
+			require.NotEqual(t, originBatchPreparedId, targetBatchPreparedId)
 
 			originLock := &sync.Mutex{}
+			originBatchMessages := make([]*message.Batch, 0)
 			originExecuteMessages := make([]*message.Execute, 0)
 			originPrepareMessages := make([]*message.Prepare, 0)
 			originKey := message.Column{0, 1}
 			originValue := message.Column{24, 51, 2}
 
 			targetLock := &sync.Mutex{}
+			targetBatchMessages := make([]*message.Batch, 0)
 			targetExecuteMessages := make([]*message.Execute, 0)
 			targetPrepareMessages := make([]*message.Prepare, 0)
 			targetKey := message.Column{2, 3, 4}
@@ -301,12 +390,12 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 
 			testSetup.Origin.CqlServer.RequestHandlers = []client2.RequestHandler{
 				client2.NewDriverConnectionInitializationHandler("origin", "dc1", func(_ string) {}),
-				NewPreparedTestHandler(originLock, &originPrepareMessages, &originExecuteMessages,
-					originPreparedId, originKey, originValue, originCtx, test.originUnprepared)}
+				NewPreparedTestHandler(originLock, &originPrepareMessages, &originExecuteMessages, &originBatchMessages,
+					test.batchQuery, originPreparedId, originBatchPreparedId, originKey, originValue, originCtx, test.originUnprepared)}
 			testSetup.Target.CqlServer.RequestHandlers = []client2.RequestHandler{
 				client2.NewDriverConnectionInitializationHandler("target", "dc1", func(_ string) {}),
-				NewPreparedTestHandler(targetLock, &targetPrepareMessages, &targetExecuteMessages,
-					targetPreparedId, targetKey, targetValue, targetCtx, test.targetUnprepared)}
+				NewPreparedTestHandler(targetLock, &targetPrepareMessages, &targetExecuteMessages, &targetBatchMessages,
+					test.batchQuery, targetPreparedId, targetBatchPreparedId, targetKey, targetValue, targetCtx, test.targetUnprepared)}
 
 			err = testSetup.Start(conf, true, primitive.ProtocolVersion4)
 			require.Nil(t, err)
@@ -356,6 +445,67 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 			rowsResult, ok := executeResp.Body.Message.(*message.RowsResult)
 			require.True(t, ok, "rows result was type %T", rowsResult)
 
+			var batchMsg *message.Batch
+			var batchPrepareMsg *message.Prepare
+			if test.batchQuery != "" {
+				batchPrepareMsg = prepareMsg.Clone().(*message.Prepare)
+				batchPrepareMsg.Query = test.batchQuery
+				prepareResp, err = testSetup.Client.CqlConnection.SendAndReceive(
+					frame.NewFrame(primitive.ProtocolVersion4, 10, batchPrepareMsg))
+				require.Nil(t, err)
+
+				preparedResult, ok = prepareResp.Body.Message.(*message.PreparedResult)
+				require.True(t, ok, "prepared result was type %T", preparedResult)
+
+				require.Equal(t, originBatchPreparedId, preparedResult.PreparedQueryId)
+
+				batchMsg = &message.Batch{
+					Type:              primitive.BatchTypeLogged,
+					Children:          []*message.BatchChild{
+						{
+							QueryOrId: test.query,
+							// the decoder uses empty slices instead of nil so this has to be initialized this way
+							// so that the equality assertions work later in this test
+							Values:    make([]*primitive.Value, 0),
+						},
+						{
+							QueryOrId: originBatchPreparedId,
+							Values:    make([]*primitive.Value, 0),
+						},
+					},
+					Consistency:       primitive.ConsistencyLevelLocalQuorum,
+					SerialConsistency: nil,
+					DefaultTimestamp:  nil,
+					Keyspace:          "",
+					NowInSeconds:      nil,
+				}
+
+				batchResp, err := testSetup.Client.CqlConnection.SendAndReceive(
+					frame.NewFrame(primitive.ProtocolVersion4, 30, batchMsg))
+				require.Nil(t, err)
+
+				unPreparedResult, ok := batchResp.Body.Message.(*message.Unprepared)
+				require.True(t, ok, "unprepared result was type %T", batchResp.Body.Message)
+
+				require.Equal(t, originBatchPreparedId, unPreparedResult.Id)
+
+				prepareResp, err = testSetup.Client.CqlConnection.SendAndReceive(
+					frame.NewFrame(primitive.ProtocolVersion4, 10, batchPrepareMsg))
+				require.Nil(t, err)
+
+				preparedResult, ok = prepareResp.Body.Message.(*message.PreparedResult)
+				require.True(t, ok, "prepared result was type %T", preparedResult)
+
+				require.Equal(t, originBatchPreparedId, preparedResult.PreparedQueryId)
+
+				batchResp, err = testSetup.Client.CqlConnection.SendAndReceive(
+					frame.NewFrame(primitive.ProtocolVersion4, 30, batchMsg))
+				require.Nil(t, err)
+
+				batchResult, ok := batchResp.Body.Message.(*message.VoidResult)
+				require.True(t, ok, "batch result was type %T", batchResult)
+			}
+
 			originLock.Lock()
 			defer originLock.Unlock()
 			targetLock.Lock()
@@ -367,7 +517,11 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 			require.NotEqual(t, message.Row{targetKey, targetValue}, rowsResult.Data[0])
 
 			require.Equal(t, 2, len(originExecuteMessages))
-			require.Equal(t, 2, len(originPrepareMessages))
+			if test.batchQuery != "" {
+				require.Equal(t, 4, len(originPrepareMessages))
+			} else {
+				require.Equal(t, 2, len(originPrepareMessages))
+			}
 			require.Equal(t, originPreparedId, originExecuteMessages[0].QueryId)
 			require.Equal(t, originPreparedId, originExecuteMessages[1].QueryId)
 
@@ -377,30 +531,65 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 				require.Equal(t, targetPreparedId, targetExecuteMessages[1].QueryId)
 				require.NotEqual(t, executeMsg, targetExecuteMessages[0])
 				require.NotEqual(t, executeMsg, targetExecuteMessages[1])
+				if test.batchQuery != "" {
+					require.Equal(t, 2, len(targetBatchMessages))
+					require.Equal(t, 2, len(targetBatchMessages[0].Children))
+					require.Equal(t, 2, len(targetBatchMessages[1].Children))
+					require.Equal(t, targetBatchPreparedId, targetBatchMessages[0].Children[1].QueryOrId)
+					require.Equal(t, targetBatchPreparedId, targetBatchMessages[1].Children[1].QueryOrId)
+					require.NotEqual(t, batchMsg, targetBatchMessages[0])
+					require.NotEqual(t, batchMsg, targetBatchMessages[1])
+				}
 			} else {
 				require.Equal(t, 0, len(targetExecuteMessages))
+				require.Equal(t, 0, len(targetBatchMessages))
 			}
-			require.Equal(t, 2, len(targetPrepareMessages))
+			if test.batchQuery != "" {
+				require.Equal(t, 4, len(targetPrepareMessages))
+			} else {
+				require.Equal(t, 2, len(targetPrepareMessages))
+			}
 
 			require.Equal(t, prepareMsg, targetPrepareMessages[0])
 			require.Equal(t, prepareMsg, targetPrepareMessages[1])
 			require.Equal(t, prepareMsg, originPrepareMessages[0])
 			require.Equal(t, prepareMsg, originPrepareMessages[1])
+
 			require.Equal(t, executeMsg, originExecuteMessages[0])
 			require.Equal(t, executeMsg, originExecuteMessages[1])
+
+			if test.batchQuery != "" {
+				require.Equal(t, batchPrepareMsg, targetPrepareMessages[2])
+				require.Equal(t, batchPrepareMsg, targetPrepareMessages[3])
+				require.Equal(t, batchPrepareMsg, originPrepareMessages[2])
+				require.Equal(t, batchPrepareMsg, originPrepareMessages[3])
+				require.Equal(t, batchMsg, originBatchMessages[0])
+				require.Equal(t, batchMsg, originBatchMessages[1])
+			}
 
 			require.Equal(t, 2, originCtx["EXECUTE_" + string(originPreparedId)])
 			if test.originUnprepared {
 				require.Equal(t, 1, originCtx["UNPREPARED_" + string(originPreparedId)])
 				require.Equal(t, 1, originCtx["ROWS_" + string(originPreparedId)])
+				if test.batchQuery != "" {
+					require.Equal(t, 1, originCtx["UNPREPARED_" + string(originBatchPreparedId)])
+					require.Equal(t, 1, originCtx["VOID_" + string(originBatchPreparedId)])
+				}
 			} else {
 				require.Equal(t, nil, originCtx["UNPREPARED_" + string(originPreparedId)])
 				require.Equal(t, 2, originCtx["ROWS_" + string(originPreparedId)])
+				if test.batchQuery != "" {
+					require.Equal(t, nil, originCtx["UNPREPARED_" + string(originBatchPreparedId)])
+					require.Equal(t, 2, originCtx["VOID_" + string(originBatchPreparedId)])
+				}
 			}
 
 			require.Equal(t, nil, originCtx["EXECUTE_" + string(targetPreparedId)])
 			require.Equal(t, nil, originCtx["ROWS_" + string(targetPreparedId)])
 			require.Equal(t, nil, originCtx["UNPREPARED_" + string(targetPreparedId)])
+			require.Equal(t, nil, originCtx["BATCH_" + string(targetBatchPreparedId)])
+			require.Equal(t, nil, originCtx["VOID_" + string(targetBatchPreparedId)])
+			require.Equal(t, nil, originCtx["UNPREPARED_" + string(targetBatchPreparedId)])
 
 			if !test.read {
 				require.Equal(t, 2, targetCtx["EXECUTE_" + string(targetPreparedId)])
@@ -411,21 +600,38 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 					require.Equal(t, nil, targetCtx["UNPREPARED_" + string(targetPreparedId)])
 					require.Equal(t, 2, targetCtx["ROWS_" + string(targetPreparedId)])
 				}
+				if test.batchQuery != "" {
+					require.Equal(t, 2, targetCtx["BATCH_" + string(targetBatchPreparedId)])
+					if test.targetUnprepared {
+						require.Equal(t, 1, targetCtx["UNPREPARED_" + string(targetBatchPreparedId)])
+						require.Equal(t, 1, targetCtx["VOID_" + string(targetBatchPreparedId)])
+					} else {
+						require.Equal(t, nil, targetCtx["UNPREPARED_" + string(targetBatchPreparedId)])
+						require.Equal(t, 2, targetCtx["VOID_" + string(targetBatchPreparedId)])
+					}
+				}
 			} else {
 				require.Equal(t, nil, targetCtx["EXECUTE_" + string(targetPreparedId)])
 				require.Equal(t, nil, targetCtx["ROWS_" + string(targetPreparedId)])
+				require.Equal(t, nil, targetCtx["BATCH_" + string(targetBatchPreparedId)])
+				require.Equal(t, nil, targetCtx["VOID_" + string(targetBatchPreparedId)])
 			}
 
 			require.Equal(t, nil, targetCtx["EXECUTE_" + string(originPreparedId)])
 			require.Equal(t, nil, targetCtx["ROWS_" + string(originPreparedId)])
 			require.Equal(t, nil, targetCtx["UNPREPARED_" + string(originPreparedId)])
+			if test.batchQuery != "" {
+				require.Equal(t, nil, targetCtx["BATCH_" + string(originBatchPreparedId)])
+				require.Equal(t, nil, targetCtx["VOID_" + string(originBatchPreparedId)])
+				require.Equal(t, nil, targetCtx["UNPREPARED_" + string(originBatchPreparedId)])
+			}
 		})
 	}
 }
 
 func NewPreparedTestHandler(
-	lock *sync.Mutex, preparedMessages *[]*message.Prepare, executeMessages *[]*message.Execute,
-	preparedId []byte, key message.Column, value message.Column, context map[string]interface{}, unpreparedTest bool) func(
+	lock *sync.Mutex, preparedMessages *[]*message.Prepare, executeMessages *[]*message.Execute, batchMessages *[]*message.Batch,
+	batchQuery string, preparedId []byte, batchPreparedId []byte, key message.Column, value message.Column, context map[string]interface{}, unpreparedTest bool) func(
 		request *frame.Frame, conn *client2.CqlServerConnection, ctx client2.RequestHandlerContext) *frame.Frame {
 	return func(request *frame.Frame, conn *client2.CqlServerConnection, ctx client2.RequestHandlerContext) *frame.Frame {
 		rowsMetadata := &message.RowsMetadata{
@@ -456,15 +662,19 @@ func NewPreparedTestHandler(
 				return nil
 			}
 			*preparedMessages = append(*preparedMessages, prepareMsg)
-			counterInterface := context["PREPARE_" + string(preparedId)]
+			prepId := preparedId
+			if prepareMsg.Query == batchQuery {
+				prepId = batchPreparedId
+			}
+			counterInterface := context["PREPARE_" + string(prepId)]
 			if counterInterface == nil {
 				counterInterface = 0
 			}
 			counter := counterInterface.(int)
-			context["PREPARE_" + string(preparedId)] = counter + 1
+			context["PREPARE_" + string(prepId)] = counter + 1
 			lock.Unlock()
 			return frame.NewFrame(request.Header.Version, request.Header.StreamId, &message.PreparedResult{
-				PreparedQueryId:   preparedId,
+				PreparedQueryId:   prepId,
 				ResultMetadataId:  nil,
 				VariablesMetadata: nil,
 				ResultMetadata:    rowsMetadata,
@@ -521,8 +731,76 @@ func NewPreparedTestHandler(
 			context[prefix + string(executeMsg.QueryId)] = counter + 1
 			lock.Unlock()
 			return frame.NewFrame(request.Header.Version, request.Header.StreamId, msg)
+
+		}  else if request.Header.OpCode == primitive.OpCodeBatch {
+			lock.Lock()
+			batchMsg, ok := request.Body.Message.(*message.Batch)
+			if !ok {
+				log.Warnf("opcodebatch expected BatchMessage but got %T", request.Body.Message)
+				lock.Unlock()
+				return nil
+			}
+			*batchMessages = append(*batchMessages, batchMsg)
+
+			batchCounterInterface := context["BATCH_" + string(batchPreparedId)]
+			if batchCounterInterface == nil {
+				batchCounterInterface = 0
+			}
+			batchCounter := batchCounterInterface.(int)
+			context["BATCH_" + string(batchPreparedId)] = batchCounter + 1
+
+			prepareCounterInterface := context["PREPARE_" + string(batchPreparedId)]
+			if prepareCounterInterface == nil {
+				prepareCounterInterface = 0
+			}
+			prepareCounter := prepareCounterInterface.(int)
+			lock.Unlock()
+
+			prepareThreshold := 1 // until this threshold is hit (number of prepare requests), this handler returns UNPREPARED
+			if unpreparedTest {
+				prepareThreshold = 2
+			}
+
+			prefix := "UNPREPARED_"
+			var msg message.Message
+			preparedIdMatches, unpreparedId := checkIfPreparedIdMatches(batchMsg, batchPreparedId)
+			if (prepareCounter < prepareThreshold && unpreparedId != nil) || !preparedIdMatches {
+				msg = &message.Unprepared{
+					ErrorMessage: "UNPREPARED",
+					Id:           unpreparedId,
+				}
+			} else {
+				prefix = "VOID_"
+				msg = &message.VoidResult{}
+			}
+
+			lock.Lock()
+			counterInterface := context[prefix + string(batchPreparedId)]
+			if counterInterface == nil {
+				counterInterface = 0
+			}
+			counter := counterInterface.(int)
+			context[prefix + string(batchPreparedId)] = counter + 1
+			lock.Unlock()
+			return frame.NewFrame(request.Header.Version, request.Header.StreamId, msg)
 		} else {
 			return nil
 		}
 	}
+}
+
+func checkIfPreparedIdMatches(batchMsg *message.Batch, preparedId []byte) (bool, []byte) {
+	var batchPreparedId []byte
+	for _, child := range batchMsg.Children {
+		switch queryOrId := child.QueryOrId.(type) {
+		case []byte:
+			batchPreparedId = queryOrId
+			if !bytes.Equal(queryOrId, preparedId) {
+				return false, batchPreparedId
+			}
+		default:
+		}
+	}
+
+	return true, batchPreparedId
 }

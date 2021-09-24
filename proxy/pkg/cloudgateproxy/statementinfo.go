@@ -31,21 +31,19 @@ func (recv *GenericStatementInfo) String() string {
 }
 
 type PreparedStatementInfo struct {
-	prepareForwardDecision forwardDecision
 	baseStatementInfo      StatementInfo
 }
 
-func NewPreparedStatementInfo(prepareForwardDecision forwardDecision, baseStmtInfo StatementInfo) *PreparedStatementInfo {
-	return &PreparedStatementInfo{prepareForwardDecision: prepareForwardDecision, baseStatementInfo: baseStmtInfo}
+func NewPreparedStatementInfo(baseStmtInfo StatementInfo) *PreparedStatementInfo {
+	return &PreparedStatementInfo{baseStatementInfo: baseStmtInfo}
 }
 
 func (recv *PreparedStatementInfo) String() string {
-	return fmt.Sprintf("PreparedStatementInfo{prepareForwardDecision: %v, baseStatementInfo: %v}",
-		recv.prepareForwardDecision, recv.baseStatementInfo)
+	return fmt.Sprintf("PreparedStatementInfo{baseStatementInfo: %v}", recv.baseStatementInfo)
 }
 
 func (recv *PreparedStatementInfo) GetForwardDecision() forwardDecision {
-	return recv.prepareForwardDecision
+	return forwardToBoth // always send PREPARE to both, use origin's ID
 }
 
 func (recv *PreparedStatementInfo) GetBaseStatementInfo() StatementInfo {
@@ -87,4 +85,24 @@ func (recv *InterceptedStatementInfo) String() string {
 
 func (recv *InterceptedStatementInfo) GetQueryType() interceptedQueryType {
 	return recv.interceptedQueryType
+}
+
+type BatchStatementInfo struct {
+	preparedDataByStmtIdx map[int]PreparedData
+}
+
+func NewBatchStatementInfo(preparedDataByStmtIdx map[int]PreparedData) *BatchStatementInfo {
+	return &BatchStatementInfo{preparedDataByStmtIdx: preparedDataByStmtIdx}
+}
+
+func (recv *BatchStatementInfo) String() string {
+	return fmt.Sprintf("BatchStatementInfo{PreparedDataByStmtIdx: %v}", recv.preparedDataByStmtIdx)
+}
+
+func (recv *BatchStatementInfo) GetForwardDecision() forwardDecision {
+	return forwardToBoth // always send BATCH to both, use origin's prepared IDs
+}
+
+func (recv *BatchStatementInfo) GetPreparedDataByStmtIdx() map[int]PreparedData {
+	return recv.preparedDataByStmtIdx
 }

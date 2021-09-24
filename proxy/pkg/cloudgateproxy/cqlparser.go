@@ -37,7 +37,7 @@ type UnpreparedExecuteError struct {
 }
 
 func (uee *UnpreparedExecuteError) Error() string {
-	return fmt.Sprintf("The preparedID of the statement to be executed (%s) does not exist in the proxy cache", uee.preparedId)
+	return fmt.Sprintf("The preparedID of the statement to be executed (%s) does not exist in the proxy cache", hex.EncodeToString(uee.preparedId))
 }
 
 // modifyFrame modifies the incoming request in certain conditions:
@@ -106,11 +106,33 @@ func parseStatement(
 		if err != nil {
 			return nil, fmt.Errorf("could not inspect PREPARE frame: %w", err)
 		}
-		prepareForwardDecision := forwardToBoth // always send PREPARE to both, use origin's ID
 		baseStmtInfo := getStatementInfoFromQueryInfo(
 			frameContext.frame, currentKeyspaceName, forwardReadsToTarget,
 			forwardSystemQueriesToTarget, virtualizationEnabled, queryInfo)
-		return NewPreparedStatementInfo(prepareForwardDecision, baseStmtInfo), nil
+		return NewPreparedStatementInfo(baseStmtInfo), nil
+	case primitive.OpCodeBatch:
+		decodedFrame, err := frameContext.GetOrDecodeFrame()
+		if err != nil {
+			return nil, fmt.Errorf("could not decode batch raw frame: %w", err)
+		}
+		batchMsg, ok := decodedFrame.Body.Message.(*message.Batch)
+		if !ok {
+			return nil, fmt.Errorf("could not convert message with batch op code to batch type, got %v instead", decodedFrame.Body.Message)
+		}
+		preparedDataByStmtIdxMap := make(map[int]PreparedData)
+		for childIdx, child := range batchMsg.Children {
+			switch queryOrId := child.QueryOrId.(type) {
+			case []byte:
+				preparedData, err := getPreparedData(psCache, mh, queryOrId, primitive.OpCodeBatch, decodedFrame)
+				if err != nil {
+					return nil, err
+				} else {
+					preparedDataByStmtIdxMap[childIdx] = preparedData
+				}
+			default:
+			}
+		}
+		return NewBatchStatementInfo(preparedDataByStmtIdxMap), nil
 	case primitive.OpCodeExecute:
 		decodedFrame, err := frameContext.GetOrDecodeFrame()
 		if err != nil {
@@ -120,20 +142,45 @@ func parseStatement(
 		if !ok {
 			return nil, fmt.Errorf("expected Execute but got %v instead", decodedFrame.Body.Message.GetOpCode())
 		}
-		if preparedData, ok := psCache.Get(executeMsg.QueryId); ok {
-			log.Tracef("Execute with prepared-id = '%s' has prepared-data = %v", hex.EncodeToString(executeMsg.QueryId), preparedData)
-			// The forward decision was set in the cache when handling the corresponding PREPARE request
-			return NewBoundStatementInfo(preparedData), nil
+		preparedData, err := getPreparedData(psCache, mh, executeMsg.QueryId, primitive.OpCodeExecute, decodedFrame)
+		if err != nil {
+			return nil, err
 		} else {
-			log.Warnf("No cached entry for prepared-id = '%s'", hex.EncodeToString(executeMsg.QueryId))
-			mh.GetProxyMetrics().PSCacheMissCount.Add(1)
-			// return meaningful error to caller so it can generate an unprepared response
-			return nil, &UnpreparedExecuteError{Header: f.Header, Body: decodedFrame.Body, preparedId: executeMsg.QueryId}
+			return NewBoundStatementInfo(preparedData), nil
 		}
 	case primitive.OpCodeAuthResponse:
 		return NewGenericStatementInfo(forwardToOrigin), nil
 	default:
 		return NewGenericStatementInfo(forwardToBoth), nil
+	}
+}
+
+func getPreparedData(
+	psCache *PreparedStatementCache,
+	mh *metrics.MetricHandler,
+	preparedId []byte,
+	code primitive.OpCode,
+	decodedFrame *frame.Frame) (PreparedData, error) {
+	var requestType string
+	switch code {
+	case primitive.OpCodeBatch:
+		requestType = "BATCH"
+	case primitive.OpCodeExecute:
+		requestType = "EXECUTE"
+	default:
+		requestType = "UNKNOWN"
+		log.Warnf("Unknown op code when fetching prepared data, this is most likely a bug. OpCode = %v, Request = %v", code, decodedFrame)
+	}
+
+	if preparedData, ok := psCache.Get(preparedId); ok {
+		log.Tracef("%v with prepared-id = '%s' has prepared-data = %v", requestType, hex.EncodeToString(preparedId), preparedData)
+		// The forward decision was set in the cache when handling the corresponding PREPARE request
+		return preparedData, nil
+	} else {
+		log.Warnf("No cached entry for prepared-id = '%s' while processing a %v.", hex.EncodeToString(preparedId), requestType)
+		mh.GetProxyMetrics().PSCacheMissCount.Add(1)
+		// return meaningful error to caller so it can generate an unprepared response
+		return nil, &UnpreparedExecuteError{Header: decodedFrame.Header, Body: decodedFrame.Body, preparedId: preparedId}
 	}
 }
 

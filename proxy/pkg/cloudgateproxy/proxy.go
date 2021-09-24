@@ -174,7 +174,7 @@ func (p *CloudgateProxy) initializeControlConnections(ctx context.Context) error
 		parsedOriginContactPoints,
 		p.Conf.OriginCassandraPort,
 		p.Conf.ClusterConnectionTimeoutMs,
-		OriginCassandra,
+		ClusterTypeOrigin,
 		p.Conf.OriginDatacenter,
 		ctx)
 	if err != nil {
@@ -190,7 +190,7 @@ func (p *CloudgateProxy) initializeControlConnections(ctx context.Context) error
 		parsedTargetContactPoints,
 		p.Conf.TargetCassandraPort,
 		p.Conf.ClusterConnectionTimeoutMs,
-		TargetCassandra,
+		ClusterTypeTarget,
 		p.Conf.TargetDatacenter,
 		ctx)
 	if err != nil {

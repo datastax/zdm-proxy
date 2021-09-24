@@ -24,8 +24,9 @@ type ClusterConnectionInfo struct {
 type ClusterType string
 
 const (
-	OriginCassandra = ClusterType("originCassandra")
-	TargetCassandra = ClusterType("targetCassandra")
+	ClusterTypeNone   = ClusterType("")
+	ClusterTypeOrigin = ClusterType("ORIGIN")
+	ClusterTypeTarget = ClusterType("TARGET")
 )
 
 type ClusterConnector struct {
@@ -68,9 +69,9 @@ func NewClusterConnector(
 
 	var clusterType ClusterType
 	if connInfo.isOriginCassandra {
-		clusterType = OriginCassandra
+		clusterType = ClusterTypeOrigin
 	} else {
-		clusterType = TargetCassandra
+		clusterType = ClusterTypeTarget
 	}
 
 	conn, timeoutCtx, err := openConnectionToCluster(connInfo, clientHandlerContext, nodeMetrics)
@@ -147,7 +148,7 @@ func closeConnectionToCluster(conn net.Conn, clusterType ClusterType, nodeMetric
 		log.Warnf("[ClusterConnector] Error closing connection to %v (%v)", clusterType, conn.RemoteAddr())
 	}
 
-	if clusterType == OriginCassandra {
+	if clusterType == ClusterTypeOrigin {
 		nodeMetrics.OriginMetrics.OpenOriginConnections.Subtract(1)
 	} else {
 		nodeMetrics.TargetMetrics.OpenTargetConnections.Subtract(1)

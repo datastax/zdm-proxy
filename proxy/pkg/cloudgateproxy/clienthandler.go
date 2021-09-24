@@ -524,17 +524,17 @@ func (ch *ClientHandler) finishRequest(holder *requestContextHolder, reqCtx *Req
 		log.Errorf("unexpected forwardDecision %v, unable to track proxy level metrics", reqCtx.stmtInfo.GetForwardDecision())
 	}
 
-	aggregatedResponse, err := ch.computeAggregatedResponse(reqCtx)
+	aggregatedResponse, responseClusterType, err := ch.computeAggregatedResponse(reqCtx)
 	finalResponse := aggregatedResponse
 	if err == nil {
-		finalResponse, err = ch.processAggregatedResponse(aggregatedResponse, reqCtx)
+		finalResponse, err = ch.processAggregatedResponse(aggregatedResponse, responseClusterType, reqCtx)
 	}
 
 	if err != nil {
 		if reqCtx.customResponseChannel != nil {
 			close(reqCtx.customResponseChannel)
 		}
-		log.Debugf("Error handling request (%v): %v", reqCtx.request.Header, err)
+		log.Errorf("Error handling request (%v): %v", reqCtx.request.Header, err)
 		return
 	}
 
@@ -583,44 +583,58 @@ func (ch *ClientHandler) cancelRequest(holder *requestContextHolder, reqCtx *Req
 }
 
 // Computes the response to be sent to the client based on the forward decision of the request.
-func (ch *ClientHandler) computeAggregatedResponse(requestContext *RequestContext) (*frame.RawFrame, error) {
+func (ch *ClientHandler) computeAggregatedResponse(requestContext *RequestContext) (*frame.RawFrame, ClusterType, error) {
 	forwardDecision := requestContext.stmtInfo.GetForwardDecision()
 	if forwardDecision == forwardToOrigin {
 		if requestContext.originResponse == nil {
-			return nil, fmt.Errorf("did not receive response from origin cassandra channel, stream: %d", requestContext.request.Header.StreamId)
+			return nil, ClusterTypeNone, fmt.Errorf(
+				"did not receive response from origin cassandra channel, stream: %d",
+				requestContext.request.Header.StreamId)
 		}
-		log.Tracef("Forward to origin: just returning the response received from OC: %d", requestContext.originResponse.Header.OpCode)
+		log.Tracef("Forward to origin: just returning the response received from %v: %d",
+			ClusterTypeOrigin, requestContext.originResponse.Header.OpCode)
 		if !isResponseSuccessful(requestContext.originResponse) {
 			ch.metricHandler.GetProxyMetrics().FailedRequestsOrigin.Add(1)
 		}
-		return requestContext.originResponse, nil
+		return requestContext.originResponse, ClusterTypeOrigin, nil
 
 	} else if forwardDecision == forwardToTarget {
 		if requestContext.targetResponse == nil {
-			return nil, fmt.Errorf("did not receive response from target cassandra channel, stream: %d", requestContext.request.Header.StreamId)
+			return nil, ClusterTypeNone, fmt.Errorf(
+				"did not receive response from target cassandra channel, stream: %d",
+				requestContext.request.Header.StreamId)
 		}
-		log.Tracef("Forward to target: just returning the response received from TC: %d", requestContext.targetResponse.Header.OpCode)
+		log.Tracef("Forward to target: just returning the response received from %v: %d",
+			ClusterTypeTarget, requestContext.targetResponse.Header.OpCode)
 		if !isResponseSuccessful(requestContext.targetResponse) {
 			ch.metricHandler.GetProxyMetrics().FailedRequestsTarget.Add(1)
 		}
-		return requestContext.targetResponse, nil
+		return requestContext.targetResponse, ClusterTypeTarget, nil
 
 	} else if forwardDecision == forwardToBoth {
 		if requestContext.originResponse == nil {
-			return nil, fmt.Errorf("did not receive response from original cassandra channel, stream: %d", requestContext.request.Header.StreamId)
+			return nil, ClusterTypeNone, fmt.Errorf(
+				"did not receive response from original cassandra channel, stream: %d",
+				requestContext.request.Header.StreamId)
 		}
 		if requestContext.targetResponse == nil {
-			return nil, fmt.Errorf("did not receive response from target cassandra channel, stream: %d", requestContext.request.Header.StreamId)
+			return nil, ClusterTypeNone, fmt.Errorf(
+				"did not receive response from target cassandra channel, stream: %d",
+				requestContext.request.Header.StreamId)
 		}
-		return ch.aggregateAndTrackResponses(requestContext.request, requestContext.originResponse, requestContext.targetResponse), nil
-
+		aggregatedResponse, responseClusterType := ch.aggregateAndTrackResponses(
+			requestContext.request, requestContext.originResponse, requestContext.targetResponse)
+		return aggregatedResponse, responseClusterType, nil
 	} else {
-		return nil, fmt.Errorf("unknown forward decision %v, request context: %v", forwardDecision, requestContext)
+		return nil, ClusterTypeNone, fmt.Errorf(
+			"unknown forward decision %v, request context: %v", forwardDecision, requestContext)
 	}
 }
 
 // Modifies internal state based on the provided aggregated response (e.g. storing prepared IDs)
-func (ch *ClientHandler) processAggregatedResponse(response *frame.RawFrame, reqCtx *RequestContext) (*frame.RawFrame, error) {
+func (ch *ClientHandler) processAggregatedResponse(
+	response *frame.RawFrame, responseClusterType ClusterType, reqCtx *RequestContext) (*frame.RawFrame, error) {
+
 	switch response.Header.OpCode {
 	case primitive.OpCodeResult, primitive.OpCodeError:
 		decodedFrame, err := defaultCodec.ConvertFromRawFrame(response)
@@ -641,27 +655,38 @@ func (ch *ClientHandler) processAggregatedResponse(response *frame.RawFrame, req
 				ch.currentKeyspaceName.Store(bodyMsg.Keyspace)
 			}
 		case *message.Unprepared:
-			executeBody, err := defaultCodec.DecodeBody(reqCtx.request.Header, bytes.NewReader(reqCtx.request.Body))
-			if err != nil {
-				return nil, fmt.Errorf("could not decode request body after receiving UNPREPARED: %w", err)
+			var unpreparedId []byte
+			switch responseClusterType {
+			case ClusterTypeOrigin:
+				unpreparedId = bodyMsg.Id
+			case ClusterTypeTarget:
+				preparedData, ok := ch.preparedStatementCache.GetByTargetPreparedId(bodyMsg.Id)
+				if !ok {
+					return nil, fmt.Errorf("could not get PreparedData by TargetPreparedId: %v", hex.EncodeToString(bodyMsg.Id))
+				}
+				unpreparedId = preparedData.GetOriginPreparedId()
+			default:
+				return nil, fmt.Errorf("invalid cluster type: %v", responseClusterType)
 			}
-			bs, ok := executeBody.Message.(*message.Execute)
-			if !ok {
-				return nil, fmt.Errorf("received UNPREPARED but request message is %v instead of EXECUTE", executeBody.Message)
-			}
+
 			newFrame := decodedFrame.Clone()
 			newUnprepared := &message.Unprepared{
 				ErrorMessage: fmt.Sprintf("Prepared query with ID %s not found (either the query was not prepared "+
 					"on this host (maybe the host has been restarted?) or you have prepared too many queries and it has "+
-					"been evicted from the internal cache)", hex.EncodeToString(bs.QueryId)),
-				Id: bs.QueryId,
+					"been evicted from the internal cache)", hex.EncodeToString(unpreparedId)),
+				Id: unpreparedId,
 			}
 			newFrame.Body.Message = newUnprepared
 			newRawFrame, err := defaultCodec.ConvertToRawFrame(newFrame)
 			if err != nil {
 				return nil, fmt.Errorf("could not convert response after receiving UNPREPARED: %w", err)
 			}
-			log.Infof("Replacing prepared ID in UNPREPARED %s with %s. Original error: %v", hex.EncodeToString(bodyMsg.Id), hex.EncodeToString(bs.QueryId), bodyMsg.ErrorMessage)
+
+			log.Infof("Received UNPREPARED from %v, generating UNPREPARED response with prepared ID %s. " +
+				"Prepared ID in response from %v: %v. Original error: %v",
+				responseClusterType, hex.EncodeToString(unpreparedId),
+				responseClusterType, hex.EncodeToString(bodyMsg.Id), bodyMsg.ErrorMessage)
+
 			return newRawFrame, nil
 		}
 	}
@@ -1015,20 +1040,51 @@ func (ch *ClientHandler) executeStatement(
 			if err != nil {
 				return fmt.Errorf("could not decode execute raw frame: %w", err)
 			}
+
 			decodedFrame = decodedFrame.Clone()
+
 			executeMsg, ok := decodedFrame.Body.Message.(*message.Execute)
 			if !ok {
 				return fmt.Errorf("expected Execute but got %v instead", decodedFrame.Body.Message.GetOpCode())
 			}
+
 			originalQueryId := executeMsg.QueryId
 			executeMsg.QueryId = castedStmtInfo.GetPreparedData().GetTargetPreparedId()
-			log.Tracef("Replacing prepared ID %s with %s for target cluster.", hex.EncodeToString(originalQueryId), hex.EncodeToString(executeMsg.QueryId))
+			log.Tracef("Replacing prepared ID %s with %s for target cluster.",
+				hex.EncodeToString(originalQueryId), hex.EncodeToString(executeMsg.QueryId))
 			targetExecuteRequest, err := defaultCodec.ConvertToRawFrame(decodedFrame)
+
 			if err != nil {
 				return fmt.Errorf("could not convert target EXECUTE response to raw frame: %w", err)
 			}
 			targetRequest = targetExecuteRequest
 		}
+	case *BatchStatementInfo:
+		decodedFrame, err := frameContext.GetOrDecodeFrame()
+		if err != nil {
+			return fmt.Errorf("could not decode batch raw frame: %w", err)
+		}
+
+		decodedFrame = decodedFrame.Clone()
+
+		batchMsg, ok := decodedFrame.Body.Message.(*message.Batch)
+		if !ok {
+			return fmt.Errorf("expected Batch but got %v instead", decodedFrame.Body.Message.GetOpCode())
+		}
+
+		for stmtIdx, preparedData := range castedStmtInfo.GetPreparedDataByStmtIdx() {
+			originalQueryId := batchMsg.Children[stmtIdx].QueryOrId.([]byte)
+			batchMsg.Children[stmtIdx].QueryOrId = preparedData.GetTargetPreparedId()
+			log.Tracef("Replacing prepared ID %s within a BATCH with %s for target cluster.",
+				hex.EncodeToString(originalQueryId), hex.EncodeToString(preparedData.GetTargetPreparedId()))
+		}
+
+		targetBatchRequest, err := defaultCodec.ConvertToRawFrame(decodedFrame)
+		if err != nil {
+			return fmt.Errorf("could not convert target BATCH response to raw frame: %w", err)
+		}
+
+		targetRequest = targetBatchRequest
 	}
 
 	if forwardDecision == forwardToNone {
@@ -1080,14 +1136,17 @@ func (ch *ClientHandler) executeStatement(
 
 	switch forwardDecision {
 	case forwardToBoth:
-		log.Tracef("Forwarding request with opcode %v for stream %v to OC and TC", f.Header.OpCode, f.Header.StreamId)
+		log.Tracef("Forwarding request with opcode %v for stream %v to %v and %v",
+			f.Header.OpCode, f.Header.StreamId, ClusterTypeOrigin, ClusterTypeTarget)
 		ch.originCassandraConnector.sendRequestToCluster(originRequest)
 		ch.targetCassandraConnector.sendRequestToCluster(targetRequest)
 	case forwardToOrigin:
-		log.Tracef("Forwarding request with opcode %v for stream %v to OC", f.Header.OpCode, f.Header.StreamId)
+		log.Tracef("Forwarding request with opcode %v for stream %v to %v",
+			f.Header.OpCode, f.Header.StreamId, ClusterTypeOrigin)
 		ch.originCassandraConnector.sendRequestToCluster(originRequest)
 	case forwardToTarget:
-		log.Tracef("Forwarding request with opcode %v for stream %v to TC", f.Header.OpCode, f.Header.StreamId)
+		log.Tracef("Forwarding request with opcode %v for stream %v to %v",
+			f.Header.OpCode, f.Header.StreamId, ClusterTypeTarget)
 		ch.targetCassandraConnector.sendRequestToCluster(targetRequest)
 	default:
 		return fmt.Errorf("unknown forward decision %v, stream: %d", forwardDecision, f.Header.StreamId)
@@ -1102,49 +1161,56 @@ func (ch *ClientHandler) executeStatement(
 //
 // Also updates metrics appropriately.
 func (ch *ClientHandler) aggregateAndTrackResponses(
-	request *frame.RawFrame, responseFromOriginCassandra *frame.RawFrame, responseFromTargetCassandra *frame.RawFrame) *frame.RawFrame {
+	request *frame.RawFrame,
+	responseFromOriginCassandra *frame.RawFrame,
+	responseFromTargetCassandra *frame.RawFrame) (*frame.RawFrame, ClusterType) {
 
 	originOpCode := responseFromOriginCassandra.Header.OpCode
-	log.Tracef("Aggregating responses. OC opcode %d, TargetCassandra opcode %d", originOpCode, responseFromTargetCassandra.Header.OpCode)
+	log.Tracef("Aggregating responses. %v opcode %d, %v opcode %d",
+		ClusterTypeOrigin, originOpCode, ClusterTypeTarget, responseFromTargetCassandra.Header.OpCode)
 
 	// aggregate responses and update relevant aggregate metrics for general failed or successful responses
 	if isResponseSuccessful(responseFromOriginCassandra) && isResponseSuccessful(responseFromTargetCassandra) {
 		if originOpCode == primitive.OpCodeSupported {
-			log.Tracef("Aggregated response: both successes, sending back TC's response with opcode %d", originOpCode)
-			return responseFromTargetCassandra
+			log.Tracef("Aggregated response: both successes, sending back %v response with opcode %d",
+				ClusterTypeTarget, originOpCode)
+			return responseFromTargetCassandra, ClusterTypeTarget
 		} else if request.Header.OpCode == primitive.OpCodePrepare {
 			// special case for PREPARE requests to always return ORIGIN, even though the default handling for "BOTH" requests would be enough
-			return responseFromOriginCassandra
+			return responseFromOriginCassandra, ClusterTypeOrigin
 		} else {
 			if ch.conf.ForwardReadsToTarget {
-				log.Tracef("Aggregated response: both successes, sending back TC's response with opcode %d", responseFromTargetCassandra.Header.OpCode)
-				return responseFromTargetCassandra
+				log.Tracef("Aggregated response: both successes, sending back %v response with opcode %d",
+					ClusterTypeTarget, responseFromTargetCassandra.Header.OpCode)
+				return responseFromTargetCassandra, ClusterTypeTarget
 			} else {
-				log.Tracef("Aggregated response: both successes, sending back OC's response with opcode %d", originOpCode)
-				return responseFromOriginCassandra
+				log.Tracef("Aggregated response: both successes, sending back %v response with opcode %d",
+					ClusterTypeOrigin, originOpCode)
+				return responseFromOriginCassandra, ClusterTypeOrigin
 			}
 		}
 	}
 
 	proxyMetrics := ch.metricHandler.GetProxyMetrics()
 	if !isResponseSuccessful(responseFromOriginCassandra) && !isResponseSuccessful(responseFromTargetCassandra) {
-		log.Debugf("Aggregated response: both failures, sending back OC's response with opcode %d", originOpCode)
+		log.Debugf("Aggregated response: both failures, sending back %v response with opcode %d",
+			ClusterTypeOrigin, originOpCode)
 		proxyMetrics.FailedRequestsBoth.Add(1)
-		return responseFromOriginCassandra
+		return responseFromOriginCassandra, ClusterTypeOrigin
 	}
 
 	// if either response is a failure, the failure "wins" --> return the failed response
 	if !isResponseSuccessful(responseFromOriginCassandra) {
-		log.Debugf("Aggregated response: failure only on OC, sending back OC's response with opcode %d", originOpCode)
+		log.Debugf("Aggregated response: failure only on %v, sending back %v response with opcode %d",
+			ClusterTypeOrigin, ClusterTypeOrigin, originOpCode)
 		proxyMetrics.FailedRequestsBothFailedOnOriginOnly.Add(1)
-		return responseFromOriginCassandra
+		return responseFromOriginCassandra, ClusterTypeOrigin
 	} else {
-		log.Debugf("Aggregated response: failure only on TargetCassandra, sending back TargetCassandra's response with opcode %d", originOpCode)
+		log.Debugf("Aggregated response: failure only on %v, sending back %v response with opcode %d",
+			ClusterTypeTarget, ClusterTypeTarget, originOpCode)
 		proxyMetrics.FailedRequestsBothFailedOnTargetOnly.Add(1)
-
-		return responseFromTargetCassandra
+		return responseFromTargetCassandra, ClusterTypeTarget
 	}
-
 }
 
 // Replaces the credentials in the provided auth frame (which are the Target credentials) with
@@ -1262,7 +1328,7 @@ func (ch *ClientHandler) trackClusterErrorMetrics(response *frame.RawFrame, clus
 		}
 
 		switch cluster {
-		case OriginCassandra:
+		case ClusterTypeOrigin:
 			switch errorMsg.GetErrorCode() {
 			case primitive.ErrorCodeUnprepared:
 				ch.nodeMetrics.OriginMetrics.OriginUnpreparedErrors.Add(1)
@@ -1274,7 +1340,7 @@ func (ch *ClientHandler) trackClusterErrorMetrics(response *frame.RawFrame, clus
 				log.Debugf("Recording origin other error: %v", errorMsg)
 				ch.nodeMetrics.OriginMetrics.OriginOtherErrors.Add(1)
 			}
-		case TargetCassandra:
+		case ClusterTypeTarget:
 			switch errorMsg.GetErrorCode() {
 			case primitive.ErrorCodeUnprepared:
 				ch.nodeMetrics.TargetMetrics.TargetUnpreparedErrors.Add(1)

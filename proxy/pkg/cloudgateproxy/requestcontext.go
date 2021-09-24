@@ -32,7 +32,7 @@ func NewRequestContextHolder() *requestContextHolder {
 	}
 }
 
-// Sets a request context if the request context holder is empty.
+// SetIfEmpty sets a request context if the request context holder is empty.
 // Returns an error if the holder is not empty.
 func (recv *requestContextHolder) SetIfEmpty(ctx *RequestContext) (err error) {
 	recv.lock.Lock()
@@ -46,7 +46,7 @@ func (recv *requestContextHolder) SetIfEmpty(ctx *RequestContext) (err error) {
 	return nil
 }
 
-// Returns the request context that is being held by the request context holder object or null if it is empty.
+// Get returns the request context that is being held by the request context holder object or null if it is empty.
 func (recv *requestContextHolder) Get() *RequestContext {
 	recv.lock.RLock()
 	defer recv.lock.RUnlock()
@@ -54,7 +54,7 @@ func (recv *requestContextHolder) Get() *RequestContext {
 	return recv.reqCtx
 }
 
-// Clears the request context holder if it is not empty and the provided request matches the one that is being held.
+// Clear clears the request context holder if it is not empty and the provided request matches the one that is being held.
 // Returns an error if the holder is empty or if the provided context doesn't match.
 func (recv *requestContextHolder) Clear(ctx *RequestContext) error {
 	recv.lock.Lock()
@@ -170,11 +170,11 @@ func (recv *RequestContext) SetResponse(nodeMetrics *metrics.NodeMetrics, f *fra
 	}
 
 	switch cluster {
-	case OriginCassandra:
-		log.Tracef("Received response from %v for query with stream id %d", OriginCassandra, f.Header.StreamId)
+	case ClusterTypeOrigin:
+		log.Tracef("Received response from %v for query with stream id %d", ClusterTypeOrigin, f.Header.StreamId)
 		nodeMetrics.OriginMetrics.OriginRequestDuration.Track(recv.startTime)
-	case TargetCassandra:
-		log.Tracef("Received response from %v for query with stream id %d", TargetCassandra, f.Header.StreamId)
+	case ClusterTypeTarget:
+		log.Tracef("Received response from %v for query with stream id %d", ClusterTypeTarget, f.Header.StreamId)
 		nodeMetrics.TargetMetrics.TargetRequestDuration.Track(recv.startTime)
 	default:
 		log.Errorf("could not recognize cluster type %v", cluster)
@@ -193,9 +193,9 @@ func (recv *RequestContext) updateInternalState(f *frame.RawFrame, cluster Clust
 	}
 
 	switch cluster {
-	case OriginCassandra:
+	case ClusterTypeOrigin:
 		recv.originResponse = f
-	case TargetCassandra:
+	case ClusterTypeTarget:
 		recv.targetResponse = f
 	default:
 		log.Errorf("could not recognize cluster type %v", cluster)
