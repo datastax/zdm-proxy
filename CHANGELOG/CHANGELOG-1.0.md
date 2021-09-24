@@ -6,6 +6,8 @@ When cutting a new release, update the `unreleased` heading to the tag being gen
 
 ## Unreleased
 
+## v1.0.2 - 2021-09-24
+
 ### Bug Fixes
 
 * [ZDM-203](https://datastax.jira.com/browse/ZDM-203) Batches with prepared statements cause driver timeouts
