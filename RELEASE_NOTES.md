@@ -6,6 +6,12 @@ Build artifacts are available at [Docker Hub](https://hub.docker.com/repository/
 
 For additional details on the changes included in a specific release, see the associated CHANGELOG-x.x.md file.
 
+## v1.0.3 - 2021-09-28
+
+Resolves an issue where empty batches caused client timeouts.
+
+[Changelog](CHANGELOG/CHANGELOG-1.0.md#v103---2021-09-28)
+
 ## v1.0.2 - 2021-09-24
 
 Resolves an issue where batched sets of prepared statements caused client timeouts.

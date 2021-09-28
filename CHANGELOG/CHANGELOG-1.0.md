@@ -6,6 +6,12 @@ When cutting a new release, update the `unreleased` heading to the tag being gen
 
 ## Unreleased
 
+## v1.0.3 - 2021-09-28
+
+### Bug Fixes
+
+* [ZDM-208](https://datastax.jira.com/browse/ZDM-208) Proxy times out requests with empty batches
+
 ## v1.0.2 - 2021-09-24
 
 ### Bug Fixes

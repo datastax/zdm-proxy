@@ -164,36 +164,10 @@ func (cc *ClientConnector) listenForRequests() {
 			if err != nil {
 				protocolVersionErr := &frame.ProtocolVersionErr{}
 				if errors.As(err, &protocolVersionErr) {
-					var protocolErrMsg *message.ProtocolError
-					if protocolVersionErr.Version == primitive.ProtocolVersion5 && !protocolVersionErr.UseBeta {
-						protocolErrMsg = &message.ProtocolError{
-							ErrorMessage: "Beta version of the protocol used (5/v5-beta), but USE_BETA flag is unset"}
-					} else {
-						protocolErrMsg = &message.ProtocolError{
-							ErrorMessage: fmt.Sprintf("Invalid or unsupported protocol version (%d); " +
-								"supported versions are (3/v3, 4/v4, 5/v5-beta))", protocolVersionErr.Version)}
-					}
 					protocolErrOccurred = true
-
-					log.Infof("Protocol error detected while decoding a frame: %v. " +
-						"Returning a protocol error to the client: %v.", protocolVersionErr, protocolErrMsg)
-
-					var responseVersion primitive.ProtocolVersion
-					if primitive.IsValidProtocolVersion(protocolVersionErr.Version) && !protocolVersionErr.Version.IsBeta() {
-						responseVersion = protocolVersionErr.Version
-					} else {
-						responseVersion = primitive.ProtocolVersion4
-					}
-
-					response := frame.NewFrame(responseVersion, 0, protocolErrMsg)
-					rawResponse, err := defaultCodec.ConvertToRawFrame(response)
-					if err != nil {
-						log.Errorf("Could not convert frame (%v) to raw frame: %v", response, err)
-						cc.clientHandlerCancelFunc()
+					if !cc.handleUnsupportedProtocol(protocolVersionErr, protocolVersionErr.Version, protocolVersionErr.UseBeta) {
 						break
 					}
-
-					cc.sendResponseToClient(rawResponse)
 					continue
 				} else {
 					handleConnectionError(
@@ -226,6 +200,36 @@ func (cc *ClientConnector) listenForRequests() {
 			})
 		}
 	}()
+}
+
+// handleUnsupportedProtocol was necessary when the native protocol library did not support v5 but now the function is here just
+// in case the library throws an error while decoding the version (maybe the client tries to use v1 or v6)
+func (cc *ClientConnector) handleUnsupportedProtocol(err error, version primitive.ProtocolVersion, useBetaFlag bool) bool {
+	var protocolErrMsg *message.ProtocolError
+	if version.IsBeta() && !useBetaFlag {
+		protocolErrMsg = &message.ProtocolError{
+			ErrorMessage: fmt.Sprintf("Beta version of the protocol used (%d/v%d-beta), but USE_BETA flag is unset",
+				version, version)}
+	} else {
+		protocolErrMsg = &message.ProtocolError{
+			ErrorMessage: fmt.Sprintf("Invalid or unsupported protocol version (%d)", version)}
+	}
+
+	log.Infof("Protocol error detected while decoding a frame: %v. " +
+		"Returning a protocol error to the client: %v.", err, protocolErrMsg)
+
+	// ideally we would use the maximum version between the versions used by both control connections if
+	// control connections implemented protocol version negotiation
+	response := frame.NewFrame(primitive.ProtocolVersion4, 0, protocolErrMsg)
+	rawResponse, err := defaultCodec.ConvertToRawFrame(response)
+	if err != nil {
+		log.Errorf("Could not convert frame (%v) to raw frame: %v", response, err)
+		cc.clientHandlerCancelFunc()
+		return false
+	}
+
+	cc.sendResponseToClient(rawResponse)
+	return true
 }
 
 func (cc *ClientConnector) sendResponseToClient(frame *frame.RawFrame) {

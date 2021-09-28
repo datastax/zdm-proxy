@@ -73,7 +73,7 @@ func TestMaxClientsThreshold(t *testing.T) {
 	t.Fatal("Expected failure in last session connection but it was successful.")
 }
 
-func TestUnsupportedProtocolVersion(t *testing.T) {
+func TestProtocolVersionNegotiation(t *testing.T) {
 	testSetup, err := setup.NewSimulacronTestSetupWithSession(true, false)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
@@ -92,7 +92,31 @@ func TestUnsupportedProtocolVersion(t *testing.T) {
 	rsp, err := testClient.SendRawRequest(0, bytes)
 	protocolErr, ok := rsp.Body.Message.(*message.ProtocolError)
 	require.True(t, ok)
-	require.Equal(t, "Beta version of the protocol used (5/v5-beta), but USE_BETA flag is unset", protocolErr.ErrorMessage)
+	require.Equal(t, "Invalid or unsupported protocol version", protocolErr.ErrorMessage)
+	require.Equal(t, int16(0), rsp.Header.StreamId)
+	require.Equal(t, primitive.ProtocolVersion4, rsp.Header.Version)
+}
+
+func TestProtocolVersionUnsupportedByProxy(t *testing.T) {
+	testSetup, err := setup.NewSimulacronTestSetupWithSession(true, false)
+	require.Nil(t, err)
+	defer testSetup.Cleanup()
+
+	testClient, err := client.NewTestClient("127.0.0.1:14002")
+	require.True(t, err == nil, "testClient setup failed: %s", err)
+	defer testClient.Shutdown()
+
+	startup := message.NewStartup()
+	f := frame.NewFrame(primitive.ProtocolVersion2, 0, startup)
+	codec := frame.NewCodec()
+	buf := bytes.Buffer{}
+	codec.EncodeFrame(f, &buf)
+	encoded := buf.Bytes()
+	encoded[0] = byte(primitive.ProtocolVersion(1))
+	rsp, err := testClient.SendRawRequest(0, encoded)
+	protocolErr, ok := rsp.Body.Message.(*message.ProtocolError)
+	require.True(t, ok)
+	require.Equal(t, "Invalid or unsupported protocol version (1)", protocolErr.ErrorMessage)
 	require.Equal(t, int16(0), rsp.Header.StreamId)
 	require.Equal(t, primitive.ProtocolVersion4, rsp.Header.Version)
 }
