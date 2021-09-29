@@ -6,6 +6,12 @@ When cutting a new release, update the `unreleased` heading to the tag being gen
 
 ## Unreleased
 
+## v1.0.4 - 2021-09-29
+
+### Bug Fixes
+
+* [ZDM-209](https://datastax.jira.com/browse/ZDM-209) Proxy fails when handling statements using Custom types
+
 ## v1.0.3 - 2021-09-28
 
 ### Bug Fixes
