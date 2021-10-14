@@ -2,6 +2,7 @@ package cloudgateproxy
 
 import (
 	"archive/zip"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	log "github.com/sirupsen/logrus"
@@ -64,4 +65,8 @@ func retrieveConfigParameterAsString(configMap map[string]interface{}, paramName
 	log.Debugf("parameter %s: %s", paramName, paramString)
 
 	return paramString, nil
+}
+
+func initializeTlsConfigurationFromSecureConnectBundle(fileMap map[string][]byte, metadataServiceHostName string, clusterType ClusterType) (*tls.Config, error) {
+	return initializeTlsConfiguration(fileMap["ca.crt"], fileMap["cert"], fileMap["key"], metadataServiceHostName, clusterType)
 }

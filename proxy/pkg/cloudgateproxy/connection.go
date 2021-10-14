@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func openConnection(cc ConnectionConfig, ec Endpoint, ctx context.Context, useBackoff bool) (net.Conn, context.Context, error){
+func openConnection(cc ConnectionConfig, ec Endpoint, ctx context.Context, useBackoff bool) (net.Conn, context.Context, error) {
 	var connection net.Conn
 	var err error
 
@@ -102,4 +102,3 @@ func openTLSConnection(endpoint Endpoint, ctx context.Context, useBackoff bool) 
 
 	return tlsConn, nil
 }
-

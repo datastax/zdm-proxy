@@ -111,6 +111,10 @@ func StartNode(nodeName string, jvmArgs ...string) (string, error) {
 	}
 }
 
+func Stop() (string, error) {
+	return execCcm(append([]string{"stop"})...)
+}
+
 func StopNode(nodeName string) (string, error) {
 	return execCcm(nodeName, "stop")
 }

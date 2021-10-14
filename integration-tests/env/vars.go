@@ -20,6 +20,7 @@ var CassandraVersion string
 var DseVersion string
 var IsDse bool
 var UseCcm bool
+var RunAllTlsTests bool
 var Debug bool
 
 func InitGlobalVars() {
@@ -42,6 +43,12 @@ func InitGlobalVars() {
 			getEnvironmentVariableOrDefault("USE_CCM", "false"),
 			"USE_CCM"),
 
+		"RUN_ALL_TLS_TESTS":
+		flag.String(
+			"RUN_ALL_TLS_TESTS",
+			getEnvironmentVariableOrDefault("RUN_ALL_TLS_TESTS", "false"),
+			"RUN_ALL_TLS_TESTS"),
+
 		"DEBUG":
 		flag.Bool(
 			"DEBUG",
@@ -54,7 +61,9 @@ func InitGlobalVars() {
 	CassandraVersion = *flags["CASSANDRA_VERSION"].(*string)
 	DseVersion = *flags["DSE_VERSION"].(*string)
 	useCcm := *flags["USE_CCM"].(*string)
+	runAllTlsTests := *flags["RUN_ALL_TLS_TESTS"].(*string)
 	Debug = *flags["DEBUG"].(*bool)
+
 	if DseVersion != "" {
 		IsDse = true
 		ServerVersion = DseVersion
@@ -65,6 +74,10 @@ func InitGlobalVars() {
 
 	if strings.ToLower(useCcm) == "true" {
 		UseCcm = true
+	}
+
+	if strings.ToLower(runAllTlsTests) == "true" {
+		RunAllTlsTests = true
 	}
 }
 

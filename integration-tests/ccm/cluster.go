@@ -121,6 +121,15 @@ func (ccmCluster *Cluster) Start(jvmArgs ...string) error {
 	return err
 }
 
+func (ccmCluster *Cluster) Stop() error {
+	err := ccmCluster.SwitchToThis()
+	if err != nil {
+		return err
+	}
+	_, err = Stop()
+	return err
+}
+
 func (ccmCluster *Cluster) SwitchToThis() error {
 	_, err := Switch(ccmCluster.name)
 	return err

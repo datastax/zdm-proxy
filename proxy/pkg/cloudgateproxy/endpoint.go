@@ -16,12 +16,14 @@ type Endpoint interface {
 }
 
 type DefaultEndpoint struct {
-	socketEndpoint string
+	socketEndpoint 	string
+	tlsConfig		*tls.Config
 }
 
-func NewDefaultEndpoint(addr string, port int) *DefaultEndpoint {
+func NewDefaultEndpoint(addr string, port int, tlsConfig *tls.Config) *DefaultEndpoint {
 	return &DefaultEndpoint{
 		socketEndpoint: fmt.Sprintf("%s:%d", addr, port),
+		tlsConfig: tlsConfig,
 	}
 }
 
@@ -30,8 +32,7 @@ func (recv *DefaultEndpoint) GetSocketEndpoint() string {
 }
 
 func (recv *DefaultEndpoint) GetTlsConfig() *tls.Config {
-	// tls not supported for non sni/astra yet
-	return nil
+	return recv.tlsConfig
 }
 
 func (recv *DefaultEndpoint) GetEndpointIdentifier() string {

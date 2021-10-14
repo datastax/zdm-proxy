@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"github.com/riptano/cloud-gate/proxy/pkg/config"
 	log "github.com/sirupsen/logrus"
 	"net"
 	"sync"
@@ -20,17 +21,28 @@ type ConnectionConfig interface {
 	CreateEndpoint(h *Host) Endpoint
 }
 
-func InitializeConnectionConfig(secureConnectBundlePath string, contactPointsFromConfig []string, port int,
-	connTimeoutInMs int, clusterType ClusterType, datacenterFromConfig string, ctx context.Context) (ConnectionConfig, error){
-	if secureConnectBundlePath != "" {
-		return initializeAstraConnectionConfig(connTimeoutInMs, clusterType, secureConnectBundlePath, ctx)
-	} else {
-		contactPoints := make([]Endpoint, 0)
-		for _, contactPoint := range contactPointsFromConfig {
-			contactPoints = append(contactPoints, NewDefaultEndpoint(contactPoint, port))
+func InitializeConnectionConfig(clusterTlsConfig *config.ClusterTlsConfig, contactPointsFromConfig []string, port int,
+	connTimeoutInMs int, clusterType ClusterType, datacenterFromConfig string, ctx context.Context) (ConnectionConfig, error) {
+
+	var tlsConfig *tls.Config
+	var err error
+	if clusterTlsConfig.TlsEnabled {
+		if clusterTlsConfig.SecureConnectBundlePath != "" {
+			return initializeAstraConnectionConfig(connTimeoutInMs, clusterType, clusterTlsConfig.SecureConnectBundlePath, ctx)
+		} else {
+			tlsConfig, err = initializeTlsConfigFromProxyClusterTlsConfig(clusterTlsConfig, clusterType)
+			if err != nil {
+				return nil, err
+			}
 		}
-		return newGenericConnectionConfig(nil, connTimeoutInMs, clusterType, datacenterFromConfig, contactPoints), nil
 	}
+
+	contactPoints := make([]Endpoint, 0)
+	for _, contactPoint := range contactPointsFromConfig {
+		contactPoints = append(contactPoints, NewDefaultEndpoint(contactPoint, port, tlsConfig))
+	}
+	return newGenericConnectionConfig(tlsConfig, connTimeoutInMs, clusterType, datacenterFromConfig, contactPoints), nil
+
 }
 
 type baseConnectionConfig struct {
@@ -80,6 +92,7 @@ func (cc *genericConnectionConfig) GetLocalDatacenter() string {
 }
 
 func (cc *genericConnectionConfig) UsesSNI() bool {
+	// SNI is currently only supported for Astra
 	return false
 }
 
@@ -92,7 +105,7 @@ func (cc *genericConnectionConfig) RefreshContactPoints(ctx context.Context) ([]
 }
 
 func (cc *genericConnectionConfig) CreateEndpoint(h *Host) Endpoint {
-	return NewDefaultEndpoint(h.Address.String(), h.Port)
+	return NewDefaultEndpoint(h.Address.String(), h.Port, cc.tlsConfig)
 }
 
 type AstraConnectionConfig interface {
@@ -129,7 +142,7 @@ func initializeAstraConnectionConfig(
 		return nil, fmt.Errorf("incomplete metadata service contact information. hostname: %v, port: %v", metadataServiceHostName, metadataServicePort)
 	}
 
-	tlsConfig, err := initializeTLSConfiguration(fileMap["ca.crt"], fileMap["cert"], fileMap["key"], metadataServiceHostName)
+	tlsConfig, err := initializeTlsConfigurationFromSecureConnectBundle(fileMap, metadataServiceHostName, clusterType)
 	if err != nil {
 		return nil, err
 	}

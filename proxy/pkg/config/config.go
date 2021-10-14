@@ -13,10 +13,10 @@ import (
 
 // Config holds the values of environment variables necessary for proper Proxy function.
 type Config struct {
-	ProxyIndex                       int    `default:"0" split_words:"true"`
-	ProxyInstanceCount               int    `default:"-1" split_words:"true"` // Overridden by length of ProxyAddresses (after split) if set
-	ProxyAddresses                   string `split_words:"true"`
-	ProxyNumTokens                   int    `default:"8" split_words:"true"`
+	ProxyIndex         int    `default:"0" split_words:"true"`
+	ProxyInstanceCount int    `default:"-1" split_words:"true"` // Overridden by length of ProxyAddresses (after split) if set
+	ProxyAddresses     string `split_words:"true"`
+	ProxyNumTokens     int    `default:"8" split_words:"true"`
 
 	OriginEnableHostAssignment bool `default:"true" split_words:"true"`
 	TargetEnableHostAssignment bool `default:"true" split_words:"true"`
@@ -37,6 +37,14 @@ type Config struct {
 	TargetCassandraContactPoints           string `split_words:"true"`
 	TargetCassandraPort                    int    `default:"9042" split_words:"true"`
 	TargetCassandraSecureConnectBundlePath string `split_words:"true"`
+
+	OriginTlsServerCaPath   string `split_words:"true"`
+	OriginTlsClientCertPath string `split_words:"true"`
+	OriginTlsClientKeyPath  string `split_words:"true"`
+
+	TargetTlsServerCaPath   string `split_words:"true"`
+	TargetTlsClientCertPath string `split_words:"true"`
+	TargetTlsClientKeyPath  string `split_words:"true"`
 
 	ProxyMetricsAddress string `default:"localhost" split_words:"true"`
 	ProxyMetricsPort    int    `default:"14001" split_words:"true"`
@@ -114,7 +122,6 @@ func (c *Config) ParseEnvVars() (*Config, error) {
 		return nil, err
 	}
 
-
 	log.Infof("Parsed configuration: %v", c)
 
 	return c, nil
@@ -124,7 +131,7 @@ func (c *Config) ParseTopologyConfig() (*TopologyConfig, error) {
 	virtualizationEnabled := true
 	proxyInstanceCount := c.ProxyInstanceCount
 	proxyAddressesTyped := []net.IP{net.ParseIP("127.0.0.1")}
-	if c.ProxyAddresses == "" {
+	if isNotDefined(c.ProxyAddresses) {
 		virtualizationEnabled = false
 		if proxyInstanceCount == -1 {
 			proxyInstanceCount = 1
@@ -153,7 +160,7 @@ func (c *Config) ParseTopologyConfig() (*TopologyConfig, error) {
 
 	proxyIndex := c.ProxyIndex
 	if proxyIndex < 0 || proxyIndex >= proxyInstanceCount {
-		return nil, fmt.Errorf("invalid ProxyIndex and ProxyInstanceCount values; " +
+		return nil, fmt.Errorf("invalid ProxyIndex and ProxyInstanceCount values; "+
 			"proxy index (%d) must be less than instance count (%d) and non negative", proxyIndex, proxyInstanceCount)
 	}
 
@@ -162,11 +169,11 @@ func (c *Config) ParseTopologyConfig() (*TopologyConfig, error) {
 	}
 
 	return &TopologyConfig{
-		VirtualizationEnabled:       virtualizationEnabled,
-		Addresses:                   proxyAddressesTyped,
-		Index:                       proxyIndex,
-		Count:                       proxyInstanceCount,
-		NumTokens:                   c.ProxyNumTokens,
+		VirtualizationEnabled: virtualizationEnabled,
+		Addresses:             proxyAddressesTyped,
+		Index:                 proxyIndex,
+		Count:                 proxyInstanceCount,
+		NumTokens:             c.ProxyNumTokens,
 	}, nil
 }
 
@@ -201,6 +208,14 @@ func (c *Config) Validate() error {
 		return err
 	}
 
+	_, err = c.ParseOriginTlsConfig(false)
+	if err != nil {
+		return err
+	}
+	_, err = c.ParseTargetTlsConfig(false)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -208,7 +223,7 @@ func (c *Config) ParseLogLevel() (log.Level, error) {
 	level, err := log.ParseLevel(strings.TrimSpace(c.LogLevel))
 	if err != nil {
 		var lvl log.Level
-		return lvl, fmt.Errorf("invalid log level, valid log levels are " +
+		return lvl, fmt.Errorf("invalid log level, valid log levels are "+
 			"PANIC, FATAL, ERROR, WARN or WARNING, INFO, DEBUG and TRACE; original err: %w", err)
 	}
 
@@ -234,34 +249,34 @@ func (c *Config) parseBuckets(bucketsConfigStr string) ([]float64, error) {
 				bucketsConfigStr,
 				bucketStr)
 		}
-		bucketsArr = append(bucketsArr, bucket / 1000) // convert ms to seconds
+		bucketsArr = append(bucketsArr, bucket/1000) // convert ms to seconds
 	}
 
 	return bucketsArr, nil
 }
 
-func (c* Config) ParseOriginContactPoints() ([]string, error) {
-	if c.OriginCassandraSecureConnectBundlePath != "" && c.OriginCassandraContactPoints != "" {
+func (c *Config) ParseOriginContactPoints() ([]string, error) {
+	if isDefined(c.OriginCassandraSecureConnectBundlePath) && isDefined(c.OriginCassandraContactPoints) {
 		return nil, fmt.Errorf("OriginCassandraSecureConnectBundlePath and OriginCassandraContactPoints are mutually exclusive. Please specify only one of them.")
 	}
 
-	if c.OriginCassandraSecureConnectBundlePath != "" && c.OriginDatacenter != "" {
+	if isDefined(c.OriginCassandraSecureConnectBundlePath) && isDefined(c.OriginDatacenter) {
 		return nil, fmt.Errorf("OriginCassandraSecureConnectBundlePath and OriginDatacenter are mutually exclusive. Please specify only one of them.")
 	}
 
-	if c.OriginCassandraSecureConnectBundlePath == "" && c.OriginCassandraContactPoints == "" {
+	if isNotDefined(c.OriginCassandraSecureConnectBundlePath) && isNotDefined(c.OriginCassandraContactPoints) {
 		return nil, fmt.Errorf("Both OriginCassandraSecureConnectBundlePath and OriginCassandraContactPoints are empty. Please specify either one of them.")
 	}
 
-	if (c.OriginCassandraContactPoints != "") && (c.OriginCassandraPort == 0) {
+	if isDefined(c.OriginCassandraContactPoints) && (c.OriginCassandraPort == 0) {
 		return nil, fmt.Errorf("OriginCassandraContactPoints was specified but the port is missing. Please provide OriginCassandraPort")
 	}
 
-	if (c.OriginEnableHostAssignment == false) && (c.OriginDatacenter != "") {
+	if (c.OriginEnableHostAssignment == false) && (isDefined(c.OriginDatacenter)) {
 		return nil, fmt.Errorf("OriginDatacenter was specified but OriginEnableHostAssignment is false. Please enable host assignment or don't set the datacenter.")
 	}
 
-	if c.OriginCassandraSecureConnectBundlePath == "" {
+	if isNotDefined(c.OriginCassandraSecureConnectBundlePath) {
 		contactPoints := parseContactPoints(c.OriginCassandraContactPoints)
 		if len(contactPoints) <= 0 {
 			return nil, fmt.Errorf("could not parse origin contact points: %v", c.OriginCassandraContactPoints)
@@ -273,28 +288,28 @@ func (c* Config) ParseOriginContactPoints() ([]string, error) {
 	return nil, nil
 }
 
-func (c* Config) ParseTargetContactPoints() ([]string, error) {
-	if c.TargetCassandraSecureConnectBundlePath != "" && c.TargetCassandraContactPoints != "" {
+func (c *Config) ParseTargetContactPoints() ([]string, error) {
+	if isDefined(c.TargetCassandraSecureConnectBundlePath) && isDefined(c.TargetCassandraContactPoints) {
 		return nil, fmt.Errorf("TargetCassandraSecureConnectBundlePath and TargetCassandraContactPoints are mutually exclusive. Please specify only one of them.")
 	}
 
-	if c.TargetCassandraSecureConnectBundlePath != "" && c.TargetDatacenter != "" {
+	if isDefined(c.TargetCassandraSecureConnectBundlePath) && isDefined(c.TargetDatacenter) {
 		return nil, fmt.Errorf("TargetCassandraSecureConnectBundlePath and TargetDatacenter are mutually exclusive. Please specify only one of them.")
 	}
 
-	if c.TargetCassandraSecureConnectBundlePath == "" && c.TargetCassandraContactPoints == "" {
+	if isNotDefined(c.TargetCassandraSecureConnectBundlePath) && isNotDefined(c.TargetCassandraContactPoints) {
 		return nil, fmt.Errorf("Both TargetCassandraSecureConnectBundlePath and TargetCassandraContactPoints are empty. Please specify either one of them.")
 	}
 
-	if (c.TargetCassandraContactPoints != "") && (c.TargetCassandraPort == 0) {
+	if (isDefined(c.TargetCassandraContactPoints)) && (c.TargetCassandraPort == 0) {
 		return nil, fmt.Errorf("TargetCassandraContactPoints was specified but the port is missing. Please provide TargetCassandraPort")
 	}
 
-	if (c.TargetEnableHostAssignment == false) && (c.TargetDatacenter != "") {
+	if (c.TargetEnableHostAssignment == false) && (isDefined(c.TargetDatacenter)) {
 		return nil, fmt.Errorf("TargetDatacenter was specified but TargetEnableHostAssignment is false. Please enable host assignment or don't set the datacenter.")
 	}
 
-	if c.TargetCassandraSecureConnectBundlePath == "" {
+	if isNotDefined(c.TargetCassandraSecureConnectBundlePath) {
 		contactPoints := parseContactPoints(c.TargetCassandraContactPoints)
 		if len(contactPoints) <= 0 {
 			return nil, fmt.Errorf("could not parse target contact points: %v", c.TargetCassandraContactPoints)
@@ -310,19 +325,160 @@ func parseContactPoints(setting string) []string {
 	return strings.Split(strings.ReplaceAll(setting, " ", ""), ",")
 }
 
+func (c *Config) ParseOriginTlsConfig(displayLogMessages bool) (*ClusterTlsConfig, error) {
+
+	// No TLS defined
+
+	if isNotDefined(c.OriginCassandraSecureConnectBundlePath) &&
+		isNotDefined(c.OriginTlsServerCaPath) &&
+		isNotDefined(c.OriginTlsClientCertPath) &&
+		isNotDefined(c.OriginTlsClientKeyPath) {
+		if displayLogMessages {
+			log.Infof("TLS was not configured for Origin")
+		}
+		return &ClusterTlsConfig{
+			TlsEnabled: false,
+		}, nil
+	}
+
+	//SCB specified
+
+	if isDefined(c.OriginCassandraSecureConnectBundlePath) {
+		if isDefined(c.OriginTlsServerCaPath) || isDefined(c.OriginTlsClientCertPath) || isDefined(c.OriginTlsClientKeyPath) {
+			return &ClusterTlsConfig{}, fmt.Errorf("Incorrect TLS configuration for Origin: Secure Connect Bundle and custom TLS parameters cannot be specified at the same time.")
+		}
+
+		if displayLogMessages {
+			log.Infof("Mutual TLS configured for Origin using an Astra secure connect bundle")
+		}
+		return &ClusterTlsConfig{
+			TlsEnabled:              true,
+			SecureConnectBundlePath: c.OriginCassandraSecureConnectBundlePath,
+		}, nil
+	}
+
+	// Custom TLS params specified
+
+	if isDefined(c.OriginTlsServerCaPath) && (isNotDefined(c.OriginTlsClientCertPath) && isNotDefined(c.OriginTlsClientKeyPath)) {
+		if displayLogMessages {
+			log.Infof("One-way TLS configured for Origin. Please note that hostname verification is not currently supported.")
+		}
+		return &ClusterTlsConfig{
+			TlsEnabled:   true,
+			ServerCaPath: c.OriginTlsServerCaPath,
+		}, nil
+	}
+
+	if isDefined(c.OriginTlsServerCaPath) && isDefined(c.OriginTlsClientCertPath) && isDefined(c.OriginTlsClientKeyPath) {
+		if displayLogMessages {
+			log.Infof("Mutual TLS configured for Origin. Please note that hostname verification is not currently supported.")
+		}
+		return &ClusterTlsConfig{
+			TlsEnabled:     true,
+			ServerCaPath:   c.OriginTlsServerCaPath,
+			ClientCertPath: c.OriginTlsClientCertPath,
+			ClientKeyPath:  c.OriginTlsClientKeyPath,
+		}, nil
+	}
+
+	return &ClusterTlsConfig{}, fmt.Errorf("Incomplete TLS configuration for Origin: when using mutual TLS, please specify Server CA path, Client Cert path and Client Key path.")
+
+}
+
+func (c *Config) ParseTargetTlsConfig(displayLogMessages bool) (*ClusterTlsConfig, error) {
+
+	// No TLS defined
+
+	if isNotDefined(c.TargetCassandraSecureConnectBundlePath) &&
+		isNotDefined(c.TargetTlsServerCaPath) &&
+		isNotDefined(c.TargetTlsClientCertPath) &&
+		isNotDefined(c.TargetTlsClientKeyPath) {
+		if displayLogMessages {
+			log.Infof("TLS was not configured for Target")
+		}
+		return &ClusterTlsConfig{
+			TlsEnabled: false,
+		}, nil
+	}
+
+	//SCB specified
+
+	if isDefined(c.TargetCassandraSecureConnectBundlePath) {
+		if isDefined(c.TargetTlsServerCaPath) || isDefined(c.TargetTlsClientCertPath) || isDefined(c.TargetTlsClientKeyPath) {
+			return &ClusterTlsConfig{}, fmt.Errorf("Incorrect TLS configuration for Target: Secure Connect Bundle and custom TLS parameters cannot be specified at the same time.")
+		}
+
+		return &ClusterTlsConfig{
+			TlsEnabled:              true,
+			SecureConnectBundlePath: c.TargetCassandraSecureConnectBundlePath,
+		}, nil
+	}
+
+	// Custom TLS params specified
+
+	if isDefined(c.TargetTlsServerCaPath) && (isNotDefined(c.TargetTlsClientCertPath) && isNotDefined(c.TargetTlsClientKeyPath)) {
+		if displayLogMessages {
+			log.Infof("One-way TLS configured for Target. Please note that hostname verification is not currently supported.")
+		}
+		return &ClusterTlsConfig{
+			TlsEnabled:   true,
+			ServerCaPath: c.TargetTlsServerCaPath,
+		}, nil
+	}
+
+	if isDefined(c.TargetTlsServerCaPath) && isDefined(c.TargetTlsClientCertPath) && isDefined(c.TargetTlsClientKeyPath) {
+		if displayLogMessages {
+			log.Infof("Mutual TLS configured for Target. Please note that hostname verification is not currently supported.")
+		}
+		return &ClusterTlsConfig{
+			TlsEnabled:     true,
+			ServerCaPath:   c.TargetTlsServerCaPath,
+			ClientCertPath: c.TargetTlsClientCertPath,
+			ClientKeyPath:  c.TargetTlsClientKeyPath,
+		}, nil
+	}
+
+	return &ClusterTlsConfig{}, fmt.Errorf("Incomplete TLS configuration for Target: when using mutual TLS, please specify Server CA path, Client Cert path and Client Key path.")
+}
+
+func isDefined(propertyValue string) bool {
+	return propertyValue != ""
+}
+
+func isNotDefined(propertyValue string) bool {
+	return !isDefined(propertyValue)
+}
+
 // TopologyConfig contains configuration parameters for 2 features related to multi cloudgate-proxy instance deployment:
 //   - Virtualization of system.peers
 //   - Assignment of C* hosts per proxy instance for request connections
-//
 type TopologyConfig struct {
-	VirtualizationEnabled       bool     // enabled if PROXY_ADDRESSES is not empty
-	Addresses                   []net.IP // comes from PROXY_ADDRESSES
-	Count                       int      // comes from PROXY_INSTANCE_COUNT unless PROXY_ADDRESSES is set
-	Index                       int      // comes from PROXY_INDEX
-	NumTokens                   int      // comes from PROXY_NUM_TOKENS
+	VirtualizationEnabled bool     // enabled if PROXY_ADDRESSES is not empty
+	Addresses             []net.IP // comes from PROXY_ADDRESSES
+	Count                 int      // comes from PROXY_INSTANCE_COUNT unless PROXY_ADDRESSES is set
+	Index                 int      // comes from PROXY_INDEX
+	NumTokens             int      // comes from PROXY_NUM_TOKENS
 }
 
 func (recv *TopologyConfig) String() string {
-	return fmt.Sprintf("TopologyConfig{VirtualizationEnabled=%v, Addresses=%v, Count=%v, Index=%v, NumTokens=%v",
+	return fmt.Sprintf("TopologyConfig{VirtualizationEnabled=%v, Addresses=%v, Count=%v, Index=%v, NumTokens=%v}",
 		recv.VirtualizationEnabled, recv.Addresses, recv.Count, recv.Index, recv.NumTokens)
+}
+
+// ClusterTlsConfig contains all TLS configuration parameters to connect to a cluster
+//   - TLS enabled is an internal flag that is automatically set based on the configuration provided
+//   - SCB and all other parameters are mutually exclusive: if SCB is provided, no other parameters must be specified. Doing so will result in a validation errExpected
+//   - When using a non-SCB configuration, all other three parameters must be specified (ServerCaPath, ClientCertPath, ClientKeyPath).
+type ClusterTlsConfig struct {
+	TlsEnabled              bool
+	ServerCaPath            string
+	ClientCertPath          string
+	ClientKeyPath           string
+	SecureConnectBundlePath string
+}
+
+func (recv *ClusterTlsConfig) String() string {
+	return fmt.Sprintf("ClusterTlsConfig{TlsEnabled=%v, ServerCaPath=%v, ClientCertPath=%v, ClientKeyPath=%v}",
+		recv.TlsEnabled, recv.ServerCaPath, recv.ClientCertPath, recv.ClientKeyPath)
+
 }

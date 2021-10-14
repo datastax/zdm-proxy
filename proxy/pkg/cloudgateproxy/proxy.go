@@ -67,7 +67,7 @@ type CloudgateProxy struct {
 	clientHandlersShutdownRequestCancelFn context.CancelFunc
 	globalClientHandlersWg                *sync.WaitGroup
 
-	metricHandler    *metrics.MetricHandler
+	metricHandler *metrics.MetricHandler
 }
 
 func NewCloudgateProxy(conf *config.Config) *CloudgateProxy {
@@ -137,7 +137,6 @@ func (p *CloudgateProxy) Start(ctx context.Context) error {
 	return nil
 }
 
-
 func (p *CloudgateProxy) initializeControlConnections(ctx context.Context) error {
 	var err error
 
@@ -169,8 +168,13 @@ func (p *CloudgateProxy) initializeControlConnections(ctx context.Context) error
 		log.Infof("Parsed Target contact points: %v", parsedTargetContactPoints)
 	}
 
+	originTlsConfig, err := p.Conf.ParseOriginTlsConfig(true)
+	if err != nil {
+		return err
+	}
+
 	// Initialize origin connection configuration and control connection endpoint configuration
-	originConnectionConfig, err := InitializeConnectionConfig(p.Conf.OriginCassandraSecureConnectBundlePath,
+	originConnectionConfig, err := InitializeConnectionConfig(originTlsConfig,
 		parsedOriginContactPoints,
 		p.Conf.OriginCassandraPort,
 		p.Conf.ClusterConnectionTimeoutMs,
@@ -185,8 +189,13 @@ func (p *CloudgateProxy) initializeControlConnections(ctx context.Context) error
 	p.originConnectionConfig = originConnectionConfig
 	p.lock.Unlock()
 
+	targetTlsConfig, err := p.Conf.ParseTargetTlsConfig(true)
+	if err != nil {
+		return err
+	}
+
 	// Initialize target connection configuration and control connection endpoint configuration
-	targetConnectionConfig, err := InitializeConnectionConfig(p.Conf.TargetCassandraSecureConnectBundlePath,
+	targetConnectionConfig, err := InitializeConnectionConfig(targetTlsConfig,
 		parsedTargetContactPoints,
 		p.Conf.TargetCassandraPort,
 		p.Conf.ClusterConnectionTimeoutMs,
@@ -199,7 +208,6 @@ func (p *CloudgateProxy) initializeControlConnections(ctx context.Context) error
 	p.lock.Lock()
 	p.targetConnectionConfig = targetConnectionConfig
 	p.lock.Unlock()
-
 
 	originControlConn := NewControlConn(
 		p.controlConnShutdownCtx, p.Conf.OriginCassandraPort, p.originConnectionConfig,
@@ -269,7 +277,7 @@ func (p *CloudgateProxy) initializeGlobalStructures() {
 	if p.requestResponseNumWorkers == -1 {
 		p.requestResponseNumWorkers = maxProcs * 4 // default
 	} else if p.requestResponseNumWorkers <= 0 {
-		log.Warnf("Invalid number of request / response workers %d, using GOMAXPROCS * 4 (%d).", p.requestResponseNumWorkers, maxProcs * 4)
+		log.Warnf("Invalid number of request / response workers %d, using GOMAXPROCS * 4 (%d).", p.requestResponseNumWorkers, maxProcs*4)
 		p.requestResponseNumWorkers = maxProcs * 4
 	}
 	log.Infof("Using %d request / response workers.", p.requestResponseNumWorkers)
@@ -278,7 +286,7 @@ func (p *CloudgateProxy) initializeGlobalStructures() {
 	if p.writeNumWorkers == -1 {
 		p.writeNumWorkers = maxProcs * 4 // default
 	} else if p.writeNumWorkers <= 0 {
-		log.Warnf("Invalid number of write workers %d, using GOMAXPROCS * 4 (%d).", p.writeNumWorkers, maxProcs * 4)
+		log.Warnf("Invalid number of write workers %d, using GOMAXPROCS * 4 (%d).", p.writeNumWorkers, maxProcs*4)
 		p.writeNumWorkers = maxProcs * 4
 	}
 	log.Infof("Using %d write workers.", p.writeNumWorkers)
@@ -287,7 +295,7 @@ func (p *CloudgateProxy) initializeGlobalStructures() {
 	if p.readNumWorkers == -1 {
 		p.readNumWorkers = maxProcs * 8 // default
 	} else if p.readNumWorkers <= 0 {
-		log.Warnf("Invalid number of read workers %d, using GOMAXPROCS * 8 (%d).", p.readNumWorkers, maxProcs * 8)
+		log.Warnf("Invalid number of read workers %d, using GOMAXPROCS * 8 (%d).", p.readNumWorkers, maxProcs*8)
 		p.readNumWorkers = maxProcs * 8
 	}
 	log.Infof("Using %d read workers.", p.readNumWorkers)
@@ -425,7 +433,7 @@ func (p *CloudgateProxy) handleNewConnection(clientConn net.Conn) {
 	} else {
 		originEndpoint = p.originControlConn.GetCurrentContactPoint()
 		if originEndpoint == nil {
-			log.Warnf("Origin ControlConnection current endpoint is nil, " +
+			log.Warnf("Origin ControlConnection current endpoint is nil, "+
 				"falling back to first origin contact point (%v) for client connection %v.",
 				p.originConnectionConfig.GetContactPoints()[0].String(), clientConn.RemoteAddr().String())
 		}
@@ -443,14 +451,14 @@ func (p *CloudgateProxy) handleNewConnection(clientConn net.Conn) {
 	} else {
 		targetEndpoint = p.targetControlConn.GetCurrentContactPoint()
 		if targetEndpoint == nil {
-			log.Warnf("Target ControlConnection current endpoint is nil, " +
+			log.Warnf("Target ControlConnection current endpoint is nil, "+
 				"falling back to first target contact point (%v) for client connection %v.",
 				p.targetConnectionConfig.GetContactPoints()[0].String(), clientConn.RemoteAddr().String())
 		}
 	}
 
 	originCassandraConnInfo := NewClusterConnectionInfo(p.originConnectionConfig, originEndpoint, true)
-	targetCassandraConnInfo := NewClusterConnectionInfo(p.targetConnectionConfig, targetEndpoint,false)
+	targetCassandraConnInfo := NewClusterConnectionInfo(p.targetConnectionConfig, targetEndpoint, false)
 	clientHandler, err := NewClientHandler(
 		clientConn,
 		originCassandraConnInfo,
