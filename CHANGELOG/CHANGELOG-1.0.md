@@ -6,9 +6,13 @@ When cutting a new release, update the `unreleased` heading to the tag being gen
 
 ## Unreleased
 
-## v1.0.4 - 2021-10-15
+## v1.1.0 - 2021-10-15
+
+### New Features
 
 * [ZDM-201](https://datastax.jira.com/browse/ZDM-201) Support TLS when connecting to self-managed clusters
+
+## v1.0.4 - 2021-09-29
 
 ### Bug Fixes
 
