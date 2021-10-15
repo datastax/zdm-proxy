@@ -6,6 +6,12 @@ Build artifacts are available at [Docker Hub](https://hub.docker.com/repository/
 
 For additional details on the changes included in a specific release, see the associated CHANGELOG-x.x.md file.
 
+## v1.1.0 - 2021-10-15
+
+Adds support for mTLS/TLS between the proxy and origin/target clusters.
+
+[Changelog](CHANGELOG/CHANGELOG-1.0.md#v110---2021-10-15)
+
 ## v1.0.4 - 2021-09-29
 
 Enables the proxy to handle statements using Custom data types.
