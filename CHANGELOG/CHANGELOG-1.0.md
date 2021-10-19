@@ -6,6 +6,10 @@ When cutting a new release, update the `unreleased` heading to the tag being gen
 
 ## Unreleased
 
+### New Features
+
+* [ZDM-217](https://datastax.jira.com/browse/ZDM-217) Remove authentication coupling between origin and target clusters
+
 ## v1.1.0 - 2021-10-15
 
 ### New Features

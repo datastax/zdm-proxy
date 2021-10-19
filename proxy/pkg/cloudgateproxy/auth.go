@@ -85,7 +85,7 @@ func (c *AuthCredentials) Unmarshal(token []byte) error {
 	}
 }
 
-// A simple authenticator to perform plain-text authentications for CQL clients.
+// DsePlainTextAuthenticator is a simple authenticator to perform plain-text authentications for CQL clients.
 type DsePlainTextAuthenticator struct {
 	Credentials *AuthCredentials
 }
@@ -112,7 +112,7 @@ func (a *DsePlainTextAuthenticator) EvaluateChallenge(challenge []byte) ([]byte,
 	return a.Credentials.Marshal(), nil
 }
 
-// This method can return nil in both credsInToken and err in case the request does not contain credentials
+// ParseCredentialsFromRequest can return nil in both credsInToken and err in case the request does not contain credentials
 func ParseCredentialsFromRequest(token []byte) (credsInToken *AuthCredentials, err error) {
 	if token == nil || bytes.Compare(token, mechanism) == 0 {
 		return nil, nil

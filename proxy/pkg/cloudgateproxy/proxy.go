@@ -468,6 +468,8 @@ func (p *CloudgateProxy) handleNewConnection(clientConn net.Conn) {
 		p.targetControlConn,
 		p.Conf,
 		p.TopologyConfig,
+		p.Conf.TargetCassandraUsername,
+		p.Conf.TargetCassandraPassword,
 		p.Conf.OriginCassandraUsername,
 		p.Conf.OriginCassandraPassword,
 		p.PreparedStatementCache,

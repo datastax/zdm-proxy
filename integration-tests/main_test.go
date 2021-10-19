@@ -5,15 +5,11 @@ import (
 	"github.com/riptano/cloud-gate/integration-tests/ccm"
 	"github.com/riptano/cloud-gate/integration-tests/env"
 	"github.com/riptano/cloud-gate/integration-tests/setup"
-	"github.com/riptano/cloud-gate/integration-tests/simulacron"
 	"github.com/riptano/cloud-gate/proxy/pkg/cloudgateproxy"
 	log "github.com/sirupsen/logrus"
 	"os"
 	"testing"
 )
-
-var originCluster *ccm.Cluster
-var targetCluster *ccm.Cluster
 
 func TestMain(m *testing.M) {
 	env.InitGlobalVars()
@@ -25,44 +21,32 @@ func TestMain(m *testing.M) {
 		log.SetLevel(log.InfoLevel)
 	}
 
-	if env.UseCcm {
-		var err error
-		originCluster, err = setup.GetGlobalTestClusterOrigin()
-
-		if err != nil {
-			log.WithError(err).Fatal()
-			os.Exit(-1)
-		}
-
-		targetCluster, err = setup.GetGlobalTestClusterTarget()
-
-		if err != nil {
-			log.WithError(err).Fatal()
-			os.Exit(-1)
-		}
-
-		sourceSession := originCluster.GetSession()
-		destSession := targetCluster.GetSession()
-
-		// Seed originCluster and targetCluster with keyspace
-		setup.SeedKeyspace(sourceSession, destSession)
-	}
-
 	os.Exit(RunTests(m))
 }
 
-func RunTests(m *testing.M) int {
-	defer func() {
-		simulacronProcess := simulacron.GetGlobalSimulacronProcess()
-		if simulacronProcess != nil {
-			simulacronProcess.Cancel()
-		}
-	}()
-	defer setup.CleanUpClusters()
+func SetupOrGetGlobalCcmClusters() (*ccm.Cluster, *ccm.Cluster, error) {
+	originCluster, err := setup.GetGlobalTestClusterOrigin()
+	if err != nil {
+		return nil, nil, err
+	}
 
+	targetCluster, err := setup.GetGlobalTestClusterTarget()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return originCluster, targetCluster, err
+}
+
+func RunTests(m *testing.M) int {
+	defer setup.CleanUpClusters()
 	return m.Run()
 }
 
 func NewProxyInstanceForGlobalCcmClusters() (*cloudgateproxy.CloudgateProxy, error) {
+	originCluster, targetCluster, err := SetupOrGetGlobalCcmClusters()
+	if err != nil {
+		return nil, err
+	}
 	return setup.NewProxyInstance(originCluster, targetCluster)
 }

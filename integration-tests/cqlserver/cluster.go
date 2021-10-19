@@ -15,10 +15,17 @@ type Cluster struct {
 
 func NewCqlServerCluster(listenAddr string, port int, username string, password string, start bool) (*Cluster, error) {
 	addr := fmt.Sprintf("%s:%d", listenAddr, port)
-	cqlServer := client.NewCqlServer(addr, &client.AuthCredentials{
-		Username: username,
-		Password: password,
-	})
+	var authCreds *client.AuthCredentials
+	if username != "" || password != "" {
+		authCreds = &client.AuthCredentials{
+			Username: username,
+			Password: password,
+		}
+	}
+	cqlServer := client.NewCqlServer(addr, authCreds)
+	cqlServer.RequestHandlers = []client.RequestHandler{
+		client.NewDriverConnectionInitializationHandler("test_cluster", "dc1", func(_ string) {}),
+	}
 	if start {
 		err := cqlServer.Start(context.Background())
 		if err != nil {

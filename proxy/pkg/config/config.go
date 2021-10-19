@@ -38,6 +38,8 @@ type Config struct {
 	TargetCassandraPort                    int    `default:"9042" split_words:"true"`
 	TargetCassandraSecureConnectBundlePath string `split_words:"true"`
 
+	ForwardClientCredentialsToOrigin bool `default:"false" split_words:"true"` // only takes effect if both clusters have auth enabled
+
 	OriginTlsServerCaPath   string `split_words:"true"`
 	OriginTlsClientCertPath string `split_words:"true"`
 	OriginTlsClientKeyPath  string `split_words:"true"`

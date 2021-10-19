@@ -35,6 +35,7 @@ type CqlConnection interface {
 	SendHeartbeat(ctx context.Context) error
 	SetEventHandler(eventHandler func(f *frame.Frame, conn CqlConnection))
 	SubscribeToProtocolEvents(ctx context.Context, eventTypes []primitive.EventType) error
+	IsAuthEnabled() (bool, error)
 }
 
 // Not thread safe
@@ -56,6 +57,7 @@ type cqlConn struct {
 	closed                bool
 	eventHandler          func(f *frame.Frame, conn CqlConnection)
 	eventHandlerLock      *sync.Mutex
+	authEnabled           bool
 }
 
 var (
@@ -95,6 +97,7 @@ func NewCqlConnection(
 		timedOutOperations:    0,
 		closed:                false,
 		eventHandlerLock:      &sync.Mutex{},
+		authEnabled:           true,
 	}
 	cqlConn.StartRequestLoop()
 	cqlConn.StartResponseLoop()
@@ -220,13 +223,22 @@ func (c *cqlConn) IsInitialized() bool {
 	return c.initialized
 }
 
+func (c *cqlConn) IsAuthEnabled() (bool, error) {
+	if !c.IsInitialized() {
+		return true, fmt.Errorf("cql connection not initialized, can not check whether auth is enabled or not")
+	}
+
+	return c.authEnabled, nil
+}
+
 func (c *cqlConn) InitializeContext(version primitive.ProtocolVersion, ctx context.Context) error {
-	err := c.PerformHandshake(version, ctx)
+	authEnabled, err := c.PerformHandshake(version, ctx)
 	if err != nil {
 		return fmt.Errorf("failed to perform handshake: %w", err)
 	}
 
 	c.initialized = true
+	c.authEnabled = authEnabled
 	return nil
 }
 
@@ -316,17 +328,19 @@ func (c *cqlConn) SendAndReceive(request *frame.Frame, ctx context.Context) (*fr
 	}
 }
 
-func (c *cqlConn) PerformHandshake(version primitive.ProtocolVersion, ctx context.Context) (err error) {
+func (c *cqlConn) PerformHandshake(version primitive.ProtocolVersion, ctx context.Context) (auth bool, err error) {
 	log.Debug("performing handshake")
 	startup := frame.NewFrame(version, -1, message.NewStartup())
 	var response *frame.Frame
 	authenticator := &DsePlainTextAuthenticator{c.credentials}
+	authEnabled := false
 	if response, err = c.SendAndReceive(startup, ctx); err == nil {
 		switch response.Body.Message.(type) {
 		case *message.Ready:
 			log.Warnf("%v: expected AUTHENTICATE, got READY – is authentication required?", c)
 			break
 		case *message.Authenticate:
+			authEnabled = true
 			var authResponse *frame.Frame
 			authResponse, err = performHandshakeStep(authenticator, version, -1, response)
 			if err == nil {
@@ -353,7 +367,7 @@ func (c *cqlConn) PerformHandshake(version primitive.ProtocolVersion, ctx contex
 	} else {
 		log.Errorf("%v: handshake failed: %v", c, err)
 	}
-	return err
+	return authEnabled, err
 }
 
 func (c *cqlConn) Query(cql string, genericTypeCodec *GenericTypeCodec, ctx context.Context) (*ParsedRowSet, error) {

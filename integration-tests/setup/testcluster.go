@@ -80,6 +80,25 @@ func createClusters() error {
 	secondClusterId := firstClusterId + 1
 	globalCcmClusterTarget, err = ccm.GetNewCluster(secondClusterId, 10, env.TargetNodes, true)
 	if err != nil {
+		globalCcmClusterOrigin.Remove()
+		return err
+	}
+
+	sourceSession := globalCcmClusterOrigin.GetSession()
+	destSession := globalCcmClusterTarget.GetSession()
+
+	// Seed originCluster and targetCluster with keyspace
+	err = SeedKeyspace(sourceSession)
+	if err != nil {
+		globalCcmClusterOrigin.Remove()
+		globalCcmClusterTarget.Remove()
+		return err
+	}
+
+	err = SeedKeyspace(destSession)
+	if err != nil {
+		globalCcmClusterOrigin.Remove()
+		globalCcmClusterTarget.Remove()
 		return err
 	}
 
@@ -378,6 +397,8 @@ func NewTestConfig(originHost string, targetHost string) *config.Config {
 	conf.TargetCassandraUsername = "cassandra"
 	conf.TargetCassandraPassword = "cassandra"
 	conf.TargetCassandraPort = 9042
+
+	conf.ForwardClientCredentialsToOrigin = false
 
 	conf.ProxyMetricsAddress = "localhost"
 	conf.ProxyMetricsPort = 14001

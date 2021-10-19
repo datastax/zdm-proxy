@@ -89,7 +89,8 @@ func parseStatement(
 	currentKeyspaceName *atomic.Value,
 	forwardReadsToTarget bool,
 	forwardSystemQueriesToTarget bool,
-	virtualizationEnabled bool) (StatementInfo, error) {
+	virtualizationEnabled bool,
+	forwardAuthToTarget bool) (StatementInfo, error) {
 
 	f := frameContext.frame
 	switch f.Header.OpCode {
@@ -149,7 +150,11 @@ func parseStatement(
 			return NewBoundStatementInfo(preparedData), nil
 		}
 	case primitive.OpCodeAuthResponse:
-		return NewGenericStatementInfo(forwardToOrigin), nil
+		if forwardAuthToTarget {
+			return NewGenericStatementInfo(forwardToTarget), nil
+		} else {
+			return NewGenericStatementInfo(forwardToOrigin), nil
+		}
 	default:
 		return NewGenericStatementInfo(forwardToBoth), nil
 	}

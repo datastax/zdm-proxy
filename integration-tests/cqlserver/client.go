@@ -13,11 +13,15 @@ type Client struct {
 }
 
 func NewCqlClient(addr string, port int, username string, password string, connect bool) (*Client, error) {
+	var authCreds *client.AuthCredentials
+	if username != "" || password != "" {
+		authCreds = &client.AuthCredentials{
+			Username: username,
+			Password: password,
+		}
+	}
 	proxyAddr := fmt.Sprintf("%s:%d", addr, port)
-	clt := client.NewCqlClient(proxyAddr, &client.AuthCredentials{
-		Username: username,
-		Password: password,
-	})
+	clt := client.NewCqlClient(proxyAddr, authCreds)
 
 	var clientConn *client.CqlClientConnection
 	var err error

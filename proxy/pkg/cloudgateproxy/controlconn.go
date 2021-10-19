@@ -51,6 +51,7 @@ type ControlConn struct {
 	proxyRand                *rand.Rand
 	reconnectCh              chan bool
 	protocolEventSubscribers map[ProtocolEventObserver]interface{}
+	authEnabled              *atomic.Value
 }
 
 const ProxyVirtualRack = "rack0"
@@ -60,6 +61,8 @@ const ccReadTimeout = 10 * time.Second
 
 func NewControlConn(ctx context.Context, defaultPort int, connConfig ConnectionConfig,
 	username string, password string, conf *config.Config, topologyConfig *config.TopologyConfig, proxyRand *rand.Rand) *ControlConn {
+	authEnabled := &atomic.Value{}
+	authEnabled.Store(true)
 	return &ControlConn{
 		conf:           conf,
 		topologyConfig: topologyConfig,
@@ -94,6 +97,7 @@ func NewControlConn(ctx context.Context, defaultPort int, connConfig ConnectionC
 		proxyRand:                proxyRand,
 		reconnectCh:              make(chan bool, 1),
 		protocolEventSubscribers: map[ProtocolEventObserver]interface{}{},
+		authEnabled:              authEnabled,
 	}
 }
 
@@ -210,6 +214,15 @@ func (cc *ControlConn) Start(wg *sync.WaitGroup, ctx context.Context) error {
 		}
 	}()
 	return nil
+}
+
+func (cc *ControlConn) IsAuthEnabled() (bool, error) {
+	if authEnabled := cc.authEnabled.Load(); authEnabled != nil {
+		return authEnabled.(bool), nil
+	}
+
+	return true, fmt.Errorf("could not check whether auth is enabled or not because " +
+		"the control connection has not been initialized")
 }
 
 func (cc *ControlConn) IncrementFailureCounter() {
@@ -570,6 +583,13 @@ func (cc *ControlConn) setConn(oldConn CqlConnection, newConn CqlConnection, new
 	if cc.cqlConn == oldConn || oldConn == nil {
 		cc.cqlConn = newConn
 		cc.currentContactPoint = newContactPoint
+		authEnabled, err := newConn.IsAuthEnabled()
+		if err != nil {
+			log.Errorf("Error detected when trying to set whether auth is enabled or not in control connection, " +
+				"this is a bug, please report: %v", err)
+		} else {
+			cc.authEnabled.Store(authEnabled)
+		}
 		return newConn, newContactPoint
 	}
 

@@ -54,9 +54,12 @@ type ClientHandler struct {
 
 	authErrorMessage *message.AuthenticationError
 
-	startupFrame          *frame.RawFrame
-	targetStartupResponse *frame.RawFrame
-	targetCreds           *AuthCredentials
+	startupRequest           *frame.RawFrame
+	secondaryStartupResponse *frame.RawFrame
+	secondaryHandshakeCreds  *AuthCredentials
+
+	targetUsername string
+	targetPassword string
 
 	originUsername string
 	originPassword string
@@ -91,6 +94,9 @@ type ClientHandler struct {
 
 	originObserver *protocolEventObserverImpl
 	targetObserver *protocolEventObserverImpl
+
+	forwardAuthToTarget        bool
+	targetCredsOnClientRequest bool
 }
 
 func NewClientHandler(
@@ -102,6 +108,8 @@ func NewClientHandler(
 	targetControlConn *ControlConn,
 	conf *config.Config,
 	topologyConfig *config.TopologyConfig,
+	targetUsername string,
+	targetPassword string,
 	originUsername string,
 	originPassword string,
 	psCache *PreparedStatementCache,
@@ -167,6 +175,9 @@ func NewClientHandler(
 		targetObserver = NewProtocolEventObserver(clientHandlerShutdownRequestCancelFn, targetHost)
 	}
 
+	forwardAuthToTarget, targetCredsOnClientRequest := forwardAuthToTarget(
+		originControlConn, targetControlConn, conf.ForwardClientCredentialsToOrigin)
+
 	return &ClientHandler{
 		clientConnector: NewClientConnector(
 			clientTcpConn,
@@ -194,7 +205,9 @@ func NewClientHandler(
 		clientHandlerCancelFunc:       clientHandlerCancelFunc,
 		currentKeyspaceName:           &atomic.Value{},
 		authErrorMessage:              nil,
-		startupFrame:                  nil,
+		startupRequest:                nil,
+		targetUsername:                targetUsername,
+		targetPassword:                targetPassword,
 		originUsername:                originUsername,
 		originPassword:                originPassword,
 		requestContextHolders:         &sync.Map{},
@@ -214,6 +227,8 @@ func NewClientHandler(
 		targetHost:                    targetHost,
 		originObserver:                originObserver,
 		targetObserver:                targetObserver,
+		forwardAuthToTarget:           forwardAuthToTarget,
+		targetCredsOnClientRequest:    targetCredsOnClientRequest,
 	}, nil
 }
 
@@ -736,15 +751,19 @@ func (ch *ClientHandler) handleHandshakeRequest(request *frame.RawFrame, wg *syn
 		defer wg.Done()
 		defer close(scheduledTaskChannel)
 		if ch.authErrorMessage != nil {
+			secondaryClusterType := ClusterTypeTarget
+			if ch.forwardAuthToTarget {
+				secondaryClusterType = ClusterTypeOrigin
+			}
 			scheduledTaskChannel <- &handshakeRequestResult{
 				authSuccess: false,
-				err:         ch.sendAuthErrorToClient(request),
+				err:         ch.sendAuthErrorToClient(request, secondaryClusterType),
 			}
 			return
 		}
 
 		if request.Header.OpCode == primitive.OpCodeAuthResponse {
-			newAuthFrame, err := ch.replaceAuthFrame(request)
+			newAuthFrame, err := ch.handleClientCredentials(request)
 			if err != nil {
 				scheduledTaskChannel <- &handshakeRequestResult{
 					authSuccess: false,
@@ -753,7 +772,9 @@ func (ch *ClientHandler) handleHandshakeRequest(request *frame.RawFrame, wg *syn
 				return
 			}
 
-			request = newAuthFrame
+			if newAuthFrame != nil {
+				request = newAuthFrame
+			}
 		}
 
 		responseChan := make(chan *customResponse, 1)
@@ -796,18 +817,42 @@ func (ch *ClientHandler) handleHandshakeRequest(request *frame.RawFrame, wg *syn
 	aggregatedResponse := response.aggregatedResponse
 
 	if request.Header.OpCode == primitive.OpCodeStartup {
-		if response.targetResponse == nil {
-			return false, fmt.Errorf("no response received from Target for startup %v", request)
-		}
-		ch.targetStartupResponse = response.targetResponse
-		ch.startupFrame = request
+		var secondaryResponse *frame.RawFrame
+		var secondaryConnector *ClusterConnector
+		var secondaryCluster ClusterType
+		if ch.forwardAuthToTarget {
+			// secondary is ORIGIN
 
-		_, _, _, err := handleTargetHandshakeResponse(
-			1, response.targetResponse, ch.clientConnector.connection.RemoteAddr(), ch.targetCassandraConnector.connection.RemoteAddr())
-		if err != nil {
-			return false, fmt.Errorf("unsuccessful startup on Target: %w", err)
+			if response.originResponse == nil {
+				return false, fmt.Errorf("no response received from %v for startup %v", ClusterTypeOrigin, request)
+			}
+			secondaryResponse = response.originResponse
+			secondaryConnector = ch.originCassandraConnector
+			aggregatedResponse = response.targetResponse
+			secondaryCluster = ClusterTypeOrigin
+		} else {
+			// secondary is TARGET
+
+			if response.targetResponse == nil {
+				return false, fmt.Errorf("no response received from %v for startup %v", ClusterTypeTarget, request)
+			}
+			secondaryResponse = response.targetResponse
+			secondaryConnector = ch.targetCassandraConnector
+			aggregatedResponse = response.originResponse
+			secondaryCluster = ClusterTypeTarget
 		}
-		aggregatedResponse = response.originResponse
+
+		ch.secondaryStartupResponse = secondaryResponse
+		ch.startupRequest = request
+
+		_, _, _, err := handleSecondaryHandshakeResponse(
+			1,
+			secondaryResponse,
+			ch.clientConnector.connection.RemoteAddr(),
+			secondaryConnector.connection.RemoteAddr(), secondaryCluster)
+		if err != nil {
+			return false, fmt.Errorf("unsuccessful startup on %v: %w", secondaryCluster, err)
+		}
 	}
 
 	scheduledTaskChannel = make(chan *handshakeRequestResult, 1)
@@ -826,18 +871,22 @@ func (ch *ClientHandler) handleHandshakeRequest(request *frame.RawFrame, wg *syn
 			// stream id goes to target in the meantime
 
 			// if we add stream id mapping logic in the future, then
-			// we can start the target handshake earlier and wait for it to end here
+			// we can start the secondary handshake earlier and wait for it to end here
 
-			targetAuthChannel, err := ch.startTargetHandshake()
+			secondaryClusterType := ClusterTypeTarget
+			if ch.forwardAuthToTarget {
+				secondaryClusterType = ClusterTypeOrigin
+			}
+			secondaryHandshakeChannel, err := ch.startSecondaryHandshake()
 			if err != nil {
 				tempResult.err = err
 				scheduledTaskChannel <- tempResult
 				return
 			}
 
-			err, ok := <-targetAuthChannel
+			err, ok := <-secondaryHandshakeChannel
 			if !ok {
-				tempResult.err = errors.New("target handshake failed (scheduledTaskChannel closed)")
+				tempResult.err = fmt.Errorf("secondary (%v) handshake failed (scheduledTaskChannel closed)", secondaryClusterType)
 				scheduledTaskChannel <- tempResult
 				return
 			}
@@ -846,12 +895,12 @@ func (ch *ClientHandler) handleHandshakeRequest(request *frame.RawFrame, wg *syn
 				var authError *AuthError
 				if errors.As(err, &authError) {
 					ch.authErrorMessage = authError.errMsg
-					tempResult.err = ch.sendAuthErrorToClient(request)
+					tempResult.err = ch.sendAuthErrorToClient(request, secondaryClusterType)
 					scheduledTaskChannel <- tempResult
 					return
 				}
 
-				log.Errorf("handshake failed, shutting down the client handler and connectors: %s", err.Error())
+				log.Errorf("secondary (%v) handshake failed, shutting down the client handler and connectors: %s", secondaryClusterType, err.Error())
 				ch.clientHandlerCancelFunc()
 				tempResult.err = fmt.Errorf("handshake failed: %w", ShutdownErr)
 				scheduledTaskChannel <- tempResult
@@ -875,14 +924,14 @@ func (ch *ClientHandler) handleHandshakeRequest(request *frame.RawFrame, wg *syn
 }
 
 // Builds auth error response and sends it to the client.
-func (ch *ClientHandler) sendAuthErrorToClient(requestFrame *frame.RawFrame) error {
+func (ch *ClientHandler) sendAuthErrorToClient(requestFrame *frame.RawFrame, secondaryClusterType ClusterType) error {
 	authErrorResponse, err := ch.buildAuthErrorResponse(requestFrame, ch.authErrorMessage)
 	if err == nil {
-		log.Warnf("Target handshake failed with an auth error, returning %v to client.", ch.authErrorMessage)
+		log.Warnf("Secondary (%v) handshake failed with an auth error, returning %v to client.", secondaryClusterType, ch.authErrorMessage)
 		ch.clientConnector.sendResponseToClient(authErrorResponse)
 		return nil
 	} else {
-		return fmt.Errorf("target handshake failed with an auth error but could not create response frame: %w", err)
+		return fmt.Errorf("secondary handshake failed with an auth error but could not create response frame: %w", err)
 	}
 }
 
@@ -897,7 +946,7 @@ func (ch *ClientHandler) buildAuthErrorResponse(
 	return defaultCodec.ConvertToRawFrame(f)
 }
 
-// Starts the handshake against the Target cluster in the background (goroutine).
+// Starts the secondary handshake in the background (goroutine).
 //
 // Returns error if the handshake could not be started.
 //
@@ -906,14 +955,14 @@ func (ch *ClientHandler) buildAuthErrorResponse(
 // If the returned channel is closed before a value could be read, then the handshake has failed as well.
 //
 // The handshake was successful if the returned channel contains a "nil" value.
-func (ch *ClientHandler) startTargetHandshake() (chan error, error) {
-	startupFrame := ch.startupFrame
+func (ch *ClientHandler) startSecondaryHandshake() (chan error, error) {
+	startupFrame := ch.startupRequest
 	if startupFrame == nil {
-		return nil, errors.New("can not start target handshake before a Startup body was received")
+		return nil, errors.New("can not start secondary handshake before a Startup request was received")
 	}
-	targetStartupResponse := ch.targetStartupResponse
-	if targetStartupResponse == nil {
-		return nil, errors.New("can not start target handshake before a Startup response was received from target")
+	startupResponse := ch.secondaryStartupResponse
+	if startupResponse == nil {
+		return nil, errors.New("can not start secondary handshake before a Startup response was received")
 	}
 
 	channel := make(chan error)
@@ -921,7 +970,7 @@ func (ch *ClientHandler) startTargetHandshake() (chan error, error) {
 	go func() {
 		defer ch.clientHandlerRequestWaitGroup.Done()
 		defer close(channel)
-		err := ch.handleTargetCassandraStartup(startupFrame, targetStartupResponse)
+		err := ch.handleSecondaryHandshakeStartup(startupFrame, startupResponse)
 		channel <- err
 	}()
 	return channel, nil
@@ -948,7 +997,7 @@ func (ch *ClientHandler) forwardRequest(request *frame.RawFrame, customResponseC
 	context, err = modifyFrame(context)
 	stmtInfo, err := parseStatement(
 		context, ch.preparedStatementCache, ch.metricHandler, ch.currentKeyspaceName, ch.conf.ForwardReadsToTarget,
-		ch.conf.ForwardSystemQueriesToTarget, ch.topologyConfig.VirtualizationEnabled)
+		ch.conf.ForwardSystemQueriesToTarget, ch.topologyConfig.VirtualizationEnabled, ch.forwardAuthToTarget)
 	if err != nil {
 		if errVal, ok := err.(*UnpreparedExecuteError); ok {
 			unpreparedFrame, err := createUnpreparedFrame(errVal)
@@ -1215,40 +1264,75 @@ func (ch *ClientHandler) aggregateAndTrackResponses(
 
 // Replaces the credentials in the provided auth frame (which are the Target credentials) with
 // the Origin credentials that are provided to the proxy in the configuration.
-func (ch *ClientHandler) replaceAuthFrame(f *frame.RawFrame) (*frame.RawFrame, error) {
+func (ch *ClientHandler) handleClientCredentials(f *frame.RawFrame) (*frame.RawFrame, error) {
 	parsedAuthFrame, err := defaultCodec.ConvertFromRawFrame(f)
 	if err != nil {
-		return nil, fmt.Errorf("could not extract auth credentials from frame to start the target handshake: %w", err)
+		return nil, fmt.Errorf("could not extract auth credentials from frame to start the secondary handshake: %w", err)
 	}
 
 	authResponse, ok := parsedAuthFrame.Body.Message.(*message.AuthResponse)
 	if !ok {
-		return nil, fmt.Errorf("expected AuthResponse but got %v, can not proceed with target handshake", parsedAuthFrame.Body.Message)
+		return nil, fmt.Errorf(
+			"expected AuthResponse but got %v, can not proceed with secondary handshake",
+			parsedAuthFrame.Body.Message)
 	}
 
-	authCreds, err := ParseCredentialsFromRequest(authResponse.Token)
+	clientCreds, err := ParseCredentialsFromRequest(authResponse.Token)
 	if err != nil {
 		return nil, err
 	}
 
-	if authCreds == nil {
+	if clientCreds == nil {
 		log.Debugf("Found auth response frame without creds: %v", authResponse)
 		return f, nil
 	}
 
-	log.Debugf("Successfuly extracted target credentials from auth frame: %v", authCreds)
+	log.Debugf("Successfully extracted credentials from client auth frame: %v", clientCreds)
 
-	ch.targetCreds = authCreds
+	var primaryHandshakeCreds *AuthCredentials
+	if ch.forwardAuthToTarget {
+		// primary handshake is TARGET, secondary is ORIGIN
 
-	originCreds := &AuthCredentials{
-		Username: ch.originUsername,
-		Password: ch.originPassword,
+		if ch.targetCredsOnClientRequest {
+			ch.secondaryHandshakeCreds = &AuthCredentials{
+				Username: ch.originUsername,
+				Password: ch.originPassword,
+			}
+		} else {
+			// unreachable code atm, if forwardAuthToTarget is true then targetCredsOnClientRequest is true
+			ch.secondaryHandshakeCreds = clientCreds
+			primaryHandshakeCreds = &AuthCredentials{
+				Username: ch.targetUsername,
+				Password: ch.targetPassword,
+			}
+		}
+	} else {
+		// primary handshake is ORIGIN, secondary is TARGET
+
+		if ch.targetCredsOnClientRequest {
+			ch.secondaryHandshakeCreds = clientCreds
+			primaryHandshakeCreds = &AuthCredentials{
+				Username: ch.originUsername,
+				Password: ch.originPassword,
+			}
+		} else {
+			ch.secondaryHandshakeCreds = &AuthCredentials{
+				Username: ch.targetUsername,
+				Password: ch.targetPassword,
+			}
+		}
 	}
-	authResponse.Token = originCreds.Marshal()
+
+	if primaryHandshakeCreds == nil {
+		// client credentials don't need to be replaced
+		return f, nil
+	}
+
+	authResponse.Token = primaryHandshakeCreds.Marshal()
 
 	f, err = defaultCodec.ConvertToRawFrame(parsedAuthFrame)
 	if err != nil {
-		return nil, fmt.Errorf("could not convert new auth response to a raw frame, can not proceed with target handshake: %w", err)
+		return nil, fmt.Errorf("could not convert new auth response to a raw frame, can not proceed with secondary handshake: %w", err)
 	}
 
 	return f, nil
@@ -1355,6 +1439,37 @@ func (ch *ClientHandler) trackClusterErrorMetrics(response *frame.RawFrame, clus
 		default:
 			log.Errorf("unexpected clusterType %v, unable to track node metrics", cluster)
 		}
+	}
+}
+
+func forwardAuthToTarget(
+	originControlConn *ControlConn,
+	targetControlConn *ControlConn,
+	forwardClientCredsToOrigin bool) (forwardAuthToTarget bool, targetCredsOnClientRequest bool) {
+	authEnabledOnOrigin, err := originControlConn.IsAuthEnabled()
+	clusterType := ClusterTypeOrigin
+	var authEnabledOnTarget bool
+	if err == nil {
+		authEnabledOnTarget, err = targetControlConn.IsAuthEnabled()
+		clusterType = ClusterTypeTarget
+	}
+
+	if err != nil {
+		log.Errorf("Error detected while checking if auth is enabled on %v to figure out which cluster should " +
+			"receive the auth credentials from the client. Falling back to sending auth to %v and assuming " +
+			"that client credentials are meant for %v. " +
+			"This is a bug, please report: %v", clusterType, ClusterTypeOrigin, ClusterTypeTarget, err)
+		return false, true
+	}
+
+	// only use forwardClientCredsToOrigin setting if we need creds for both,
+	// otherwise just forward the client creds to the only cluster that asked for them
+	if !authEnabledOnOrigin && authEnabledOnTarget {
+		return true, true
+	} else if authEnabledOnOrigin && !authEnabledOnTarget {
+		return false, false
+	} else {
+		return false, !forwardClientCredsToOrigin
 	}
 }
 

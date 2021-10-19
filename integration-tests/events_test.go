@@ -19,6 +19,9 @@ func TestSchemaEvents(t *testing.T) {
 		t.Skip("Test requires CCM, set USE_CCM env variable to TRUE")
 	}
 
+	originCluster, targetCluster, err := SetupOrGetGlobalCcmClusters()
+	require.Nil(t, err)
+
 	tests := []struct {
 		name                 string
 		endpointSchemaChange string

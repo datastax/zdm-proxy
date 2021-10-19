@@ -1,7 +1,6 @@
 package cloudgateproxy
 
 import (
-	"errors"
 	"fmt"
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
@@ -23,27 +22,43 @@ func (recv *AuthError) Error() string {
 	return fmt.Sprintf("authentication error: %v", recv.errMsg)
 }
 
-func (ch *ClientHandler) handleTargetCassandraStartup(startupFrame *frame.RawFrame, targetStartupResponse *frame.RawFrame) error {
+func (ch *ClientHandler) handleSecondaryHandshakeStartup(
+	startupRequest *frame.RawFrame, startupResponse *frame.RawFrame) error {
 
 	// extracting these into variables for convenience
 	clientIPAddress := ch.clientConnector.connection.RemoteAddr()
-	targetCassandraIPAddress := ch.targetCassandraConnector.connection.RemoteAddr()
+	var clusterAddress net.Addr
+	var clusterType ClusterType
+	var forwardToSecondary forwardDecision
+	if ch.forwardAuthToTarget {
+		// secondary is ORIGIN
 
-	log.Infof("Initiating startup between %v and %v", clientIPAddress, targetCassandraIPAddress)
+		clusterAddress = ch.originCassandraConnector.connection.RemoteAddr()
+		clusterType = ClusterTypeOrigin
+		forwardToSecondary = forwardToOrigin
+	} else {
+		// secondary is TARGET
+
+		clusterAddress = ch.targetCassandraConnector.connection.RemoteAddr()
+		clusterType = ClusterTypeTarget
+		forwardToSecondary = forwardToTarget
+	}
+
+	log.Infof("Initiating startup between %v and %v (%v)", clientIPAddress, clusterAddress, clusterType)
 	phase := 1
 	attempts := 0
 
 	var authenticator *DsePlainTextAuthenticator
-	if ch.targetCreds != nil {
+	if ch.secondaryHandshakeCreds != nil {
 		authenticator = &DsePlainTextAuthenticator{
-			Credentials: ch.targetCreds,
+			Credentials: ch.secondaryHandshakeCreds,
 		}
 	}
 
 	var lastResponse *frame.Frame
 	for {
 		if attempts > maxAuthRetries {
-			return errors.New("reached max number of attempts to complete target cluster handshake")
+			return fmt.Errorf("reached max number of attempts to complete secondary (%v) handshake", clusterType)
 		}
 
 		attempts++
@@ -55,16 +70,19 @@ func (ch *ClientHandler) handleTargetCassandraStartup(startupFrame *frame.RawFra
 		switch phase {
 		case 1:
 			requestSent = true
-			request = startupFrame
-			response = targetStartupResponse
+			request = startupRequest
+			response = startupResponse
 		case 2:
 			if authenticator == nil {
-				return fmt.Errorf("target requested authentication but origin did not, can not proceed with target handshake")
+				return fmt.Errorf(
+					"secondary cluster (%v) requested authentication but primary did not, " +
+					"can not proceed with secondary handshake", clusterType)
 			}
 
 			var err error
 			var parsedRequest *frame.Frame
-			parsedRequest, err = performHandshakeStep(authenticator, startupFrame.Header.Version, startupFrame.Header.StreamId, lastResponse)
+			parsedRequest, err = performHandshakeStep(
+				authenticator, startupRequest.Header.Version, startupRequest.Header.StreamId, lastResponse)
 			if err != nil {
 				return fmt.Errorf("could not perform handshake step: %w", err)
 			}
@@ -79,9 +97,14 @@ func (ch *ClientHandler) handleTargetCassandraStartup(startupFrame *frame.RawFra
 		if !requestSent {
 			overallRequestStartTime := time.Now()
 			channel := make(chan *customResponse, 1)
-			err := ch.executeStatement(&frameDecodeContext{frame: request}, NewGenericStatementInfo(forwardToTarget), overallRequestStartTime, channel)
+			err := ch.executeStatement(
+				&frameDecodeContext{frame: request},
+				NewGenericStatementInfo(forwardToSecondary),
+				overallRequestStartTime,
+				channel)
+
 			if err != nil {
-				return fmt.Errorf("unable to send target handshake frame to %v: %w", targetCassandraIPAddress, err)
+				return fmt.Errorf("unable to send secondary (%v) handshake frame to %v: %w", clusterType, clusterAddress, err)
 			}
 
 			select {
@@ -91,8 +114,8 @@ func (ch *ClientHandler) handleTargetCassandraStartup(startupFrame *frame.RawFra
 						return ShutdownErr
 					}
 
-					return fmt.Errorf("unable to send startup frame from clientConnection %v to %v",
-						clientIPAddress, targetCassandraIPAddress)
+					return fmt.Errorf("error while receiving secondary handshake response from %v (%v)",
+						clusterAddress, clusterType)
 				}
 				response = customResponse.aggregatedResponse
 			case <-ch.clientHandlerContext.Done():
@@ -100,7 +123,8 @@ func (ch *ClientHandler) handleTargetCassandraStartup(startupFrame *frame.RawFra
 			}
 		}
 
-		newPhase, parsedFrame, done, err := handleTargetHandshakeResponse(phase, response, clientIPAddress, targetCassandraIPAddress)
+		newPhase, parsedFrame, done, err := handleSecondaryHandshakeResponse(
+			phase, response, clientIPAddress, clusterAddress, clusterType)
 		if err != nil {
 			return err
 		}
@@ -112,33 +136,35 @@ func (ch *ClientHandler) handleTargetCassandraStartup(startupFrame *frame.RawFra
 	}
 }
 
-func handleTargetHandshakeResponse(phase int, f *frame.RawFrame, clientIPAddress net.Addr, targetCassandraIPAddress net.Addr) (int, *frame.Frame, bool, error){
+func handleSecondaryHandshakeResponse(
+	phase int, f *frame.RawFrame, clientIPAddress net.Addr,
+	clusterAddress net.Addr, clusterType ClusterType) (int, *frame.Frame, bool, error){
 	parsedFrame, err := defaultCodec.ConvertFromRawFrame(f)
 	if err != nil {
-		return phase, nil, false, fmt.Errorf("could not decode frame from %v: %w", targetCassandraIPAddress, err)
+		return phase, nil, false, fmt.Errorf("could not decode frame from %v: %w", clusterAddress, err)
 	}
 
 	done := false
 	switch f.Header.OpCode {
 	case primitive.OpCodeAuthenticate:
-		log.Debugf("Received AUTHENTICATE for target handshake")
+		log.Debugf("Received AUTHENTICATE for secondary handshake (%v)", clusterType)
 		return 2, parsedFrame, false, nil
 	case primitive.OpCodeAuthChallenge:
-		log.Debugf("Received AUTH_CHALLENGE for target handshake")
+		log.Debugf("Received AUTH_CHALLENGE for secondary handshake (%v)", clusterType)
 	case primitive.OpCodeReady:
 		done = true
-		log.Debugf("Target cluster did not request authorization for client %v", clientIPAddress)
+		log.Debugf("%v (%v) did not request authorization for client %v", clusterAddress, clusterType, clientIPAddress)
 	case primitive.OpCodeAuthSuccess:
 		done = true
-		log.Debugf("%s successfully authenticated with target (%v)", clientIPAddress, targetCassandraIPAddress)
+		log.Debugf("%s successfully authenticated with %v (%v)", clientIPAddress, clusterAddress, clusterType)
 	default:
 		authErrorMsg, ok := parsedFrame.Body.Message.(*message.AuthenticationError)
 		if ok {
 			return phase, parsedFrame, done, &AuthError{errMsg: authErrorMsg}
 		}
 		return phase, parsedFrame, done, fmt.Errorf(
-			"received response in target handshake that was not "+
-				"READY, AUTHENTICATE, AUTH_CHALLENGE, or AUTH_SUCCESS: %v", parsedFrame.Body.Message)
+			"received response in secondary handshake (%v) that was not "+
+				"READY, AUTHENTICATE, AUTH_CHALLENGE, or AUTH_SUCCESS: %v", clusterType, parsedFrame.Body.Message)
 	}
 	return phase, parsedFrame, done, nil
 }

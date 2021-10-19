@@ -22,6 +22,9 @@ func TestBasicUpdate(t *testing.T) {
 	require.Nil(t, err)
 	defer proxyInstance.Shutdown()
 
+	originCluster, targetCluster, err := SetupOrGetGlobalCcmClusters()
+	require.Nil(t, err)
+
 	// Initialize test data
 	dataIds1 := []string{
 		"cf0f4cf0-8c20-11ea-9fc6-6d2c86545d91",

@@ -22,17 +22,14 @@ var DataIds []string
 var DataTasks []string
 
 // SeedKeyspace seeds the specified source and dest sessions with TestKeyspace
-func SeedKeyspace(source *gocql.Session, dest *gocql.Session) {
+func SeedKeyspace(session *gocql.Session) error {
 	log.Info("Seeding keyspace...")
-	err := source.Query(fmt.Sprintf("CREATE KEYSPACE IF NOT EXISTS %s WITH replication = {'class':'SimpleStrategy', 'replication_factor':1};", TestKeyspace)).Exec()
+	err := session.Query(fmt.Sprintf("CREATE KEYSPACE IF NOT EXISTS %s WITH replication = {'class':'SimpleStrategy', 'replication_factor':1};", TestKeyspace)).Exec()
 	if err != nil {
-		log.WithError(err).Error("Failed to seed keyspace in source cluster.")
+		return fmt.Errorf("failed to seed keyspace: %w", err)
 	}
 
-	err = dest.Query(fmt.Sprintf("CREATE KEYSPACE IF NOT EXISTS %s WITH replication = {'class':'SimpleStrategy', 'replication_factor':1};", TestKeyspace)).Exec()
-	if err != nil {
-		log.WithError(err).Error("Failed to seed keyspace in dest cluster.")
-	}
+	return nil
 }
 
 // SeedData seeds the specified source and dest sessions with data in data.go
