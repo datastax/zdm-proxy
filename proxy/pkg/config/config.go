@@ -1,7 +1,6 @@
 package config
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"github.com/kelseyhightower/envconfig"
@@ -25,14 +24,14 @@ type Config struct {
 	TargetDatacenter string `split_words:"true"`
 
 	OriginCassandraUsername string `required:"true" split_words:"true"`
-	OriginCassandraPassword string `required:"true" split_words:"true"`
+	OriginCassandraPassword string `required:"true" split_words:"true" json:"-"`
 
 	OriginCassandraContactPoints           string `split_words:"true"`
 	OriginCassandraPort                    int    `default:"9042" split_words:"true"`
 	OriginCassandraSecureConnectBundlePath string `split_words:"true"`
 
 	TargetCassandraUsername string `required:"true" split_words:"true"`
-	TargetCassandraPassword string `required:"true" split_words:"true"`
+	TargetCassandraPassword string `required:"true" split_words:"true" json:"-"`
 
 	TargetCassandraContactPoints           string `split_words:"true"`
 	TargetCassandraPort                    int    `default:"9042" split_words:"true"`
@@ -92,18 +91,8 @@ type Config struct {
 }
 
 func (c *Config) String() string {
-	var configMap map[string]interface{}
 	serializedConfig, _ := json.Marshal(c)
-	json.Unmarshal(serializedConfig, &configMap)
-
-	b := new(bytes.Buffer)
-	for field, val := range configMap {
-		if !strings.Contains(strings.ToLower(field), "username") &&
-			!strings.Contains(strings.ToLower(field), "password") {
-			fmt.Fprintf(b, "%s=\"%v\"; ", field, val)
-		}
-	}
-	return fmt.Sprintf("Config{%v}", b.String())
+	return string(serializedConfig)
 }
 
 // New returns an empty Config struct

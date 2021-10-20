@@ -209,7 +209,7 @@ func TestOriginConfig_ClusterTlsConfig(t *testing.T) {
 				t.Fatal("No configuration validation error was thrown but the parsed configuration is null, stopping test here")
 			} else {
 
-				tlsConf, err = conf.ParseOriginTlsConfig()
+				tlsConf, err = conf.ParseOriginTlsConfig(true)
 
 				require.Equal(t, tt.tlsEnabled, tlsConf.TlsEnabled)
 				require.Equal(t, tt.serverCaPath, tlsConf.ServerCaPath)
@@ -408,7 +408,7 @@ func TestTargetConfig_ClusterTlsConfig(t *testing.T) {
 				t.Fatal("No configuration validation error was thrown but the parsed configuration is null, stopping test here")
 			} else {
 
-				tlsConf, err = conf.ParseTargetTlsConfig()
+				tlsConf, err = conf.ParseTargetTlsConfig(true)
 
 				require.Equal(t, tt.tlsEnabled, tlsConf.TlsEnabled)
 				require.Equal(t, tt.serverCaPath, tlsConf.ServerCaPath)
