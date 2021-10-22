@@ -1,6 +1,7 @@
 package integration_tests
 
 import (
+	"context"
 	"fmt"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
@@ -46,19 +47,19 @@ func TestSchemaEvents(t *testing.T) {
 			defer proxyInstance.Shutdown()
 
 			// test client that connects to the proxy
-			testClientForEvents, err := client.NewTestClient("127.0.0.1:14002")
+			testClientForEvents, err := client.NewTestClient(context.Background(), "127.0.0.1:14002")
 			require.True(t, err == nil, "unable to connect to test client: %v", err)
 			defer testClientForEvents.Shutdown()
 
 			// test client that connects to the C* node directly
-			testClientForSchemaChange, err := client.NewTestClient(tt.endpointSchemaChange)
+			testClientForSchemaChange, err := client.NewTestClient(context.Background(), tt.endpointSchemaChange)
 			require.True(t, err == nil, "unable to connect to test client: %v", err)
 			defer testClientForSchemaChange.Shutdown()
 
-			err = testClientForEvents.PerformDefaultHandshake(primitive.ProtocolVersion4, false)
+			err = testClientForEvents.PerformDefaultHandshake(context.Background(), primitive.ProtocolVersion4, false)
 			require.True(t, err == nil, "could not perform handshake: %v", err)
 
-			err = testClientForSchemaChange.PerformDefaultHandshake(primitive.ProtocolVersion4, false)
+			err = testClientForSchemaChange.PerformDefaultHandshake(context.Background(), primitive.ProtocolVersion4, false)
 			require.True(t, err == nil, "could not perform handshake: %v", err)
 
 			// send REGISTER to proxy
@@ -69,7 +70,7 @@ func TestSchemaEvents(t *testing.T) {
 					primitive.EventTypeTopologyChange},
 			}
 
-			response, _, err := testClientForEvents.SendMessage(primitive.ProtocolVersion4, registerMsg)
+			response, _, err := testClientForEvents.SendMessage(context.Background(), primitive.ProtocolVersion4, registerMsg)
 			require.True(t, err == nil, "could not send register frame: %v", err)
 
 			_, ok := response.Body.Message.(*message.Ready)
@@ -81,7 +82,7 @@ func TestSchemaEvents(t *testing.T) {
 					"WITH REPLICATION = {'class':'SimpleStrategy', 'replication_factor':1};", env.Rand.Uint64()),
 			}
 
-			response, _, err = testClientForSchemaChange.SendMessage(primitive.ProtocolVersion4, createKeyspaceMessage)
+			response, _, err = testClientForSchemaChange.SendMessage(context.Background(), primitive.ProtocolVersion4, createKeyspaceMessage)
 			require.True(t, err == nil, "could not send create keyspace request: %v", err)
 
 			_, ok = response.Body.Message.(*message.SchemaChangeResult)
@@ -145,11 +146,11 @@ func TestTopologyStatusEvents(t *testing.T) {
 			require.Nil(t, err)
 			defer proxyInstance.Shutdown()
 
-			testClientForEvents, err := client.NewTestClient("127.0.0.1:14002")
+			testClientForEvents, err := client.NewTestClient(context.Background(), "127.0.0.1:14002")
 			require.True(t, err == nil, "unable to connect to test client: %v", err)
 			defer testClientForEvents.Shutdown()
 
-			err = testClientForEvents.PerformDefaultHandshake(primitive.ProtocolVersion4, false)
+			err = testClientForEvents.PerformDefaultHandshake(context.Background(), primitive.ProtocolVersion4, false)
 			require.True(t, err == nil, "could not perform handshake: %v", err)
 
 			registerMsg := &message.Register{
@@ -159,7 +160,7 @@ func TestTopologyStatusEvents(t *testing.T) {
 					primitive.EventTypeTopologyChange},
 			}
 
-			response, _, err := testClientForEvents.SendMessage(primitive.ProtocolVersion4, registerMsg)
+			response, _, err := testClientForEvents.SendMessage(context.Background(), primitive.ProtocolVersion4, registerMsg)
 			require.True(t, err == nil, "could not send register frame: %v", err)
 
 			_, ok := response.Body.Message.(*message.Ready)

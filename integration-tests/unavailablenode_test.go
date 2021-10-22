@@ -1,6 +1,7 @@
 package integration_tests
 
 import (
+	"context"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
 	"github.com/riptano/cloud-gate/integration-tests/client"
@@ -21,11 +22,11 @@ func TestUnavailableNode(t *testing.T) {
 			require.Nil(t, err)
 			defer simulacronSetup.Cleanup()
 
-			testClient, err := client.NewTestClient("127.0.0.1:14002")
+			testClient, err := client.NewTestClient(context.Background(), "127.0.0.1:14002")
 			require.True(t, err == nil, "testClient setup failed: %s", err)
 			defer testClient.Shutdown()
 
-			err = testClient.PerformDefaultHandshake(primitive.ProtocolVersion4, false)
+			err = testClient.PerformDefaultHandshake(context.Background(), primitive.ProtocolVersion4, false)
 			require.True(t, err == nil, "No-auth handshake failed: %s", err)
 
 			switch clusterNotResponding {
@@ -46,7 +47,7 @@ func TestUnavailableNode(t *testing.T) {
 			query := &message.Query{
 				Query: "SELECT * FROM system.peers",
 			}
-			response, _, err := testClient.SendMessage(primitive.ProtocolVersion4, query)
+			response, _, err := testClient.SendMessage(context.Background(), primitive.ProtocolVersion4, query)
 
 			if response != nil {
 				responseError, ok := response.Body.Message.(*message.Overloaded)
@@ -60,15 +61,15 @@ func TestUnavailableNode(t *testing.T) {
 			}
 
 			// open new connection to verify that the same proxy instance continues working normally
-			newTestClient, err := client.NewTestClient("127.0.0.1:14002")
+			newTestClient, err := client.NewTestClient(context.Background(), "127.0.0.1:14002")
 			require.True(t, err == nil, "newTestClient setup failed: %s", err)
 			defer newTestClient.Shutdown()
 
-			err = newTestClient.PerformDefaultHandshake(primitive.ProtocolVersion4, false)
+			err = newTestClient.PerformDefaultHandshake(context.Background(), primitive.ProtocolVersion4, false)
 			require.True(t, err == nil, "No-auth handshake failed: %s", err)
 
 			// send same query on the new connection and this time it should succeed
-			response, _, err = newTestClient.SendMessage(primitive.ProtocolVersion4, query)
+			response, _, err = newTestClient.SendMessage(context.Background(), primitive.ProtocolVersion4, query)
 			require.True(t, err == nil, "Query failed: %v", err)
 
 			require.Equal(

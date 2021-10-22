@@ -140,8 +140,8 @@ func NewClientHandler(
 		defer globalClientHandlersWg.Done()
 		<-clientHandlerContext.Done()
 		clientHandlerShutdownRequestCancelFn()
-		requestsDoneCancelFn()
 		localClientHandlerWg.Wait()
+		requestsDoneCancelFn() // make sure this ctx is not leaked but it should be canceled before this
 		log.Debugf("Client Handler is shutdown.")
 	}()
 
@@ -908,7 +908,9 @@ func (ch *ClientHandler) handleHandshakeRequest(request *frame.RawFrame, wg *syn
 			}
 
 			tempResult.authSuccess = true
+			ch.clientConnector.sendResponseToClient(aggregatedResponse)
 			scheduledTaskChannel <- tempResult
+			return
 		}
 
 		// send overall response back to client

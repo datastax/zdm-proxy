@@ -11,6 +11,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"time"
 )
@@ -18,7 +19,7 @@ import (
 type TestClient struct {
 	queue                 chan *request
 	streamIds             chan int16
-	pendingOperations     map[int16]chan *frame.Frame
+	pendingOperations     *sync.Map
 	pendingOperationsLock *sync.RWMutex
 	requestTimeout        time.Duration
 	waitGroup             *sync.WaitGroup
@@ -47,13 +48,14 @@ const (
 	eventQueueLength  = 2048
 )
 
-func NewTestClient(address string) (*TestClient, error) {
+func NewTestClient(ctx context.Context, address string) (*TestClient, error) {
 	streamIdsQueue := make(chan int16, numberOfStreamIds)
 	for i := int16(0); i < numberOfStreamIds; i++ {
 		streamIdsQueue <- i
 	}
 
-	conn, err := net.Dial("tcp", address)
+	d := net.Dialer{}
+	conn, err := d.DialContext(ctx, "tcp", address)
 	if err != nil {
 		return nil, fmt.Errorf("could not open connection: %w", err)
 	}
@@ -62,7 +64,7 @@ func NewTestClient(address string) (*TestClient, error) {
 	client := &TestClient{
 		queue:                 make(chan *request, numberOfStreamIds),
 		streamIds:             streamIdsQueue,
-		pendingOperations:     make(map[int16]chan *frame.Frame),
+		pendingOperations:     &sync.Map{},
 		pendingOperationsLock: &sync.RWMutex{},
 		requestTimeout:        2 * time.Second,
 		waitGroup:             &sync.WaitGroup{},
@@ -77,14 +79,21 @@ func NewTestClient(address string) (*TestClient, error) {
 	go func() {
 		defer client.waitGroup.Done()
 		defer client.shutdownInternal()
-		for {
+		for client.context.Err() == nil {
 			select {
 			case req := <-client.queue:
 				_, err := conn.Write(req.buffer)
 				if errors.Is(err, io.EOF) {
 					return
 				} else if err != nil {
-					log.Errorf("[TestClient] error in test client connection: %v", err)
+					if client.context.Err() == nil &&
+						!strings.Contains(err.Error(), "use of closed network connection") &&
+						!strings.Contains(err.Error(), "An existing connection was forcibly closed by the remote host") &&
+						!strings.Contains(err.Error(), "connection reset by peer") {
+						log.Errorf("[TestClient] error while writing to test client connection: %v", err)
+					} else {
+						log.Infof("[TestClient] error while writing to test client connection: %v", err)
+					}
 					return
 				}
 			case <-client.context.Done():
@@ -98,13 +107,20 @@ func NewTestClient(address string) (*TestClient, error) {
 		defer client.waitGroup.Done()
 		defer client.shutdownInternal()
 		codec := frame.NewCodec()
-		for {
+		for client.context.Err() == nil {
 			parsedFrame, err := codec.DecodeFrame(conn)
 			if errors.Is(err, io.EOF) {
 				log.Infof("[TestClient] EOF in test client connection")
 				break
 			} else if err != nil {
-				log.Errorf("[TestClient] error while reading from test client connection: %v", err)
+				if client.context.Err() == nil &&
+					!strings.Contains(err.Error(), "use of closed network connection") &&
+					!strings.Contains(err.Error(), "An existing connection was forcibly closed by the remote host") &&
+					!strings.Contains(err.Error(), "connection reset by peer") {
+					log.Errorf("[TestClient] error while reading from test client connection: %v", err)
+				} else {
+					log.Infof("[TestClient] error while reading from test client connection: %v", err)
+				}
 				break
 			}
 
@@ -120,23 +136,25 @@ func NewTestClient(address string) (*TestClient, error) {
 			}
 
 			client.pendingOperationsLock.RLock()
-			respChan, ok := client.pendingOperations[parsedFrame.Header.StreamId]
-			client.pendingOperationsLock.RUnlock()
+			respChan, ok := client.pendingOperations.Load(parsedFrame.Header.StreamId)
 
 			if !ok {
+				client.pendingOperationsLock.RUnlock()
 				log.Warnf("[TestClient] could not find response channel for streamid %d, skipping", parsedFrame.Header.StreamId)
 				client.ReturnStreamId(parsedFrame.Header.StreamId)
 				continue
 			}
-			respChan <- parsedFrame
+			respChan.(chan *frame.Frame) <- parsedFrame
 			client.ReturnStreamId(parsedFrame.Header.StreamId)
+			client.pendingOperationsLock.RUnlock()
 		}
 
 		client.pendingOperationsLock.Lock()
-		for streamId, respChan := range client.pendingOperations {
-			close(respChan)
-			delete(client.pendingOperations, streamId)
-		}
+		client.pendingOperations.Range(func(key, value interface{}) bool {
+			close(value.(chan *frame.Frame))
+			client.pendingOperations.Delete(key)
+			return true
+		})
 		client.pendingOperationsLock.Unlock()
 	}()
 
@@ -150,8 +168,8 @@ func (testClient *TestClient) isClosed() bool {
 }
 
 func (testClient *TestClient) PerformHandshake(
-	version primitive.ProtocolVersion, useAuth bool, username string, password string) error {
-	response, _, err := testClient.SendMessage(version, message.NewStartup())
+	ctx context.Context, version primitive.ProtocolVersion, useAuth bool, username string, password string) error {
+	response, _, err := testClient.SendMessage(ctx, version, message.NewStartup())
 	if err != nil {
 		return fmt.Errorf("could not send startup frame: %w", err)
 	}
@@ -168,7 +186,7 @@ func (testClient *TestClient) PerformHandshake(
 			return fmt.Errorf("could not create initial response token: %w", err)
 		}
 
-		response, _, err = testClient.SendMessage(version, &message.AuthResponse{Token: initialResponse})
+		response, _, err = testClient.SendMessage(ctx, version, &message.AuthResponse{Token: initialResponse})
 		if err != nil {
 			return fmt.Errorf("could not send auth response: %w", err)
 		}
@@ -187,8 +205,8 @@ func (testClient *TestClient) PerformHandshake(
 	return nil
 }
 
-func (testClient *TestClient) PerformDefaultHandshake(version primitive.ProtocolVersion, useAuth bool) error {
-	return testClient.PerformHandshake(version, useAuth, "cassandra", "cassandra")
+func (testClient *TestClient) PerformDefaultHandshake(ctx context.Context, version primitive.ProtocolVersion, useAuth bool) error {
+	return testClient.PerformHandshake(ctx, version, useAuth, "cassandra", "cassandra")
 }
 
 func (testClient *TestClient) Shutdown() error {
@@ -211,11 +229,13 @@ func (testClient *TestClient) shutdownInternal() error {
 		testClient.cancelFunc()
 		err := testClient.connection.Close()
 
-		testClient.pendingOperationsLock.RLock()
-		for _, respChan := range testClient.pendingOperations {
-			close(respChan)
-		}
-		testClient.pendingOperationsLock.RUnlock()
+		testClient.pendingOperationsLock.Lock()
+		testClient.pendingOperations.Range(func(key, value interface{}) bool {
+			close(value.(chan *frame.Frame))
+			testClient.pendingOperations.Delete(key)
+			return true
+		})
+		testClient.pendingOperationsLock.Unlock()
 
 		close(testClient.eventsQueue)
 
@@ -240,37 +260,45 @@ func (testClient *TestClient) ReturnStreamId(streamId int16) {
 	testClient.streamIds <- streamId
 }
 
-func (testClient *TestClient) SendRawRequest(streamId int16, reqBuf []byte) (*frame.Frame, error) {
+func (testClient *TestClient) SendRawRequest(ctx context.Context, streamId int16, reqBuf []byte) (*frame.Frame, error) {
 	req := newRequest(reqBuf)
 
-	testClient.pendingOperationsLock.Lock()
+	testClient.pendingOperationsLock.RLock()
 	if testClient.closed {
-		testClient.pendingOperationsLock.Unlock()
+		testClient.pendingOperationsLock.RUnlock()
 		return nil, errors.New("response channel closed")
 	}
 
-	if _, ok := testClient.pendingOperations[streamId]; ok {
-		testClient.pendingOperationsLock.Unlock()
+	testClient.pendingOperationsLock.RUnlock()
+
+	if _, ok := testClient.pendingOperations.Load(streamId); ok {
 		return nil, errors.New("stream id already in use")
 	}
+	testClient.pendingOperations.Store(streamId, req.responseChannel)
 
-	testClient.pendingOperations[streamId] = req.responseChannel
-	testClient.pendingOperationsLock.Unlock()
-
-	testClient.queue <- req
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case testClient.queue <- req:
+	}
 
 	var response *frame.Frame = nil
 	var ok bool
 	var timedOut bool
+	var canceled bool
 	select {
 	case response, ok = <-req.responseChannel:
 	case <-time.After(testClient.requestTimeout):
 		timedOut = true
+	case <-ctx.Done():
+		canceled = true
 	}
 
-	testClient.pendingOperationsLock.Lock()
-	delete(testClient.pendingOperations, streamId)
-	testClient.pendingOperationsLock.Unlock()
+	testClient.pendingOperations.Delete(streamId)
+
+	if canceled {
+		return nil, ctx.Err()
+	}
 
 	if timedOut {
 		return nil, errors.New("request timed out at client level")
@@ -283,7 +311,7 @@ func (testClient *TestClient) SendRawRequest(streamId int16, reqBuf []byte) (*fr
 	return response, nil
 }
 
-func (testClient *TestClient) SendRequest(request *frame.Frame) (*frame.Frame, int16, error) {
+func (testClient *TestClient) SendRequest(ctx context.Context, request *frame.Frame) (*frame.Frame, int16, error) {
 	streamId, err := testClient.BorrowStreamId()
 	if err != nil {
 		return nil, streamId, err
@@ -296,12 +324,12 @@ func (testClient *TestClient) SendRequest(request *frame.Frame) (*frame.Frame, i
 	if err != nil {
 		return nil, streamId, fmt.Errorf("could not encode request: %w", err)
 	}
-	response, err := testClient.SendRawRequest(streamId, buf.Bytes())
+	response, err := testClient.SendRawRequest(ctx, streamId, buf.Bytes())
 	return response, streamId, err
 }
 
 func (testClient *TestClient) SendMessage(
-	protocolVersion primitive.ProtocolVersion, message message.Message) (*frame.Frame, int16, error) {
+	ctx context.Context, protocolVersion primitive.ProtocolVersion, message message.Message) (*frame.Frame, int16, error) {
 	streamId, err := testClient.BorrowStreamId()
 	if err != nil {
 		return nil, streamId, err
@@ -315,7 +343,7 @@ func (testClient *TestClient) SendMessage(
 		return nil, streamId, fmt.Errorf("could not encode request: %w", err)
 	}
 
-	response, err := testClient.SendRawRequest(streamId, buf.Bytes())
+	response, err := testClient.SendRawRequest(ctx, streamId, buf.Bytes())
 	return response, streamId, err
 }
 

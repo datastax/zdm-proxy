@@ -9,6 +9,11 @@ When cutting a new release, update the `unreleased` heading to the tag being gen
 ### New Features
 
 * [ZDM-217](https://datastax.jira.com/browse/ZDM-217) Remove authentication coupling between origin and target clusters
+* [ZDM-194](https://datastax.jira.com/browse/ZDM-194) Allow users to provide origin credentials
+
+### Bug Fixes
+
+* [ZDM-239](https://datastax.jira.com/browse/ZDM-239) Panic when connections are closed during handshake
 
 ## v1.1.0 - 2021-10-15
 

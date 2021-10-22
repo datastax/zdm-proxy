@@ -1,6 +1,7 @@
 package integration_tests
 
 import (
+	"context"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
 	"github.com/riptano/cloud-gate/integration-tests/client"
@@ -17,12 +18,12 @@ func TestAtLeastOneClusterReturnsNoResponse(t *testing.T) {
 	require.Nil(t, err)
 	defer simulacronSetup.Cleanup()
 
-	testClient, err := client.NewTestClient("127.0.0.1:14002")
+	testClient, err := client.NewTestClient(context.Background(), "127.0.0.1:14002")
 	require.True(t, err == nil, "testClient setup failed: %s", err)
 
 	defer testClient.Shutdown()
 
-	err = testClient.PerformDefaultHandshake(primitive.ProtocolVersion4, false)
+	err = testClient.PerformDefaultHandshake(context.Background(), primitive.ProtocolVersion4, false)
 	require.True(t, err == nil, "No-auth handshake failed: %s", err)
 
 	queryPrimeNoResponse :=
@@ -81,7 +82,7 @@ func TestAtLeastOneClusterReturnsNoResponse(t *testing.T) {
 					PositionalValues: []*primitive.Value{primitive.NewValue([]byte("john"))},
 				},
 			}
-			response, _, err := testClient.SendMessage(primitive.ProtocolVersion4, query)
+			response, _, err := testClient.SendMessage(context.Background(), primitive.ProtocolVersion4, query)
 
 			require.True(t, response == nil, "a response has been received")
 			require.True(t, err != nil, "no error has been received, but the request should have failed")

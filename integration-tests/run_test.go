@@ -52,7 +52,7 @@ func TestRunWithRetries(t *testing.T) {
 
 	time.Sleep(1 * time.Second)
 
-	testClient, err := client.NewTestClient("127.0.0.1:14002")
+	testClient, err := client.NewTestClient(context.Background(), "127.0.0.1:14002")
 	if err == nil {
 		testClient.Shutdown()
 		t.Fatal("expected client tcp connection failure but proxy accepted connection")
@@ -63,7 +63,7 @@ func TestRunWithRetries(t *testing.T) {
 
 	time.Sleep(1 * time.Second)
 
-	testClient, err = client.NewTestClient("127.0.0.1:14002")
+	testClient, err = client.NewTestClient(context.Background(), "127.0.0.1:14002")
 	if err == nil {
 		testClient.Shutdown()
 		t.Fatal("expected client tcp connection failure after origin enable listener but proxy accepted connection")
@@ -74,7 +74,7 @@ func TestRunWithRetries(t *testing.T) {
 
 	time.Sleep(1 * time.Second)
 
-	testClient, err = client.NewTestClient("127.0.0.1:14002")
+	testClient, err = client.NewTestClient(context.Background(), "127.0.0.1:14002")
 	require.True(t, err == nil, "expected successful connection attempt but proxy refused")
 	defer testClient.Shutdown()
 	require.True(t, proxy.Load() != nil, "expected RunWithRetries to return but it did not")

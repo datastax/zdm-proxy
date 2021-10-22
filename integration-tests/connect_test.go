@@ -2,6 +2,7 @@ package integration_tests
 
 import (
 	"bytes"
+	"context"
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
@@ -78,7 +79,7 @@ func TestProtocolVersionNegotiation(t *testing.T) {
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
-	testClient, err := client.NewTestClient("127.0.0.1:14002")
+	testClient, err := client.NewTestClient(context.Background(), "127.0.0.1:14002")
 	require.True(t, err == nil, "testClient setup failed: %s", err)
 	defer testClient.Shutdown()
 
@@ -89,7 +90,7 @@ func TestProtocolVersionNegotiation(t *testing.T) {
 	codec.EncodeFrame(f, &buf)
 	bytes := buf.Bytes()
 	bytes[1] = 0
-	rsp, err := testClient.SendRawRequest(0, bytes)
+	rsp, err := testClient.SendRawRequest(context.Background(), 0, bytes)
 	protocolErr, ok := rsp.Body.Message.(*message.ProtocolError)
 	require.True(t, ok)
 	require.Equal(t, "Invalid or unsupported protocol version", protocolErr.ErrorMessage)
@@ -102,7 +103,7 @@ func TestProtocolVersionUnsupportedByProxy(t *testing.T) {
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
-	testClient, err := client.NewTestClient("127.0.0.1:14002")
+	testClient, err := client.NewTestClient(context.Background(), "127.0.0.1:14002")
 	require.True(t, err == nil, "testClient setup failed: %s", err)
 	defer testClient.Shutdown()
 
@@ -113,7 +114,7 @@ func TestProtocolVersionUnsupportedByProxy(t *testing.T) {
 	codec.EncodeFrame(f, &buf)
 	encoded := buf.Bytes()
 	encoded[0] = byte(primitive.ProtocolVersion(1))
-	rsp, err := testClient.SendRawRequest(0, encoded)
+	rsp, err := testClient.SendRawRequest(context.Background(), 0, encoded)
 	protocolErr, ok := rsp.Body.Message.(*message.ProtocolError)
 	require.True(t, ok)
 	require.Equal(t, "Invalid or unsupported protocol version (1)", protocolErr.ErrorMessage)

@@ -2,6 +2,7 @@ package integration_tests
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	client2 "github.com/datastax/go-cassandra-native-protocol/client"
 	"github.com/datastax/go-cassandra-native-protocol/datatype"
@@ -23,12 +24,12 @@ func TestPreparedIdProxyCacheMiss(t *testing.T) {
 	require.Nil(t, err)
 	defer simulacronSetup.Cleanup()
 
-	testClient, err := client.NewTestClient("127.0.0.1:14002")
+	testClient, err := client.NewTestClient(context.Background(), "127.0.0.1:14002")
 	require.True(t, err == nil, "testClient setup failed: %s", err)
 
 	defer testClient.Shutdown()
 
-	err = testClient.PerformDefaultHandshake(primitive.ProtocolVersion4, false)
+	err = testClient.PerformDefaultHandshake(context.Background(), primitive.ProtocolVersion4, false)
 	require.True(t, err == nil, "No-auth handshake failed: %s", err)
 
 	preparedId := []byte{143, 7, 36, 50, 225, 104, 157, 89, 199, 177, 239, 231, 82, 201, 142, 253}
@@ -37,7 +38,7 @@ func TestPreparedIdProxyCacheMiss(t *testing.T) {
 		QueryId:          preparedId,
 		ResultMetadataId: nil,
 	}
-	response, requestStreamId, err := testClient.SendMessage(primitive.ProtocolVersion4, executeMsg)
+	response, requestStreamId, err := testClient.SendMessage(context.Background(), primitive.ProtocolVersion4, executeMsg)
 	require.True(t, err == nil, "execute request send failed: %s", err)
 	require.True(t, response != nil, "response received was null")
 
@@ -64,12 +65,12 @@ func TestPreparedIdPreparationMismatch(t *testing.T) {
 	require.Nil(t, err)
 	defer simulacronSetup.Cleanup()
 
-	testClient, err := client.NewTestClient("127.0.0.1:14002")
+	testClient, err := client.NewTestClient(context.Background(), "127.0.0.1:14002")
 	require.True(t, err == nil, "testClient setup failed: %s", err)
 
 	defer testClient.Shutdown()
 
-	err = testClient.PerformDefaultHandshake(primitive.ProtocolVersion4, false)
+	err = testClient.PerformDefaultHandshake(context.Background(), primitive.ProtocolVersion4, false)
 	require.True(t, err == nil, "No-auth handshake failed: %s", err)
 
 	tests := map[string]*simulacron.Cluster{
@@ -91,7 +92,7 @@ func TestPreparedIdPreparationMismatch(t *testing.T) {
 				Keyspace: "",
 			}
 
-			response, requestStreamId, err := testClient.SendMessage(primitive.ProtocolVersion4, prepareMsg)
+			response, requestStreamId, err := testClient.SendMessage(context.Background(), primitive.ProtocolVersion4, prepareMsg)
 			require.True(t, err == nil, "prepare request send failed: %s", err)
 
 			preparedResponse, ok := response.Body.Message.(*message.PreparedResult)
@@ -106,7 +107,7 @@ func TestPreparedIdPreparationMismatch(t *testing.T) {
 				ResultMetadataId: preparedResponse.ResultMetadataId,
 			}
 
-			response, requestStreamId, err = testClient.SendMessage(primitive.ProtocolVersion4, executeMsg)
+			response, requestStreamId, err = testClient.SendMessage(context.Background(), primitive.ProtocolVersion4, executeMsg)
 			require.True(t, err == nil, "execute request send failed: %s", err)
 
 			errorResponse, ok := response.Body.Message.(message.Error)
