@@ -6,11 +6,17 @@ Build artifacts are available at [Docker Hub](https://hub.docker.com/repository/
 
 For additional details on the changes included in a specific release, see the associated CHANGELOG-x.x.md file.
 
+## v1.2.0 - 2021-10-22
+
+Makes authentication more configurable and resolves a potential issue related to unexpected connection closure timing.
+
+[Changelog](CHANGELOG/CHANGELOG-1.2.md#v120---2021-10-22)
+
 ## v1.1.0 - 2021-10-15
 
 Adds support for mTLS/TLS between the proxy and origin/target clusters.
 
-[Changelog](CHANGELOG/CHANGELOG-1.0.md#v110---2021-10-15)
+[Changelog](CHANGELOG/CHANGELOG-1.1.md#v110---2021-10-15)
 
 ## v1.0.4 - 2021-09-29
 
