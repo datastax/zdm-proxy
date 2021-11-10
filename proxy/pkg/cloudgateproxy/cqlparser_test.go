@@ -138,7 +138,9 @@ func TestModifyFrame(t *testing.T) {
 			context := &frameDecodeContext{frame: test.args.f}
 			queryInfo, err := context.GetOrInspectQuery()
 			require.Nil(t, err)
-			newContext, err := modifyFrame(context)
+			timeUuidGenerator, err := GetDefaultTimeUuidGenerator()
+			require.Nil(t, err)
+			newContext, err := modifyFrame(context, timeUuidGenerator)
 			require.Nil(t, err)
 
 			require.Equal(t, test.statementType, queryInfo.getStatementType())

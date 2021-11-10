@@ -26,6 +26,8 @@ type CloudgateProxy struct {
 	originConnectionConfig ConnectionConfig
 	targetConnectionConfig ConnectionConfig
 
+	timeUuidGenerator TimeUuidGenerator
+
 	proxyRand *rand.Rand
 
 	lock *sync.RWMutex
@@ -86,6 +88,14 @@ func (p *CloudgateProxy) Start(ctx context.Context) error {
 	err := p.Conf.Validate()
 	if err != nil {
 		return fmt.Errorf("invalid config: %w", err)
+	}
+
+	p.lock.Lock()
+	p.timeUuidGenerator, err = GetDefaultTimeUuidGenerator()
+	p.lock.Unlock()
+
+	if err != nil {
+		return fmt.Errorf("could not create timeuuid generator: %w", err)
 	}
 
 	log.Infof("Starting proxy...")
@@ -477,7 +487,8 @@ func (p *CloudgateProxy) handleNewConnection(clientConn net.Conn) {
 		p.requestResponseNumWorkers,
 		p.clientHandlersShutdownRequestCtx,
 		originHost,
-		targetHost)
+		targetHost,
+		p.timeUuidGenerator)
 
 	if err != nil {
 		errFunc(err)

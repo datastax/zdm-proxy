@@ -95,6 +95,8 @@ type ClientHandler struct {
 
 	forwardAuthToTarget        bool
 	targetCredsOnClientRequest bool
+
+	timeUuidGenerator TimeUuidGenerator
 }
 
 func NewClientHandler(
@@ -118,7 +120,8 @@ func NewClientHandler(
 	numWorkers int,
 	globalShutdownRequestCtx context.Context,
 	originHost *Host,
-	targetHost *Host) (*ClientHandler, error) {
+	targetHost *Host,
+	timeUuidGenerator TimeUuidGenerator) (*ClientHandler, error) {
 
 	nodeMetrics, err := metricHandler.GetNodeMetrics(
 		originCassandraConnInfo.endpoint.GetEndpointIdentifier(),
@@ -225,6 +228,7 @@ func NewClientHandler(
 		targetObserver:                targetObserver,
 		forwardAuthToTarget:           forwardAuthToTarget,
 		targetCredsOnClientRequest:    targetCredsOnClientRequest,
+		timeUuidGenerator:             timeUuidGenerator,
 	}, nil
 }
 
@@ -992,7 +996,7 @@ func (ch *ClientHandler) forwardRequest(request *frame.RawFrame, customResponseC
 		frame: request,
 	}
 	var err error
-	context, err = modifyFrame(context)
+	context, err = modifyFrame(context, ch.timeUuidGenerator)
 	stmtInfo, err := parseStatement(
 		context, ch.preparedStatementCache, ch.metricHandler, ch.currentKeyspaceName, ch.conf.ForwardReadsToTarget,
 		ch.conf.ForwardSystemQueriesToTarget, ch.topologyConfig.VirtualizationEnabled, ch.forwardAuthToTarget)

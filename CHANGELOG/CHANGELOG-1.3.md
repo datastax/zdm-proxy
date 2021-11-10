@@ -6,6 +6,10 @@ When cutting a new release, update the `unreleased` heading to the tag being gen
 
 ## Unreleased
 
+### Improvements
+
+* [ZDM-246](https://datastax.jira.com/browse/ZDM-246) Replace go's type 1 UUID generator
+
 ### Tasks
 
 * [ZDM-243](https://datastax.jira.com/browse/ZDM-243) Support for latest native-protocol API changes

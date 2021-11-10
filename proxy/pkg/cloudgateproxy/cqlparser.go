@@ -6,7 +6,6 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/google/uuid"
 	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
 	"strings"
@@ -42,7 +41,7 @@ func (uee *UnpreparedExecuteError) Error() string {
 
 // modifyFrame modifies the incoming request in certain conditions:
 //   * if the request is a QUERY and it contains now() function calls
-func modifyFrame(context *frameDecodeContext) (*frameDecodeContext, error) {
+func modifyFrame(context *frameDecodeContext, timeUuidGenerator TimeUuidGenerator) (*frameDecodeContext, error) {
 	switch context.frame.Header.OpCode {
 	case primitive.OpCodeQuery:
 		decodedFrame, err := context.GetOrDecodeFrame()
@@ -54,10 +53,7 @@ func modifyFrame(context *frameDecodeContext) (*frameDecodeContext, error) {
 			return nil, fmt.Errorf("could not inspect query of a QUERY frame: %w", err)
 		}
 		if queryInfo.hasNowFunctionCalls() {
-			timeUUID, err := uuid.NewUUID()
-			if err != nil {
-				return nil, fmt.Errorf("could not generate type 1 UUID values, can not modify query: %w", err)
-			}
+			timeUUID := timeUuidGenerator.GetTimeUuid()
 			newQueryInfo := queryInfo.replaceNowFunctionCallsWithLiteral(timeUUID)
 			newQueryFrame := decodedFrame.Clone()
 			newQueryMsg, ok := newQueryFrame.Body.Message.(*message.Query)
