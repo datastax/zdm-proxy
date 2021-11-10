@@ -40,8 +40,6 @@ type ClientHandler struct {
 	originControlConn *ControlConn
 	targetControlConn *ControlConn
 
-	typeCodecManager TypeCodecManager
-
 	preparedStatementCache *PreparedStatementCache
 
 	metricHandler          *metrics.MetricHandler
@@ -103,7 +101,6 @@ func NewClientHandler(
 	clientTcpConn net.Conn,
 	originCassandraConnInfo *ClusterConnectionInfo,
 	targetCassandraConnInfo *ClusterConnectionInfo,
-	typeCodecManager TypeCodecManager,
 	originControlConn *ControlConn,
 	targetControlConn *ControlConn,
 	conf *config.Config,
@@ -197,7 +194,6 @@ func NewClientHandler(
 		targetCassandraConnector:      targetConnector,
 		originControlConn:             originControlConn,
 		targetControlConn:             targetControlConn,
-		typeCodecManager:              typeCodecManager,
 		preparedStatementCache:        psCache,
 		metricHandler:                 metricHandler,
 		nodeMetrics:                   nodeMetrics,
@@ -1053,7 +1049,7 @@ func (ch *ClientHandler) executeStatement(
 			return err
 		}
 
-		typeCodec := ch.typeCodecManager.GetOrCreate(f.Header.Version)
+		typeCodec := GetDefaultGenericTypeCodec()
 
 		switch interceptedQueryType {
 		case peersV2:
@@ -1062,7 +1058,7 @@ func (ch *ClientHandler) executeStatement(
 			}
 		case peersV1:
 			interceptedQueryResponse, err = NewSystemPeersRowsResult(
-				typeCodec, virtualHosts, controlConn.GetLocalVirtualHostIndex(),
+				typeCodec, f.Header.Version, virtualHosts, controlConn.GetLocalVirtualHostIndex(),
 				ch.conf.ProxyQueryPort, controlConn.PreferredIpColumnExists())
 			if err != nil {
 				return err
@@ -1070,7 +1066,7 @@ func (ch *ClientHandler) executeStatement(
 		case local:
 			localVirtualHost := virtualHosts[controlConn.GetLocalVirtualHostIndex()]
 			interceptedQueryResponse, err = NewSystemLocalRowsResult(
-				typeCodec, controlConn.GetSystemLocalInfo(), localVirtualHost, ch.conf.ProxyQueryPort)
+				typeCodec, f.Header.Version, controlConn.GetSystemLocalInfo(), localVirtualHost, ch.conf.ProxyQueryPort)
 			if err != nil {
 				return err
 			}

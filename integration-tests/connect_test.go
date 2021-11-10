@@ -91,6 +91,7 @@ func TestProtocolVersionNegotiation(t *testing.T) {
 	bytes := buf.Bytes()
 	bytes[1] = 0
 	rsp, err := testClient.SendRawRequest(context.Background(), 0, bytes)
+	require.Nil(t, err)
 	protocolErr, ok := rsp.Body.Message.(*message.ProtocolError)
 	require.True(t, ok)
 	require.Equal(t, "Invalid or unsupported protocol version", protocolErr.ErrorMessage)

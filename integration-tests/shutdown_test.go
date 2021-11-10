@@ -136,173 +136,174 @@ func TestShutdownInFlightRequests(t *testing.T) {
 
 // Test for a race condition that causes a panic on proxy shutdown
 func TestStressShutdown(t *testing.T) {
-	for testCount := 1; testCount <= 100; testCount ++ {
-		t.Run(fmt.Sprintf("%v", testCount), func(t *testing.T) {
-			testSetup, err := setup.NewSimulacronTestSetupWithSession(false, false)
-			require.Nil(t, err)
-			defer testSetup.Cleanup()
-			cfg := setup.NewTestConfig(testSetup.Origin.GetInitialContactPoint(), testSetup.Target.GetInitialContactPoint())
-			proxy, err := setup.NewProxyInstanceWithConfig(cfg)
-			require.Nil(t, err)
-			shutdownProxyTriggered := atomic.Value{}
-			shutdownProxyTriggered.Store(false)
-			defer func() {
-				if !shutdownProxyTriggered.Load().(bool) {
-					proxy.Shutdown()
-				}
-			}()
-
-			cqlConn, err := client.NewTestClient(context.Background(), "127.0.0.1:14002")
-			require.Nil(t, err)
-			defer cqlConn.Shutdown()
-
-			oldLevel := log.GetLevel()
-			oldZeroLogLevel := zerolog.GlobalLevel()
-			log.SetLevel(log.WarnLevel)
-			defer log.SetLevel(oldLevel)
-			zerolog.SetGlobalLevel(zerolog.WarnLevel)
-			defer zerolog.SetGlobalLevel(oldZeroLogLevel)
-
-			wg := &sync.WaitGroup{}
-			defer wg.Wait()
-
-			ctx, cancelFn := context.WithCancel(context.Background())
-			defer cancelFn()
-
-			err = cqlConn.PerformDefaultHandshake(ctx, primitive.ProtocolVersion4, false)
-			require.Nil(t, err)
-
-			goCtx, goCancel := context.WithCancel(context.Background())
-			goWg := &sync.WaitGroup{}
-			errChan := make(chan error, 1000)
-			requestsWg := &sync.WaitGroup{}
-			for j := 0; j < 20; j++ {
-				wg.Add(1)
-				goWg.Add(1)
-				requestsWg.Add(1)
-				go func() {
-					defer wg.Done()
-					defer requestsWg.Done()
-					newCtx, cancelFn := context.WithTimeout(ctx, 5000*time.Millisecond)
-					tempCqlConn, err := client.NewTestClient(newCtx, "127.0.0.1:14002")
-					optionsWg := &sync.WaitGroup{}
-					if err == nil {
-						for x := 0; x < 50; x++ {
-							optionsWg.Add(1)
-							go func() {
-								defer optionsWg.Done()
-								for newCtx.Err() == nil {
-									_, _, _ = tempCqlConn.SendMessage(newCtx, primitive.ProtocolVersion4, &message.Options{})
-								}
-							}()
-						}
-						goWg.Done()
-						<-goCtx.Done()
-						r := rand.Intn(20) + 85
-						time.Sleep(time.Duration(r) * time.Millisecond)
-						err = tempCqlConn.PerformDefaultHandshake(newCtx, primitive.ProtocolVersion4, false)
-						cancelFn()
-					}
-					optionsWg.Wait()
-
-					if tempCqlConn != nil {
-						tempCqlConn.Shutdown()
-					}
-
-					if err != nil && ctx.Err() == nil {
-						if !shutdownProxyTriggered.Load().(bool) &&
-							!errors.Is(err, context.DeadlineExceeded) {
-							errChan <- err
-							return
-						}
-					}
-				}()
+	f := func() {
+		testSetup, err := setup.NewSimulacronTestSetupWithSession(false, false)
+		require.Nil(t, err)
+		defer testSetup.Cleanup()
+		cfg := setup.NewTestConfig(testSetup.Origin.GetInitialContactPoint(), testSetup.Target.GetInitialContactPoint())
+		proxy, err := setup.NewProxyInstanceWithConfig(cfg)
+		require.Nil(t, err)
+		shutdownProxyTriggered := atomic.Value{}
+		shutdownProxyTriggered.Store(false)
+		defer func() {
+			if !shutdownProxyTriggered.Load().(bool) {
+				proxy.Shutdown()
 			}
+		}()
 
-			for jj := 0; jj < 1; jj++ {
-				wg.Add(1)
-				requestsWg.Add(1)
-				j := jj
-				go func() {
-					defer requestsWg.Done()
-					defer wg.Done()
-					for i := 0; ctx.Err() == nil; i++ {
-						queryMsg := &message.Query{
-							Query:   "SELECT * FROM system.local",
-							Options: &message.QueryOptions{Consistency: primitive.ConsistencyLevelLocalOne},
-						}
-						newCtx, cancelFn := context.WithTimeout(ctx, 15 * time.Second)
-						rsp, _, err := cqlConn.SendMessage(newCtx, primitive.ProtocolVersion4, queryMsg)
-						cancelFn()
+		cqlConn, err := client.NewTestClient(context.Background(), "127.0.0.1:14002")
+		require.Nil(t, err)
+		defer cqlConn.Shutdown()
 
-						if err != nil {
-							t.Logf("Break fatal on j=%v i=%v", j, i)
-							return
-						}
+		oldLevel := log.GetLevel()
+		oldZeroLogLevel := zerolog.GlobalLevel()
+		log.SetLevel(log.WarnLevel)
+		defer log.SetLevel(oldLevel)
+		zerolog.SetGlobalLevel(zerolog.WarnLevel)
+		defer zerolog.SetGlobalLevel(oldZeroLogLevel)
 
-						if rsp.Header.OpCode != primitive.OpCodeError && rsp.Header.OpCode != primitive.OpCodeResult {
-							errChan <- fmt.Errorf("expected error or result actual %v", rsp.Header.OpCode)
-							return
-						}
+		wg := &sync.WaitGroup{}
+		defer wg.Wait()
 
-						if rsp.Header.OpCode == primitive.OpCodeError {
-							_, ok := rsp.Body.Message.(*message.Overloaded)
-							if !ok {
-								errChan <- fmt.Errorf("expected %v actual %v", "*message.Overloaded", rsp.Body.Message)
-								return
+		ctx, cancelFn := context.WithCancel(context.Background())
+		defer cancelFn()
+
+		err = cqlConn.PerformDefaultHandshake(ctx, primitive.ProtocolVersion4, false)
+		require.Nil(t, err)
+
+		goCtx, goCancel := context.WithCancel(context.Background())
+		goWg := &sync.WaitGroup{}
+		errChan := make(chan error, 1000)
+		requestsWg := &sync.WaitGroup{}
+		for j := 0; j < 20; j++ {
+			wg.Add(1)
+			goWg.Add(1)
+			requestsWg.Add(1)
+			go func() {
+				defer wg.Done()
+				defer requestsWg.Done()
+				newCtx, cancelFn := context.WithTimeout(ctx, 5000*time.Millisecond)
+				tempCqlConn, err := client.NewTestClient(newCtx, "127.0.0.1:14002")
+				optionsWg := &sync.WaitGroup{}
+				if err == nil {
+					for x := 0; x < 50; x++ {
+						optionsWg.Add(1)
+						go func() {
+							defer optionsWg.Done()
+							for newCtx.Err() == nil {
+								_, _, _ = tempCqlConn.SendMessage(newCtx, primitive.ProtocolVersion4, &message.Options{})
 							}
+						}()
+					}
+					goWg.Done()
+					<-goCtx.Done()
+					r := rand.Intn(20) + 85
+					time.Sleep(time.Duration(r) * time.Millisecond)
+					err = tempCqlConn.PerformDefaultHandshake(newCtx, primitive.ProtocolVersion4, false)
+					cancelFn()
+				}
+				optionsWg.Wait()
+
+				if tempCqlConn != nil {
+					tempCqlConn.Shutdown()
+				}
+
+				if err != nil && ctx.Err() == nil {
+					if !shutdownProxyTriggered.Load().(bool) &&
+						!errors.Is(err, context.DeadlineExceeded) {
+						errChan <- err
+						return
+					}
+				}
+			}()
+		}
+
+		for jj := 0; jj < 1; jj++ {
+			wg.Add(1)
+			requestsWg.Add(1)
+			j := jj
+			go func() {
+				defer requestsWg.Done()
+				defer wg.Done()
+				for i := 0; ctx.Err() == nil; i++ {
+					queryMsg := &message.Query{
+						Query:   "SELECT * FROM system.local",
+						Options: &message.QueryOptions{Consistency: primitive.ConsistencyLevelLocalOne},
+					}
+					newCtx, cancelFn := context.WithTimeout(ctx, 15*time.Second)
+					rsp, _, err := cqlConn.SendMessage(newCtx, primitive.ProtocolVersion4, queryMsg)
+					cancelFn()
+
+					if err != nil {
+						t.Logf("Break fatal on j=%v i=%v", j, i)
+						return
+					}
+
+					if rsp.Header.OpCode != primitive.OpCodeError && rsp.Header.OpCode != primitive.OpCodeResult {
+						errChan <- fmt.Errorf("expected error or result actual %v", rsp.Header.OpCode)
+						return
+					}
+
+					if rsp.Header.OpCode == primitive.OpCodeError {
+						_, ok := rsp.Body.Message.(*message.Overloaded)
+						if !ok {
+							errChan <- fmt.Errorf("expected %v actual %v", "*message.Overloaded", rsp.Body.Message)
+							return
 						}
 					}
-				}()
-			}
+				}
+			}()
+		}
 
-			requestsDoneCh := make(chan bool)
+		requestsDoneCh := make(chan bool)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			requestsWg.Wait()
+			close(requestsDoneCh)
+		}()
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer close(errChan)
+
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
+				goWg.Wait()
+				shutdownProxyTriggered.Store(true)
+				goCancel()
+				time.Sleep(100 * time.Millisecond)
+				proxy.Shutdown()
 				requestsWg.Wait()
-				close(requestsDoneCh)
+				cancelFn()
 			}()
-
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				defer close(errChan)
-
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
-					goWg.Wait()
-					shutdownProxyTriggered.Store(true)
-					goCancel()
-					time.Sleep(100 * time.Millisecond)
-					log.Errorf("#1")
-					proxy.Shutdown()
-					requestsWg.Wait()
-					cancelFn()
-				}()
-				select {
-				case <-ctx.Done():
-				case <-time.After(15 * time.Second):
-					errChan <- errors.New("timed out waiting for requests to end")
-				}
-			}()
-
-			var lastErr error
-			testDone := false
-			for !testDone {
-				e, ok := <-errChan
-				if !ok {
-					testDone = true
-					break
-				}
-				lastErr = e
-				t.Logf("error found: %v", e)
+			select {
+			case <-ctx.Done():
+			case <-time.After(15 * time.Second):
+				errChan <- errors.New("timed out waiting for requests to end")
 			}
+		}()
 
-			if lastErr != nil {
-				t.Errorf("an error (or more) occured. last error: %v", lastErr)
+		var lastErr error
+		testDone := false
+		for !testDone {
+			e, ok := <-errChan
+			if !ok {
+				testDone = true
+				break
 			}
-		})
+			lastErr = e
+			t.Logf("error found: %v", e)
+		}
+
+		if lastErr != nil {
+			t.Errorf("an error (or more) occured. last error: %v", lastErr)
+		}
+	}
+
+	for testCount := 1; testCount <= 100; testCount ++ {
+		f()
 	}
 }

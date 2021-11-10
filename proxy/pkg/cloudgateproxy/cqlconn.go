@@ -31,7 +31,7 @@ type CqlConnection interface {
 	SendAndReceive(request *frame.Frame, ctx context.Context) (*frame.Frame, error)
 	Close() error
 	Execute(msg message.Message, ctx context.Context) (message.Message, error)
-	Query(cql string, genericTypeCodec *GenericTypeCodec, ctx context.Context) (*ParsedRowSet, error)
+	Query(cql string, genericTypeCodec *GenericTypeCodec, version primitive.ProtocolVersion, ctx context.Context) (*ParsedRowSet, error)
 	SendHeartbeat(ctx context.Context) error
 	SetEventHandler(eventHandler func(f *frame.Frame, conn CqlConnection))
 	SubscribeToProtocolEvents(ctx context.Context, eventTypes []primitive.EventType) error
@@ -370,7 +370,8 @@ func (c *cqlConn) PerformHandshake(version primitive.ProtocolVersion, ctx contex
 	return authEnabled, err
 }
 
-func (c *cqlConn) Query(cql string, genericTypeCodec *GenericTypeCodec, ctx context.Context) (*ParsedRowSet, error) {
+func (c *cqlConn) Query(
+	cql string, genericTypeCodec *GenericTypeCodec, version primitive.ProtocolVersion, ctx context.Context) (*ParsedRowSet, error) {
 	queryMsg := &message.Query{
 		Query:   cql,
 		Options: &message.QueryOptions{
@@ -399,7 +400,7 @@ func (c *cqlConn) Query(cql string, genericTypeCodec *GenericTypeCodec, ctx cont
 				columnsIndexes = nil
 			}
 
-			newRowSet, err = ParseRowsResult(genericTypeCodec, m, columns, columnsIndexes)
+			newRowSet, err = ParseRowsResult(genericTypeCodec, version, m, columns, columnsIndexes)
 			if err != nil {
 				return nil, fmt.Errorf("could not parse rows result: %w", err)
 			}

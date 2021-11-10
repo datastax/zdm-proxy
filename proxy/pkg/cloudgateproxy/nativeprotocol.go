@@ -33,13 +33,14 @@ type ParsedRowSet struct {
 
 func EncodeRowsResult(
 	genericTypeCodec *GenericTypeCodec,
+	version primitive.ProtocolVersion,
 	columns []*message.ColumnMetadata,
 	rows [][]interface{}) (*message.RowsResult, error) {
 	encodedRows := make([]message.Row, len(rows))
 	for rowIdx, parsedRow := range rows {
 		newRow := make([]message.Column, len(columns))
 		for colIdx, value := range parsedRow {
-			encoded, err := genericTypeCodec.Encode(columns[colIdx].Type, value)
+			encoded, err := genericTypeCodec.Encode(columns[colIdx].Type, value, version)
 			if err != nil {
 				return nil, fmt.Errorf("could not encode col %d of row %d: %w", colIdx, rowIdx, err)
 			}
@@ -59,6 +60,7 @@ func EncodeRowsResult(
 
 func ParseRowsResult(
 	genericTypeCodec *GenericTypeCodec,
+	version primitive.ProtocolVersion,
 	result *message.RowsResult,
 	columns []*message.ColumnMetadata,
 	columnsIndexes map[string]int) (*ParsedRowSet, error) {
@@ -93,7 +95,7 @@ func ParseRowsResult(
 
 		newRow := make([]interface{}, len(row))
 		for colIdx, value := range row {
-			decoded, err := genericTypeCodec.Decode(columns[colIdx].Type, value)
+			decoded, err := genericTypeCodec.Decode(columns[colIdx].Type, value, version)
 			if err != nil {
 				return nil, fmt.Errorf("could not parse col %d of row %d: %w", colIdx, rowIdx, err)
 			}
@@ -311,7 +313,7 @@ func (recv *optionalColumn) AsNillableInt() *int {
 }
 
 func NewSystemLocalRowsResult(
-	genericTypeCodec *GenericTypeCodec, systemLocalInfo *systemLocalInfo,
+	genericTypeCodec *GenericTypeCodec, version primitive.ProtocolVersion, systemLocalInfo *systemLocalInfo,
 	virtualHost *VirtualHost, proxyPort int) (*message.RowsResult, error) {
 
 	columns := make([]*message.ColumnMetadata, 0, len(systemLocalColumns))
@@ -355,7 +357,7 @@ func NewSystemLocalRowsResult(
 	addValueAndColumnIfExists(&row, &columns, workloadColumn, virtualHost.Host.Workload)
 	addValueAndColumnIfExists(&row, &columns, workloadsColumn, virtualHost.Host.Workloads)
 
-	return EncodeRowsResult(genericTypeCodec, columns, [][]interface{}{row})
+	return EncodeRowsResult(genericTypeCodec, version, columns, [][]interface{}{row})
 }
 
 func addValueAndColumnIfExists(row *[]interface{}, columns *[]*message.ColumnMetadata, columnMetadata *message.ColumnMetadata, col *optionalColumn) {
@@ -465,7 +467,7 @@ var systemPeersColumns = []*message.ColumnMetadata{
 }
 
 func NewSystemPeersRowsResult(
-	genericTypeCodec *GenericTypeCodec, virtualHosts []*VirtualHost,
+	genericTypeCodec *GenericTypeCodec, version primitive.ProtocolVersion, virtualHosts []*VirtualHost,
 	localVirtualHostIndex int, proxyPort int, preferredIpColExists bool) (*message.RowsResult, error) {
 
 	columns := make([]*message.ColumnMetadata, 0, len(systemPeersColumns))
@@ -528,7 +530,7 @@ func NewSystemPeersRowsResult(
 		rows = [][]interface{}{}
 	}
 
-	return EncodeRowsResult(genericTypeCodec, columns, rows)
+	return EncodeRowsResult(genericTypeCodec, version, columns, rows)
 }
 
 func addPeerColumnHelper(first bool, row *[]interface{}, columns *[]*message.ColumnMetadata, addedColumnsByName map[string]interface{}, columnMetadata *message.ColumnMetadata, colExists bool, val interface{}, errors *[]error) {

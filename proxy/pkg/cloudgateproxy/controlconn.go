@@ -37,7 +37,6 @@ type ControlConn struct {
 	consecutiveFailures      int
 	OpenConnectionTimeout    time.Duration
 	cqlConnLock              *sync.Mutex
-	genericTypeCodec         *GenericTypeCodec
 	topologyLock             *sync.RWMutex
 	datacenter               string
 	orderedHostsInLocalDc    []*Host
@@ -84,7 +83,6 @@ func NewControlConn(ctx context.Context, defaultPort int, connConfig ConnectionC
 		consecutiveFailures:      0,
 		OpenConnectionTimeout:    time.Duration(conf.ClusterConnectionTimeoutMs) * time.Millisecond,
 		cqlConnLock:              &sync.Mutex{},
-		genericTypeCodec:         NewDefaultGenericTypeCodec(ccProtocolVersion),
 		topologyLock:             &sync.RWMutex{},
 		orderedHostsInLocalDc:    nil,
 		hostsInLocalDcById:       map[uuid.UUID]*Host{},
@@ -383,7 +381,7 @@ func (cc *ControlConn) Close() {
 }
 
 func (cc *ControlConn) RefreshHosts(conn CqlConnection, ctx context.Context) ([]*Host, error) {
-	localQueryResult, err := conn.Query("SELECT * FROM system.local", cc.genericTypeCodec, ctx)
+	localQueryResult, err := conn.Query("SELECT * FROM system.local", GetDefaultGenericTypeCodec(), ccProtocolVersion, ctx)
 	if err != nil {
 		return nil, fmt.Errorf("could not fetch information from system.local table: %w", err)
 	}
@@ -398,7 +396,7 @@ func (cc *ControlConn) RefreshHosts(conn CqlConnection, ctx context.Context) ([]
 		return nil, fmt.Errorf("virtualization is enabled and partitioner is not Murmur3 but instead %v", *partitioner)
 	}
 
-	peersQuery, err := conn.Query("SELECT * FROM system.peers", cc.genericTypeCodec, ctx)
+	peersQuery, err := conn.Query("SELECT * FROM system.peers", GetDefaultGenericTypeCodec(), ccProtocolVersion, ctx)
 	if err != nil {
 		return nil, fmt.Errorf("could not fetch information from system.peers table: %w", err)
 	}

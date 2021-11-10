@@ -136,26 +136,22 @@ func NewTestClient(ctx context.Context, address string) (*TestClient, error) {
 			}
 
 			client.pendingOperationsLock.RLock()
-			respChan, ok := client.pendingOperations.Load(parsedFrame.Header.StreamId)
-
-			if !ok {
-				client.pendingOperationsLock.RUnlock()
-				log.Warnf("[TestClient] could not find response channel for streamid %d, skipping", parsedFrame.Header.StreamId)
-				client.ReturnStreamId(parsedFrame.Header.StreamId)
-				continue
+			respChan, ok := client.pendingOperations.LoadAndDelete(parsedFrame.Header.StreamId)
+			if ok {
+				respChan.(chan *frame.Frame) <- parsedFrame
 			}
-			respChan.(chan *frame.Frame) <- parsedFrame
-			client.ReturnStreamId(parsedFrame.Header.StreamId)
 			client.pendingOperationsLock.RUnlock()
-		}
 
-		client.pendingOperationsLock.Lock()
-		client.pendingOperations.Range(func(key, value interface{}) bool {
-			close(value.(chan *frame.Frame))
-			client.pendingOperations.Delete(key)
-			return true
-		})
-		client.pendingOperationsLock.Unlock()
+			if _, protocolErrorOccured := parsedFrame.Body.Message.(*message.ProtocolError); protocolErrorOccured {
+				log.Errorf("[TestClient] Protocol error in test client connection, closing: %v", parsedFrame.Body.Message)
+				break
+			}
+
+			client.ReturnStreamId(parsedFrame.Header.StreamId)
+			if !ok {
+				log.Warnf("[TestClient] could not find response channel for streamid %d, skipping", parsedFrame.Header.StreamId)
+			}
+		}
 	}()
 
 	return client, nil

@@ -26,8 +26,6 @@ type CloudgateProxy struct {
 	originConnectionConfig ConnectionConfig
 	targetConnectionConfig ConnectionConfig
 
-	typeCodecManager TypeCodecManager
-
 	proxyRand *rand.Rand
 
 	lock *sync.RWMutex
@@ -266,7 +264,6 @@ func (p *CloudgateProxy) initializeMetricHandler() error {
 func (p *CloudgateProxy) initializeGlobalStructures() {
 	p.lock = &sync.RWMutex{}
 
-	p.typeCodecManager = NewTypeCodecManager()
 	p.listenerLock = &sync.Mutex{}
 	p.listenerClosed = false
 	p.proxyRand = NewThreadSafeRand()
@@ -463,7 +460,6 @@ func (p *CloudgateProxy) handleNewConnection(clientConn net.Conn) {
 		clientConn,
 		originCassandraConnInfo,
 		targetCassandraConnInfo,
-		p.typeCodecManager,
 		p.originControlConn,
 		p.targetControlConn,
 		p.Conf,

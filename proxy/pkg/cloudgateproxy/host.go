@@ -304,16 +304,18 @@ func parseAddress(row *ParsedRow, columnName string) net.IP {
 }
 
 func parseNillableStringSlice(row *ParsedRow, column string) ([]string, bool) {
-	var slice []interface{}
+	var slice []*string
 	val, ok := row.GetByColumn(column)
 	if val == nil {
 		return nil, ok
 	}
 
-	slice = val.([]interface{})
-	strSlice := make([]string, len(slice))
-	for idx, elem := range slice {
-		strSlice[idx] = elem.(string)
+	slice = val.([]*string)
+	strSlice := make([]string, 0, len(slice))
+	for _, elem := range slice {
+		if elem != nil {
+			strSlice = append(strSlice, *elem)
+		}
 	}
 
 	return strSlice, true
