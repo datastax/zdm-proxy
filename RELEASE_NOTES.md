@@ -6,6 +6,12 @@ Build artifacts are available at [Docker Hub](https://hub.docker.com/repository/
 
 For additional details on the changes included in a specific release, see the associated CHANGELOG-x.x.md file.
 
+## v1.2.1 - 2021-11-24
+
+Improves performance of the UUID generator and fixes a bug where partial socket reads could happen (which caused native protocol errors).
+
+[Changelog](CHANGELOG/CHANGELOG-1.2.md#v121---2021-11-24)
+
 ## v1.2.0 - 2021-10-22
 
 Makes authentication more configurable and resolves a potential issue related to unexpected connection closure timing.

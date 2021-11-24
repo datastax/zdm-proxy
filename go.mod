@@ -4,7 +4,7 @@ go 1.16
 
 require (
 	github.com/antlr/antlr4 v0.0.0-20201008165544-0fc0617bec24
-	github.com/datastax/go-cassandra-native-protocol v0.0.0-20211110093324-f21b53922e61
+	github.com/datastax/go-cassandra-native-protocol v0.0.0-20211124104234-f6aea54fa801
 	github.com/gocql/gocql v0.0.0-20200624222514-34081eda590e
 	github.com/google/go-cmp v0.5.2 // indirect
 	github.com/google/uuid v1.1.1
