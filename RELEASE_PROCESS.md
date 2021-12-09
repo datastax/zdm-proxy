@@ -10,7 +10,7 @@ The `versioned-release` workflow is triggered by the push of a semantically vali
 
 ```
 git tag v2.0.0
-git push v2.0.0 origin
+git push origin v2.0.0
 ```
 
 The result of that workflow is the creation and publishing of a Docker image with a series of tags applied to it, for example:
