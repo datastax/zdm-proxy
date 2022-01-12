@@ -311,6 +311,7 @@ func TestNowFunctionCalls(t *testing.T) {
 		expectedWithLiteral    string
 		expectedWithPositional string
 		expectedWithNamed      string
+		expectedReplacedTerms  []*term
 	}{
 		{
 			"simple INSERT",
@@ -321,6 +322,34 @@ func TestNowFunctionCalls(t *testing.T) {
 			"INSERT INTO ks1.table1 (foo) VALUES (7872e70a-5a68-11eb-ae93-0242ac130002)",
 			"INSERT INTO ks1.table1 (foo) VALUES (?)",
 			"INSERT INTO ks1.table1 (foo) VALUES (:cloudgate__now)",
+			[]*term{
+				NewFunctionCallTerm(NewFunctionCall("", "now", 0, 37, 41), -1)},
+		},
+		{
+			"simple INSERT with positional markers at start and end",
+			"INSERT INTO ks1.table1 (foo1, foo2, foo3, foo4) VALUES (?, now(), now(), ?)",
+			statementTypeInsert,
+			uid,
+			true,
+			"INSERT INTO ks1.table1 (foo1, foo2, foo3, foo4) VALUES (?, 7872e70a-5a68-11eb-ae93-0242ac130002, 7872e70a-5a68-11eb-ae93-0242ac130002, ?)",
+			"INSERT INTO ks1.table1 (foo1, foo2, foo3, foo4) VALUES (?, ?, ?, ?)",
+			"INSERT INTO ks1.table1 (foo1, foo2, foo3, foo4) VALUES (?, :cloudgate__now, :cloudgate__now, ?)", // invalid but doesn't matter here
+			[]*term{
+				NewFunctionCallTerm(NewFunctionCall("", "now", 0, 59, 63), 0),
+				NewFunctionCallTerm(NewFunctionCall("", "now", 0, 66, 70), 0)},
+		},
+		{
+			"simple INSERT with positional markers at middle",
+			"INSERT INTO ks1.table1 (foo1, foo2, foo3, foo4) VALUES (now(), ?, ?, now())",
+			statementTypeInsert,
+			uid,
+			true,
+			"INSERT INTO ks1.table1 (foo1, foo2, foo3, foo4) VALUES (7872e70a-5a68-11eb-ae93-0242ac130002, ?, ?, 7872e70a-5a68-11eb-ae93-0242ac130002)",
+			"INSERT INTO ks1.table1 (foo1, foo2, foo3, foo4) VALUES (?, ?, ?, ?)",
+			"INSERT INTO ks1.table1 (foo1, foo2, foo3, foo4) VALUES (:cloudgate__now, ?, ?, :cloudgate__now)", // invalid but doesn't matter here
+			[]*term{
+				NewFunctionCallTerm(NewFunctionCall("", "now", 0, 56, 60), -1),
+				NewFunctionCallTerm(NewFunctionCall("", "now", 0, 69, 73), 1)},
 		},
 		{
 			"qualified call INSERT",
@@ -331,6 +360,8 @@ func TestNowFunctionCalls(t *testing.T) {
 			"INSERT INTO ks1.table1 (foo) VALUES (7872e70a-5a68-11eb-ae93-0242ac130002)",
 			"INSERT INTO ks1.table1 (foo) VALUES (?)",
 			"INSERT INTO ks1.table1 (foo) VALUES (:cloudgate__now)",
+			[]*term{
+				NewFunctionCallTerm(NewFunctionCall("system", "now", 0, 37, 48), -1)},
 		},
 		{
 			"qualified call with whitespace and quoted identifiers",
@@ -341,6 +372,8 @@ func TestNowFunctionCalls(t *testing.T) {
 			"INSERT INTO ks1.table1 (foo) VALUES ( 7872e70a-5a68-11eb-ae93-0242ac130002 )",
 			"INSERT INTO ks1.table1 (foo) VALUES ( ? )",
 			"INSERT INTO ks1.table1 (foo) VALUES ( :cloudgate__now )",
+			[]*term{
+				NewFunctionCallTerm(NewFunctionCall("system", "now", 0, 38, 57), -1)},
 		},
 		{
 			"cast INSERT",
@@ -351,6 +384,8 @@ func TestNowFunctionCalls(t *testing.T) {
 			"INSERT INTO ks1.table1 (foo) VALUES ( ( uuid ) 7872e70a-5a68-11eb-ae93-0242ac130002)",
 			"INSERT INTO ks1.table1 (foo) VALUES ( ( uuid ) ?)",
 			"INSERT INTO ks1.table1 (foo) VALUES ( ( uuid ) :cloudgate__now)",
+			[]*term{
+				NewFunctionCallTerm(NewFunctionCall("system", "now", 0, 47, 58), -1)},
 		},
 		{
 			"other functions INSERT",
@@ -361,6 +396,8 @@ func TestNowFunctionCalls(t *testing.T) {
 			"INSERT INTO ks1.table1 (foo, bar, qix) VALUES (7872e70a-5a68-11eb-ae93-0242ac130002, yesterday(), tomorrow())",
 			"INSERT INTO ks1.table1 (foo, bar, qix) VALUES (?, yesterday(), tomorrow())",
 			"INSERT INTO ks1.table1 (foo, bar, qix) VALUES (:cloudgate__now, yesterday(), tomorrow())",
+			[]*term{
+				NewFunctionCallTerm(NewFunctionCall("", "now", 0, 47, 51), -1)},
 		},
 		{
 			"multiple occurrences INSERT",
@@ -371,6 +408,11 @@ func TestNowFunctionCalls(t *testing.T) {
 			"INSERT INTO ks1.table1 (c1, c2, c3, c4) VALUES ( 7872e70a-5a68-11eb-ae93-0242ac130002, 7872e70a-5a68-11eb-ae93-0242ac130002, 7872e70a-5a68-11eb-ae93-0242ac130002, 7872e70a-5a68-11eb-ae93-0242ac130002)",
 			"INSERT INTO ks1.table1 (c1, c2, c3, c4) VALUES ( ?, ?, ?, ?)",
 			"INSERT INTO ks1.table1 (c1, c2, c3, c4) VALUES ( :cloudgate__now, :cloudgate__now, :cloudgate__now, :cloudgate__now)",
+			[]*term{
+				NewFunctionCallTerm(NewFunctionCall("", "now", 0, 49, 53), -1),
+				NewFunctionCallTerm(NewFunctionCall("", "now", 0, 56, 62), -1),
+				NewFunctionCallTerm(NewFunctionCall("system", "now", 0, 65, 76), -1),
+				NewFunctionCallTerm(NewFunctionCall("system", "now", 0, 79, 98), -1)},
 		},
 		{
 			"INSERT inside BATCH",
@@ -401,6 +443,10 @@ func TestNowFunctionCalls(t *testing.T) {
 				"INSERT INTO ks1.table1 (c1, c2) VALUES (42, :cloudgate__now) " +
 				"INSERT INTO ks1.table1 (c1, c2) VALUES (42, :cloudgate__now) " +
 				"APPLY BATCH",
+			[]*term{
+				NewFunctionCallTerm(NewFunctionCall("", "now", 0, 56, 60), -1),
+				NewFunctionCallTerm(NewFunctionCall("", "now", 0, 144, 148), -1),
+				NewFunctionCallTerm(NewFunctionCall("", "now", 0, 195, 199), -1)},
 		},
 		{
 			"BATCH with INSERTs, UPDATEs and DELETEs",
@@ -435,6 +481,13 @@ func TestNowFunctionCalls(t *testing.T) {
 				"INSERT INTO ks1.table1 (c1, c2) VALUES (42, :cloudgate__now) " +
 				"INSERT INTO ks1.table1 (c1, c2) VALUES (42, :cloudgate__now) " +
 				"APPLY BATCH",
+			[]*term{
+				NewFunctionCallTerm(NewFunctionCall("", "now", 0, 56, 60), -1),
+				NewFunctionCallTerm(NewFunctionCall("", "now", 0, 97, 101), -1),
+				NewFunctionCallTerm(NewFunctionCall("", "now", 0, 130, 134), -1),
+				NewFunctionCallTerm(NewFunctionCall("", "now", 0, 147, 151), -1),
+				NewFunctionCallTerm(NewFunctionCall("", "now", 0, 197, 201), -1),
+				NewFunctionCallTerm(NewFunctionCall("", "now", 0, 248, 252), -1)},
 		},
 		{
 			"no occurrences",
@@ -445,6 +498,7 @@ func TestNowFunctionCalls(t *testing.T) {
 			"INSERT INTO ks1.table1 (foo) VALUES ('bar')",
 			"INSERT INTO ks1.table1 (foo) VALUES ('bar')",
 			"INSERT INTO ks1.table1 (foo) VALUES ('bar')",
+			[]*term{},
 		},
 		{
 			"update",
@@ -455,6 +509,8 @@ func TestNowFunctionCalls(t *testing.T) {
 			"UPDATE ks1.table1 SET foo = 'bar' WHERE col = 7872e70a-5a68-11eb-ae93-0242ac130002",
 			"UPDATE ks1.table1 SET foo = 'bar' WHERE col = ?",
 			"UPDATE ks1.table1 SET foo = 'bar' WHERE col = :cloudgate__now",
+			[]*term{
+				NewFunctionCallTerm(NewFunctionCall("", "now", 0, 46, 50), -1)},
 		},
 		{
 			"delete",
@@ -465,6 +521,8 @@ func TestNowFunctionCalls(t *testing.T) {
 			"DELETE FROM ks1.table1 WHERE col = 7872e70a-5a68-11eb-ae93-0242ac130002",
 			"DELETE FROM ks1.table1 WHERE col = ?",
 			"DELETE FROM ks1.table1 WHERE col = :cloudgate__now",
+			[]*term{
+				NewFunctionCallTerm(NewFunctionCall("", "now", 0, 35, 39), -1)},
 		},
 		{
 			"unknown statement",
@@ -475,6 +533,7 @@ func TestNowFunctionCalls(t *testing.T) {
 			"CREATE TABLE foo",
 			"CREATE TABLE foo",
 			"CREATE TABLE foo",
+			[]*term{},
 		},
 		{
 			"empty statement",
@@ -485,6 +544,7 @@ func TestNowFunctionCalls(t *testing.T) {
 			"",
 			"",
 			"",
+			[]*term{},
 		},
 	}
 	for _, tt := range tests {
@@ -494,9 +554,9 @@ func TestNowFunctionCalls(t *testing.T) {
 			assert.Equal(t, tt.statementType, info.getStatementType())
 			assert.Equal(t, tt.hasNow, info.hasNowFunctionCalls())
 
-			modifiedWithLiteral := info.replaceNowFunctionCallsWithLiteral(tt.replacement)
-			modifiedWithPositional := info.replaceNowFunctionCallsWithPositionalBindMarkers()
-			modifiedWithNamed := info.replaceNowFunctionCallsWithNamedBindMarkers()
+			modifiedWithLiteral, replacedTerms1 := info.replaceNowFunctionCallsWithLiteral(tt.replacement)
+			modifiedWithPositional, replacedTerms2 := info.replaceNowFunctionCallsWithPositionalBindMarkers()
+			modifiedWithNamed, replacedTerms3 := info.replaceNowFunctionCallsWithNamedBindMarkers()
 
 			// check modified queries
 			assert.Equal(t, tt.expectedWithLiteral, modifiedWithLiteral.getQuery())
@@ -512,6 +572,10 @@ func TestNowFunctionCalls(t *testing.T) {
 			assert.Equal(t, tt.statementType, modifiedWithLiteral.getStatementType())
 			assert.Equal(t, tt.statementType, modifiedWithPositional.getStatementType())
 			assert.Equal(t, tt.statementType, modifiedWithNamed.getStatementType())
+
+			assert.Equal(t, tt.expectedReplacedTerms, replacedTerms1)
+			assert.Equal(t, tt.expectedReplacedTerms, replacedTerms2)
+			assert.Equal(t, tt.expectedReplacedTerms, replacedTerms3)
 		})
 	}
 }

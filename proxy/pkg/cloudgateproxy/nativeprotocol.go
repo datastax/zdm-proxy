@@ -342,11 +342,8 @@ func NewSystemLocalRowsResult(
 	if virtualHost.Host.SchemaVersion == nil {
 		addValueAndColumn(&row, &columns, schemaVersionColumn, nil)
 	} else {
-		schemaId, err := primitive.ParseUuid(virtualHost.Host.SchemaVersion.String())
-		if err != nil {
-			return nil, fmt.Errorf("could not encode schema version: %v", err)
-		}
-		addValueAndColumn(&row, &columns, schemaVersionColumn, schemaId)
+		schemaId := primitive.UUID(*virtualHost.Host.SchemaVersion)
+		addValueAndColumn(&row, &columns, schemaVersionColumn, &schemaId)
 	}
 	addValueAndColumnIfExists(&row, &columns, serverIdColumn, virtualHost.Host.ServerId)
 	addValueAndColumnIfExists(&row, &columns, storagePortColumn, virtualHost.Host.StoragePort)
@@ -507,11 +504,8 @@ func NewSystemPeersRowsResult(
 		if host.SchemaVersion == nil {
 			addPeerColumn(first, &row, &columns, addedColumns, schemaVersionPeersColumn, nil, &errors)
 		} else {
-			schemaId, err := primitive.ParseUuid(host.SchemaVersion.String())
-			if err != nil {
-				return nil, fmt.Errorf("could not encode schema version: %v", err)
-			}
-			addPeerColumn(first, &row, &columns, addedColumns, schemaVersionPeersColumn, schemaId, &errors)
+			schemaId := primitive.UUID(*host.SchemaVersion)
+			addPeerColumn(first, &row, &columns, addedColumns, schemaVersionPeersColumn, &schemaId, &errors)
 		}
 		addPeerColumnIfExists(first, &row, &columns, addedColumns, serverIdPeersColumn, host.ServerId, &errors)
 		addPeerColumnIfExists(first, &row, &columns, addedColumns, storagePortPeersColumn, host.StoragePort, &errors)

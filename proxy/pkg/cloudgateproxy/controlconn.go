@@ -692,17 +692,14 @@ func computeVirtualHosts(topologyConfig *config.TopologyConfig, orderedHosts []*
 			tokens[t] = token
 		}
 		hostId := uuid.NewSHA1(uuid.Nil, proxyAddresses[i])
-		primitiveHostId, err := primitive.ParseUuid(hostId.String())
-		if err != nil {
-			return nil, fmt.Errorf("could not compute virtual hosts due to proxy host id parsing error: %w", err)
-		}
+		primitiveHostId := primitive.UUID(hostId)
 
 		host := assignedHostsForVirtualization[i]
 		virtualHosts[i] = &VirtualHost{
 			Tokens:     tokens,
 			Addr:       proxyAddresses[i],
 			Host:       host,
-			HostId:     primitiveHostId,
+			HostId:     &primitiveHostId,
 			Rack:       ProxyVirtualRack,
 		}
 	}

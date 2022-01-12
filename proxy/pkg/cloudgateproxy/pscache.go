@@ -3,6 +3,7 @@ package cloudgateproxy
 import (
 	"encoding/hex"
 	"fmt"
+	"github.com/datastax/go-cassandra-native-protocol/message"
 	log "github.com/sirupsen/logrus"
 	"sync"
 )
@@ -29,18 +30,19 @@ func (psc PreparedStatementCache) GetPreparedStatementCacheSize() float64{
 }
 
 func (psc *PreparedStatementCache) Store(
-	originPreparedId []byte, targetPreparedId []byte, preparedStmtInfo *PreparedStatementInfo) {
+	originPreparedResult *message.PreparedResult, targetPreparedResult *message.PreparedResult,
+	preparedStmtInfo *PreparedStatementInfo) {
 
-	originPrepareIdStr := string(originPreparedId)
-	targetPrepareIdStr := string(targetPreparedId)
+	originPrepareIdStr := string(originPreparedResult.PreparedQueryId)
+	targetPrepareIdStr := string(targetPreparedResult.PreparedQueryId)
 	psc.lock.Lock()
 	defer psc.lock.Unlock()
 
-	psc.cache[originPrepareIdStr] = NewPreparedData(originPreparedId, targetPreparedId, preparedStmtInfo)
+	psc.cache[originPrepareIdStr] = NewPreparedData(originPreparedResult, targetPreparedResult, preparedStmtInfo)
 	psc.index[targetPrepareIdStr] = originPrepareIdStr
 
 	log.Debugf("Storing PS cache entry: {OriginPreparedId=%v, TargetPreparedId: %v, StatementInfo: %v}",
-		hex.EncodeToString(originPreparedId), hex.EncodeToString(targetPreparedId), preparedStmtInfo)
+		hex.EncodeToString(originPreparedResult.PreparedQueryId), hex.EncodeToString(targetPreparedResult.PreparedQueryId), preparedStmtInfo)
 }
 
 func (psc *PreparedStatementCache) Get(originPreparedId []byte) (PreparedData, bool) {
@@ -73,19 +75,26 @@ type PreparedData interface {
 	GetOriginPreparedId() []byte
 	GetTargetPreparedId() []byte
 	GetPreparedStatementInfo() *PreparedStatementInfo
+	GetOriginVariablesMetadata() *message.VariablesMetadata
+	GetTargetVariablesMetadata() *message.VariablesMetadata
 }
 
 type preparedDataImpl struct {
-	originPreparedId []byte
-	targetPreparedId []byte
-	stmtInfo         *PreparedStatementInfo
+	originPreparedId        []byte
+	targetPreparedId        []byte
+	stmtInfo                *PreparedStatementInfo
+	originVariablesMetadata *message.VariablesMetadata
+	targetVariablesMetadata *message.VariablesMetadata
 }
 
-func NewPreparedData(originPreparedId []byte, targetPreparedId []byte, preparedStmtInfo *PreparedStatementInfo) PreparedData {
+func NewPreparedData(originPreparedResult *message.PreparedResult, targetPreparedResult *message.PreparedResult,
+	preparedStmtInfo *PreparedStatementInfo) PreparedData {
 	return &preparedDataImpl{
-		originPreparedId: originPreparedId,
-		targetPreparedId: targetPreparedId,
-		stmtInfo:         preparedStmtInfo,
+		originPreparedId:        originPreparedResult.PreparedQueryId,
+		targetPreparedId:        targetPreparedResult.PreparedQueryId,
+		stmtInfo:                preparedStmtInfo,
+		originVariablesMetadata: originPreparedResult.VariablesMetadata,
+		targetVariablesMetadata: targetPreparedResult.VariablesMetadata,
 	}
 }
 
@@ -99,6 +108,14 @@ func (recv *preparedDataImpl) GetTargetPreparedId() []byte {
 
 func (recv *preparedDataImpl) GetPreparedStatementInfo() *PreparedStatementInfo {
 	return recv.stmtInfo
+}
+
+func (recv *preparedDataImpl) GetOriginVariablesMetadata() *message.VariablesMetadata {
+	return recv.originVariablesMetadata
+}
+
+func (recv *preparedDataImpl) GetTargetVariablesMetadata() *message.VariablesMetadata {
+	return recv.targetVariablesMetadata
 }
 
 func (recv *preparedDataImpl) String() string {
