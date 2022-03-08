@@ -1,0 +1,44 @@
+version: '3.8'
+
+networks:
+  proxy:
+    name: proxy
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 192.168.100.0/24
+
+services:
+  origin:
+    image: datastax/dse-server:6.8.20
+    restart: unless-stopped
+    environment:
+      - DS_LICENSE=accept
+    networks:
+      proxy:
+        ipv4_address: 192.168.100.101
+
+  target:
+    image: datastax/dse-server:6.8.20
+    restart: unless-stopped
+    environment:
+      - DS_LICENSE=accept
+    networks:
+      proxy:
+        ipv4_address: 192.168.100.102
+
+  proxy:
+    image: golang
+    restart: unless-stopped
+    tty: true
+    ports:
+      - 2345:2345
+      - 9042:9042
+    volumes:
+      - .:/source
+    entrypoint:
+      - /source/compose/proxy-entrypoint.sh
+    networks:
+      proxy:
+        ipv4_address: 192.168.100.103
