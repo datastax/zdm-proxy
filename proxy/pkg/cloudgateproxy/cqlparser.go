@@ -2,6 +2,7 @@ package cloudgateproxy
 
 import (
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
@@ -35,51 +36,23 @@ type UnpreparedExecuteError struct {
 	preparedId []byte
 }
 
+type statementQueryData struct {
+	statementIndex int
+	queryData      QueryInfo
+}
+
+type statementReplacedTerms struct {
+	statementIndex int
+	replacedTerms  []*term
+}
+
 func (uee *UnpreparedExecuteError) Error() string {
 	return fmt.Sprintf("The preparedID of the statement to be executed (%s) does not exist in the proxy cache", hex.EncodeToString(uee.preparedId))
 }
 
-// modifyFrame modifies the incoming request in certain conditions:
-//   * if the request is a QUERY and it contains now() function calls
-func modifyFrame(context *frameDecodeContext, timeUuidGenerator TimeUuidGenerator) (*frameDecodeContext, error) {
-	switch context.frame.Header.OpCode {
-	case primitive.OpCodeQuery:
-		decodedFrame, err := context.GetOrDecodeFrame()
-		if err != nil {
-			return nil, fmt.Errorf("could not decode raw frame of a QUERY request: %w", err)
-		}
-		queryInfo, err  := context.GetOrInspectQuery()
-		if err != nil {
-			return nil, fmt.Errorf("could not inspect query of a QUERY frame: %w", err)
-		}
-		if queryInfo.hasNowFunctionCalls() {
-			timeUUID := timeUuidGenerator.GetTimeUuid()
-			newQueryInfo := queryInfo.replaceNowFunctionCallsWithLiteral(timeUUID)
-			newQueryFrame := decodedFrame.Clone()
-			newQueryMsg, ok := newQueryFrame.Body.Message.(*message.Query)
-			if !ok {
-				return nil, fmt.Errorf("expected Query in cloned frame but got %v instead", newQueryFrame.Body.Message.GetOpCode())
-			}
-			newQueryMsg.Query = newQueryInfo.getQuery()
-			newQueryRawFrame, err := defaultCodec.ConvertToRawFrame(newQueryFrame)
-			if err != nil {
-				return nil, fmt.Errorf("could not convert modified query frame to raw frame: %w", err)
-			}
-			return &frameDecodeContext{
-				frame:        newQueryRawFrame,
-				decodedFrame: newQueryFrame,
-				queryInfo:    newQueryInfo,
-			}, nil
-		} else {
-			return context, nil
-		}
-	default:
-		return context, nil
-	}
-}
-
-func parseStatement(
+func buildStatementInfo(
 	frameContext *frameDecodeContext,
+	stmtsReplacedTerms []*statementReplacedTerms,
 	psCache *PreparedStatementCache,
 	mh *metrics.MetricHandler,
 	currentKeyspaceName *atomic.Value,
@@ -88,25 +61,31 @@ func parseStatement(
 	virtualizationEnabled bool,
 	forwardAuthToTarget bool) (StatementInfo, error) {
 
-	f := frameContext.frame
+	f := frameContext.GetRawFrame()
 	switch f.Header.OpCode {
 	case primitive.OpCodeQuery:
-		queryInfo, err := frameContext.GetOrInspectQuery()
+		stmtQueryData, err := frameContext.GetOrInspectStatement()
 		if err != nil {
 			return nil, fmt.Errorf("could not inspect QUERY frame: %w", err)
 		}
 		return getStatementInfoFromQueryInfo(
-			frameContext.frame, currentKeyspaceName, forwardReadsToTarget,
-			forwardSystemQueriesToTarget, virtualizationEnabled, queryInfo), nil
+			frameContext.GetRawFrame(), currentKeyspaceName, forwardReadsToTarget,
+			forwardSystemQueriesToTarget, virtualizationEnabled, stmtQueryData.queryData), nil
 	case primitive.OpCodePrepare:
-		queryInfo, err := frameContext.GetOrInspectQuery()
+		stmtQueryData, err := frameContext.GetOrInspectStatement()
 		if err != nil {
 			return nil, fmt.Errorf("could not inspect PREPARE frame: %w", err)
 		}
 		baseStmtInfo := getStatementInfoFromQueryInfo(
-			frameContext.frame, currentKeyspaceName, forwardReadsToTarget,
-			forwardSystemQueriesToTarget, virtualizationEnabled, queryInfo)
-		return NewPreparedStatementInfo(baseStmtInfo), nil
+			frameContext.GetRawFrame(), currentKeyspaceName, forwardReadsToTarget,
+			forwardSystemQueriesToTarget, virtualizationEnabled, stmtQueryData.queryData)
+		replacedTerms := make([]*term, 0)
+		if len(stmtsReplacedTerms) > 1 {
+			return nil, fmt.Errorf("expected single list of replaced terms for prepare message but got %v", len(stmtsReplacedTerms))
+		} else if len(stmtsReplacedTerms) == 1 {
+			replacedTerms = stmtsReplacedTerms[0].replacedTerms
+		}
+		return NewPreparedStatementInfo(baseStmtInfo, replacedTerms, stmtQueryData.queryData.hasPositionalBindMarkers()), nil
 	case primitive.OpCodeBatch:
 		decodedFrame, err := frameContext.GetOrDecodeFrame()
 		if err != nil {
@@ -162,23 +141,12 @@ func getPreparedData(
 	preparedId []byte,
 	code primitive.OpCode,
 	decodedFrame *frame.Frame) (PreparedData, error) {
-	var requestType string
-	switch code {
-	case primitive.OpCodeBatch:
-		requestType = "BATCH"
-	case primitive.OpCodeExecute:
-		requestType = "EXECUTE"
-	default:
-		requestType = "UNKNOWN"
-		log.Warnf("Unknown op code when fetching prepared data, this is most likely a bug. OpCode = %v, Request = %v", code, decodedFrame)
-	}
-
 	if preparedData, ok := psCache.Get(preparedId); ok {
-		log.Tracef("%v with prepared-id = '%s' has prepared-data = %v", requestType, hex.EncodeToString(preparedId), preparedData)
+		log.Tracef("%v with prepared-id = '%s' has prepared-data = %v", code.String(), hex.EncodeToString(preparedId), preparedData)
 		// The forward decision was set in the cache when handling the corresponding PREPARE request
 		return preparedData, nil
 	} else {
-		log.Warnf("No cached entry for prepared-id = '%s' while processing a %v.", hex.EncodeToString(preparedId), requestType)
+		log.Warnf("No cached entry for prepared-id = '%s' for %v.", hex.EncodeToString(preparedId), code.String())
 		mh.GetProxyMetrics().PSCacheMissCount.Add(1)
 		// return meaningful error to caller so it can generate an unprepared response
 		return nil, &UnpreparedExecuteError{Header: decodedFrame.Header, Body: decodedFrame.Body, preparedId: preparedId}
@@ -191,7 +159,7 @@ func getStatementInfoFromQueryInfo(
 	forwardReadsToTarget bool,
 	forwardSystemQueriesToTarget bool,
 	virtualizationEnabled bool,
-	queryInfo queryInfo) StatementInfo {
+	queryInfo QueryInfo) StatementInfo {
 
 	forwardDecision := forwardToBoth
 	if queryInfo.getStatementType() == statementTypeSelect {
@@ -227,7 +195,7 @@ func getStatementInfoFromQueryInfo(
 	return NewGenericStatementInfo(forwardDecision)
 }
 
-func isSystemQuery(info queryInfo, currentKeyspaceName *atomic.Value) bool {
+func isSystemQuery(info QueryInfo, currentKeyspaceName *atomic.Value) bool {
 	keyspaceName := info.getKeyspaceName()
 	if keyspaceName == "" {
 		value := currentKeyspaceName.Load()
@@ -241,7 +209,7 @@ func isSystemQuery(info queryInfo, currentKeyspaceName *atomic.Value) bool {
 		strings.HasPrefix(keyspaceName, "dse_")
 }
 
-func isSystemPeersV1(info queryInfo, currentKeyspaceName *atomic.Value) bool {
+func isSystemPeersV1(info QueryInfo, currentKeyspaceName *atomic.Value) bool {
 	keyspaceName := info.getKeyspaceName()
 	if keyspaceName == "" {
 		value := currentKeyspaceName.Load()
@@ -253,7 +221,7 @@ func isSystemPeersV1(info queryInfo, currentKeyspaceName *atomic.Value) bool {
 	return keyspaceName == "system" && info.getTableName() == "peers"
 }
 
-func isSystemPeersV2(info queryInfo, currentKeyspaceName *atomic.Value) bool {
+func isSystemPeersV2(info QueryInfo, currentKeyspaceName *atomic.Value) bool {
 	keyspaceName := info.getKeyspaceName()
 	if keyspaceName == "" {
 		value := currentKeyspaceName.Load()
@@ -265,7 +233,7 @@ func isSystemPeersV2(info queryInfo, currentKeyspaceName *atomic.Value) bool {
 	return keyspaceName == "system" && info.getTableName() == "peers_v2"
 }
 
-func isSystemLocal(info queryInfo, currentKeyspaceName *atomic.Value) bool {
+func isSystemLocal(info QueryInfo, currentKeyspaceName *atomic.Value) bool {
 	keyspaceName := info.getKeyspaceName()
 	if keyspaceName == "" {
 		value := currentKeyspaceName.Load()
@@ -278,9 +246,26 @@ func isSystemLocal(info queryInfo, currentKeyspaceName *atomic.Value) bool {
 }
 
 type frameDecodeContext struct {
-	frame        *frame.RawFrame // always non nil
-	decodedFrame *frame.Frame    // nil until first decode
-	queryInfo    queryInfo       // nil until first query inspection
+	frame               *frame.RawFrame       // always non nil
+	decodedFrame        *frame.Frame          // nil until first decode
+	statementsQueryData []*statementQueryData // nil until first query inspection
+}
+
+var NotInspectableErr = errors.New("only Query and Prepare messages can be inspected")
+
+func NewFrameDecodeContext(f *frame.RawFrame) *frameDecodeContext {
+	return &frameDecodeContext{frame: f}
+}
+
+func NewInitializedFrameDecodeContext(f *frame.RawFrame, decodedFrame *frame.Frame, statementsQueryData []*statementQueryData) *frameDecodeContext {
+	return &frameDecodeContext{
+		frame:               f,
+		decodedFrame:        decodedFrame,
+		statementsQueryData: statementsQueryData}
+}
+
+func (recv *frameDecodeContext) GetRawFrame() *frame.RawFrame {
+	return recv.frame
 }
 
 func (recv *frameDecodeContext) GetOrDecodeFrame() (*frame.Frame, error) {
@@ -297,34 +282,81 @@ func (recv *frameDecodeContext) GetOrDecodeFrame() (*frame.Frame, error) {
 	return decodedFrame, nil
 }
 
-func (recv *frameDecodeContext) GetOrInspectQuery() (queryInfo, error) {
-	if recv.queryInfo != nil {
-		return recv.queryInfo, nil
+func (recv *frameDecodeContext) GetOrInspectStatement() (*statementQueryData, error) {
+	err := recv.inspectStatements()
+	if err != nil {
+		return nil, err
+	}
+
+	if len(recv.statementsQueryData) != 1 {
+		return nil, fmt.Errorf("expected 1 query info object but got %v", len(recv.statementsQueryData))
+	}
+
+	return recv.statementsQueryData[0], nil
+}
+
+func (recv *frameDecodeContext) GetOrInspectAllStatements() ([]*statementQueryData, error) {
+	err := recv.inspectStatements()
+	if err != nil {
+		return nil, err
+	}
+
+	return recv.statementsQueryData, nil
+}
+
+func (recv *frameDecodeContext) inspectStatements() error {
+	if recv.statementsQueryData != nil {
+		return nil
 	}
 
 	decodedFrame, err := recv.GetOrDecodeFrame()
 	if err != nil {
-		return nil, fmt.Errorf("could not decode frame: %w", err)
+		return fmt.Errorf("could not decode frame: %w", err)
 	}
 
-	var queryStr string
+	var statementsQueryData []*statementQueryData
 	switch decodedFrame.Header.OpCode {
 	case primitive.OpCodeQuery:
 		queryMsg, ok := decodedFrame.Body.Message.(*message.Query)
 		if !ok {
-			return nil, fmt.Errorf("expected Query but got %v instead", decodedFrame.Body.Message.GetOpCode())
+			return fmt.Errorf("expected Query but got %v instead", decodedFrame.Body.Message.GetOpCode().String())
 		}
-		queryStr = queryMsg.Query
+		statementsQueryData = []*statementQueryData{&statementQueryData{statementIndex: 0, queryData: inspectCqlQuery(queryMsg.Query)}}
 	case primitive.OpCodePrepare:
 		prepareMsg, ok := decodedFrame.Body.Message.(*message.Prepare)
 		if !ok {
-			return nil, fmt.Errorf("expected Prepare but got %v instead", decodedFrame.Body.Message.GetOpCode())
+			return fmt.Errorf("expected Prepare but got %v instead", decodedFrame.Body.Message.GetOpCode().String())
 		}
-		queryStr = prepareMsg.Query
+		statementsQueryData = []*statementQueryData{&statementQueryData{statementIndex: 0, queryData: inspectCqlQuery(prepareMsg.Query)}}
+	case primitive.OpCodeBatch:
+		batchMsg, ok := decodedFrame.Body.Message.(*message.Batch)
+		if !ok {
+			return fmt.Errorf("expected Batch but got %v instead", decodedFrame.Body.Message.GetOpCode().String())
+		}
+		for idx, childStmt := range batchMsg.Children {
+			switch typedQueryOrId := childStmt.QueryOrId.(type) {
+			case string:
+				statementsQueryData = append(statementsQueryData, &statementQueryData{statementIndex: idx, queryData: inspectCqlQuery(typedQueryOrId)})
+			}
+		}
 	default:
-		return nil, fmt.Errorf("expected Query or Prepare opcode but got %v instead", decodedFrame.Header.OpCode)
+		return fmt.Errorf("%v messages are not inspectable: %w", decodedFrame.Header.OpCode.String(), NotInspectableErr)
 	}
 
-	recv.queryInfo = inspectCqlQuery(queryStr)
-	return recv.queryInfo, nil
+	recv.statementsQueryData = statementsQueryData
+	return nil
+}
+
+func (recv *frameDecodeContext) GetOrDecodeAndInspect() (*frame.Frame, []*statementQueryData, error) {
+	decodedFrame, err := recv.GetOrDecodeFrame()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	stmtsQueryData, err := recv.GetOrInspectAllStatements()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return decodedFrame, stmtsQueryData, nil
 }

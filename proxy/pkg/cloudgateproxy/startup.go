@@ -98,7 +98,7 @@ func (ch *ClientHandler) handleSecondaryHandshakeStartup(
 			overallRequestStartTime := time.Now()
 			channel := make(chan *customResponse, 1)
 			err := ch.executeStatement(
-				&frameDecodeContext{frame: request},
+				NewFrameDecodeContext(request),
 				NewGenericStatementInfo(forwardToSecondary),
 				overallRequestStartTime,
 				channel)
@@ -167,4 +167,19 @@ func handleSecondaryHandshakeResponse(
 				"READY, AUTHENTICATE, AUTH_CHALLENGE, or AUTH_SUCCESS: %v", clusterType, parsedFrame.Body.Message)
 	}
 	return phase, parsedFrame, done, nil
+}
+
+func validateSecondaryStartupResponse(f *frame.RawFrame, clusterType ClusterType) error {
+	switch f.Header.OpCode {
+	case primitive.OpCodeAuthenticate:
+	case primitive.OpCodeAuthChallenge:
+	case primitive.OpCodeReady:
+	case primitive.OpCodeAuthSuccess:
+	default:
+		return fmt.Errorf(
+			"received response in secondary handshake (%v) that was not "+
+				"READY, AUTHENTICATE, AUTH_CHALLENGE, or AUTH_SUCCESS: %v", clusterType, f.Header.OpCode.String())
+	}
+
+	return nil
 }

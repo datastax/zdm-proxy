@@ -1,6 +1,8 @@
 package simulacron
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"github.com/gocql/gocql"
 	"time"
@@ -78,6 +80,39 @@ type queryParameter struct {
 	dataType DataType
 	value    interface{}
 }
+type mapElement struct {
+	Key string
+	Val interface{}
+}
+
+type orderedMap []*mapElement
+
+func (recv orderedMap) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+
+	buf.WriteString("{")
+	for i, kv := range recv {
+		if i != 0 {
+			buf.WriteString(",")
+		}
+		// marshal key
+		key, err := json.Marshal(kv.Key)
+		if err != nil {
+			return nil, err
+		}
+		buf.Write(key)
+		buf.WriteString(":")
+		// marshal value
+		val, err := json.Marshal(kv.Val)
+		if err != nil {
+			return nil, err
+		}
+		buf.Write(val)
+	}
+
+	buf.WriteString("}")
+	return buf.Bytes(), nil
+}
 
 type WhenQueryOptions struct {
 	values           []queryParameter
@@ -91,11 +126,11 @@ func WhenQuery(cql string, options *WhenQueryOptions) When {
 	}
 
 	if len(options.values) != 0 {
-		parameters := make(map[string]interface{})
-		paramTypes := make(map[string]DataType)
+		parameters := make(orderedMap, 0, len(options.values))
+		paramTypes := make(orderedMap, 0, len(options.values))
 		for _, param := range options.values {
-			parameters[param.name] = param.value
-			paramTypes[param.name] = param.dataType
+			parameters = append(parameters, &mapElement{param.name, param.value})
+			paramTypes = append(paramTypes, &mapElement{param.name, param.dataType})
 		}
 
 		out["params"] = parameters

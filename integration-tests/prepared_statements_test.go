@@ -130,22 +130,66 @@ func TestPreparedIdPreparationMismatch(t *testing.T) {
 
 func TestPreparedIdReplacement(t *testing.T) {
 	type test struct {
-		name       string
-		query      string
-		batchQuery string
-		read       bool
+		name                               string
+		query                              string
+		expectedQuery                      string
+		expectedVariables                  *message.VariablesMetadata
+		batchQuery                         string
+		expectedBatchQuery                 string
+		expectedBatchPreparedStmtVariables *message.VariablesMetadata
+		read                               bool
 	}
 	tests := []test{
 		{
 			"reads",
 			"SELECT * FROM ks1.tb1",
+			"SELECT * FROM ks1.tb1",
+			nil,
 			"",
+			"",
+			nil,
 			true,
 		},
 		{
 			"writes",
 			"INSERT INTO ks1.tb1 (key, value) VALUES ('key', 'value')",
+			"INSERT INTO ks1.tb1 (key, value) VALUES ('key', 'value')",
+			nil,
 			"INSERT INTO ks1.tb1 (key, value) VALUES ('key', 'value2')",
+			"INSERT INTO ks1.tb1 (key, value) VALUES ('key', 'value2')",
+			nil,
+			false,
+		},
+		{
+			"writes_function_call",
+			"INSERT INTO ks1.tb1 (key, value) VALUES ('key', now())",
+			"INSERT INTO ks1.tb1 (key, value) VALUES ('key', ?)",
+			&message.VariablesMetadata{
+				PkIndices: nil,
+				Columns: []*message.ColumnMetadata{
+					{
+						Keyspace: "",
+						Table:    "",
+						Name:     "value",
+						Index:    0,
+						Type:     datatype.Timeuuid,
+					},
+				},
+			},
+			"INSERT INTO ks1.tb1 (key, value) VALUES ('key2', now())",
+			"INSERT INTO ks1.tb1 (key, value) VALUES ('key2', ?)",
+			&message.VariablesMetadata{
+				PkIndices: nil,
+				Columns: []*message.ColumnMetadata{
+					{
+						Keyspace: "",
+						Table:    "",
+						Name:     "value",
+						Index:    0,
+						Type:     datatype.Timeuuid,
+					},
+				},
+			},
 			false,
 		}}
 
@@ -180,17 +224,23 @@ func TestPreparedIdReplacement(t *testing.T) {
 			testSetup.Origin.CqlServer.RequestHandlers = []client2.RequestHandler{
 				client2.NewDriverConnectionInitializationHandler("origin", "dc1", func(_ string) {}),
 				NewPreparedTestHandler(originLock, &originPrepareMessages, &originExecuteMessages, &originBatchMessages,
-					test.batchQuery, originPreparedId, originBatchPreparedId, originKey, originValue, map[string]interface{}{}, false)}
+					test.expectedBatchQuery, originPreparedId, originBatchPreparedId, originKey, originValue, map[string]interface{}{}, false,
+					test.expectedVariables, test.expectedBatchPreparedStmtVariables)}
 			testSetup.Target.CqlServer.RequestHandlers = []client2.RequestHandler{
 				client2.NewDriverConnectionInitializationHandler("target", "dc1", func(_ string) {}),
 				NewPreparedTestHandler(targetLock, &targetPrepareMessages, &targetExecuteMessages, &targetBatchMessages,
-					test.batchQuery, targetPreparedId, targetBatchPreparedId, targetKey, targetValue, map[string]interface{}{}, false)}
+					test.expectedBatchQuery, targetPreparedId, targetBatchPreparedId, targetKey, targetValue, map[string]interface{}{}, false,
+					test.expectedVariables, test.expectedBatchPreparedStmtVariables)}
 
 			err = testSetup.Start(conf, true, primitive.ProtocolVersion4)
 			require.Nil(t, err)
 
 			prepareMsg := &message.Prepare{
 				Query:    test.query,
+				Keyspace: "",
+			}
+			expectedPrepareMsg := &message.Prepare{
+				Query:    test.expectedQuery,
 				Keyspace: "",
 			}
 
@@ -204,9 +254,12 @@ func TestPreparedIdReplacement(t *testing.T) {
 			require.Equal(t, originPreparedId, preparedResult.PreparedQueryId)
 
 			var batchPrepareMsg *message.Prepare
+			var expectedBatchPrepareMsg *message.Prepare
 			if test.batchQuery != "" {
 				batchPrepareMsg = prepareMsg.Clone().(*message.Prepare)
 				batchPrepareMsg.Query = test.batchQuery
+				expectedBatchPrepareMsg = batchPrepareMsg.Clone().(*message.Prepare)
+				expectedBatchPrepareMsg.Query = test.expectedBatchQuery
 				prepareResp, err = testSetup.Client.CqlConnection.SendAndReceive(
 					frame.NewFrame(primitive.ProtocolVersion4, 10, batchPrepareMsg))
 				require.Nil(t, err)
@@ -304,12 +357,25 @@ func TestPreparedIdReplacement(t *testing.T) {
 				require.Equal(t, 1, len(targetPrepareMessages))
 			}
 
-			require.Equal(t, prepareMsg, targetPrepareMessages[0])
-			require.Equal(t, prepareMsg, originPrepareMessages[0])
-			require.Equal(t, executeMsg, originExecuteMessages[0])
+			require.Equal(t, expectedPrepareMsg, targetPrepareMessages[0])
+			require.Equal(t, expectedPrepareMsg, originPrepareMessages[0])
+			if test.expectedVariables != nil {
+				require.Equal(t, executeMsg.QueryId, originExecuteMessages[0].QueryId)
+				require.Equal(t, executeMsg.ResultMetadataId, originExecuteMessages[0].ResultMetadataId)
+				require.NotEqual(t, executeMsg.Options, originExecuteMessages[0].Options)
+				require.Equal(t, len(test.expectedVariables.Columns), len(originExecuteMessages[0].Options.PositionalValues))
+				require.NotEqual(t, len(executeMsg.Options.PositionalValues), len(originExecuteMessages[0].Options.PositionalValues))
+
+				// check if only the positional values are different, we test the parameter replacement in depth on other tests
+				modifiedOriginExecuteMsg := originExecuteMessages[0].Clone()
+				modifiedOriginExecuteMsg.(*message.Execute).Options.PositionalValues = executeMsg.Options.PositionalValues
+				require.Equal(t, executeMsg, modifiedOriginExecuteMsg)
+			} else {
+				require.Equal(t, executeMsg, originExecuteMessages[0])
+			}
 			if test.batchQuery != "" {
-				require.Equal(t, batchPrepareMsg, targetPrepareMessages[1])
-				require.Equal(t, batchPrepareMsg, originPrepareMessages[1])
+				require.Equal(t, expectedBatchPrepareMsg, targetPrepareMessages[1])
+				require.Equal(t, expectedBatchPrepareMsg, originPrepareMessages[1])
 				require.Equal(t, batchMsg, originBatchMessages[0])
 			}
 		})
@@ -392,11 +458,13 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 			testSetup.Origin.CqlServer.RequestHandlers = []client2.RequestHandler{
 				client2.NewDriverConnectionInitializationHandler("origin", "dc1", func(_ string) {}),
 				NewPreparedTestHandler(originLock, &originPrepareMessages, &originExecuteMessages, &originBatchMessages,
-					test.batchQuery, originPreparedId, originBatchPreparedId, originKey, originValue, originCtx, test.originUnprepared)}
+					test.batchQuery, originPreparedId, originBatchPreparedId, originKey, originValue, originCtx, test.originUnprepared,
+					nil, nil)}
 			testSetup.Target.CqlServer.RequestHandlers = []client2.RequestHandler{
 				client2.NewDriverConnectionInitializationHandler("target", "dc1", func(_ string) {}),
 				NewPreparedTestHandler(targetLock, &targetPrepareMessages, &targetExecuteMessages, &targetBatchMessages,
-					test.batchQuery, targetPreparedId, targetBatchPreparedId, targetKey, targetValue, targetCtx, test.targetUnprepared)}
+					test.batchQuery, targetPreparedId, targetBatchPreparedId, targetKey, targetValue, targetCtx, test.targetUnprepared,
+					nil, nil)}
 
 			err = testSetup.Start(conf, true, primitive.ProtocolVersion4)
 			require.Nil(t, err)
@@ -632,7 +700,8 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 
 func NewPreparedTestHandler(
 	lock *sync.Mutex, preparedMessages *[]*message.Prepare, executeMessages *[]*message.Execute, batchMessages *[]*message.Batch,
-	batchQuery string, preparedId []byte, batchPreparedId []byte, key message.Column, value message.Column, context map[string]interface{}, unpreparedTest bool) func(
+	batchQuery string, preparedId []byte, batchPreparedId []byte, key message.Column, value message.Column, context map[string]interface{}, unpreparedTest bool,
+	variableMetadata *message.VariablesMetadata, batchVariableMetadata *message.VariablesMetadata) func(
 		request *frame.Frame, conn *client2.CqlServerConnection, ctx client2.RequestHandlerContext) *frame.Frame {
 	return func(request *frame.Frame, conn *client2.CqlServerConnection, ctx client2.RequestHandlerContext) *frame.Frame {
 		rowsMetadata := &message.RowsMetadata{
@@ -664,8 +733,10 @@ func NewPreparedTestHandler(
 			}
 			*preparedMessages = append(*preparedMessages, prepareMsg)
 			prepId := preparedId
+			variablesMetadata := variableMetadata
 			if prepareMsg.Query == batchQuery {
 				prepId = batchPreparedId
+				variablesMetadata = batchVariableMetadata
 			}
 			counterInterface := context["PREPARE_" + string(prepId)]
 			if counterInterface == nil {
@@ -677,7 +748,7 @@ func NewPreparedTestHandler(
 			return frame.NewFrame(request.Header.Version, request.Header.StreamId, &message.PreparedResult{
 				PreparedQueryId:   prepId,
 				ResultMetadataId:  nil,
-				VariablesMetadata: nil,
+				VariablesMetadata: variablesMetadata,
 				ResultMetadata:    rowsMetadata,
 			})
 		} else if request.Header.OpCode == primitive.OpCodeExecute {

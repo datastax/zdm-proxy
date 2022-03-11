@@ -39,7 +39,40 @@ type FrameLogEntry struct {
 	TracingId       string                    `json:"tracing_id"`
 	CustomPayload   map[string]string         `json:"custom_payload"`
 	Warnings        []string                  `json:"warnings"`
-	Message         interface{}               `json:"message"`
+	Message         json.RawMessage           `json:"message"`
+}
+
+type BatchMessage struct {
+	Type              string           `json:"type"`
+	Opcode            primitive.OpCode `json:"opcode"`
+	IsResponse        bool             `json:"is_response"`
+	QueriesOrIds      []string         `json:"queries_or_ids"`
+	Values            [][]string       `json:"values"`
+	Consistency       string           `json:"consistency"`
+	SerialConsistency string           `json:"serial_consistency"`
+	DefaultTimestamp  int64            `json:"default_timestamp"`
+	Keyspace          string           `json:"keyspace"`
+}
+
+type ExecuteMessage struct {
+	Type             string           `json:"type"`
+	Opcode           primitive.OpCode `json:"opcode"`
+	ResultMetadataId string           `json:"result_metadata_id"`
+	IsResponse       bool             `json:"is_response"`
+	Options          *QueryOptions    `json:"options"`
+	Id               string           `json:"id"`
+}
+
+type QueryOptions struct {
+	Consistency       string            `json:"consistency"`
+	PositionalValues  []string          `json:"positional_values"`
+	NamedValues       map[string]string `json:"named_values"`
+	Keyspace          string            `json:"keyspace"`
+	SkipMetadata      bool              `json:"skip_metadata"`
+	SerialConsistency string            `json:"serial_consistency"`
+	DefaultTimestamp  int64             `json:"default_timestamp"`
+	PageSize          int               `json:"page_size"`
+	PagingState       string            `json:"paging_state"`
 }
 
 type QueryType string
@@ -53,6 +86,12 @@ const (
 	QueryTypeStartup QueryType = "STARTUP"
 	QueryTypeRegister QueryType = "REGISTER"
 )
+
+func (baseSimulacron *baseSimulacron) DeleteLogs() error {
+	_, err := baseSimulacron.process.execHttp("DELETE", baseSimulacron.getPath("log"), nil)
+	return err
+}
+
 
 func (baseSimulacron *baseSimulacron) GetLogs() (*ClusterLogs, error) {
 	bytes, err := baseSimulacron.process.execHttp("GET", baseSimulacron.getPath("log"), nil)

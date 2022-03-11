@@ -3,7 +3,7 @@ module github.com/riptano/cloud-gate
 go 1.16
 
 require (
-	github.com/antlr/antlr4 v0.0.0-20201008165544-0fc0617bec24
+	github.com/antlr/antlr4/runtime/Go/antlr v0.0.0-20211106181442-e4c1a74c66bd
 	github.com/datastax/go-cassandra-native-protocol v0.0.0-20211124104234-f6aea54fa801
 	github.com/gocql/gocql v0.0.0-20200624222514-34081eda590e
 	github.com/google/go-cmp v0.5.2 // indirect

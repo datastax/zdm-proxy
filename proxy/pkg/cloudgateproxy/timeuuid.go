@@ -40,6 +40,16 @@ func GetDefaultTimeUuidGenerator() (*timeUuidGeneratorImpl, error) {
 		return singletonGenerator, nil
 	}
 
+	var err error
+	singletonGenerator, err = newTimeUuidGenerator()
+	if err != nil {
+		return nil, err
+	}
+
+	return singletonGenerator, nil
+}
+
+func newTimeUuidGenerator() (*timeUuidGeneratorImpl, error) {
 	// skip trying to use mac addresses, just generate a random node id
 	var newNodeId [6]byte
 	_, err := rand.Read(newNodeId[:])

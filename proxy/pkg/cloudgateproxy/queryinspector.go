@@ -1,13 +1,18 @@
 package cloudgateproxy
 
 import (
+	"fmt"
 	"github.com/antlr/antlr4/runtime/Go/antlr"
 	"github.com/google/uuid"
 	parser "github.com/riptano/cloud-gate/antlr"
+	log "github.com/sirupsen/logrus"
 	"strings"
+	"sync"
 )
 
 type statementType string
+
+type replacementType int
 
 const (
 	statementTypeInsert = statementType("insert")
@@ -17,9 +22,32 @@ const (
 	statementTypeSelect = statementType("select")
 	statementTypeUse    = statementType("use")
 	statementTypeOther  = statementType("other")
+
+	cloudgateNowNamedMarker = "cloudgate__now"
 )
 
-type queryInfo interface {
+const (
+	noReplacement replacementType = iota
+	literalReplacement
+	namedMarkerReplacement
+	positionalMarkerReplacement
+)
+
+var (
+	sortedCloudgateNamedMarkers = []string{cloudgateNowNamedMarker}
+	parserPool = sync.Pool{New: func() interface{} {
+		p := parser.NewSimplifiedCqlParser(nil)
+		p.RemoveErrorListeners()
+		p.SetErrorHandler(antlr.NewBailErrorStrategy())
+		p.GetInterpreter().SetPredictionMode(antlr.PredictionModeSLL)
+		return p
+	}}
+	lexerPool = sync.Pool{New: func() interface{} {
+		return parser.NewSimplifiedCqlLexer(nil)
+	}}
+)
+
+type QueryInfo interface {
 	getQuery() string
 	getStatementType() statementType
 	getKeyspaceName() string
@@ -47,16 +75,20 @@ type queryInfo interface {
 	// This will always be false for non-INSERT statements or batches not containing INSERT statements.
 	hasNowFunctionCalls() bool
 
-	replaceNowFunctionCallsWithLiteral(replacement uuid.UUID) queryInfo
-	replaceNowFunctionCallsWithPositionalBindMarkers() queryInfo
-	replaceNowFunctionCallsWithNamedBindMarkers() queryInfo
+	replaceNowFunctionCallsWithLiteral(replacement uuid.UUID) (QueryInfo, []*term)
+	replaceNowFunctionCallsWithPositionalBindMarkers() (QueryInfo, []*term)
+	replaceNowFunctionCallsWithNamedBindMarkers() (QueryInfo, []*term)
 }
 
-func inspectCqlQuery(query string) queryInfo {
+func inspectCqlQuery(query string) QueryInfo {
 	is := antlr.NewInputStream(query)
-	lexer := parser.NewSimplifiedCqlLexer(is)
+	lexer := lexerPool.Get().(*parser.SimplifiedCqlLexer)
+	defer lexerPool.Put(lexer)
+	lexer.SetInputStream(is)
 	stream := antlr.NewCommonTokenStream(lexer, antlr.TokenDefaultChannel)
-	cqlParser := parser.NewSimplifiedCqlParser(stream)
+	cqlParser := parserPool.Get().(*parser.SimplifiedCqlParser)
+	defer parserPool.Put(cqlParser)
+	cqlParser.SetInputStream(stream)
 	listener := &cqlListener{query: query, statementType: statementTypeOther}
 	antlr.ParseTreeWalkerDefault.Walk(listener, cqlParser.CqlStatement())
 	return listener
@@ -68,6 +100,16 @@ type functionCall struct {
 	arity      int
 	startIndex int
 	stopIndex  int
+}
+
+func NewFunctionCall(keyspace string, name string, arity int, startIndex int, stopIndex int) *functionCall {
+	return &functionCall{
+		keyspace:   keyspace,
+		name:       name,
+		arity:      arity,
+		startIndex: startIndex,
+		stopIndex:  stopIndex,
+	}
 }
 
 func (f *functionCall) isNow() bool {
@@ -83,6 +125,14 @@ type parsedStatement struct {
 	terms          []*term
 }
 
+func (recv *parsedStatement) ShallowClone() *parsedStatement {
+	return &parsedStatement{
+		statementIndex: recv.statementIndex,
+		statementType:  recv.statementType,
+		terms:          recv.terms,
+	}
+}
+
 // A term can be one of the following:
 // - a literal,
 // - a function call
@@ -91,6 +141,10 @@ type term struct {
 	// The function call details in this term,
 	// or nil if this term does not contain a function call.
 	functionCall *functionCall
+
+	// The index of the closest (to the left) positional bind marker.
+	// (-1 if no positional bind marker exists to the left of this term).
+	previousPositionalIndex int
 
 	// The zero-based index of the positional bind marker in this term
 	// (-1 if this term does not contain a positional bind marker).
@@ -102,6 +156,46 @@ type term struct {
 
 	// The literal expression in this term, or empty if this term does not contain a literal.
 	literal string
+}
+
+func NewNamedBindMarkerTerm(name string, previousPositionalIndex int) *term {
+	return &term{
+		functionCall:            nil,
+		positionalIndex:         -1,
+		previousPositionalIndex: previousPositionalIndex,
+		bindMarkerName:          name,
+		literal:                 "",
+	}
+}
+
+func NewPositionalBindMarkerTerm(position int) *term {
+	return &term{
+		functionCall:            nil,
+		positionalIndex:         position,
+		previousPositionalIndex: position - 1,
+		bindMarkerName:          "",
+		literal:                 "",
+	}
+}
+
+func NewLiteralTerm(literal string, previousPositionalIndex int) *term {
+	return &term{
+		functionCall:            nil,
+		positionalIndex:         -1,
+		previousPositionalIndex: previousPositionalIndex,
+		bindMarkerName:          "",
+		literal:                 literal,
+	}
+}
+
+func NewFunctionCallTerm(functionCall *functionCall, previousPositionalIndex int) *term {
+	return &term{
+		functionCall:            functionCall,
+		positionalIndex:         -1,
+		previousPositionalIndex: previousPositionalIndex,
+		bindMarkerName:          "",
+		literal:                 "",
+	}
 }
 
 func (t *term) isFunctionCall() bool {
@@ -171,79 +265,111 @@ func (l *cqlListener) hasNowFunctionCalls() bool {
 }
 
 func (l *cqlListener) EnterCqlStatement(ctx *parser.CqlStatementContext) {
-	if ctx.InsertStatement() != nil {
+	if ctx.GetChildCount() == 0 {
+		return
+	}
+
+	statement := ctx.GetChild(0)
+	switch statement.(type) {
+	case parser.IInsertStatementContext:
 		l.statementType = statementTypeInsert
-	} else if ctx.UpdateStatement() != nil {
+	case parser.IUpdateStatementContext:
 		l.statementType = statementTypeUpdate
-	} else if ctx.DeleteStatement() != nil {
+	case parser.IDeleteStatementContext:
 		l.statementType = statementTypeDelete
-	} else if ctx.BatchStatement() != nil {
+	case parser.IBatchStatementContext:
 		l.statementType = statementTypeBatch
-	} else if ctx.SelectStatement() != nil {
+	case parser.ISelectStatementContext:
 		l.statementType = statementTypeSelect
-	} else if ctx.UseStatement() != nil {
+	case parser.IUseStatementContext:
 		l.statementType = statementTypeUse
 	}
 }
 
 func (l *cqlListener) EnterInsertStatement(ctx *parser.InsertStatementContext) {
-	parsedStatement := &parsedStatement{statementIndex: l.currentBatchChildIndex, statementType: statementTypeInsert}
-	values := ctx.Terms().(*parser.TermsContext)
-	for _, termCtx := range values.AllTerm() {
-		parsedStatement.terms = append(parsedStatement.terms, l.extractTerm(termCtx.(*parser.TermContext)))
+	parsedStmt := &parsedStatement{statementIndex: l.currentBatchChildIndex, statementType: statementTypeInsert}
+	for _, childCtx := range ctx.GetChildren() {
+		switch childCtx.(type) {
+		case parser.ITermsContext:
+			parsedStmt.terms = append(parsedStmt.terms, l.extractTerms(childCtx)...)
+		case parser.IUsingClauseContext:
+			parsedStmt.terms = append(parsedStmt.terms, l.extractUsingClauseBindMarkers(childCtx)...)
+		}
 	}
 
-	l.parsedStatements = append(l.parsedStatements, parsedStatement)
+	l.parsedStatements = append(l.parsedStatements, parsedStmt)
 	l.currentBatchChildIndex++
 }
 
 func (l *cqlListener) EnterUpdateStatement(ctx *parser.UpdateStatementContext) {
-	parsedStatement := &parsedStatement{statementIndex: l.currentBatchChildIndex, statementType: statementTypeUpdate}
+	parsedStmt := &parsedStatement{statementIndex: l.currentBatchChildIndex, statementType: statementTypeUpdate}
 
-	updateOperations := ctx.UpdateOperations().(*parser.UpdateOperationsContext).AllUpdateOperation()
-	for _, updateOperation := range updateOperations {
-		updateOperationTyped := updateOperation.(*parser.UpdateOperationContext)
-		for _, termCtx := range updateOperationTyped.AllTerm() {
-			parsedStatement.terms = append(parsedStatement.terms, l.extractTerm(termCtx.(*parser.TermContext)))
+	for _, childCtx := range ctx.GetChildren() {
+		switch childCtx.(type) {
+		case parser.IUsingClauseContext:
+			parsedStmt.terms = append(parsedStmt.terms, l.extractUsingClauseBindMarkers(childCtx)...)
+		case parser.IUpdateOperationsContext:
+			for _, updateOperation := range childCtx.GetChildren() {
+				for _, termCtx := range updateOperation.GetChildren() {
+					typedTermCtx, ok := termCtx.(*parser.TermContext)
+					if ok {
+						parsedStmt.terms = append(parsedStmt.terms, l.extractTerm(typedTermCtx))
+					}
+				}
+			}
+		case parser.IWhereClauseContext:
+			whereClauseTerms := l.extractWhereClauseTerms(childCtx)
+			parsedStmt.terms = append(parsedStmt.terms, whereClauseTerms...)
+		case parser.IConditionsContext:
+			conditionTerms := l.extractConditionsTerms(childCtx)
+			parsedStmt.terms = append(parsedStmt.terms, conditionTerms...)
 		}
 	}
 
-	whereClauseTerms := l.extractWhereClauseTerms(ctx.WhereClause().(*parser.WhereClauseContext))
-	parsedStatement.terms = append(parsedStatement.terms, whereClauseTerms...)
-
-	if conditionsCtx := ctx.Conditions(); conditionsCtx != nil {
-		conditionTerms := l.extractConditionsTerms(conditionsCtx.(*parser.ConditionsContext))
-		parsedStatement.terms = append(parsedStatement.terms, conditionTerms...)
-	}
-
-	l.parsedStatements = append(l.parsedStatements, parsedStatement)
+	l.parsedStatements = append(l.parsedStatements, parsedStmt)
 	l.currentBatchChildIndex++
 }
 
 func (l *cqlListener) EnterDeleteStatement(ctx *parser.DeleteStatementContext) {
-	parsedStatement := &parsedStatement{statementIndex: l.currentBatchChildIndex, statementType: statementTypeDelete}
+	parsedStmt := &parsedStatement{statementIndex: l.currentBatchChildIndex, statementType: statementTypeDelete}
 
-	if deleteOperationsCtx := ctx.DeleteOperations(); deleteOperationsCtx != nil {
-		deleteOperations := deleteOperationsCtx.(*parser.DeleteOperationsContext).AllDeleteOperation()
-		for _, deleteOperation := range deleteOperations {
-			deleteOperationTyped := deleteOperation.(*parser.DeleteOperationContext)
-			t := deleteOperationTyped.Term()
-			if t != nil {
-				parsedStatement.terms = append(parsedStatement.terms, l.extractTerm(t.(*parser.TermContext)))
+	for _, childCtx := range ctx.GetChildren() {
+		switch childCtx.(type) {
+		case parser.IDeleteOperationsContext:
+			for _, deleteOperation := range childCtx.GetChildren() {
+				deleteOperationTyped, ok := deleteOperation.(*parser.DeleteOperationContext)
+				if ok {
+					t := deleteOperationTyped.Term()
+					if t != nil {
+						parsedStmt.terms = append(parsedStmt.terms, l.extractTerm(t))
+					}
+				}
 			}
+		case parser.ITimestampContext:
+			parsedTimestampCtx := childCtx.(*parser.TimestampContext)
+			timeStampTerm := l.extractNillableBindMarker(parsedTimestampCtx.BindMarker())
+			if timeStampTerm != nil {
+				parsedStmt.terms = append(parsedStmt.terms, timeStampTerm)
+			}
+		case parser.IWhereClauseContext:
+			whereClauseTerms := l.extractWhereClauseTerms(childCtx)
+			parsedStmt.terms = append(parsedStmt.terms, whereClauseTerms...)
+		case parser.IConditionsContext:
+			conditionTerms := l.extractConditionsTerms(childCtx)
+			parsedStmt.terms = append(parsedStmt.terms, conditionTerms...)
 		}
 	}
 
-	whereClauseTerms := l.extractWhereClauseTerms(ctx.WhereClause().(*parser.WhereClauseContext))
-	parsedStatement.terms = append(parsedStatement.terms, whereClauseTerms...)
-
-	if conditionsCtx := ctx.Conditions(); conditionsCtx != nil {
-		conditionTerms := l.extractConditionsTerms(conditionsCtx.(*parser.ConditionsContext))
-		parsedStatement.terms = append(parsedStatement.terms, conditionTerms...)
-	}
-
-	l.parsedStatements = append(l.parsedStatements, parsedStatement)
+	l.parsedStatements = append(l.parsedStatements, parsedStmt)
 	l.currentBatchChildIndex++
+}
+
+func (l *cqlListener) EnterBatchStatement(ctx *parser.BatchStatementContext) {
+	usingClauseCtx := ctx.UsingClause()
+	if usingClauseCtx != nil {
+		// ignore terms, just process the clause to update the current positional marker position that is used in the actual child statements
+		_ = l.extractUsingClauseBindMarkers(usingClauseCtx)
+	}
 }
 
 func (l *cqlListener) EnterUseStatement(ctx *parser.UseStatementContext) {
@@ -251,177 +377,329 @@ func (l *cqlListener) EnterUseStatement(ctx *parser.UseStatementContext) {
 }
 
 func (l *cqlListener) EnterTableName(ctx *parser.TableNameContext) {
+	qualifiedId := ctx.GetChild(0)
 	// Note: this will capture the *last* table name in a BATCH statement
-	if ctx.QualifiedIdentifier().GetChildCount() == 1 {
-		identifierContext := ctx.QualifiedIdentifier().GetChild(0).(*parser.IdentifierContext)
+	if qualifiedId.GetChildCount() == 1 {
+		identifierContext := qualifiedId.GetChild(0).(*parser.IdentifierContext)
 		l.tableName = extractIdentifier(identifierContext)
 	} else {
 		// 3 children: keyspaceName, token DOT, identifier
-		keyspaceNameContext := ctx.QualifiedIdentifier().GetChild(0).(*parser.KeyspaceNameContext)
-		l.keyspaceName = extractIdentifier(keyspaceNameContext.Identifier().(*parser.IdentifierContext))
-		identifierContext := ctx.QualifiedIdentifier().GetChild(2).(*parser.IdentifierContext)
+		keyspaceNameContext := qualifiedId.GetChild(0)
+		l.keyspaceName = extractIdentifier(keyspaceNameContext.GetChild(0).(*parser.IdentifierContext))
+		identifierContext := qualifiedId.GetChild(2).(*parser.IdentifierContext)
 		l.tableName = extractIdentifier(identifierContext)
 	}
 }
 
-func (l *cqlListener) extractTerm(termCtx *parser.TermContext) *term {
-	var t *term
-	if typeCastCtx := termCtx.TypeCast(); typeCastCtx != nil {
-		// extract the term being cast and ignore the target type of the cast expression
-		t = l.extractTerm(typeCastCtx.(*parser.TypeCastContext).Term().(*parser.TermContext))
-	} else {
-		t = &term{positionalIndex: -1}
-		if literalCtx := termCtx.Literal(); literalCtx != nil {
-			t.literal = literalCtx.GetText()
-		} else if functionCallCtx := termCtx.FunctionCall(); functionCallCtx != nil {
-			t.functionCall = extractFunctionCall(functionCallCtx.(*parser.FunctionCallContext))
-			if t.functionCall.isNow() {
+func (l *cqlListener) extractAllTerms(termsCtx []antlr.Tree) []*term {
+	var terms []*term
+	for _, termCtx := range termsCtx {
+		typedTermCtx, ok := termCtx.(*parser.TermContext)
+		if ok {
+			terms = append(terms, l.extractTerm(typedTermCtx))
+		}
+	}
+	return terms
+}
+
+func (l *cqlListener) extractTerms(termsCtx antlr.Tree) []*term {
+	return l.extractAllTerms(termsCtx.GetChildren())
+}
+
+func (l *cqlListener) extractTerm(termCtx antlr.Tree) *term {
+	for _, childCtx := range termCtx.GetChildren() {
+		switch typedCtx := childCtx.(type) {
+		case parser.ITypeCastContext:
+			return l.extractTerm(childCtx.GetChild(3))
+		case parser.ILiteralContext:
+			return NewLiteralTerm(typedCtx.GetText(), l.currentPositionalIndex - 1)
+		case parser.IFunctionCallContext:
+			fCall := extractFunctionCall(childCtx.(*parser.FunctionCallContext))
+			if fCall.isNow() {
 				l.nowFunctionCalls = true
 			}
-		} else if bindMarkerCtx := termCtx.BindMarker(); bindMarkerCtx != nil {
-			positionalBindMarkerCtx := bindMarkerCtx.(*parser.BindMarkerContext).PositionalBindMarker()
-			if positionalBindMarkerCtx != nil {
-				l.positionalBindMarkers = true
-				t.positionalIndex = l.currentPositionalIndex
-				l.currentPositionalIndex++
-			} else {
-				namedBindMarkerCtx := bindMarkerCtx.(*parser.BindMarkerContext).NamedBindMarker()
-				if namedBindMarkerCtx != nil {
-					l.namedBindMarkers = true
-					bindMarkerName := extractIdentifier(
-						namedBindMarkerCtx.(*parser.NamedBindMarkerContext).
-							Identifier().(*parser.IdentifierContext))
-					t.bindMarkerName = bindMarkerName
+			return NewFunctionCallTerm(fCall, l.currentPositionalIndex - 1)
+		case parser.IBindMarkerContext:
+			return l.extractBindMarker(childCtx)
+		}
+	}
+	return nil
+}
+
+func (l *cqlListener) extractAllBindMarkers(allBindMarkersCtx []antlr.Tree) []*term {
+	var terms []*term
+	for _, bindMarkerCtx := range allBindMarkersCtx {
+		typedBindMarkerCtx, ok := bindMarkerCtx.(*parser.BindMarkerContext)
+		if ok {
+			terms = append(terms, l.extractBindMarker(typedBindMarkerCtx))
+		}
+	}
+	return terms
+}
+
+func (l *cqlListener) extractBindMarkers(bindMarkersCtx antlr.Tree) []*term {
+	return l.extractAllBindMarkers(bindMarkersCtx.GetChildren())
+}
+
+func (l *cqlListener) extractBindMarker(bindMarkerCtx antlr.Tree) *term {
+	for _, childCtx := range bindMarkerCtx.GetChildren() {
+		switch childCtx.(type) {
+		case parser.IPositionalBindMarkerContext:
+			l.positionalBindMarkers = true
+			newTerm := NewPositionalBindMarkerTerm(l.currentPositionalIndex)
+			l.currentPositionalIndex++
+			return newTerm
+		case parser.INamedBindMarkerContext:
+			l.namedBindMarkers = true
+			bindMarkerName := extractIdentifier(childCtx.GetChild(1))
+			return NewNamedBindMarkerTerm(bindMarkerName, l.currentPositionalIndex - 1)
+		}
+	}
+
+	log.Errorf("Could not parse bind marker: %T", bindMarkerCtx)
+	return nil
+}
+
+func (l *cqlListener) extractWhereClauseTerms(ctx antlr.Tree) []*term {
+	var terms []*term
+
+	for _, relationCtx := range ctx.GetChildren() {
+		relationTyped, ok := relationCtx.(*parser.RelationContext)
+		if ok {
+			terms = append(terms, l.extractRelationTerms(relationTyped)...)
+		}
+	}
+
+	return terms
+}
+
+func (l *cqlListener) extractRelationTerms(ctx antlr.Tree) []*term {
+	terms := make([]*term, 0)
+	for _, childCtx := range ctx.GetChildren() {
+		switch childCtx.(type) {
+		case parser.IRelationContext:
+			return l.extractRelationTerms(childCtx)
+		case parser.ITermsContext:
+			terms = append(terms, l.extractAllTerms(childCtx.GetChildren())...)
+		case parser.ITermContext:
+			terms = append(terms, l.extractTerm(childCtx))
+		case parser.IBindMarkersContext:
+			terms = append(terms, l.extractBindMarkers(childCtx)...)
+		case parser.IBindMarkerContext:
+			terms = append(terms, l.extractBindMarker(childCtx))
+		case parser.ITupleLiteralContext:
+			termsCtx := childCtx.GetChild(1)
+			terms = append(terms, l.extractTerms(termsCtx)...)
+		case parser.ITupleLiteralsContext:
+			for _, tupleLiteralCtx := range childCtx.GetChildren() {
+				typedTupleLiteralCtx, ok := tupleLiteralCtx.(*parser.TupleLiteralContext)
+				if ok {
+					terms = append(terms, l.extractTerms(typedTupleLiteralCtx.GetChild(1))...)
 				}
 			}
 		}
 	}
-	return t
+
+	return terms
 }
 
-func (l *cqlListener) extractWhereClauseTerms(ctx *parser.WhereClauseContext) []*term {
+func (l *cqlListener) extractConditionsTerms(ctx antlr.Tree) []*term {
 	var terms []*term
 
-	relations := ctx.AllRelation()
-	for _, relation := range relations {
-		relationTyped := relation.(*parser.RelationContext)
-		for _, termCtx := range relationTyped.AllTerm() {
-			terms = append(terms, l.extractTerm(termCtx.(*parser.TermContext)))
+	for _, conditionCtx := range ctx.GetChildren() {
+		for _, childCtx := range conditionCtx.GetChildren() {
+			switch childCtx.(type) {
+			case parser.ITermContext:
+				terms = append(terms, l.extractTerm(childCtx))
+			case parser.ITermsContext:
+				terms = append(terms, l.extractTerms(childCtx)...)
+			case parser.IBindMarkerContext:
+				terms = append(terms, l.extractBindMarker(childCtx))
+			}
 		}
 	}
 
 	return terms
 }
 
-func (l *cqlListener) extractConditionsTerms(ctx *parser.ConditionsContext) []*term {
+func (l *cqlListener) extractUsingClauseBindMarkers(ctx antlr.Tree) []*term {
 	var terms []*term
 
-	conditions := ctx.AllCondition()
-	for _, condition := range conditions {
-		conditionTyped := condition.(*parser.ConditionContext)
-		for _, termCtx := range conditionTyped.AllTerm() {
-			terms = append(terms, l.extractTerm(termCtx.(*parser.TermContext)))
+	for _, childCtx := range ctx.GetChildren() {
+		var bindMarkerTerm *term
+		switch childCtx.(type) {
+		case parser.ITimestampContext, parser.ITtlContext:
+			bindMarkerTerm = l.extractNillableBindMarker(childCtx.GetChild(1))
+		}
+
+		if bindMarkerTerm != nil {
+			terms = append(terms, bindMarkerTerm)
 		}
 	}
 
 	return terms
+}
+
+func (l *cqlListener) extractNillableBindMarker(ctx antlr.Tree) *term {
+	if ctx != nil {
+		typedCtx, ok := ctx.(*parser.BindMarkerContext)
+		if ok {
+			return l.extractBindMarker(typedCtx)
+		}
+	}
+
+	return nil
 }
 
 func extractFunctionCall(ctx *parser.FunctionCallContext) *functionCall {
-	qualifiedIdentifierContext := ctx.
-		FunctionName().(*parser.FunctionNameContext).
-		QualifiedIdentifier().(*parser.QualifiedIdentifierContext)
+	qualifiedIdentifierCtx := ctx.GetChild(0).GetChild(0).(*parser.QualifiedIdentifierContext)
 	keyspaceName := ""
-	if qualifiedIdentifierContext.KeyspaceName() != nil {
-		keyspaceName = extractIdentifier(
-			qualifiedIdentifierContext.KeyspaceName().(*parser.KeyspaceNameContext).
-				Identifier().(*parser.IdentifierContext))
+	functionNameChildIdx := 0
+	if qualifiedIdentifierCtx.GetChildCount() > 1 {
+		keyspaceName = extractIdentifier(qualifiedIdentifierCtx.GetChild(0).GetChild(0).(*parser.IdentifierContext))
+		functionNameChildIdx = 2
 	}
-	functionName := extractIdentifier(qualifiedIdentifierContext.Identifier().(*parser.IdentifierContext))
+	functionName := extractIdentifier(qualifiedIdentifierCtx.GetChild(functionNameChildIdx).(*parser.IdentifierContext))
 	// For now we only record the function arity, not the actual function arguments
 	functionArity := 0
-	if ctx.FunctionArgs() != nil {
-		functionArity = len(ctx.FunctionArgs().(*parser.FunctionArgsContext).AllFunctionArg())
+	if ctx.GetChildCount() == 4 {
+		functionArity = ctx.GetChild(2).GetChildCount()
 	}
 	start := ctx.GetStart().GetStart()
 	stop := ctx.GetStop().GetStop()
-	return &functionCall{
-		keyspace:   keyspaceName,
-		name:       functionName,
-		arity:      functionArity,
-		startIndex: start,
-		stopIndex:  stop,
-	}
+	return NewFunctionCall(
+		keyspaceName,
+		functionName,
+		functionArity,
+		start,
+		stop)
 }
 
 // Returns the identifier in the context object, in its internal form.
 // For unquoted identifiers and unreserved keywords, the internal form is the form in full lower case;
 // for quoted ones, the internal form is the unquoted string, in its exact case.
-func extractIdentifier(identifierContext *parser.IdentifierContext) string {
-	if unquotedIdentifier := identifierContext.UNQUOTED_IDENTIFIER(); unquotedIdentifier != nil {
-		return strings.ToLower(unquotedIdentifier.GetText())
-	} else if quotedIdentifier := identifierContext.QUOTED_IDENTIFIER(); quotedIdentifier != nil {
-		identifier := quotedIdentifier.GetText()
-		// remove surrounding quotes
-		identifier = identifier[1 : len(identifier)-1]
-		// handle escaped double-quotes
-		identifier = strings.ReplaceAll(identifier, "\"\"", "\"")
-		return identifier
-	} else {
-		return strings.ToLower(identifierContext.UnreservedKeyword().GetText())
+func extractIdentifier(identifierContext antlr.Tree) string {
+	childCtx := identifierContext.GetChild(0)
+	switch typedChildCtx := childCtx.(type) {
+	case antlr.TerminalNode:
+		switch typedChildCtx.GetSymbol().GetTokenType() {
+		case parser.SimplifiedCqlParserQUOTED_IDENTIFIER:
+			identifier := typedChildCtx.GetText()
+			// remove surrounding quotes
+			identifier = identifier[1 : len(identifier)-1]
+			// handle escaped double-quotes
+			identifier = strings.ReplaceAll(identifier, "\"\"", "\"")
+			return identifier
+		default: // UNQUOTED
+			return strings.ToLower(typedChildCtx.GetText())
+		}
+	default: // UNRESERVED KEYWORD
+		return strings.ToLower(childCtx.(*parser.UnreservedKeywordContext).GetText())
 	}
 }
 
-func (l *cqlListener) replaceFunctionCalls(replacementFunc func(query string, functionCall *functionCall) *string) queryInfo {
+func (l *cqlListener) replaceFunctionCalls(replacementFunc func(query string, functionCall *functionCall) (string, replacementType)) (QueryInfo, []*term) {
 	if !l.hasNowFunctionCalls() {
-		return l
+		return l, make([]*term, 0)
 	}
 	var result string
 	i := 0
-	for _, parsedStatement := range l.parsedStatements {
-		for _, term := range parsedStatement.terms {
-			if term.isFunctionCall() {
-				replacement := replacementFunc(l.query, term.functionCall)
-				if replacement != nil {
-					result = result + l.query[i:term.functionCall.startIndex] + *replacement
-					i = term.functionCall.stopIndex + 1
+	replacedTerms := make([]*term, 0)
+	newParsedStatements := make([]*parsedStatement, 0, len(l.parsedStatements))
+	previousPositionalIndex := 0
+	namedMarkers := false
+	positionalMarkers := false
+	for _, parsedStmt := range l.parsedStatements {
+		newParsedStmt := parsedStmt.ShallowClone()
+		newTerms := make([]*term, 0)
+		for _, t := range parsedStmt.terms {
+			var newTerm *term
+			if t.isFunctionCall() {
+				replacement, rType := replacementFunc(l.query, t.functionCall)
+				if rType != noReplacement {
+					replacedTerms = append(replacedTerms, t)
+					result = result + l.query[i:t.functionCall.startIndex] + replacement
+					i = t.functionCall.stopIndex + 1
+					switch rType {
+					case literalReplacement:
+						newTerm = NewLiteralTerm(replacement, t.previousPositionalIndex)
+					case namedMarkerReplacement:
+						newTerm = NewNamedBindMarkerTerm(replacement[1:], t.previousPositionalIndex)
+					case positionalMarkerReplacement:
+						newTerm = NewPositionalBindMarkerTerm(previousPositionalIndex + 1)
+						previousPositionalIndex++
+					}
 				}
 			}
+			if newTerm == nil {
+				newTerm = t
+			}
+			newTerms = append(newTerms, newTerm)
+			if newTerm.isPositionalBindMarker() {
+				positionalMarkers = true
+			} else if newTerm.isNamedBindMarker() {
+				namedMarkers = true
+			}
 		}
+		newParsedStmt.terms = newTerms
+		newParsedStatements = append(newParsedStatements, newParsedStmt)
 	}
 	result = result + l.query[i:len(l.query)]
-	return inspectCqlQuery(result)
+	newQueryInfo := l.shallowClone()
+	newQueryInfo.query = result
+	newQueryInfo.nowFunctionCalls = false
+	newQueryInfo.parsedStatements = newParsedStatements
+	newQueryInfo.namedBindMarkers = namedMarkers
+	newQueryInfo.positionalBindMarkers = positionalMarkers
+	return newQueryInfo, replacedTerms
 }
 
-func (l *cqlListener) replaceNowFunctionCallsWithLiteral(literal uuid.UUID) queryInfo {
-	replacement := literal.String()
-	return l.replaceFunctionCalls(func(query string, functionCall *functionCall) *string {
+func (l *cqlListener) replaceNowFunctionCallsWithLiteral(literal uuid.UUID) (QueryInfo, []*term) {
+	return l.replaceFunctionCalls(func(query string, functionCall *functionCall) (string, replacementType) {
 		if functionCall.isNow() {
-			return &replacement
+			return literal.String(), literalReplacement
 		} else {
-			return nil
+			return "", noReplacement
 		}
 	})
 }
 
-func (l *cqlListener) replaceNowFunctionCallsWithPositionalBindMarkers() queryInfo {
-	var questionMark = "?"
-	return l.replaceFunctionCalls(func(query string, functionCall *functionCall) *string {
+func (l *cqlListener) replaceNowFunctionCallsWithPositionalBindMarkers() (QueryInfo, []*term) {
+	return l.replaceFunctionCalls(func(query string, functionCall *functionCall) (string, replacementType) {
 		if functionCall.isNow() {
-			return &questionMark
+			return "?", positionalMarkerReplacement
 		} else {
-			return nil
+			return "", noReplacement
 		}
 	})
 }
 
-func (l *cqlListener) replaceNowFunctionCallsWithNamedBindMarkers() queryInfo {
-	return l.replaceFunctionCalls(func(query string, functionCall *functionCall) *string {
+func (l *cqlListener) replaceNowFunctionCallsWithNamedBindMarkers() (QueryInfo, []*term) {
+	return l.replaceFunctionCalls(func(query string, functionCall *functionCall) (string, replacementType) {
 		if functionCall.isNow() {
-			name := ":cloudgate__now"
-			return &name
+			return fmt.Sprintf(":%s", cloudgateNowNamedMarker), namedMarkerReplacement
 		} else {
-			return nil
+			return "", noReplacement
 		}
 	})
+}
+
+func (l *cqlListener) shallowClone() *cqlListener {
+	return &cqlListener{
+		BaseSimplifiedCqlListener: l.BaseSimplifiedCqlListener,
+		query:                     l.query,
+		statementType:             l.statementType,
+		keyspaceName:              l.keyspaceName,
+		tableName:                 l.tableName,
+		parsedStatements:          l.parsedStatements,
+		positionalBindMarkers:     l.positionalBindMarkers,
+		namedBindMarkers:          l.namedBindMarkers,
+		nowFunctionCalls:          l.nowFunctionCalls,
+		currentPositionalIndex:    l.currentPositionalIndex,
+		currentBatchChildIndex:    l.currentBatchChildIndex,
+	}
+}
+
+func GetSortedCloudgateNamedMarkers() []string {
+	return sortedCloudgateNamedMarkers
 }

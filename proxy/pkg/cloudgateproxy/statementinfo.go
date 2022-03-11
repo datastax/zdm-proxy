@@ -31,11 +31,19 @@ func (recv *GenericStatementInfo) String() string {
 }
 
 type PreparedStatementInfo struct {
-	baseStatementInfo      StatementInfo
+	baseStatementInfo         StatementInfo
+	replacedTerms             []*term
+	containsPositionalMarkers bool
 }
 
-func NewPreparedStatementInfo(baseStmtInfo StatementInfo) *PreparedStatementInfo {
-	return &PreparedStatementInfo{baseStatementInfo: baseStmtInfo}
+func NewPreparedStatementInfo(
+	baseStmtInfo StatementInfo,
+	replacedTerms []*term,
+	containsPositionalMarkers bool) *PreparedStatementInfo {
+	return &PreparedStatementInfo{
+		baseStatementInfo:         baseStmtInfo,
+		replacedTerms:             replacedTerms,
+		containsPositionalMarkers: containsPositionalMarkers}
 }
 
 func (recv *PreparedStatementInfo) String() string {
@@ -48,6 +56,14 @@ func (recv *PreparedStatementInfo) GetForwardDecision() forwardDecision {
 
 func (recv *PreparedStatementInfo) GetBaseStatementInfo() StatementInfo {
 	return recv.baseStatementInfo
+}
+
+func (recv *PreparedStatementInfo) GetReplacedTerms() []*term {
+	return recv.replacedTerms
+}
+
+func (recv *PreparedStatementInfo) ContainsPositionalMarkers() bool {
+	return recv.containsPositionalMarkers
 }
 
 type BoundStatementInfo struct {
