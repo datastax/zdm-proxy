@@ -1,4 +1,4 @@
-// Code generated from antlr/SimplifiedCql.g4 by ANTLR 4.8. DO NOT EDIT.
+// Code generated from SimplifiedCql.g4 by ANTLR 4.9.3. DO NOT EDIT.
 
 package parser // SimplifiedCql
 
@@ -408,9 +408,6 @@ var parserATN = []uint16{
 	533, 537, 592, 601, 611, 615, 618, 623, 627, 633, 639, 648, 660, 676, 686,
 	695, 700, 707, 712, 724, 731, 747, 768, 777, 793, 802, 808, 833, 838,
 }
-var deserializer = antlr.NewATNDeserializer(nil)
-var deserializedATN = deserializer.DeserializeFromUInt16(parserATN)
-
 var literalNames = []string{
 	"", "'('", "')'", "','", "'='", "'+'", "'-'", "'+='", "'-='", "'['", "']'",
 	"'.'", "'*'", "'<'", "'<='", "'>'", "'>='", "'!='", "'{'", "'}'", "':'",
@@ -454,21 +451,25 @@ var ruleNames = []string{
 	"keyspaceName", "qualifiedIdentifier", "identifiers", "identifier", "unreservedKeyword",
 	"unrecognizedStatement", "unrecognizedToken",
 }
-var decisionToDFA = make([]*antlr.DFA, len(deserializedATN.DecisionToState))
-
-func init() {
-	for index, ds := range deserializedATN.DecisionToState {
-		decisionToDFA[index] = antlr.NewDFA(ds, index)
-	}
-}
 
 type SimplifiedCqlParser struct {
 	*antlr.BaseParser
 }
 
+// NewSimplifiedCqlParser produces a new parser instance for the optional input antlr.TokenStream.
+//
+// The *SimplifiedCqlParser instance produced may be reused by calling the SetInputStream method.
+// The initial parser configuration is expensive to construct, and the object is not thread-safe;
+// however, if used within a Golang sync.Pool, the construction cost amortizes well and the
+// objects can be used in a thread-safe manner.
 func NewSimplifiedCqlParser(input antlr.TokenStream) *SimplifiedCqlParser {
 	this := new(SimplifiedCqlParser)
-
+	deserializer := antlr.NewATNDeserializer(nil)
+	deserializedATN := deserializer.DeserializeFromUInt16(parserATN)
+	decisionToDFA := make([]*antlr.DFA, len(deserializedATN.DecisionToState))
+	for index, ds := range deserializedATN.DecisionToState {
+		decisionToDFA[index] = antlr.NewDFA(ds, index)
+	}
 	this.BaseParser = antlr.NewBaseParser(input)
 
 	this.Interpreter = antlr.NewParserATNSimulator(this, deserializedATN, decisionToDFA, antlr.NewPredictionContextCache())
@@ -796,6 +797,9 @@ func (s *CqlStatementContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) CqlStatement() (localctx ICqlStatementContext) {
+	this := p
+	_ = this
+
 	localctx = NewCqlStatementContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 0, SimplifiedCqlParserRULE_cqlStatement)
 	var _la int
@@ -1073,6 +1077,9 @@ func (s *InsertStatementContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) InsertStatement() (localctx IInsertStatementContext) {
+	this := p
+	_ = this
+
 	localctx = NewInsertStatementContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 2, SimplifiedCqlParserRULE_insertStatement)
 	var _la int
@@ -1293,6 +1300,9 @@ func (s *UpdateStatementContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) UpdateStatement() (localctx IUpdateStatementContext) {
+	this := p
+	_ = this
+
 	localctx = NewUpdateStatementContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 4, SimplifiedCqlParserRULE_updateStatement)
 	var _la int
@@ -1458,6 +1468,9 @@ func (s *UpdateOperationsContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) UpdateOperations() (localctx IUpdateOperationsContext) {
+	this := p
+	_ = this
+
 	localctx = NewUpdateOperationsContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 6, SimplifiedCqlParserRULE_updateOperations)
 	var _la int
@@ -1610,6 +1623,9 @@ func (s *UpdateOperationContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) UpdateOperation() (localctx IUpdateOperationContext) {
+	this := p
+	_ = this
+
 	localctx = NewUpdateOperationContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 8, SimplifiedCqlParserRULE_updateOperation)
 	var _la int
@@ -1899,6 +1915,9 @@ func (s *DeleteStatementContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) DeleteStatement() (localctx IDeleteStatementContext) {
+	this := p
+	_ = this
+
 	localctx = NewDeleteStatementContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 10, SimplifiedCqlParserRULE_deleteStatement)
 	var _la int
@@ -2075,6 +2094,9 @@ func (s *DeleteOperationsContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) DeleteOperations() (localctx IDeleteOperationsContext) {
+	this := p
+	_ = this
+
 	localctx = NewDeleteOperationsContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 12, SimplifiedCqlParserRULE_deleteOperations)
 	var _la int
@@ -2214,6 +2236,9 @@ func (s *DeleteOperationContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) DeleteOperation() (localctx IDeleteOperationContext) {
+	this := p
+	_ = this
+
 	localctx = NewDeleteOperationContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 14, SimplifiedCqlParserRULE_deleteOperation)
 
@@ -2406,6 +2431,9 @@ func (s *BatchStatementContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) BatchStatement() (localctx IBatchStatementContext) {
+	this := p
+	_ = this
+
 	localctx = NewBatchStatementContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 16, SimplifiedCqlParserRULE_batchStatement)
 	var _la int
@@ -2590,6 +2618,9 @@ func (s *BatchChildStatementContext) ExitRule(listener antlr.ParseTreeListener) 
 }
 
 func (p *SimplifiedCqlParser) BatchChildStatement() (localctx IBatchChildStatementContext) {
+	this := p
+	_ = this
+
 	localctx = NewBatchChildStatementContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 18, SimplifiedCqlParserRULE_batchChildStatement)
 
@@ -2794,6 +2825,9 @@ func (s *SelectStatementContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) SelectStatement() (localctx ISelectStatementContext) {
+	this := p
+	_ = this
+
 	localctx = NewSelectStatementContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 20, SimplifiedCqlParserRULE_selectStatement)
 	var _la int
@@ -2994,6 +3028,9 @@ func (s *SelectClauseContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) SelectClause() (localctx ISelectClauseContext) {
+	this := p
+	_ = this
+
 	localctx = NewSelectClauseContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 22, SimplifiedCqlParserRULE_selectClause)
 
@@ -3120,6 +3157,9 @@ func (s *SelectorsContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) Selectors() (localctx ISelectorsContext) {
+	this := p
+	_ = this
+
 	localctx = NewSelectorsContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 24, SimplifiedCqlParserRULE_selectors)
 	var _la int
@@ -3250,6 +3290,9 @@ func (s *SelectorContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) Selector() (localctx ISelectorContext) {
+	this := p
+	_ = this
+
 	localctx = NewSelectorContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 26, SimplifiedCqlParserRULE_selector)
 	var _la int
@@ -3405,6 +3448,9 @@ func (s *UnaliasedSelectorContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) UnaliasedSelector() (localctx IUnaliasedSelectorContext) {
+	this := p
+	_ = this
+
 	localctx = NewUnaliasedSelectorContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 28, SimplifiedCqlParserRULE_unaliasedSelector)
 
@@ -3565,6 +3611,9 @@ func (s *UseStatementContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) UseStatement() (localctx IUseStatementContext) {
+	this := p
+	_ = this
+
 	localctx = NewUseStatementContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 30, SimplifiedCqlParserRULE_useStatement)
 
@@ -3674,6 +3723,9 @@ func (s *OrderByClauseContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) OrderByClause() (localctx IOrderByClauseContext) {
+	this := p
+	_ = this
+
 	localctx = NewOrderByClauseContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 32, SimplifiedCqlParserRULE_orderByClause)
 
@@ -3792,6 +3844,9 @@ func (s *OrderingsContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) Orderings() (localctx IOrderingsContext) {
+	this := p
+	_ = this
+
 	localctx = NewOrderingsContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 34, SimplifiedCqlParserRULE_orderings)
 	var _la int
@@ -3916,6 +3971,9 @@ func (s *OrderingContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) Ordering() (localctx IOrderingContext) {
+	this := p
+	_ = this
+
 	localctx = NewOrderingContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 36, SimplifiedCqlParserRULE_ordering)
 	var _la int
@@ -4040,6 +4098,9 @@ func (s *GroupByClauseContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) GroupByClause() (localctx IGroupByClauseContext) {
+	this := p
+	_ = this
+
 	localctx = NewGroupByClauseContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 38, SimplifiedCqlParserRULE_groupByClause)
 
@@ -4161,6 +4222,9 @@ func (s *PerPartitionLimitClauseContext) ExitRule(listener antlr.ParseTreeListen
 }
 
 func (p *SimplifiedCqlParser) PerPartitionLimitClause() (localctx IPerPartitionLimitClauseContext) {
+	this := p
+	_ = this
+
 	localctx = NewPerPartitionLimitClauseContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 40, SimplifiedCqlParserRULE_perPartitionLimitClause)
 
@@ -4293,6 +4357,9 @@ func (s *LimitClauseContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) LimitClause() (localctx ILimitClauseContext) {
+	this := p
+	_ = this
+
 	localctx = NewLimitClauseContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 42, SimplifiedCqlParserRULE_limitClause)
 
@@ -4427,6 +4494,9 @@ func (s *UsingClauseContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) UsingClause() (localctx IUsingClauseContext) {
+	this := p
+	_ = this
+
 	localctx = NewUsingClauseContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 44, SimplifiedCqlParserRULE_usingClause)
 
@@ -4591,6 +4661,9 @@ func (s *TimestampContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) Timestamp() (localctx ITimestampContext) {
+	this := p
+	_ = this
+
 	localctx = NewTimestampContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 46, SimplifiedCqlParserRULE_timestamp)
 
@@ -4715,6 +4788,9 @@ func (s *TtlContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) Ttl() (localctx ITtlContext) {
+	this := p
+	_ = this
+
 	localctx = NewTtlContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 48, SimplifiedCqlParserRULE_ttl)
 
@@ -4852,6 +4928,9 @@ func (s *ConditionsContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) Conditions() (localctx IConditionsContext) {
+	this := p
+	_ = this
+
 	localctx = NewConditionsContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 50, SimplifiedCqlParserRULE_conditions)
 	var _la int
@@ -5038,6 +5117,9 @@ func (s *ConditionContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) Condition() (localctx IConditionContext) {
+	this := p
+	_ = this
+
 	localctx = NewConditionContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 52, SimplifiedCqlParserRULE_condition)
 	var _la int
@@ -5380,6 +5462,9 @@ func (s *WhereClauseContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) WhereClause() (localctx IWhereClauseContext) {
+	this := p
+	_ = this
+
 	localctx = NewWhereClauseContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 54, SimplifiedCqlParserRULE_whereClause)
 	var _la int
@@ -5635,6 +5720,9 @@ func (s *RelationContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) Relation() (localctx IRelationContext) {
+	this := p
+	_ = this
+
 	localctx = NewRelationContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 56, SimplifiedCqlParserRULE_relation)
 	var _la int
@@ -6098,6 +6186,9 @@ func (s *OperatorContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) Operator() (localctx IOperatorContext) {
+	this := p
+	_ = this
+
 	localctx = NewOperatorContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 58, SimplifiedCqlParserRULE_operator)
 	var _la int
@@ -6237,6 +6328,9 @@ func (s *LiteralContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) Literal() (localctx ILiteralContext) {
+	this := p
+	_ = this
+
 	localctx = NewLiteralContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 60, SimplifiedCqlParserRULE_literal)
 
@@ -6394,6 +6488,9 @@ func (s *PrimitiveLiteralContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) PrimitiveLiteral() (localctx IPrimitiveLiteralContext) {
+	this := p
+	_ = this
+
 	localctx = NewPrimitiveLiteralContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 62, SimplifiedCqlParserRULE_primitiveLiteral)
 	var _la int
@@ -6596,6 +6693,9 @@ func (s *CollectionLiteralContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) CollectionLiteral() (localctx ICollectionLiteralContext) {
+	this := p
+	_ = this
+
 	localctx = NewCollectionLiteralContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 64, SimplifiedCqlParserRULE_collectionLiteral)
 
@@ -6713,6 +6813,9 @@ func (s *ListLiteralContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) ListLiteral() (localctx IListLiteralContext) {
+	this := p
+	_ = this
+
 	localctx = NewListLiteralContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 66, SimplifiedCqlParserRULE_listLiteral)
 	var _la int
@@ -6826,6 +6929,9 @@ func (s *SetLiteralContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) SetLiteral() (localctx ISetLiteralContext) {
+	this := p
+	_ = this
+
 	localctx = NewSetLiteralContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 68, SimplifiedCqlParserRULE_setLiteral)
 	var _la int
@@ -6939,6 +7045,9 @@ func (s *MapLiteralContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) MapLiteral() (localctx IMapLiteralContext) {
+	this := p
+	_ = this
+
 	localctx = NewMapLiteralContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 70, SimplifiedCqlParserRULE_mapLiteral)
 	var _la int
@@ -7065,6 +7174,9 @@ func (s *MapEntriesContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) MapEntries() (localctx IMapEntriesContext) {
+	this := p
+	_ = this
+
 	localctx = NewMapEntriesContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 72, SimplifiedCqlParserRULE_mapEntries)
 	var _la int
@@ -7194,6 +7306,9 @@ func (s *MapEntryContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) MapEntry() (localctx IMapEntryContext) {
+	this := p
+	_ = this
+
 	localctx = NewMapEntryContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 74, SimplifiedCqlParserRULE_mapEntry)
 
@@ -7312,6 +7427,9 @@ func (s *TupleLiteralsContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) TupleLiterals() (localctx ITupleLiteralsContext) {
+	this := p
+	_ = this
+
 	localctx = NewTupleLiteralsContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 76, SimplifiedCqlParserRULE_tupleLiterals)
 	var _la int
@@ -7428,6 +7546,9 @@ func (s *TupleLiteralContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) TupleLiteral() (localctx ITupleLiteralContext) {
+	this := p
+	_ = this
+
 	localctx = NewTupleLiteralContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 78, SimplifiedCqlParserRULE_tupleLiteral)
 
@@ -7533,6 +7654,9 @@ func (s *UdtLiteralContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) UdtLiteral() (localctx IUdtLiteralContext) {
+	this := p
+	_ = this
+
 	localctx = NewUdtLiteralContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 80, SimplifiedCqlParserRULE_udtLiteral)
 
@@ -7651,6 +7775,9 @@ func (s *FieldLiteralsContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) FieldLiterals() (localctx IFieldLiteralsContext) {
+	this := p
+	_ = this
+
 	localctx = NewFieldLiteralsContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 82, SimplifiedCqlParserRULE_fieldLiterals)
 	var _la int
@@ -7777,6 +7904,9 @@ func (s *FieldLiteralContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) FieldLiteral() (localctx IFieldLiteralContext) {
+	this := p
+	_ = this
+
 	localctx = NewFieldLiteralContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 84, SimplifiedCqlParserRULE_fieldLiteral)
 
@@ -7892,6 +8022,9 @@ func (s *FunctionCallContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) FunctionCall() (localctx IFunctionCallContext) {
+	this := p
+	_ = this
+
 	localctx = NewFunctionCallContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 86, SimplifiedCqlParserRULE_functionCall)
 	var _la int
@@ -8022,6 +8155,9 @@ func (s *FunctionArgsContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) FunctionArgs() (localctx IFunctionArgsContext) {
+	this := p
+	_ = this
+
 	localctx = NewFunctionArgsContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 88, SimplifiedCqlParserRULE_functionArgs)
 	var _la int
@@ -8148,6 +8284,9 @@ func (s *FunctionArgContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) FunctionArg() (localctx IFunctionArgContext) {
+	this := p
+	_ = this
+
 	localctx = NewFunctionArgContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 90, SimplifiedCqlParserRULE_functionArg)
 
@@ -8271,6 +8410,9 @@ func (s *BindMarkersContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) BindMarkers() (localctx IBindMarkersContext) {
+	this := p
+	_ = this
+
 	localctx = NewBindMarkersContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 92, SimplifiedCqlParserRULE_bindMarkers)
 	var _la int
@@ -8397,6 +8539,9 @@ func (s *BindMarkerContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) BindMarker() (localctx IBindMarkerContext) {
+	this := p
+	_ = this
+
 	localctx = NewBindMarkerContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 94, SimplifiedCqlParserRULE_bindMarker)
 
@@ -8504,6 +8649,9 @@ func (s *PositionalBindMarkerContext) ExitRule(listener antlr.ParseTreeListener)
 }
 
 func (p *SimplifiedCqlParser) PositionalBindMarker() (localctx IPositionalBindMarkerContext) {
+	this := p
+	_ = this
+
 	localctx = NewPositionalBindMarkerContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 96, SimplifiedCqlParserRULE_positionalBindMarker)
 
@@ -8601,6 +8749,9 @@ func (s *NamedBindMarkerContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) NamedBindMarker() (localctx INamedBindMarkerContext) {
+	this := p
+	_ = this
+
 	localctx = NewNamedBindMarkerContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 98, SimplifiedCqlParserRULE_namedBindMarker)
 
@@ -8715,6 +8866,9 @@ func (s *TermsContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) Terms() (localctx ITermsContext) {
+	this := p
+	_ = this
+
 	localctx = NewTermsContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 100, SimplifiedCqlParserRULE_terms)
 	var _la int
@@ -8861,6 +9015,9 @@ func (s *TermContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) Term() (localctx ITermContext) {
+	this := p
+	_ = this
+
 	localctx = NewTermContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 102, SimplifiedCqlParserRULE_term)
 
@@ -8995,6 +9152,9 @@ func (s *TypeCastContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) TypeCast() (localctx ITypeCastContext) {
+	this := p
+	_ = this
+
 	localctx = NewTypeCastContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 104, SimplifiedCqlParserRULE_typeCast)
 
@@ -9148,6 +9308,9 @@ func (s *CqlTypeContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) CqlType() (localctx ICqlTypeContext) {
+	this := p
+	_ = this
+
 	localctx = NewCqlTypeContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 106, SimplifiedCqlParserRULE_cqlType)
 
@@ -9365,6 +9528,9 @@ func (s *PrimitiveTypeContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) PrimitiveType() (localctx IPrimitiveTypeContext) {
+	this := p
+	_ = this
+
 	localctx = NewPrimitiveTypeContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 108, SimplifiedCqlParserRULE_primitiveType)
 	var _la int
@@ -9495,6 +9661,9 @@ func (s *CollectionTypeContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) CollectionType() (localctx ICollectionTypeContext) {
+	this := p
+	_ = this
+
 	localctx = NewCollectionTypeContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 110, SimplifiedCqlParserRULE_collectionType)
 
@@ -9676,6 +9845,9 @@ func (s *TupleTypeContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) TupleType() (localctx ITupleTypeContext) {
+	this := p
+	_ = this
+
 	localctx = NewTupleTypeContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 112, SimplifiedCqlParserRULE_tupleType)
 	var _la int
@@ -9804,6 +9976,9 @@ func (s *TableNameContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) TableName() (localctx ITableNameContext) {
+	this := p
+	_ = this
+
 	localctx = NewTableNameContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 114, SimplifiedCqlParserRULE_tableName)
 
@@ -9901,6 +10076,9 @@ func (s *FunctionNameContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) FunctionName() (localctx IFunctionNameContext) {
+	this := p
+	_ = this
+
 	localctx = NewFunctionNameContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 116, SimplifiedCqlParserRULE_functionName)
 
@@ -9998,6 +10176,9 @@ func (s *UserTypeNameContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) UserTypeName() (localctx IUserTypeNameContext) {
+	this := p
+	_ = this
+
 	localctx = NewUserTypeNameContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 118, SimplifiedCqlParserRULE_userTypeName)
 
@@ -10095,6 +10276,9 @@ func (s *KeyspaceNameContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) KeyspaceName() (localctx IKeyspaceNameContext) {
+	this := p
+	_ = this
+
 	localctx = NewKeyspaceNameContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 120, SimplifiedCqlParserRULE_keyspaceName)
 
@@ -10202,6 +10386,9 @@ func (s *QualifiedIdentifierContext) ExitRule(listener antlr.ParseTreeListener) 
 }
 
 func (p *SimplifiedCqlParser) QualifiedIdentifier() (localctx IQualifiedIdentifierContext) {
+	this := p
+	_ = this
+
 	localctx = NewQualifiedIdentifierContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 122, SimplifiedCqlParserRULE_qualifiedIdentifier)
 
@@ -10326,6 +10513,9 @@ func (s *IdentifiersContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) Identifiers() (localctx IIdentifiersContext) {
+	this := p
+	_ = this
+
 	localctx = NewIdentifiersContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 124, SimplifiedCqlParserRULE_identifiers)
 	var _la int
@@ -10450,6 +10640,9 @@ func (s *IdentifierContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) Identifier() (localctx IIdentifierContext) {
+	this := p
+	_ = this
+
 	localctx = NewIdentifierContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 126, SimplifiedCqlParserRULE_identifier)
 
@@ -10658,6 +10851,9 @@ func (s *UnreservedKeywordContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) UnreservedKeyword() (localctx IUnreservedKeywordContext) {
+	this := p
+	_ = this
+
 	localctx = NewUnreservedKeywordContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 128, SimplifiedCqlParserRULE_unreservedKeyword)
 
@@ -10931,6 +11127,9 @@ func (s *UnrecognizedStatementContext) ExitRule(listener antlr.ParseTreeListener
 }
 
 func (p *SimplifiedCqlParser) UnrecognizedStatement() (localctx IUnrecognizedStatementContext) {
+	this := p
+	_ = this
+
 	localctx = NewUnrecognizedStatementContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 130, SimplifiedCqlParserRULE_unrecognizedStatement)
 
@@ -11031,6 +11230,9 @@ func (s *UnrecognizedTokenContext) ExitRule(listener antlr.ParseTreeListener) {
 }
 
 func (p *SimplifiedCqlParser) UnrecognizedToken() (localctx IUnrecognizedTokenContext) {
+	this := p
+	_ = this
+
 	localctx = NewUnrecognizedTokenContext(p, p.GetParserRuleContext(), p.GetState())
 	p.EnterRule(localctx, 132, SimplifiedCqlParserRULE_unrecognizedToken)
 

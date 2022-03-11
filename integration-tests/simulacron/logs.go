@@ -42,6 +42,18 @@ type FrameLogEntry struct {
 	Message         json.RawMessage           `json:"message"`
 }
 
+type BatchMessage struct {
+	Type              string           `json:"type"`
+	Opcode            primitive.OpCode `json:"opcode"`
+	IsResponse        bool             `json:"is_response"`
+	QueriesOrIds      []string         `json:"queries_or_ids"`
+	Values            [][]string       `json:"values"`
+	Consistency       string           `json:"consistency"`
+	SerialConsistency string           `json:"serial_consistency"`
+	DefaultTimestamp  int64            `json:"default_timestamp"`
+	Keyspace          string           `json:"keyspace"`
+}
+
 type ExecuteMessage struct {
 	Type             string           `json:"type"`
 	Opcode           primitive.OpCode `json:"opcode"`

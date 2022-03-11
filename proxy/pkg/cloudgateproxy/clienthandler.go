@@ -1084,9 +1084,7 @@ func (ch *ClientHandler) handleRequest(f *frame.RawFrame) {
 func (ch *ClientHandler) forwardRequest(request *frame.RawFrame, customResponseChannel chan *customResponse) error {
 	overallRequestStartTime := time.Now()
 	context := NewFrameDecodeContext(request)
-	var err error
-	var replacedTerms []*term
-	context, replacedTerms, err = ch.queryModifier.replaceQueryString(context)
+	context, replacedTerms, err := ch.queryModifier.replaceQueryString(context)
 	if err != nil {
 		return err
 	}
@@ -1244,21 +1242,52 @@ func (ch *ClientHandler) executeStatement(
 			return fmt.Errorf("could not decode batch raw frame: %w", err)
 		}
 
-		decodedFrame = decodedFrame.Clone()
+		var newOriginRequest *frame.Frame
+		var newOriginBatchMsg *message.Batch
 
-		batchMsg, ok := decodedFrame.Body.Message.(*message.Batch)
+		newTargetRequest := decodedFrame.Clone()
+		newTargetBatchMsg, ok := newTargetRequest.Body.Message.(*message.Batch)
 		if !ok {
-			return fmt.Errorf("expected Batch but got %v instead", decodedFrame.Body.Message.GetOpCode())
+			return fmt.Errorf("expected Batch but got %v instead", newTargetRequest.Body.Message.GetOpCode())
 		}
 
 		for stmtIdx, preparedData := range castedStmtInfo.GetPreparedDataByStmtIdx() {
-			originalQueryId := batchMsg.Children[stmtIdx].QueryOrId.([]byte)
-			batchMsg.Children[stmtIdx].QueryOrId = preparedData.GetTargetPreparedId()
+			preparedStmtInfo := preparedData.GetPreparedStatementInfo()
+			if len(preparedStmtInfo.GetReplacedTerms()) > 0 {
+				if newOriginRequest == nil {
+					newOriginRequest = decodedFrame.Clone()
+					newOriginBatchMsg, ok = newOriginRequest.Body.Message.(*message.Batch)
+					if !ok {
+						return fmt.Errorf("expected Batch but got %v instead", newOriginRequest.Body.Message.GetOpCode())
+					}
+				}
+				err = ch.parameterModifier.addValuesToBatchChild(decodedFrame.Header.Version, newTargetBatchMsg.Children[stmtIdx],
+					preparedData.GetPreparedStatementInfo(), preparedData.GetTargetVariablesMetadata())
+				if err == nil && newOriginBatchMsg != nil {
+					err = ch.parameterModifier.addValuesToBatchChild(decodedFrame.Header.Version, newOriginBatchMsg.Children[stmtIdx],
+						preparedData.GetPreparedStatementInfo(), preparedData.GetOriginVariablesMetadata())
+				}
+				if err != nil {
+					return fmt.Errorf("could not add values to batch child statement: %w", err)
+				}
+			}
+
+			originalQueryId := newTargetBatchMsg.Children[stmtIdx].QueryOrId.([]byte)
+			newTargetBatchMsg.Children[stmtIdx].QueryOrId = preparedData.GetTargetPreparedId()
 			log.Tracef("Replacing prepared ID %s within a BATCH with %s for target cluster.",
 				hex.EncodeToString(originalQueryId), hex.EncodeToString(preparedData.GetTargetPreparedId()))
 		}
 
-		targetBatchRequest, err := defaultCodec.ConvertToRawFrame(decodedFrame)
+		if newOriginRequest != nil {
+			originBatchRequest, err := defaultCodec.ConvertToRawFrame(newOriginRequest)
+			if err != nil {
+				return fmt.Errorf("could not convert origin BATCH response to raw frame: %w", err)
+			}
+
+			originRequest = originBatchRequest
+		}
+
+		targetBatchRequest, err := defaultCodec.ConvertToRawFrame(newTargetRequest)
 		if err != nil {
 			return fmt.Errorf("could not convert target BATCH response to raw frame: %w", err)
 		}

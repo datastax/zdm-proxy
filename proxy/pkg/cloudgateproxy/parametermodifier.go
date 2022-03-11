@@ -54,11 +54,11 @@ func (recv *ParameterModifier) addValuesToExecuteMessage(
 
 	var err error
 	if len(executeMsg.Options.NamedValues) == 0 {
-		if preparedStmtInfo.ContainsPositionalMarkers() {
-			err = recv.addPositionalValuesForReplacedPositionalMarkers(
-				version, executeMsg, preparedStmtInfo.GetReplacedTerms(), variablesMetadata)
-		} else {
-			err = recv.addPositionalValuesForReplacedNamedMarkers(version, executeMsg, variablesMetadata)
+		var newPositionalValues []*primitive.Value
+		newPositionalValues, err = recv.computeReplacedPositionalValues(
+			version, executeMsg.Options.PositionalValues, preparedStmtInfo, variablesMetadata)
+		if err == nil {
+			executeMsg.Options.PositionalValues = newPositionalValues
 		}
 	} else {
 		err = recv.addNamedValuesForReplacedNamedMarkers(version, executeMsg, variablesMetadata)
@@ -67,37 +67,63 @@ func (recv *ParameterModifier) addValuesToExecuteMessage(
 	return err
 }
 
+func (recv *ParameterModifier) addValuesToBatchChild(
+	version primitive.ProtocolVersion, batchChild *message.BatchChild,
+	preparedStmtInfo *PreparedStatementInfo, variablesMetadata *message.VariablesMetadata) error {
+
+	newPositionalValues, err := recv.computeReplacedPositionalValues(
+		version, batchChild.Values, preparedStmtInfo, variablesMetadata)
+	if err == nil {
+		batchChild.Values = newPositionalValues
+	}
+
+	return err
+}
+
+func (recv *ParameterModifier) computeReplacedPositionalValues(
+	version primitive.ProtocolVersion, originalPositionalValues []*primitive.Value,
+	preparedStmtInfo *PreparedStatementInfo, variablesMetadata *message.VariablesMetadata) ([]*primitive.Value, error) {
+	if preparedStmtInfo.ContainsPositionalMarkers() {
+		return recv.addPositionalValuesForReplacedPositionalMarkers(
+			version, originalPositionalValues, preparedStmtInfo.GetReplacedTerms(), variablesMetadata)
+	} else {
+		return recv.addPositionalValuesForReplacedNamedMarkers(version, originalPositionalValues, variablesMetadata)
+	}
+}
+
 func (recv *ParameterModifier) addPositionalValuesForReplacedPositionalMarkers(version primitive.ProtocolVersion,
-	executeMsg *message.Execute, replacedTerms []*term, variablesMetadata *message.VariablesMetadata) error {
-	newPositionalValues := make([]*primitive.Value, 0, len(executeMsg.Options.PositionalValues)+len(replacedTerms))
+	originalPositionalValues []*primitive.Value, replacedTerms []*term, variablesMetadata *message.VariablesMetadata) ([]*primitive.Value, error) {
+	newPositionalValues := make([]*primitive.Value, 0, len(originalPositionalValues) + len(replacedTerms))
 	start := 0
 	offset := 0
 	var generatedTimeUuidValue *primitive.Value
 	var err error
 	for _, currentTerm := range replacedTerms {
 		newValueIdx := offset + currentTerm.previousPositionalIndex + 1
-		if currentTerm.previousPositionalIndex >= len(executeMsg.Options.PositionalValues) {
-			return fmt.Errorf("invalid number of positional values in execute %v", executeMsg)
+		if currentTerm.previousPositionalIndex >= len(originalPositionalValues) {
+			return nil, fmt.Errorf("current term has previous positional index %v but " +
+				"number of positional values in the request is %v",
+				currentTerm.previousPositionalIndex, len(originalPositionalValues))
 		}
 
 		if currentTerm.previousPositionalIndex >= 0 {
 			end := currentTerm.previousPositionalIndex + 1
 			newPositionalValues = append(
 				newPositionalValues,
-				executeMsg.Options.PositionalValues[start:end]...)
+				originalPositionalValues[start:end]...)
 			start = end
 		}
 
 		if currentTerm.isFunctionCall() && currentTerm.functionCall.isNow() {
 			if newValueIdx >= len(variablesMetadata.Columns) {
-				return fmt.Errorf("could not insert positional value because columns metadata has unexpected length; "+
-					"execute: %v variablesmetadata: %v", executeMsg, variablesMetadata)
+				return nil, fmt.Errorf("could not insert positional value (%v) because columns metadata " +
+					"has unexpected length; variablesmetadata: %v", newValueIdx, variablesMetadata)
 			}
 
 			if generatedTimeUuidValue == nil {
 				generatedTimeUuidValue, err = recv.generateTimeUuidValue(version, variablesMetadata.Columns[newValueIdx].Type)
 				if err != nil {
-					return fmt.Errorf("could not generate new timeuuid value: %w", err)
+					return nil, fmt.Errorf("could not generate new timeuuid value: %w", err)
 				}
 			}
 
@@ -106,20 +132,18 @@ func (recv *ParameterModifier) addPositionalValuesForReplacedPositionalMarkers(v
 		}
 	}
 
-	if start < len(executeMsg.Options.PositionalValues) {
+	if start < len(originalPositionalValues) {
 		newPositionalValues = append(
 			newPositionalValues,
-			executeMsg.Options.PositionalValues[start:]...)
+			originalPositionalValues[start:]...)
 	}
-	executeMsg.Options.PositionalValues = newPositionalValues
-
-	return nil
+	return newPositionalValues, nil
 }
 
 func (recv *ParameterModifier) addPositionalValuesForReplacedNamedMarkers(version primitive.ProtocolVersion,
-	executeMsg *message.Execute, variablesMetadata *message.VariablesMetadata) error {
+	originalPositionalValues []*primitive.Value, variablesMetadata *message.VariablesMetadata) ([]*primitive.Value, error) {
 	colLength := len(variablesMetadata.Columns)
-	originalPositionalValuesLength := len(executeMsg.Options.PositionalValues)
+	originalPositionalValuesLength := len(originalPositionalValues)
 	newPositionalValues := make([]*primitive.Value, 0, colLength)
 
 	var generatedTimeUuidValue *primitive.Value
@@ -133,7 +157,7 @@ func (recv *ParameterModifier) addPositionalValuesForReplacedNamedMarkers(versio
 				if generatedTimeUuidValue == nil {
 					generatedTimeUuidValue, err = recv.generateTimeUuidValue(version, col.Type)
 					if err != nil {
-						return fmt.Errorf("could not generate new timeuuid value: %w", err)
+						return nil, fmt.Errorf("could not generate new timeuuid value: %w", err)
 					}
 				}
 				newPositionalValues = append(newPositionalValues, generatedTimeUuidValue)
@@ -144,15 +168,14 @@ func (recv *ParameterModifier) addPositionalValuesForReplacedNamedMarkers(versio
 
 		if !replaced {
 			if currentIdx >= originalPositionalValuesLength {
-				return fmt.Errorf("invalid index (%v) while copying positional values: %v", currentIdx, originalPositionalValuesLength)
+				return nil, fmt.Errorf("invalid index (%v) while copying positional values: %v", currentIdx, originalPositionalValuesLength)
 			}
-			newPositionalValues = append(newPositionalValues, executeMsg.Options.PositionalValues[currentIdx])
+			newPositionalValues = append(newPositionalValues, originalPositionalValues[currentIdx])
 			currentIdx++
 		}
 	}
 
-	executeMsg.Options.PositionalValues = newPositionalValues
-	return nil
+	return newPositionalValues, nil
 }
 
 func (recv *ParameterModifier) addNamedValuesForReplacedNamedMarkers(version primitive.ProtocolVersion,
