@@ -1,5 +1,7 @@
 name: Build and publish commit release
 
+on: workflow_dispatch
+
 jobs:
   build_and_publish:
     name: Build and publish docker image
