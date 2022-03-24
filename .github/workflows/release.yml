@@ -1,6 +1,7 @@
 name: Build and publish releases
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - master
@@ -30,7 +31,7 @@ jobs:
           images: |
             datastax/cloudgate-proxy
           flavor: |
-            latest=false
+            latest=auto
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}}
