@@ -5,12 +5,7 @@ import (
 	"testing"
 )
 
-type envVar struct {
-	vName  string
-	vValue string
-}
-
-type test struct {
+type tlsTest struct {
 	name               string
 	envVars            []envVar
 	needsContactPoints bool
@@ -25,7 +20,7 @@ type test struct {
 
 func TestOriginConfig_ClusterTlsConfig(t *testing.T) {
 
-	tests := []test{
+	tests := []tlsTest{
 		{name: "No TLS at all",
 			envVars:            []envVar{{}},
 			needsContactPoints: true,
@@ -223,7 +218,7 @@ func TestOriginConfig_ClusterTlsConfig(t *testing.T) {
 
 func TestTargetConfig_ClusterTlsConfig(t *testing.T) {
 
-	tests := []test{
+	tests := []tlsTest{
 		{name: "No TLS at all",
 			envVars:            []envVar{{}},
 			needsContactPoints: true,

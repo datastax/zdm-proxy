@@ -4,22 +4,28 @@ import "github.com/datastax/go-cassandra-native-protocol/frame"
 
 type Response struct {
 	responseFrame *frame.RawFrame
-	cluster       ClusterType
+	connectorType ClusterConnectorType
 	requestFrame  *frame.RawFrame
 }
 
-func NewResponse(f *frame.RawFrame, cluster ClusterType) *Response {
+func NewResponse(f *frame.RawFrame, connectorType ClusterConnectorType) *Response {
 	return &Response{
 		responseFrame: f,
-		cluster:       cluster,
+		connectorType: connectorType,
 		requestFrame:  nil,
 	}
 }
 
-func NewTimeoutResponse(requestFrame *frame.RawFrame) *Response {
+func NewTimeoutResponse(requestFrame *frame.RawFrame, async bool) *Response {
+	var connectorType ClusterConnectorType
+	if async {
+		connectorType = ClusterConnectorTypeAsync
+	} else {
+		connectorType = ClusterConnectorTypeNone
+	}
 	return &Response{
 		responseFrame: nil,
-		cluster:       "",
+		connectorType: connectorType,
 		requestFrame:  requestFrame,
 	}
 }

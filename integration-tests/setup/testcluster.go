@@ -435,8 +435,14 @@ func NewTestConfig(originHost string, targetHost string) *config.Config {
 
 	conf.EventQueueSizeFrames = 12
 
+	conf.AsyncConnectorWriteQueueSizeFrames = 2048
+	conf.AsyncConnectorWriteBufferSizeBytes = 4096
+
 	conf.ForwardReadsToTarget = false
 	conf.ForwardSystemQueriesToTarget = false
+	conf.DualReadsEnabled = false
+	conf.AsyncReadsOnSecondary = false
+	conf.AsyncHandshakeTimeoutMs = 4000
 
 	conf.RequestTimeoutMs = 10000
 

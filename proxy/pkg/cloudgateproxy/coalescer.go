@@ -20,8 +20,8 @@ type writeCoalescer struct {
 	conf             *config.Config
 
 	clientHandlerWaitGroup  *sync.WaitGroup
-	shutdownContext         context.Context
-	clientHandlerCancelFunc context.CancelFunc
+	shutdownContext context.Context
+	cancelFunc      context.CancelFunc
 
 	writeQueue chan *frame.RawFrame
 
@@ -42,28 +42,35 @@ func NewWriteCoalescer(
 	clientHandlerCancelFunc context.CancelFunc,
 	logPrefix string,
 	isRequest bool,
+	isAsync bool,
 	scheduler *Scheduler) *writeCoalescer {
 
 	writeQueueSizeFrames := conf.RequestWriteQueueSizeFrames
 	if !isRequest {
 		writeQueueSizeFrames = conf.ResponseWriteQueueSizeFrames
 	}
+	if isAsync {
+		writeQueueSizeFrames = conf.AsyncConnectorWriteQueueSizeFrames
+	}
 
 	writeBufferSizeBytes := conf.RequestWriteBufferSizeBytes
 	if !isRequest {
 		writeBufferSizeBytes = conf.ResponseWriteBufferSizeBytes
 	}
+	if isAsync {
+		writeBufferSizeBytes = conf.AsyncConnectorWriteBufferSizeBytes
+	}
 	return &writeCoalescer{
-		connection:              conn,
-		conf:                    conf,
-		clientHandlerWaitGroup:  clientHandlerWaitGroup,
-		shutdownContext:         shutdownContext,
-		clientHandlerCancelFunc: clientHandlerCancelFunc,
-		writeQueue:              make(chan *frame.RawFrame, writeQueueSizeFrames),
-		logPrefix:               logPrefix,
-		waitGroup:               &sync.WaitGroup{},
-		writeBufferSizeBytes:    writeBufferSizeBytes,
-		scheduler:               scheduler,
+		connection:             conn,
+		conf:                   conf,
+		clientHandlerWaitGroup: clientHandlerWaitGroup,
+		shutdownContext:        shutdownContext,
+		cancelFunc:             clientHandlerCancelFunc,
+		writeQueue:             make(chan *frame.RawFrame, writeQueueSizeFrames),
+		logPrefix:              logPrefix,
+		waitGroup:              &sync.WaitGroup{},
+		writeBufferSizeBytes:   writeBufferSizeBytes,
+		scheduler:              scheduler,
 	}
 }
 
@@ -129,7 +136,7 @@ func (recv *writeCoalescer) RunWriteQueueLoop() {
 					err := writeRawFrame(tempBuffer, connectionAddr, recv.shutdownContext, f)
 					if err != nil {
 						tempDraining = true
-						handleConnectionError(err, recv.shutdownContext, recv.clientHandlerCancelFunc, recv.logPrefix, "writing", connectionAddr)
+						handleConnectionError(err, recv.shutdownContext, recv.cancelFunc, recv.logPrefix, "writing", connectionAddr)
 					} else {
 						if tempBuffer.Len() >= recv.writeBufferSizeBytes {
 							t := &coalescerIterationResult{
@@ -155,7 +162,7 @@ func (recv *writeCoalescer) RunWriteQueueLoop() {
 				_, err := recv.connection.Write(bufferedWriter.Bytes())
 				bufferedWriter.Reset()
 				if err != nil {
-					handleConnectionError(err, recv.shutdownContext, recv.clientHandlerCancelFunc, recv.logPrefix, "writing", connectionAddr)
+					handleConnectionError(err, recv.shutdownContext, recv.cancelFunc, recv.logPrefix, "writing", connectionAddr)
 					draining = true
 				}
 			}
@@ -167,6 +174,18 @@ func (recv *writeCoalescer) Enqueue(frame *frame.RawFrame) {
 	log.Tracef("[%v] Sending %v to write queue on %v", recv.logPrefix, frame.Header, recv.connection.RemoteAddr())
 	recv.writeQueue <- frame
 	log.Tracef("[%v] Sent %v to write queue on %v", recv.logPrefix, frame.Header, recv.connection.RemoteAddr())
+}
+
+func (recv *writeCoalescer) EnqueueAsync(frame *frame.RawFrame) bool {
+	log.Tracef("[%v] Sending %v to write queue on %v", recv.logPrefix, frame.Header, recv.connection.RemoteAddr())
+	select {
+	case recv.writeQueue <- frame:
+		log.Tracef("[%v] Sent %v to write queue on %v", recv.logPrefix, frame.Header, recv.connection.RemoteAddr())
+		return true
+	default:
+		log.Debugf("[%v] Discarded %v because write queue is full on %v", recv.logPrefix, frame.Header, recv.connection.RemoteAddr())
+		return false
+	}
 }
 
 func (recv *writeCoalescer) Close() {

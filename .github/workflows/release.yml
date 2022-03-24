@@ -1,7 +1,17 @@
-name: Build and publish versioned release
+name: Build and publish releases
 
 on:
+  workflow_dispatch:
   push:
+    branches:
+      - master
+    paths:
+      - 'proxy/**'
+      - 'antlr/**'
+      - 'Dockerfile'
+      - 'go.mod'
+      - 'go.sum'
+      - 'LICENSE'
     tags:
       - 'v*.*.*'
       - 'v*.*.*-*'
@@ -20,11 +30,13 @@ jobs:
         with:
           images: |
             datastax/cloudgate-proxy
+          flavor: |
+            latest=auto
           tags: |
+            type=ref,event=branch
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}.x
             type=semver,pattern={{major}}.x
-            type=sha
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v1
       - name: Login to DockerHub

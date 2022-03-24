@@ -73,12 +73,54 @@ func TestPreparedIdPreparationMismatch(t *testing.T) {
 	err = testClient.PerformDefaultHandshake(context.Background(), primitive.ProtocolVersion4, false)
 	require.True(t, err == nil, "No-auth handshake failed: %s", err)
 
-	tests := map[string]*simulacron.Cluster{
-		"origin": simulacronSetup.Origin,
-		"target": simulacronSetup.Target,
+	tests := map[string]struct {
+		cluster               *simulacron.Cluster
+		dualReadsEnabled      bool
+		asyncReadsOnSecondary bool
+		query                 string
+		read                  bool
+		expectedUnprepared    bool
+		queryId               string
+	}{
+		"write_unprepared_origin": {
+			cluster:               simulacronSetup.Origin,
+			dualReadsEnabled:      false,
+			asyncReadsOnSecondary: false,
+			query:                 "INSERT INTO ks1.table1 (c1, c2) VALUES (1, 2)",
+			read:                  false,
+			expectedUnprepared:    true,
+			queryId:               "05440fe1",
+		},
+		"read_unprepared_origin": {
+			cluster:               simulacronSetup.Origin,
+			dualReadsEnabled:      false,
+			asyncReadsOnSecondary: false,
+			query:                 "SELECT * FROM ks1.table1",
+			read:                  true,
+			expectedUnprepared:    true,
+			queryId:               "7b442804",
+		},
+		"write_unprepared_target": {
+			cluster:               simulacronSetup.Target,
+			dualReadsEnabled:      false,
+			asyncReadsOnSecondary: false,
+			query:                 "INSERT INTO ks1.table1 (c1, c2) VALUES (1, 2)",
+			read:                  false,
+			expectedUnprepared:    true,
+			queryId:               "05440fe1",
+		},
+		"read_unprepared_target": {
+			cluster:               simulacronSetup.Target,
+			dualReadsEnabled:      false,
+			asyncReadsOnSecondary: false,
+			query:                 "SELECT * FROM ks1.table1",
+			read:                  true,
+			expectedUnprepared:    false,
+			queryId:               "7b442804",
+		},
 	}
 
-	for name, cluster := range tests {
+	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
 
 			err := simulacronSetup.Origin.ClearPrimes()
@@ -88,7 +130,7 @@ func TestPreparedIdPreparationMismatch(t *testing.T) {
 			require.True(t, err == nil, "clear primes failed on target: %s", err)
 
 			prepareMsg := &message.Prepare{
-				Query:    "INSERT INTO ks1.table1 (c1, c2) VALUES (1, 2)",
+				Query:    test.query,
 				Keyspace: "",
 			}
 
@@ -99,7 +141,7 @@ func TestPreparedIdPreparationMismatch(t *testing.T) {
 			require.True(t, ok, "did not receive prepared result, got instead: %v", response.Body.Message)
 
 			// clear primes only on selected cluster
-			err = cluster.ClearPrimes()
+			err = test.cluster.ClearPrimes()
 			require.True(t, err == nil, "clear primes failed: %s", err)
 
 			executeMsg := &message.Execute{
@@ -110,30 +152,40 @@ func TestPreparedIdPreparationMismatch(t *testing.T) {
 			response, requestStreamId, err = testClient.SendMessage(context.Background(), primitive.ProtocolVersion4, executeMsg)
 			require.True(t, err == nil, "execute request send failed: %s", err)
 
-			errorResponse, ok := response.Body.Message.(message.Error)
-			require.True(t, ok, fmt.Sprintf("expected error result but got %02x", response.Body.Message.GetOpCode()))
-			require.Equal(t, requestStreamId, response.Header.StreamId, "streamId does not match expected value.")
-			require.True(t, err == nil, "Error response could not be parsed: %s", err)
-			require.Equal(t, primitive.ErrorCodeUnprepared, errorResponse.GetErrorCode(), "Error code received was not Unprepared.")
-			require.Equal(t, "Prepared query with ID 05440fe1 not found (either the query was not prepared on " +
-				"this host (maybe the host has been restarted?) or you have prepared too many queries and it has been " +
-				"evicted from the internal cache)",
-				errorResponse.GetErrorMessage(),
-				"Unexpected error message.")
+			if test.expectedUnprepared {
+				errorResponse, ok := response.Body.Message.(message.Error)
+				require.True(t, ok, fmt.Sprintf("expected error result but got %02x", response.Body.Message.GetOpCode()))
+				require.Equal(t, requestStreamId, response.Header.StreamId, "streamId does not match expected value.")
+				require.True(t, err == nil, "Error response could not be parsed: %s", err)
+				require.Equal(t, primitive.ErrorCodeUnprepared, errorResponse.GetErrorCode(), "Error code received was not Unprepared.")
+				require.Equal(t, fmt.Sprintf("Prepared query with ID %v not found (either the query was not prepared on "+
+					"this host (maybe the host has been restarted?) or you have prepared too many queries and it has been "+
+					"evicted from the internal cache)", test.queryId),
+					errorResponse.GetErrorMessage(),
+					"Unexpected error message.")
 
-			unprepared, ok := errorResponse.(*message.Unprepared)
-			require.True(t, ok, fmt.Sprintf("expected unprepared but got %T", errorResponse))
-			require.Equal(t, preparedResponse.PreparedQueryId, unprepared.Id, "Error body did not contain the expected preparedId.")
+				unprepared, ok := errorResponse.(*message.Unprepared)
+				require.True(t, ok, fmt.Sprintf("expected unprepared but got %T", errorResponse))
+				require.Equal(t, preparedResponse.PreparedQueryId, unprepared.Id, "Error body did not contain the expected preparedId.")
+			} else {
+				switch response.Body.Message.(type) {
+				case *message.RowsResult, *message.VoidResult:
+				default:
+					require.Fail(t, "expected success response but got %v", response.Body.Message.GetOpCode().String())
+				}
+			}
 		})
 	}
 }
 
 func TestPreparedIdReplacement(t *testing.T) {
 	type test struct {
-		name       string
-		query      string
-		batchQuery string
-		read       bool
+		name                  string
+		query                 string
+		batchQuery            string
+		read                  bool
+		dualReadsEnabled      bool
+		asyncReadsOnSecondary bool
 	}
 	tests := []test{
 		{
@@ -141,17 +193,31 @@ func TestPreparedIdReplacement(t *testing.T) {
 			"SELECT * FROM ks1.tb1",
 			"",
 			true,
+			false,
+			false,
+		},
+		{
+			"reads_async",
+			"SELECT * FROM ks1.tb1",
+			"",
+			true,
+			true,
+			true,
 		},
 		{
 			"writes",
 			"INSERT INTO ks1.tb1 (key, value) VALUES ('key', 'value')",
 			"INSERT INTO ks1.tb1 (key, value) VALUES ('key', 'value2')",
 			false,
+			false,
+			false,
 		}}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			conf := setup.NewTestConfig("127.0.1.1", "127.0.1.2")
+			conf.DualReadsEnabled = test.dualReadsEnabled
+			conf.AsyncReadsOnSecondary = test.asyncReadsOnSecondary
 			testSetup, err := setup.NewCqlServerTestSetup(conf, false, false, false)
 			require.Nil(t, err)
 			defer testSetup.Cleanup()
@@ -180,11 +246,11 @@ func TestPreparedIdReplacement(t *testing.T) {
 			testSetup.Origin.CqlServer.RequestHandlers = []client2.RequestHandler{
 				client2.NewDriverConnectionInitializationHandler("origin", "dc1", func(_ string) {}),
 				NewPreparedTestHandler(originLock, &originPrepareMessages, &originExecuteMessages, &originBatchMessages,
-					test.batchQuery, originPreparedId, originBatchPreparedId, originKey, originValue, map[string]interface{}{}, false)}
+					test.batchQuery, originPreparedId, originBatchPreparedId, originKey, originValue, map[string]interface{}{}, false, false)}
 			testSetup.Target.CqlServer.RequestHandlers = []client2.RequestHandler{
 				client2.NewDriverConnectionInitializationHandler("target", "dc1", func(_ string) {}),
 				NewPreparedTestHandler(targetLock, &targetPrepareMessages, &targetExecuteMessages, &targetBatchMessages,
-					test.batchQuery, targetPreparedId, targetBatchPreparedId, targetKey, targetValue, map[string]interface{}{}, false)}
+					test.batchQuery, targetPreparedId, targetBatchPreparedId, targetKey, targetValue, map[string]interface{}{}, false, test.dualReadsEnabled && test.read)}
 
 			err = testSetup.Start(conf, true, primitive.ProtocolVersion4)
 			require.Nil(t, err)
@@ -284,31 +350,49 @@ func TestPreparedIdReplacement(t *testing.T) {
 
 			targetLock.Lock()
 			defer targetLock.Unlock()
-			if !test.read {
-				require.Equal(t, 1, len(targetExecuteMessages))
-				require.Equal(t, targetPreparedId, targetExecuteMessages[0].QueryId)
-				require.NotEqual(t, executeMsg, targetExecuteMessages[0])
+
+			expectedTargetPrepares := 1
+			expectedTargetExecutes := 0
+			expectedTargetBatches := 0
+			if !test.read || test.dualReadsEnabled {
+				expectedTargetExecutes += 1
 				if test.batchQuery != "" {
-					require.Equal(t, 1, len(targetBatchMessages))
-					require.Equal(t, 2, len(targetBatchMessages[0].Children))
-					require.Equal(t, targetBatchPreparedId, targetBatchMessages[0].Children[1].QueryOrId)
-					require.NotEqual(t, batchMsg, targetBatchMessages[0])
+					expectedTargetBatches += 1
 				}
-			} else {
-				require.Equal(t, 0, len(targetExecuteMessages))
-				require.Equal(t, 0, len(targetBatchMessages))
+			}
+			if test.dualReadsEnabled {
+				expectedTargetPrepares += 1
 			}
 			if test.batchQuery != "" {
-				require.Equal(t, 2, len(targetPrepareMessages))
-			} else {
-				require.Equal(t, 1, len(targetPrepareMessages))
+				expectedTargetPrepares += 1
 			}
 
+			require.Equal(t, expectedTargetExecutes, len(targetExecuteMessages))
+			for _, targetExecute := range targetExecuteMessages {
+				require.Equal(t, targetPreparedId, targetExecute.QueryId)
+				require.NotEqual(t, executeMsg, targetExecute)
+			}
+			require.Equal(t, expectedTargetBatches, len(targetBatchMessages))
+			if expectedTargetBatches > 0 {
+				require.Equal(t, 2, len(targetBatchMessages[0].Children))
+				require.Equal(t, targetBatchPreparedId, targetBatchMessages[0].Children[1].QueryOrId)
+				require.NotEqual(t, batchMsg, targetBatchMessages[0])
+			}
+			require.Equal(t, expectedTargetPrepares, len(targetPrepareMessages))
+
 			require.Equal(t, prepareMsg, targetPrepareMessages[0])
+			if test.dualReadsEnabled {
+				require.Equal(t, prepareMsg, targetPrepareMessages[1])
+			}
+
 			require.Equal(t, prepareMsg, originPrepareMessages[0])
 			require.Equal(t, executeMsg, originExecuteMessages[0])
 			if test.batchQuery != "" {
-				require.Equal(t, batchPrepareMsg, targetPrepareMessages[1])
+				if test.dualReadsEnabled {
+					require.Equal(t, batchPrepareMsg, targetPrepareMessages[2])
+				} else {
+					require.Equal(t, batchPrepareMsg, targetPrepareMessages[1])
+				}
 				require.Equal(t, batchPrepareMsg, originPrepareMessages[1])
 				require.Equal(t, batchMsg, originBatchMessages[0])
 			}
@@ -318,12 +402,14 @@ func TestPreparedIdReplacement(t *testing.T) {
 
 func TestUnpreparedIdReplacement(t *testing.T) {
 	type test struct {
-		name             string
-		query            string
-		batchQuery       string
-		read             bool
-		originUnprepared bool
-		targetUnprepared bool
+		name                  string
+		query                 string
+		batchQuery            string
+		read                  bool
+		originUnprepared      bool
+		targetUnprepared      bool
+		dualReadsEnabled      bool
+		asyncReadsOnSecondary bool
 	}
 	tests := []test{
 		{
@@ -333,6 +419,18 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 			true,
 			true,
 			false,
+			false,
+			false,
+		},
+		{
+			"reads_both_unprepared_async_reads_on_target",
+			"SELECT * FROM ks1.tb1",
+			"",
+			true,
+			true,
+			true,
+			true,
+			true,
 		},
 		{
 			"writes_origin_unprepared",
@@ -340,6 +438,8 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 			"INSERT INTO ks1.tb1 (key, value) VALUES ('key', 'value2')",
 			false,
 			true,
+			false,
+			false,
 			false,
 		},
 		{
@@ -349,6 +449,8 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 			false,
 			false,
 			true,
+			false,
+			false,
 		},
 		{
 			"writes_both_unprepared",
@@ -357,11 +459,15 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 			false,
 			true,
 			true,
+			false,
+			false,
 		}}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			conf := setup.NewTestConfig("127.0.1.1", "127.0.1.2")
+			conf.DualReadsEnabled = test.dualReadsEnabled
+			conf.AsyncReadsOnSecondary = test.asyncReadsOnSecondary
 			testSetup, err := setup.NewCqlServerTestSetup(conf, false, false, false)
 			require.Nil(t, err)
 			defer testSetup.Cleanup()
@@ -392,11 +498,11 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 			testSetup.Origin.CqlServer.RequestHandlers = []client2.RequestHandler{
 				client2.NewDriverConnectionInitializationHandler("origin", "dc1", func(_ string) {}),
 				NewPreparedTestHandler(originLock, &originPrepareMessages, &originExecuteMessages, &originBatchMessages,
-					test.batchQuery, originPreparedId, originBatchPreparedId, originKey, originValue, originCtx, test.originUnprepared)}
+					test.batchQuery, originPreparedId, originBatchPreparedId, originKey, originValue, originCtx, test.originUnprepared, false)}
 			testSetup.Target.CqlServer.RequestHandlers = []client2.RequestHandler{
 				client2.NewDriverConnectionInitializationHandler("target", "dc1", func(_ string) {}),
 				NewPreparedTestHandler(targetLock, &targetPrepareMessages, &targetExecuteMessages, &targetBatchMessages,
-					test.batchQuery, targetPreparedId, targetBatchPreparedId, targetKey, targetValue, targetCtx, test.targetUnprepared)}
+					test.batchQuery, targetPreparedId, targetBatchPreparedId, targetKey, targetValue, targetCtx, test.targetUnprepared, test.dualReadsEnabled && test.read)}
 
 			err = testSetup.Start(conf, true, primitive.ProtocolVersion4)
 			require.Nil(t, err)
@@ -526,33 +632,41 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 			require.Equal(t, originPreparedId, originExecuteMessages[0].QueryId)
 			require.Equal(t, originPreparedId, originExecuteMessages[1].QueryId)
 
-			if !test.read {
-				require.Equal(t, 2, len(targetExecuteMessages))
-				require.Equal(t, targetPreparedId, targetExecuteMessages[0].QueryId)
-				require.Equal(t, targetPreparedId, targetExecuteMessages[1].QueryId)
-				require.NotEqual(t, executeMsg, targetExecuteMessages[0])
-				require.NotEqual(t, executeMsg, targetExecuteMessages[1])
+			expectedTargetPrepares := 2
+			expectedTargetExecutes := 0
+			expectedTargetBatches := 0
+			if !test.read || test.dualReadsEnabled {
+				expectedTargetExecutes = 2
 				if test.batchQuery != "" {
-					require.Equal(t, 2, len(targetBatchMessages))
-					require.Equal(t, 2, len(targetBatchMessages[0].Children))
-					require.Equal(t, 2, len(targetBatchMessages[1].Children))
-					require.Equal(t, targetBatchPreparedId, targetBatchMessages[0].Children[1].QueryOrId)
-					require.Equal(t, targetBatchPreparedId, targetBatchMessages[1].Children[1].QueryOrId)
-					require.NotEqual(t, batchMsg, targetBatchMessages[0])
-					require.NotEqual(t, batchMsg, targetBatchMessages[1])
+					expectedTargetBatches += 2
 				}
-			} else {
-				require.Equal(t, 0, len(targetExecuteMessages))
-				require.Equal(t, 0, len(targetBatchMessages))
+			}
+			if test.dualReadsEnabled {
+				expectedTargetPrepares += 2
 			}
 			if test.batchQuery != "" {
-				require.Equal(t, 4, len(targetPrepareMessages))
-			} else {
-				require.Equal(t, 2, len(targetPrepareMessages))
+				expectedTargetPrepares += 2
 			}
-
+			require.Equal(t, expectedTargetExecutes, len(targetExecuteMessages))
+			for _, execute := range targetExecuteMessages {
+				require.Equal(t, targetPreparedId, execute.QueryId)
+				require.NotEqual(t, executeMsg, execute)
+			}
+			require.Equal(t, expectedTargetBatches, len(targetBatchMessages))
+			if expectedTargetBatches > 0 {
+				for _, batch := range targetBatchMessages {
+					require.Equal(t, 2, len(batch.Children))
+					require.Equal(t, targetBatchPreparedId, batch.Children[1].QueryOrId)
+					require.NotEqual(t, batchMsg, batch)
+				}
+			}
+			require.Equal(t, expectedTargetPrepares, len(targetPrepareMessages))
 			require.Equal(t, prepareMsg, targetPrepareMessages[0])
 			require.Equal(t, prepareMsg, targetPrepareMessages[1])
+			if test.dualReadsEnabled {
+				require.Equal(t, prepareMsg, targetPrepareMessages[2])
+				require.Equal(t, prepareMsg, targetPrepareMessages[3])
+			}
 			require.Equal(t, prepareMsg, originPrepareMessages[0])
 			require.Equal(t, prepareMsg, originPrepareMessages[1])
 
@@ -560,8 +674,13 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 			require.Equal(t, executeMsg, originExecuteMessages[1])
 
 			if test.batchQuery != "" {
-				require.Equal(t, batchPrepareMsg, targetPrepareMessages[2])
-				require.Equal(t, batchPrepareMsg, targetPrepareMessages[3])
+				if test.dualReadsEnabled {
+					require.Equal(t, batchPrepareMsg, targetPrepareMessages[4])
+					require.Equal(t, batchPrepareMsg, targetPrepareMessages[5])
+				} else {
+					require.Equal(t, batchPrepareMsg, targetPrepareMessages[2])
+					require.Equal(t, batchPrepareMsg, targetPrepareMessages[3])
+				}
 				require.Equal(t, batchPrepareMsg, originPrepareMessages[2])
 				require.Equal(t, batchPrepareMsg, originPrepareMessages[3])
 				require.Equal(t, batchMsg, originBatchMessages[0])
@@ -592,7 +711,7 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 			require.Equal(t, nil, originCtx["VOID_" + string(targetBatchPreparedId)])
 			require.Equal(t, nil, originCtx["UNPREPARED_" + string(targetBatchPreparedId)])
 
-			if !test.read {
+			if !test.read || test.dualReadsEnabled {
 				require.Equal(t, 2, targetCtx["EXECUTE_" + string(targetPreparedId)])
 				if test.targetUnprepared {
 					require.Equal(t, 1, targetCtx["UNPREPARED_" + string(targetPreparedId)])
@@ -632,7 +751,7 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 
 func NewPreparedTestHandler(
 	lock *sync.Mutex, preparedMessages *[]*message.Prepare, executeMessages *[]*message.Execute, batchMessages *[]*message.Batch,
-	batchQuery string, preparedId []byte, batchPreparedId []byte, key message.Column, value message.Column, context map[string]interface{}, unpreparedTest bool) func(
+	batchQuery string, preparedId []byte, batchPreparedId []byte, key message.Column, value message.Column, context map[string]interface{}, unpreparedTest bool, dualReads bool) func(
 		request *frame.Frame, conn *client2.CqlServerConnection, ctx client2.RequestHandlerContext) *frame.Frame {
 	return func(request *frame.Frame, conn *client2.CqlServerConnection, ctx client2.RequestHandlerContext) *frame.Frame {
 		rowsMetadata := &message.RowsMetadata{
@@ -705,8 +824,14 @@ func NewPreparedTestHandler(
 			lock.Unlock()
 
 			threshold := 1
+			if dualReads {
+				threshold += 1
+			}
 			if unpreparedTest {
-				threshold = 2
+				threshold += 1
+				if dualReads {
+					threshold += 1
+				}
 			}
 
 			prefix := "UNPREPARED_"

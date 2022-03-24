@@ -23,33 +23,45 @@ func (recv *AuthError) Error() string {
 }
 
 func (ch *ClientHandler) handleSecondaryHandshakeStartup(
-	startupRequest *frame.RawFrame, startupResponse *frame.RawFrame) error {
+	startupRequest *frame.RawFrame, startupResponse *frame.RawFrame, asyncConnector bool) error {
 
 	// extracting these into variables for convenience
 	clientIPAddress := ch.clientConnector.connection.RemoteAddr()
 	var clusterAddress net.Addr
-	var clusterType ClusterType
+	var logIdentifier string
 	var forwardToSecondary forwardDecision
-	if ch.forwardAuthToTarget {
+	requestTimeout := time.Duration(ch.conf.RequestTimeoutMs) * time.Millisecond
+	if asyncConnector {
+		clusterAddress = ch.asyncConnector.connection.RemoteAddr()
+		logIdentifier = fmt.Sprintf("ASYNC-%v", ch.asyncConnector.clusterType)
+		forwardToSecondary = forwardToAsync
+		requestTimeout = time.Duration(ch.conf.AsyncHandshakeTimeoutMs) * time.Millisecond
+	} else if ch.forwardAuthToTarget {
 		// secondary is ORIGIN
 
 		clusterAddress = ch.originCassandraConnector.connection.RemoteAddr()
-		clusterType = ClusterTypeOrigin
+		logIdentifier = "ORIGIN"
 		forwardToSecondary = forwardToOrigin
 	} else {
 		// secondary is TARGET
 
 		clusterAddress = ch.targetCassandraConnector.connection.RemoteAddr()
-		clusterType = ClusterTypeTarget
+		logIdentifier = "TARGET"
 		forwardToSecondary = forwardToTarget
 	}
 
-	log.Infof("Initiating startup between %v and %v (%v)", clientIPAddress, clusterAddress, clusterType)
+	log.Infof("Initiating startup between %v and %v (%v)", clientIPAddress, clusterAddress, logIdentifier)
 	phase := 1
 	attempts := 0
 
 	var authenticator *DsePlainTextAuthenticator
-	if ch.secondaryHandshakeCreds != nil {
+	if asyncConnector {
+		if ch.asyncHandshakeCreds != nil {
+			authenticator = &DsePlainTextAuthenticator{
+				Credentials: ch.asyncHandshakeCreds,
+			}
+		}
+	} else if ch.secondaryHandshakeCreds != nil {
 		authenticator = &DsePlainTextAuthenticator{
 			Credentials: ch.secondaryHandshakeCreds,
 		}
@@ -58,7 +70,7 @@ func (ch *ClientHandler) handleSecondaryHandshakeStartup(
 	var lastResponse *frame.Frame
 	for {
 		if attempts > maxAuthRetries {
-			return fmt.Errorf("reached max number of attempts to complete secondary (%v) handshake", clusterType)
+			return fmt.Errorf("reached max number of attempts to complete secondary (%v) handshake", logIdentifier)
 		}
 
 		attempts++
@@ -69,14 +81,16 @@ func (ch *ClientHandler) handleSecondaryHandshakeStartup(
 
 		switch phase {
 		case 1:
-			requestSent = true
+			if !asyncConnector {
+				requestSent = true
+			}
 			request = startupRequest
 			response = startupResponse
 		case 2:
 			if authenticator == nil {
 				return fmt.Errorf(
 					"secondary cluster (%v) requested authentication but primary did not, " +
-					"can not proceed with secondary handshake", clusterType)
+					"can not proceed with secondary handshake", logIdentifier)
 			}
 
 			var err error
@@ -99,12 +113,13 @@ func (ch *ClientHandler) handleSecondaryHandshakeStartup(
 			channel := make(chan *customResponse, 1)
 			err := ch.executeStatement(
 				&frameDecodeContext{frame: request},
-				NewGenericStatementInfo(forwardToSecondary),
+				NewGenericStatementInfo(forwardToSecondary, asyncConnector),
 				overallRequestStartTime,
-				channel)
+				channel,
+				requestTimeout)
 
 			if err != nil {
-				return fmt.Errorf("unable to send secondary (%v) handshake frame to %v: %w", clusterType, clusterAddress, err)
+				return fmt.Errorf("unable to send secondary (%v) handshake frame to %v: %w", logIdentifier, clusterAddress, err)
 			}
 
 			select {
@@ -115,7 +130,7 @@ func (ch *ClientHandler) handleSecondaryHandshakeStartup(
 					}
 
 					return fmt.Errorf("error while receiving secondary handshake response from %v (%v)",
-						clusterAddress, clusterType)
+						clusterAddress, logIdentifier)
 				}
 				response = customResponse.aggregatedResponse
 			case <-ch.clientHandlerContext.Done():
@@ -124,11 +139,20 @@ func (ch *ClientHandler) handleSecondaryHandshakeStartup(
 		}
 
 		newPhase, parsedFrame, done, err := handleSecondaryHandshakeResponse(
-			phase, response, clientIPAddress, clusterAddress, clusterType)
+			phase, response, clientIPAddress, clusterAddress, logIdentifier)
 		if err != nil {
 			return err
 		}
 		if done {
+			if asyncConnector {
+				if ch.asyncConnector.SetReady() {
+					return nil
+				} else {
+					return fmt.Errorf(
+						"could not set async connector (%v) as ready after a successful handshake " +
+							"because the connector was already shutdown", logIdentifier)
+				}
+			}
 			return nil
 		}
 		phase = newPhase
@@ -138,7 +162,7 @@ func (ch *ClientHandler) handleSecondaryHandshakeStartup(
 
 func handleSecondaryHandshakeResponse(
 	phase int, f *frame.RawFrame, clientIPAddress net.Addr,
-	clusterAddress net.Addr, clusterType ClusterType) (int, *frame.Frame, bool, error){
+	clusterAddress net.Addr, logIdentifier string) (int, *frame.Frame, bool, error){
 	parsedFrame, err := defaultCodec.ConvertFromRawFrame(f)
 	if err != nil {
 		return phase, nil, false, fmt.Errorf("could not decode frame from %v: %w", clusterAddress, err)
@@ -147,16 +171,16 @@ func handleSecondaryHandshakeResponse(
 	done := false
 	switch f.Header.OpCode {
 	case primitive.OpCodeAuthenticate:
-		log.Debugf("Received AUTHENTICATE for secondary handshake (%v)", clusterType)
+		log.Debugf("Received AUTHENTICATE for secondary handshake (%v)", logIdentifier)
 		return 2, parsedFrame, false, nil
 	case primitive.OpCodeAuthChallenge:
-		log.Debugf("Received AUTH_CHALLENGE for secondary handshake (%v)", clusterType)
+		log.Debugf("Received AUTH_CHALLENGE for secondary handshake (%v)", logIdentifier)
 	case primitive.OpCodeReady:
 		done = true
-		log.Debugf("%v (%v) did not request authorization for client %v", clusterAddress, clusterType, clientIPAddress)
+		log.Debugf("%v (%v) did not request authorization for client %v", clusterAddress, logIdentifier, clientIPAddress)
 	case primitive.OpCodeAuthSuccess:
 		done = true
-		log.Debugf("%s successfully authenticated with %v (%v)", clientIPAddress, clusterAddress, clusterType)
+		log.Debugf("%s successfully authenticated with %v (%v)", clientIPAddress, clusterAddress, logIdentifier)
 	default:
 		authErrorMsg, ok := parsedFrame.Body.Message.(*message.AuthenticationError)
 		if ok {
@@ -164,7 +188,22 @@ func handleSecondaryHandshakeResponse(
 		}
 		return phase, parsedFrame, done, fmt.Errorf(
 			"received response in secondary handshake (%v) that was not "+
-				"READY, AUTHENTICATE, AUTH_CHALLENGE, or AUTH_SUCCESS: %v", clusterType, parsedFrame.Body.Message)
+				"READY, AUTHENTICATE, AUTH_CHALLENGE, or AUTH_SUCCESS: %v", logIdentifier, parsedFrame.Body.Message)
 	}
 	return phase, parsedFrame, done, nil
+}
+
+func validateSecondaryStartupResponse(f *frame.RawFrame, clusterType ClusterType) error {
+	switch f.Header.OpCode {
+	case primitive.OpCodeAuthenticate:
+	case primitive.OpCodeAuthChallenge:
+	case primitive.OpCodeReady:
+	case primitive.OpCodeAuthSuccess:
+	default:
+		return fmt.Errorf(
+			"received response in secondary handshake (%v) that was not "+
+				"READY, AUTHENTICATE, AUTH_CHALLENGE, or AUTH_SUCCESS: %v", clusterType, f.Header.OpCode.String())
+	}
+
+	return nil
 }

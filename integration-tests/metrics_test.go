@@ -80,62 +80,89 @@ var selectQuery = frame.NewFrame(
 
 func testMetrics(t *testing.T, metricsHandler *httpcloudgate.HandlerWithFallback) {
 
-	originHost := "127.0.1.1"
-	targetHost := "127.0.1.2"
-	originEndpoint := fmt.Sprintf("%v:9042", originHost)
-	targetEndpoint := fmt.Sprintf("%v:9042", targetHost)
-	conf := setup.NewTestConfig(originHost, targetHost)
+	tests := []struct{
+		name                  string
+		dualReadsEnabled      bool
+		asyncReadsOnSecondary bool
+	}{
+		{
+			name:                  "default",
+			dualReadsEnabled:      false,
+			asyncReadsOnSecondary: false,
+		},
+		{
+			name:                  "dual reads, async on secondary",
+			dualReadsEnabled:      true,
+			asyncReadsOnSecondary: true,
+		},
+	}
 
-	testSetup, err := setup.NewCqlServerTestSetup(conf, false, false, false)
-	require.Nil(t, err)
-	defer testSetup.Cleanup()
-	testSetup.Origin.CqlServer.RequestHandlers = []client.RequestHandler{client.RegisterHandler, client.HeartbeatHandler, client.HandshakeHandler, client.NewSystemTablesHandler("cluster1", "dc1"), handleReads, handleWrites}
-	testSetup.Target.CqlServer.RequestHandlers = []client.RequestHandler{client.RegisterHandler, client.HeartbeatHandler, client.HandshakeHandler, client.NewSystemTablesHandler("cluster2", "dc2"), handleWrites}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			originHost := "127.0.1.1"
+			targetHost := "127.0.1.2"
+			originEndpoint := fmt.Sprintf("%v:9042", originHost)
+			targetEndpoint := fmt.Sprintf("%v:9042", targetHost)
+			conf := setup.NewTestConfig(originHost, targetHost)
+			conf.DualReadsEnabled = test.dualReadsEnabled
+			conf.AsyncReadsOnSecondary = test.asyncReadsOnSecondary
 
-	err = testSetup.Start(conf, false, primitive.ProtocolVersion4)
-	require.Nil(t, err)
+			expectedTargetConnections := 1
+			if conf.DualReadsEnabled {
+				expectedTargetConnections += 1
+			}
 
-	wg := &sync.WaitGroup{}
-	defer wg.Wait()
-	srv := startMetricsHandler(t, conf, wg, metricsHandler)
-	defer func() {
-		err := srv.Close()
-		if err != nil {
-			log.Warnf("error cleaning http server: %v", err)
-		}
-	}()
+			testSetup, err := setup.NewCqlServerTestSetup(conf, false, false, false)
+			require.Nil(t, err)
+			defer testSetup.Cleanup()
+			testSetup.Origin.CqlServer.RequestHandlers = []client.RequestHandler{client.RegisterHandler, client.HeartbeatHandler, client.HandshakeHandler, client.NewSystemTablesHandler("cluster1", "dc1"), handleReads, handleWrites}
+			testSetup.Target.CqlServer.RequestHandlers = []client.RequestHandler{client.RegisterHandler, client.HeartbeatHandler, client.HandshakeHandler, client.NewSystemTablesHandler("cluster2", "dc2"), handleWrites}
 
-	lines := gatherMetrics(t, conf, false)
-	checkMetrics(t, false, lines, 0, 0, 0, 0, 0, 0, true, true, originEndpoint, targetEndpoint)
+			err = testSetup.Start(conf, false, primitive.ProtocolVersion4)
+			require.Nil(t, err)
 
-	err = testSetup.Client.Connect(primitive.ProtocolVersion4)
-	require.Nil(t, err)
-	clientConn := testSetup.Client.CqlConnection
+			wg := &sync.WaitGroup{}
+			defer wg.Wait()
+			srv := startMetricsHandler(t, conf, wg, metricsHandler)
+			defer func() {
+				err := srv.Close()
+				if err != nil {
+					log.Warnf("error cleaning http server: %v", err)
+				}
+			}()
 
-	lines = gatherMetrics(t, conf, true)
-	// 1 on origin: AUTH_RESPONSE
-	// 1 on target: AUTH_RESPONSE
-	// 1 on both: STARTUP
-	checkMetrics(t, true, lines, 1, 1, 1, 1, 1, 1, true, true, originEndpoint, targetEndpoint)
+			lines := gatherMetrics(t, conf, false)
+			checkMetrics(t, false, lines, 0, 0, 0, 0, 0, 0, true, true, originEndpoint, targetEndpoint)
 
-	_, err = clientConn.SendAndReceive(insertQuery)
-	require.Nil(t, err)
+			err = testSetup.Client.Connect(primitive.ProtocolVersion4)
+			require.Nil(t, err)
+			clientConn := testSetup.Client.CqlConnection
 
-	lines = gatherMetrics(t, conf, true)
-	// 1 on origin: AUTH_RESPONSE
-	// 1 on target: AUTH_RESPONSE
-	// 2 on both: STARTUP and QUERY INSERT INTO
-	checkMetrics(t, true, lines, 1, 1, 1, 2, 1, 1, true, true, originEndpoint, targetEndpoint)
+			lines = gatherMetrics(t, conf, true)
+			// 1 on origin: AUTH_RESPONSE
+			// 1 on target: AUTH_RESPONSE
+			// 1 on both: STARTUP
+			checkMetrics(t, true, lines, 1, 1, expectedTargetConnections, 1, 1, 1, true, true, originEndpoint, targetEndpoint)
 
-	_, err = clientConn.SendAndReceive(selectQuery)
-	require.Nil(t, err)
+			_, err = clientConn.SendAndReceive(insertQuery)
+			require.Nil(t, err)
 
-	lines = gatherMetrics(t, conf, true)
-	// 2 on origin: AUTH_RESPONSE and QUERY SELECT
-	// 1 on target: AUTH_RESPONSE
-	// 2 on both: STARTUP and QUERY INSERT INTO
-	checkMetrics(t, true, lines, 1, 1, 1, 2, 2, 1, false, true, originEndpoint, targetEndpoint)
+			lines = gatherMetrics(t, conf, true)
+			// 1 on origin: AUTH_RESPONSE
+			// 1 on target: AUTH_RESPONSE
+			// 2 on both: STARTUP and QUERY INSERT INTO
+			checkMetrics(t, true, lines, 1, 1, expectedTargetConnections, 2, 1, 1, true, true, originEndpoint, targetEndpoint)
 
+			_, err = clientConn.SendAndReceive(selectQuery)
+			require.Nil(t, err)
+
+			lines = gatherMetrics(t, conf, true)
+			// 2 on origin: AUTH_RESPONSE and QUERY SELECT
+			// 1 on target: AUTH_RESPONSE
+			// 2 on both: STARTUP and QUERY INSERT INTO
+			checkMetrics(t, true, lines, 1, 1, expectedTargetConnections, 2, 2, 1, false, true, originEndpoint, targetEndpoint)
+		})
+	}
 }
 
 func startMetricsHandler(

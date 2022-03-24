@@ -28,6 +28,8 @@ type CloudgateProxy struct {
 
 	timeUuidGenerator TimeUuidGenerator
 
+	readMode config.ReadMode
+
 	proxyRand *rand.Rand
 
 	lock *sync.RWMutex
@@ -280,6 +282,19 @@ func (p *CloudgateProxy) initializeGlobalStructures() {
 
 	maxProcs := runtime.GOMAXPROCS(0)
 
+	var err error
+	p.readMode, err = p.Conf.ParseReadMode()
+	if err != nil {
+		p.readMode = config.ReadModePrimaryOnly // just to compute workers, proxy.Start() will call validate() and return the error
+	}
+
+	defaultReadWorkers := maxProcs * 8
+	defaultWriteWorkers := maxProcs * 4
+	if p.readMode == config.ReadModeSecondaryAsync {
+		defaultReadWorkers = maxProcs * 12
+		defaultWriteWorkers = maxProcs * 6
+	}
+
 	p.requestResponseNumWorkers = p.Conf.RequestResponseMaxWorkers
 	if p.requestResponseNumWorkers == -1 {
 		p.requestResponseNumWorkers = maxProcs * 4 // default
@@ -291,19 +306,19 @@ func (p *CloudgateProxy) initializeGlobalStructures() {
 
 	p.writeNumWorkers = p.Conf.WriteMaxWorkers
 	if p.writeNumWorkers == -1 {
-		p.writeNumWorkers = maxProcs * 4 // default
+		p.writeNumWorkers = defaultWriteWorkers // default
 	} else if p.writeNumWorkers <= 0 {
-		log.Warnf("Invalid number of write workers %d, using GOMAXPROCS * 4 (%d).", p.writeNumWorkers, maxProcs*4)
-		p.writeNumWorkers = maxProcs * 4
+		log.Warnf("Invalid number of write workers %d, using default (%d).", p.writeNumWorkers, defaultWriteWorkers)
+		p.writeNumWorkers = defaultWriteWorkers
 	}
 	log.Infof("Using %d write workers.", p.writeNumWorkers)
 
 	p.readNumWorkers = p.Conf.ReadMaxWorkers
 	if p.readNumWorkers == -1 {
-		p.readNumWorkers = maxProcs * 8 // default
+		p.readNumWorkers = defaultReadWorkers // default
 	} else if p.readNumWorkers <= 0 {
-		log.Warnf("Invalid number of read workers %d, using GOMAXPROCS * 8 (%d).", p.readNumWorkers, maxProcs*8)
-		p.readNumWorkers = maxProcs * 8
+		log.Warnf("Invalid number of read workers %d, using default (%d).", p.readNumWorkers, defaultReadWorkers)
+		p.readNumWorkers = defaultReadWorkers
 	}
 	log.Infof("Using %d read workers.", p.readNumWorkers)
 
@@ -311,7 +326,7 @@ func (p *CloudgateProxy) initializeGlobalStructures() {
 	if p.listenerNumWorkers == -1 {
 		p.listenerNumWorkers = maxProcs // default
 	} else if p.listenerNumWorkers <= 0 {
-		log.Warnf("Invalid number of cluster connector workers %d, using GOMAXPROCS (%d).", p.listenerNumWorkers, maxProcs)
+		log.Warnf("Invalid number of connection listener workers %d, using GOMAXPROCS (%d).", p.listenerNumWorkers, maxProcs)
 		p.listenerNumWorkers = maxProcs
 	}
 	log.Infof("Using %d listener workers.", p.listenerNumWorkers)
@@ -333,7 +348,6 @@ func (p *CloudgateProxy) initializeGlobalStructures() {
 	p.listenerShutdownWg = &sync.WaitGroup{}
 	p.shutdownClientListenerChan = make(chan bool)
 
-	var err error
 	p.originBuckets, err = p.Conf.ParseOriginBuckets()
 	if err != nil {
 		log.Errorf("Failed to parse origin buckets, falling back to default buckets: %v", err)
@@ -488,7 +502,8 @@ func (p *CloudgateProxy) handleNewConnection(clientConn net.Conn) {
 		p.clientHandlersShutdownRequestCtx,
 		originHost,
 		targetHost,
-		p.timeUuidGenerator)
+		p.timeUuidGenerator,
+		p.readMode)
 
 	if err != nil {
 		errFunc(err)

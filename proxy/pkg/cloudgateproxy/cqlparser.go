@@ -19,6 +19,7 @@ const (
 	forwardToTarget = forwardDecision("target")
 	forwardToBoth   = forwardDecision("both")
 	forwardToNone   = forwardDecision("none")
+	forwardToAsync  = forwardDecision("async") // for async connector handshake requests
 )
 
 type interceptedQueryType string
@@ -103,10 +104,18 @@ func parseStatement(
 		if err != nil {
 			return nil, fmt.Errorf("could not inspect PREPARE frame: %w", err)
 		}
+		decodedFrame, err := frameContext.GetOrDecodeFrame()
+		if err != nil {
+			return nil, fmt.Errorf("could not decode frame: %w", err)
+		}
+		prepareMsg, ok := decodedFrame.Body.Message.(*message.Prepare)
+		if !ok {
+			return nil, fmt.Errorf("unexpected message type when decoding PREPARE message: %v", decodedFrame.Body.Message)
+		}
 		baseStmtInfo := getStatementInfoFromQueryInfo(
 			frameContext.frame, currentKeyspaceName, forwardReadsToTarget,
 			forwardSystemQueriesToTarget, virtualizationEnabled, queryInfo)
-		return NewPreparedStatementInfo(baseStmtInfo), nil
+		return NewPreparedStatementInfo(baseStmtInfo, prepareMsg.Query, prepareMsg.Keyspace), nil
 	case primitive.OpCodeBatch:
 		decodedFrame, err := frameContext.GetOrDecodeFrame()
 		if err != nil {
@@ -147,12 +156,14 @@ func parseStatement(
 		}
 	case primitive.OpCodeAuthResponse:
 		if forwardAuthToTarget {
-			return NewGenericStatementInfo(forwardToTarget), nil
+			return NewGenericStatementInfo(forwardToTarget, false), nil
 		} else {
-			return NewGenericStatementInfo(forwardToOrigin), nil
+			return NewGenericStatementInfo(forwardToOrigin, false), nil
 		}
+	case primitive.OpCodeRegister, primitive.OpCodeStartup:
+		return NewGenericStatementInfo(forwardToBoth, false), nil
 	default:
-		return NewGenericStatementInfo(forwardToBoth), nil
+		return NewGenericStatementInfo(forwardToBoth, true), nil
 	}
 }
 
@@ -193,6 +204,7 @@ func getStatementInfoFromQueryInfo(
 	virtualizationEnabled bool,
 	queryInfo queryInfo) StatementInfo {
 
+	var sendAsync bool
 	forwardDecision := forwardToBoth
 	if queryInfo.getStatementType() == statementTypeSelect {
 		if virtualizationEnabled {
@@ -208,6 +220,7 @@ func getStatementInfoFromQueryInfo(
 			}
 		}
 
+		sendAsync = true
 		if isSystemQuery(queryInfo, currentKeyspaceName) {
 			log.Debugf("Detected system query: %v with stream id: %v", queryInfo.getQuery(), f.Header.StreamId)
 			if forwardSystemQueriesToTarget {
@@ -222,9 +235,13 @@ func getStatementInfoFromQueryInfo(
 				forwardDecision = forwardToOrigin
 			}
 		}
+	} else if queryInfo.getStatementType() == statementTypeUse {
+		sendAsync = true
+	} else {
+		sendAsync = false
 	}
 
-	return NewGenericStatementInfo(forwardDecision)
+	return NewGenericStatementInfo(forwardDecision, sendAsync)
 }
 
 func isSystemQuery(info queryInfo, currentKeyspaceName *atomic.Value) bool {

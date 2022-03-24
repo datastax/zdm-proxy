@@ -60,10 +60,25 @@ type Config struct {
 	HeartbeatRetryBackoffFactor float64 `default:"2" split_words:"true"`
 	HeartbeatFailureThreshold   int     `default:"1" split_words:"true"`
 
+	EnableMetrics bool `default:"true" split_words:"true"`
+
+	ForwardReadsToTarget         bool `default:"false" split_words:"true"`
+	ForwardSystemQueriesToTarget bool `default:"false" split_words:"true"`
+
+	DualReadsEnabled        bool `default:"false" split_words:"true"`
+	AsyncReadsOnSecondary   bool `default:"false" split_words:"true"`
+	AsyncHandshakeTimeoutMs int  `default:"4000" split_words:"true"`
+
+	RequestTimeoutMs int `default:"10000" split_words:"true"`
+
+	LogLevel string `default:"INFO" split_words:"true"`
+
+	MaxClientsThreshold int `default:"500" split_words:"true"`
+
 	OriginBucketsMs string `default:"1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000" split_words:"true"`
 	TargetBucketsMs string `default:"1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000" split_words:"true"`
 
-	EnableMetrics bool `default:"true" split_words:"true"`
+	// PERFORMANCE TUNING CONFIG SETTINGS (shouldn't be changed by users)
 
 	RequestWriteQueueSizeFrames int `default:"128" split_words:"true"`
 	RequestWriteBufferSizeBytes int `default:"4096" split_words:"true"`
@@ -73,8 +88,6 @@ type Config struct {
 	ResponseWriteBufferSizeBytes int `default:"8192" split_words:"true"`
 	ResponseReadBufferSizeBytes  int `default:"32768" split_words:"true"`
 
-	MaxClientsThreshold int `default:"500" split_words:"true"`
-
 	RequestResponseMaxWorkers int `default:"-1" split_words:"true"`
 	WriteMaxWorkers           int `default:"-1" split_words:"true"`
 	ReadMaxWorkers            int `default:"-1" split_words:"true"`
@@ -82,12 +95,8 @@ type Config struct {
 
 	EventQueueSizeFrames int `default:"12" split_words:"true"`
 
-	ForwardReadsToTarget         bool `default:"false" split_words:"true"`
-	ForwardSystemQueriesToTarget bool `default:"false" split_words:"true"`
-
-	RequestTimeoutMs int `default:"10000" split_words:"true"`
-
-	LogLevel string `default:"INFO" split_words:"true"`
+	AsyncConnectorWriteQueueSizeFrames int `default:"2048" split_words:"true"`
+	AsyncConnectorWriteBufferSizeBytes int `default:"4096" split_words:"true"`
 }
 
 func (c *Config) String() string {
@@ -203,10 +212,17 @@ func (c *Config) Validate() error {
 	if err != nil {
 		return err
 	}
+
 	_, err = c.ParseTargetTlsConfig(false)
 	if err != nil {
 		return err
 	}
+
+	_, err = c.ParseReadMode()
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -432,6 +448,24 @@ func (c *Config) ParseTargetTlsConfig(displayLogMessages bool) (*ClusterTlsConfi
 	return &ClusterTlsConfig{}, fmt.Errorf("Incomplete TLS configuration for Target: when using mutual TLS, please specify Server CA path, Client Cert path and Client Key path.")
 }
 
+func (c *Config) ParseReadMode() (ReadMode, error) {
+	if c.DualReadsEnabled {
+		if c.AsyncReadsOnSecondary {
+			return ReadModeSecondaryAsync, nil
+		} else {
+			return ReadModeUndefined, fmt.Errorf("combination of DUAL_READS_ENABLED (%v) and ASYNC_READS_ON_SECONDARY (%v) not yet implemented",
+				c.DualReadsEnabled, c.AsyncReadsOnSecondary)
+		}
+	} else {
+		if c.AsyncReadsOnSecondary {
+			return ReadModeUndefined, fmt.Errorf("invalid combination of DUAL_READS_ENABLED (%v) and ASYNC_READS_ON_SECONDARY (%v)",
+				c.DualReadsEnabled, c.AsyncReadsOnSecondary)
+		} else {
+			return ReadModePrimaryOnly, nil
+		}
+	}
+}
+
 func isDefined(propertyValue string) bool {
 	return propertyValue != ""
 }
@@ -473,3 +507,17 @@ func (recv *ClusterTlsConfig) String() string {
 		recv.TlsEnabled, recv.ServerCaPath, recv.ClientCertPath, recv.ClientKeyPath)
 
 }
+
+type ReadMode struct {
+	slug string
+}
+
+func (r ReadMode) String() string {
+	return r.slug
+}
+
+var (
+	ReadModeUndefined      = ReadMode{""}
+	ReadModePrimaryOnly    = ReadMode{"primary_only"}
+	ReadModeSecondaryAsync = ReadMode{"secondary_async"}
+)

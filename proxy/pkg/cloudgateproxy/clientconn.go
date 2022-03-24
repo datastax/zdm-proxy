@@ -15,6 +15,8 @@ import (
 	"sync/atomic"
 )
 
+const ClientConnectorLogPrefix = "CLIENT-CONNECTOR"
+
 /*
   This owns:
     - a response channel to send responses back to the client
@@ -75,7 +77,8 @@ func NewClientConnector(
 			localClientHandlerWg,
 			clientHandlerContext,
 			clientHandlerCancelFunc,
-			"ClientConnector",
+			ClientConnectorLogPrefix,
+			false,
 			false,
 			writeScheduler),
 		responsesDoneChan:               responsesDoneChan,
@@ -100,18 +103,19 @@ func (cc *ClientConnector) run(activeClients *int32) {
 		<- cc.requestsDoneCtx.Done()
 		<- cc.eventsDoneChan
 
-		log.Debugf("[ClientConnector] All in flight requests are done, requesting cluster connections of client handler %v to be terminated.", cc.connection.RemoteAddr())
+		log.Debugf("[%s] All in flight requests are done, requesting cluster connections of client handler %v " +
+			"to be terminated.", ClientConnectorLogPrefix, cc.connection.RemoteAddr())
 		cc.clientHandlerCancelFunc()
 
-		log.Infof("[ClientConnector] Shutting down client connection to %v", cc.connection.RemoteAddr())
+		log.Infof("[%s] Shutting down client connection to %v", ClientConnectorLogPrefix, cc.connection.RemoteAddr())
 		err := cc.connection.Close()
 		if err != nil {
-			log.Warnf("[ClientConnector] Error received while closing connection to %v: %v", cc.connection.RemoteAddr(), err)
+			log.Warnf("[%s] Error received while closing connection to %v: %v", ClientConnectorLogPrefix, cc.connection.RemoteAddr(), err)
 		}
 
-		log.Debugf("[ClientConnector] Waiting until request listener is done.")
+		log.Debugf("[%s] Waiting until request listener is done.", ClientConnectorLogPrefix)
 		<- cc.clientConnectorRequestsDoneChan
-		log.Debugf("[ClientConnector] Shutting down write coalescer.")
+		log.Debugf("[%s] Shutting down write coalescer.", ClientConnectorLogPrefix)
 		cc.writeCoalescer.Close()
 
 		atomic.AddInt32(activeClients, -1)
@@ -120,7 +124,7 @@ func (cc *ClientConnector) run(activeClients *int32) {
 
 func (cc *ClientConnector) listenForRequests() {
 
-	log.Tracef("listenForRequests for client %v", cc.connection.RemoteAddr())
+	log.Tracef("[%s] listenForRequests for client %v", ClientConnectorLogPrefix, cc.connection.RemoteAddr())
 
 	cc.clientHandlerWg.Add(1)
 	go func() {
@@ -129,7 +133,7 @@ func (cc *ClientConnector) listenForRequests() {
 
 		wg := &sync.WaitGroup{}
 		defer wg.Wait()
-		defer log.Debugf("[ClientConnector] Shutting down request listener, waiting until request listener tasks are done...")
+		defer log.Debugf("[%s] Shutting down request listener, waiting until request listener tasks are done...", ClientConnectorLogPrefix)
 
 		lock := &sync.Mutex{}
 		closed := false
@@ -140,7 +144,7 @@ func (cc *ClientConnector) listenForRequests() {
 			select {
 			case <-cc.clientHandlerContext.Done():
 			case <-cc.shutdownRequestCtx.Done():
-				log.Debugf("[ClientConnector] Entering \"draining\" mode of request listener %v", cc.connection.RemoteAddr())
+				log.Debugf("[%s] Entering \"draining\" mode of request listener %v", ClientConnectorLogPrefix, cc.connection.RemoteAddr())
 			}
 
 			lock.Lock()
@@ -156,7 +160,8 @@ func (cc *ClientConnector) listenForRequests() {
 			f, err := readRawFrame(bufferedReader, connectionAddr, cc.clientHandlerContext)
 
 			if protocolErrOccurred {
-				log.Infof("Request received after a protocol error occured, forcibly closing the client connection.")
+				log.Infof("[%s] Request received after a protocol error occured, " +
+					"forcibly closing the client connection.", ClientConnectorLogPrefix)
 				cc.clientHandlerCancelFunc()
 				break
 			}
@@ -171,7 +176,7 @@ func (cc *ClientConnector) listenForRequests() {
 					continue
 				} else {
 					handleConnectionError(
-						err, cc.clientHandlerContext, cc.clientHandlerCancelFunc, "ClientConnector", "reading", connectionAddr)
+						err, cc.clientHandlerContext, cc.clientHandlerCancelFunc, ClientConnectorLogPrefix, "reading", connectionAddr)
 					break
 				}
 			}
@@ -179,7 +184,7 @@ func (cc *ClientConnector) listenForRequests() {
 			wg.Add(1)
 			cc.readScheduler.Schedule(func() {
 				defer wg.Done()
-				log.Tracef("Received request on client connector: %v", f.Header)
+				log.Tracef("[%s] Received request on client connector: %v", ClientConnectorLogPrefix, f.Header)
 				lock.Lock()
 				if closed {
 					lock.Unlock()
@@ -189,14 +194,14 @@ func (cc *ClientConnector) listenForRequests() {
 					response := frame.NewFrame(f.Header.Version, f.Header.StreamId, msg)
 					rawResponse, err := defaultCodec.ConvertToRawFrame(response)
 					if err != nil {
-						log.Errorf("Could not convert frame (%v) to raw frame: %v", response, err)
+						log.Errorf("[%s] Could not convert frame (%v) to raw frame: %v", ClientConnectorLogPrefix, response, err)
 					}
 					cc.sendResponseToClient(rawResponse)
 					return
 				}
 				cc.requestChannel <- f
 				lock.Unlock()
-				log.Tracef("Request sent to client connector's request channel: %v", f.Header)
+				log.Tracef("[%s] Request sent to client connector's request channel: %v", ClientConnectorLogPrefix, f.Header)
 			})
 		}
 	}()
@@ -215,15 +220,15 @@ func (cc *ClientConnector) handleUnsupportedProtocol(err error, version primitiv
 			ErrorMessage: fmt.Sprintf("Invalid or unsupported protocol version (%d)", version)}
 	}
 
-	log.Infof("Protocol error detected while decoding a frame: %v. " +
-		"Returning a protocol error to the client: %v.", err, protocolErrMsg)
+	log.Infof("[%s] Protocol error detected while decoding a frame: %v. " +
+		"Returning a protocol error to the client: %v.", ClientConnectorLogPrefix, err, protocolErrMsg)
 
 	// ideally we would use the maximum version between the versions used by both control connections if
 	// control connections implemented protocol version negotiation
 	response := frame.NewFrame(primitive.ProtocolVersion4, 0, protocolErrMsg)
 	rawResponse, err := defaultCodec.ConvertToRawFrame(response)
 	if err != nil {
-		log.Errorf("Could not convert frame (%v) to raw frame: %v", response, err)
+		log.Errorf("[%s] Could not convert frame (%v) to raw frame: %v", ClientConnectorLogPrefix, response, err)
 		cc.clientHandlerCancelFunc()
 		return false
 	}

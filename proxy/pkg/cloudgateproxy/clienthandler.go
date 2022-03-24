@@ -36,6 +36,7 @@ type ClientHandler struct {
 
 	originCassandraConnector *ClusterConnector
 	targetCassandraConnector *ClusterConnector
+	asyncConnector           *ClusterConnector
 
 	originControlConn *ControlConn
 	targetControlConn *ControlConn
@@ -55,6 +56,7 @@ type ClientHandler struct {
 	startupRequest           *frame.RawFrame
 	secondaryStartupResponse *frame.RawFrame
 	secondaryHandshakeCreds  *AuthCredentials
+	asyncHandshakeCreds      *AuthCredentials
 
 	targetUsername string
 	targetPassword string
@@ -64,6 +66,12 @@ type ClientHandler struct {
 
 	// map of request context holders that store the contexts for the active requests, keyed on streamID
 	requestContextHolders *sync.Map
+
+	// map of request context holders that store the contexts for the active requests that are sent to async connector, keyed on streamID
+	asyncRequestContextHolders *sync.Map
+
+	// pending requests map of "fire and forget" requests (kept here so that they can be timed out)
+	asyncPendingRequests *pendingRequests
 
 	reqChannel  <-chan *frame.RawFrame
 	respChannel chan *Response
@@ -121,7 +129,8 @@ func NewClientHandler(
 	globalShutdownRequestCtx context.Context,
 	originHost *Host,
 	targetHost *Host,
-	timeUuidGenerator TimeUuidGenerator) (*ClientHandler, error) {
+	timeUuidGenerator TimeUuidGenerator,
+	readMode config.ReadMode) (*ClientHandler, error) {
 
 	nodeMetrics, err := metricHandler.GetNodeMetrics(
 		originCassandraConnInfo.endpoint.GetEndpointIdentifier(),
@@ -146,21 +155,43 @@ func NewClientHandler(
 	}()
 
 	respChannel := make(chan *Response, numWorkers)
+	clientHandlerRequestWg := &sync.WaitGroup{}
 
 	originConnector, err := NewClusterConnector(
-		originCassandraConnInfo, conf, nodeMetrics, localClientHandlerWg,
-		clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler, requestsDoneCtx)
+		originCassandraConnInfo, conf, psCache, nodeMetrics, localClientHandlerWg, clientHandlerRequestWg,
+		clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler, requestsDoneCtx,
+		false, nil)
 	if err != nil {
 		clientHandlerCancelFunc()
 		return nil, err
 	}
 
 	targetConnector, err := NewClusterConnector(
-		targetCassandraConnInfo, conf, nodeMetrics, localClientHandlerWg,
-		clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler, requestsDoneCtx)
+		targetCassandraConnInfo, conf, psCache, nodeMetrics, localClientHandlerWg, clientHandlerRequestWg,
+		clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler, requestsDoneCtx,
+		false, nil)
 	if err != nil {
 		clientHandlerCancelFunc()
 		return nil, err
+	}
+
+	asyncPendingRequests := newPendingRequests(MaxStreams)
+	var asyncConnector *ClusterConnector
+	if readMode == config.ReadModeSecondaryAsync {
+		var asyncConnInfo *ClusterConnectionInfo
+		if conf.ForwardReadsToTarget {
+			asyncConnInfo = originCassandraConnInfo
+		} else {
+			asyncConnInfo = targetCassandraConnInfo
+		}
+		asyncConnector, err = NewClusterConnector(
+			asyncConnInfo, conf, psCache, nodeMetrics, localClientHandlerWg, clientHandlerRequestWg,
+			clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler, requestsDoneCtx,
+			true, asyncPendingRequests)
+		if err != nil {
+			log.Errorf("Could not create async cluster connector to %s, async requests will not be forwarded: %s", asyncConnInfo.connConfig.GetClusterType(), err.Error())
+			asyncConnector = nil
+		}
 	}
 
 	responsesDoneChan := make(chan bool, 1)
@@ -193,6 +224,7 @@ func NewClientHandler(
 			writeScheduler,
 			clientHandlerShutdownRequestContext),
 
+		asyncConnector:                asyncConnector,
 		originCassandraConnector:      originConnector,
 		targetCassandraConnector:      targetConnector,
 		originControlConn:             originControlConn,
@@ -210,9 +242,11 @@ func NewClientHandler(
 		originUsername:                originUsername,
 		originPassword:                originPassword,
 		requestContextHolders:         &sync.Map{},
+		asyncRequestContextHolders:    &sync.Map{},
+		asyncPendingRequests:          asyncPendingRequests,
 		reqChannel:                    requestsChannel,
 		respChannel:                   respChannel,
-		clientHandlerRequestWaitGroup: &sync.WaitGroup{},
+		clientHandlerRequestWaitGroup: clientHandlerRequestWg,
 		closedRespChannel:             false,
 		closedRespChannelLock:         &sync.RWMutex{},
 		responsesDoneChan:             responsesDoneChan,
@@ -239,6 +273,9 @@ func (ch *ClientHandler) run(activeClients *int32) {
 	ch.clientConnector.run(activeClients)
 	ch.originCassandraConnector.run()
 	ch.targetCassandraConnector.run()
+	if ch.asyncConnector != nil {
+		ch.asyncConnector.run()
+	}
 	ch.requestLoop()
 	ch.listenForEventMessages()
 	ch.responseLoop()
@@ -249,6 +286,9 @@ func (ch *ClientHandler) run(activeClients *int32) {
 	go func() {
 		<- ch.originCassandraConnector.doneChan
 		<- ch.targetCassandraConnector.doneChan
+		if ch.asyncConnector != nil {
+			<- ch.asyncConnector.doneChan
+		}
 		ch.closedRespChannelLock.Lock()
 		defer ch.closedRespChannelLock.Unlock()
 		close(ch.respChannel)
@@ -294,6 +334,10 @@ func (ch *ClientHandler) requestLoop() {
 		defer log.Debugf("Waiting for origin write coalescer to finish...")
 		defer ch.targetCassandraConnector.writeCoalescer.Close()
 		defer log.Debugf("Waiting for target write coalescer to finish...")
+		if ch.asyncConnector != nil {
+			defer ch.asyncConnector.writeCoalescer.Close()
+			defer log.Debugf("Waiting for async %s write coalescer to finish...", ch.asyncConnector.clusterType)
+		}
 
 		wg := &sync.WaitGroup{}
 		for {
@@ -330,23 +374,47 @@ func (ch *ClientHandler) requestLoop() {
 
 		go func() {
 			<-ch.clientHandlerContext.Done()
-			ch.requestContextHolders.Range(func(key, value interface{}) bool {
-				reqCtxHolder := value.(*requestContextHolder)
-				reqCtx := reqCtxHolder.Get()
-				if reqCtx == nil {
-					return true
-				}
-				canceled := reqCtx.Cancel()
-				if canceled {
-					ch.cancelRequest(reqCtxHolder, reqCtx)
-				}
-				return true
-			})
+			ch.clearRequestContexts(ch.requestContextHolders)
+			ch.clearRequestContexts(ch.asyncRequestContextHolders)
+			if ch.asyncPendingRequests != nil {
+				ch.asyncPendingRequests.clear(func(ctx RequestContext) {
+					typedReqCtx, ok := ctx.(*asyncRequestContextImpl)
+					if !ok {
+						log.Errorf("Failed to cancel async request because request context conversion failed. "+
+							"This is most likely a bug, please report. AsyncRequestContext: %v", ctx)
+					} else {
+						if !typedReqCtx.expectedResponse {
+							ch.clientHandlerRequestWaitGroup.Done()
+						}
+					}
+				})
+			}
 		}()
 
 		log.Debugf("Waiting for all in flight requests from %v to finish.", connectionAddr)
 		ch.clientHandlerRequestWaitGroup.Wait()
 	}()
+}
+
+func (ch *ClientHandler) clearRequestContexts(contextHoldersMap *sync.Map) {
+	contextHoldersMap.Range(func(key, value interface{}) bool {
+		reqCtxHolder := value.(*requestContextHolder)
+		reqCtx := reqCtxHolder.Get()
+		if reqCtx == nil {
+			return true
+		}
+		canceled := reqCtx.Cancel()
+		if canceled {
+			typedReqCtx, ok := reqCtx.(*requestContextImpl)
+			if !ok {
+				log.Errorf("Failed to cancel request because request context conversion failed. " +
+					"This is most likely a bug, please report. RequestContext: %v", reqCtx)
+			} else {
+				ch.cancelRequest(reqCtxHolder, typedReqCtx)
+			}
+		}
+		return true
+	})
 }
 
 // Infinite loop that blocks on receiving from both cluster connector event channels.
@@ -459,16 +527,43 @@ func (ch *ClientHandler) responseLoop() {
 			ch.requestResponseScheduler.Schedule(func() {
 				defer wg.Done()
 
-				if ch.tryProcessProtocolError(response) {
-					return
+				var responseClusterType ClusterType
+				switch response.connectorType {
+				case ClusterConnectorTypeAsync:
+					responseClusterType = ch.asyncConnector.clusterType
+				case ClusterConnectorTypeOrigin:
+					responseClusterType = ch.originCassandraConnector.clusterType
+				case ClusterConnectorTypeTarget:
+					responseClusterType = ch.targetCassandraConnector.clusterType
+				}
+
+				if response.connectorType != ClusterConnectorTypeAsync {
+					_, protocolErr, err := decodeProtocolError(response.responseFrame)
+					if err != nil {
+						log.Errorf("Could not validate if error from %v is a protocol error (%v), skipping it.",
+							responseClusterType, response.responseFrame.Header.String())
+						return
+					}
+					if protocolErr != nil {
+						log.Infof("Protocol error detected (%v) on %v, forwarding it to the client.",
+							protocolErr, responseClusterType)
+						ch.clientConnector.sendResponseToClient(response.responseFrame)
+						return
+					}
 				}
 
 				streamId := response.GetStreamId()
-				holder := ch.getOrCreateRequestContextHolder(streamId)
+				var contextHoldersMap *sync.Map
+				if response.connectorType == ClusterConnectorTypeAsync {
+					contextHoldersMap = ch.asyncRequestContextHolders
+				} else {
+					contextHoldersMap = ch.requestContextHolders
+				}
+				holder := getOrCreateRequestContextHolder(contextHoldersMap, streamId)
 				reqCtx := holder.Get()
 				if reqCtx == nil {
-					log.Warnf("Could not find request context for stream id %d on %v. " +
-						"It either timed out or a protocol error occurred.", streamId, response.cluster)
+					log.Warnf("Could not find request context for stream id %d received from %v. " +
+						"It either timed out or a protocol error occurred.", streamId, response.connectorType)
 					return
 				}
 
@@ -476,12 +571,18 @@ func (ch *ClientHandler) responseLoop() {
 				if response.responseFrame == nil {
 					finished = reqCtx.SetTimeout(ch.nodeMetrics, response.requestFrame)
 				} else {
-					finished = reqCtx.SetResponse(ch.nodeMetrics, response.responseFrame, response.cluster)
-					ch.trackClusterErrorMetrics(response.responseFrame, response.cluster)
+					finished = reqCtx.SetResponse(ch.nodeMetrics, response.responseFrame, responseClusterType, response.connectorType)
+					ch.trackClusterErrorMetrics(response.responseFrame, response.connectorType)
 				}
 
 				if finished {
-					ch.finishRequest(holder, reqCtx)
+					typedReqCtx, ok := reqCtx.(*requestContextImpl)
+					if !ok {
+						log.Errorf("Failed to finish request because request context conversion failed. " +
+							"This is most likely a bug, please report. RequestContext: %v", reqCtx)
+					} else {
+						ch.finishRequest(holder, typedReqCtx)
+					}
 				}
 			})
 		}
@@ -490,34 +591,27 @@ func (ch *ClientHandler) responseLoop() {
 	}()
 }
 
-// Checks if response is a protocol error. Returns true if it processes this response. If it returns false,
-// then the response wasn't processed and it should be processed by another function.
-func (ch *ClientHandler) tryProcessProtocolError(response *Response) bool {
-	if response.responseFrame != nil &&
-		response.responseFrame.Header.OpCode == primitive.OpCodeError {
+func decodeProtocolError(responseFrame *frame.RawFrame) (*frame.Body, *message.ProtocolError, error) {
+	if responseFrame != nil &&
+		responseFrame.Header.OpCode == primitive.OpCodeError {
 		body, err := defaultCodec.DecodeBody(
-			response.responseFrame.Header, bytes.NewReader(response.responseFrame.Body))
+			responseFrame.Header, bytes.NewReader(responseFrame.Body))
 
 		if err != nil {
-			log.Errorf("Could not parse error with stream id 0 on %v: %v, skipping it.",
-				response.cluster, response.responseFrame.Header)
-			return true
+			return nil, nil, err
 		} else {
 			protocolError, ok := body.Message.(*message.ProtocolError)
 			if ok {
-				log.Infof("Protocol error detected (%v) on %v, forwarding it to the client.",
-					protocolError, response.cluster)
-				ch.clientConnector.sendResponseToClient(response.responseFrame)
-				return true
+				return body, protocolError, nil
 			}
 		}
 	}
 
-	return false
+	return nil, nil, nil
 }
 
 // should only be called after SetTimeout or SetResponse returns true
-func (ch *ClientHandler) finishRequest(holder *requestContextHolder, reqCtx *RequestContext) {
+func (ch *ClientHandler) finishRequest(holder *requestContextHolder, reqCtx *requestContextImpl) {
 	defer ch.clientHandlerRequestWaitGroup.Done()
 	err := holder.Clear(reqCtx)
 	if err != nil {
@@ -535,13 +629,14 @@ func (ch *ClientHandler) finishRequest(holder *requestContextHolder, reqCtx *Req
 	case forwardToTarget:
 		proxyMetrics.ProxyRequestDurationTarget.Track(reqCtx.startTime)
 		proxyMetrics.InFlightRequestsTarget.Subtract(1)
+	case forwardToAsync, forwardToNone:
 	default:
 		log.Errorf("unexpected forwardDecision %v, unable to track proxy level metrics", reqCtx.stmtInfo.GetForwardDecision())
 	}
 
 	aggregatedResponse, responseClusterType, err := ch.computeAggregatedResponse(reqCtx)
 	finalResponse := aggregatedResponse
-	if err == nil {
+	if err == nil && reqCtx.stmtInfo.GetForwardDecision() != forwardToAsync {
 		finalResponse, err = ch.processAggregatedResponse(aggregatedResponse, responseClusterType, reqCtx)
 	}
 
@@ -571,7 +666,7 @@ func (ch *ClientHandler) finishRequest(holder *requestContextHolder, reqCtx *Req
 }
 
 // should only be called after Cancel returns true
-func (ch *ClientHandler) cancelRequest(holder *requestContextHolder, reqCtx *RequestContext) {
+func (ch *ClientHandler) cancelRequest(holder *requestContextHolder, reqCtx *requestContextImpl) {
 	defer ch.clientHandlerRequestWaitGroup.Done()
 	err := holder.Clear(reqCtx)
 	if err != nil {
@@ -586,6 +681,7 @@ func (ch *ClientHandler) cancelRequest(holder *requestContextHolder, reqCtx *Req
 		proxyMetrics.InFlightRequestsOrigin.Subtract(1)
 	case forwardToTarget:
 		proxyMetrics.InFlightRequestsTarget.Subtract(1)
+	case forwardToAsync, forwardToNone:
 	default:
 		log.Errorf("unexpected forwardDecision %v, unable to track proxy level metrics", reqCtx.stmtInfo.GetForwardDecision())
 	}
@@ -598,9 +694,10 @@ func (ch *ClientHandler) cancelRequest(holder *requestContextHolder, reqCtx *Req
 }
 
 // Computes the response to be sent to the client based on the forward decision of the request.
-func (ch *ClientHandler) computeAggregatedResponse(requestContext *RequestContext) (*frame.RawFrame, ClusterType, error) {
-	forwardDecision := requestContext.stmtInfo.GetForwardDecision()
-	if forwardDecision == forwardToOrigin {
+func (ch *ClientHandler) computeAggregatedResponse(requestContext *requestContextImpl) (*frame.RawFrame, ClusterType, error) {
+	fwdDecision := requestContext.stmtInfo.GetForwardDecision()
+	switch fwdDecision {
+	case forwardToOrigin:
 		if requestContext.originResponse == nil {
 			return nil, ClusterTypeNone, fmt.Errorf(
 				"did not receive response from origin cassandra channel, stream: %d",
@@ -612,8 +709,7 @@ func (ch *ClientHandler) computeAggregatedResponse(requestContext *RequestContex
 			ch.metricHandler.GetProxyMetrics().FailedRequestsOrigin.Add(1)
 		}
 		return requestContext.originResponse, ClusterTypeOrigin, nil
-
-	} else if forwardDecision == forwardToTarget {
+	case forwardToTarget:
 		if requestContext.targetResponse == nil {
 			return nil, ClusterTypeNone, fmt.Errorf(
 				"did not receive response from target cassandra channel, stream: %d",
@@ -625,8 +721,7 @@ func (ch *ClientHandler) computeAggregatedResponse(requestContext *RequestContex
 			ch.metricHandler.GetProxyMetrics().FailedRequestsTarget.Add(1)
 		}
 		return requestContext.targetResponse, ClusterTypeTarget, nil
-
-	} else if forwardDecision == forwardToBoth {
+	case forwardToBoth:
 		if requestContext.originResponse == nil {
 			return nil, ClusterTypeNone, fmt.Errorf(
 				"did not receive response from original cassandra channel, stream: %d",
@@ -640,15 +735,43 @@ func (ch *ClientHandler) computeAggregatedResponse(requestContext *RequestContex
 		aggregatedResponse, responseClusterType := ch.aggregateAndTrackResponses(
 			requestContext.request, requestContext.originResponse, requestContext.targetResponse)
 		return aggregatedResponse, responseClusterType, nil
-	} else {
+	case forwardToAsync:
+		switch ch.asyncConnector.clusterType {
+		case ClusterTypeTarget:
+			if requestContext.targetResponse == nil {
+				return nil, ClusterTypeNone, fmt.Errorf(
+					"did not receive response from async target cassandra channel, stream: %d",
+					requestContext.request.Header.StreamId)
+			}
+			log.Tracef("Forward to async: just returning the response received from %v: %d",
+				ClusterTypeTarget, requestContext.targetResponse.Header.OpCode)
+			return requestContext.targetResponse, ClusterTypeTarget, nil
+		case ClusterTypeOrigin:
+			if requestContext.originResponse == nil {
+				return nil, ClusterTypeNone, fmt.Errorf(
+					"did not receive response from async origin cassandra channel, stream: %d",
+					requestContext.request.Header.StreamId)
+			}
+			log.Tracef("Forward to async: just returning the response received from %v: %d",
+				ClusterTypeOrigin, requestContext.originResponse.Header.OpCode)
+			return requestContext.originResponse, ClusterTypeOrigin, nil
+		default:
+			log.Errorf("Unknown cluster type: %v. This is a bug, please report.", ch.asyncConnector.clusterType)
+			return nil, ClusterTypeNone, fmt.Errorf("unknown cluster type: %v; this is a bug, please report", ch.asyncConnector.clusterType)
+		}
+	case forwardToNone:
 		return nil, ClusterTypeNone, fmt.Errorf(
-			"unknown forward decision %v, request context: %v", forwardDecision, requestContext)
+			"%v is not expected to reach this code, this is a BUG, please report (request context: %v)",
+			fwdDecision, requestContext)
+	default:
+		return nil, ClusterTypeNone, fmt.Errorf(
+			"unknown forward decision %v, request context: %v", fwdDecision, requestContext)
 	}
 }
 
 // Modifies internal state based on the provided aggregated response (e.g. storing prepared IDs)
 func (ch *ClientHandler) processAggregatedResponse(
-	response *frame.RawFrame, responseClusterType ClusterType, reqCtx *RequestContext) (*frame.RawFrame, error) {
+	response *frame.RawFrame, responseClusterType ClusterType, reqCtx *requestContextImpl) (*frame.RawFrame, error) {
 
 	switch response.Header.OpCode {
 	case primitive.OpCodeResult, primitive.OpCodeError:
@@ -708,7 +831,7 @@ func (ch *ClientHandler) processAggregatedResponse(
 	return response, nil
 }
 
-func (ch *ClientHandler) processPreparedResponse(bodyMsg *message.PreparedResult, reqCtx *RequestContext) error {
+func (ch *ClientHandler) processPreparedResponse(bodyMsg *message.PreparedResult, reqCtx *requestContextImpl) error {
 	if bodyMsg.PreparedQueryId == nil {
 		return errors.New("unexpected prepared query id nil")
 	} else if reqCtx.stmtInfo == nil {
@@ -818,7 +941,6 @@ func (ch *ClientHandler) handleHandshakeRequest(request *frame.RawFrame, wg *syn
 
 	if request.Header.OpCode == primitive.OpCodeStartup {
 		var secondaryResponse *frame.RawFrame
-		var secondaryConnector *ClusterConnector
 		var secondaryCluster ClusterType
 		if ch.forwardAuthToTarget {
 			// secondary is ORIGIN
@@ -827,7 +949,6 @@ func (ch *ClientHandler) handleHandshakeRequest(request *frame.RawFrame, wg *syn
 				return false, fmt.Errorf("no response received from %v for startup %v", ClusterTypeOrigin, request)
 			}
 			secondaryResponse = response.originResponse
-			secondaryConnector = ch.originCassandraConnector
 			aggregatedResponse = response.targetResponse
 			secondaryCluster = ClusterTypeOrigin
 		} else {
@@ -837,7 +958,6 @@ func (ch *ClientHandler) handleHandshakeRequest(request *frame.RawFrame, wg *syn
 				return false, fmt.Errorf("no response received from %v for startup %v", ClusterTypeTarget, request)
 			}
 			secondaryResponse = response.targetResponse
-			secondaryConnector = ch.targetCassandraConnector
 			aggregatedResponse = response.originResponse
 			secondaryCluster = ClusterTypeTarget
 		}
@@ -845,11 +965,7 @@ func (ch *ClientHandler) handleHandshakeRequest(request *frame.RawFrame, wg *syn
 		ch.secondaryStartupResponse = secondaryResponse
 		ch.startupRequest = request
 
-		_, _, _, err := handleSecondaryHandshakeResponse(
-			1,
-			secondaryResponse,
-			ch.clientConnector.connection.RemoteAddr(),
-			secondaryConnector.connection.RemoteAddr(), secondaryCluster)
+		err := validateSecondaryStartupResponse(secondaryResponse, secondaryCluster)
 		if err != nil {
 			return false, fmt.Errorf("unsuccessful startup on %v: %w", secondaryCluster, err)
 		}
@@ -877,18 +993,36 @@ func (ch *ClientHandler) handleHandshakeRequest(request *frame.RawFrame, wg *syn
 			if ch.forwardAuthToTarget {
 				secondaryClusterType = ClusterTypeOrigin
 			}
-			secondaryHandshakeChannel, err := ch.startSecondaryHandshake()
+			secondaryHandshakeChannel, err := ch.startSecondaryHandshake(false)
 			if err != nil {
 				tempResult.err = err
 				scheduledTaskChannel <- tempResult
 				return
 			}
+			var asyncConnectorHandshakeChannel chan error
+			if ch.asyncConnector != nil {
+				asyncConnectorHandshakeChannel, err = ch.startSecondaryHandshake(true)
+				if err != nil {
+					log.Errorf("Error occured in async connector (%v) handshake: %v. " +
+						"Async requests will not be forwarded.", ch.asyncConnector.clusterType, err.Error())
+					ch.asyncConnector.Shutdown()
+					asyncConnectorHandshakeChannel = nil
+				}
+			}
+			var errAsync error
+			for asyncConnectorHandshakeChannel != nil || secondaryHandshakeChannel != nil {
+				select {
+				case errAsync, _ = <-asyncConnectorHandshakeChannel:
+					asyncConnectorHandshakeChannel = nil
+				case err, _ = <-secondaryHandshakeChannel:
+					secondaryHandshakeChannel = nil
+				}
+			}
 
-			err, ok := <-secondaryHandshakeChannel
-			if !ok {
-				tempResult.err = fmt.Errorf("secondary (%v) handshake failed (scheduledTaskChannel closed)", secondaryClusterType)
-				scheduledTaskChannel <- tempResult
-				return
+			if errAsync != nil {
+				log.Errorf("Async connector (%v) handshake failed, async requests will not be forwarded: %s",
+					ch.asyncConnector.clusterType, errAsync.Error())
+				ch.asyncConnector.Shutdown()
 			}
 
 			if err != nil {
@@ -957,7 +1091,7 @@ func (ch *ClientHandler) buildAuthErrorResponse(
 // If the returned channel is closed before a value could be read, then the handshake has failed as well.
 //
 // The handshake was successful if the returned channel contains a "nil" value.
-func (ch *ClientHandler) startSecondaryHandshake() (chan error, error) {
+func (ch *ClientHandler) startSecondaryHandshake(asyncConnector bool) (chan error, error) {
 	startupFrame := ch.startupRequest
 	if startupFrame == nil {
 		return nil, errors.New("can not start secondary handshake before a Startup request was received")
@@ -972,7 +1106,8 @@ func (ch *ClientHandler) startSecondaryHandshake() (chan error, error) {
 	go func() {
 		defer ch.clientHandlerRequestWaitGroup.Done()
 		defer close(channel)
-		err := ch.handleSecondaryHandshakeStartup(startupFrame, startupResponse)
+		var err error
+		err = ch.handleSecondaryHandshakeStartup(startupFrame, startupResponse, asyncConnector)
 		channel <- err
 	}()
 	return channel, nil
@@ -1018,7 +1153,8 @@ func (ch *ClientHandler) forwardRequest(request *frame.RawFrame, customResponseC
 		return err
 	}
 
-	err = ch.executeStatement(context, stmtInfo, overallRequestStartTime, customResponseChannel)
+	requestTimeout := time.Duration(ch.conf.RequestTimeoutMs) * time.Millisecond
+	err = ch.executeStatement(context, stmtInfo, overallRequestStartTime, customResponseChannel, requestTimeout)
 	if err != nil {
 		return err
 	}
@@ -1028,9 +1164,10 @@ func (ch *ClientHandler) forwardRequest(request *frame.RawFrame, customResponseC
 // executeStatement executes the forward decision and waits for one or two responses, then returns the response
 // that should be sent back to the client.
 func (ch *ClientHandler) executeStatement(
-	frameContext *frameDecodeContext, stmtInfo StatementInfo, overallRequestStartTime time.Time, customResponseChannel chan *customResponse) error {
+	frameContext *frameDecodeContext, stmtInfo StatementInfo, overallRequestStartTime time.Time,
+	customResponseChannel chan *customResponse, requestTimeout time.Duration) error {
 	forwardDecision := stmtInfo.GetForwardDecision()
-	log.Tracef("Opcode: %v, Forward decision: %v", frameContext.frame.Header.OpCode, forwardDecision)
+	log.Tracef("Opcode: %v, Forward decision: %v", frameContext.frame.Header.OpCode.String(), forwardDecision)
 
 	f := frameContext.frame
 	originRequest := f
@@ -1086,7 +1223,9 @@ func (ch *ClientHandler) executeStatement(
 
 		clientResponse = interceptedResponseRawFrame
 	case *BoundStatementInfo:
-		if forwardDecision == forwardToBoth || forwardDecision == forwardToTarget {
+		sendToAsyncConnector := (stmtInfo.ShouldBeSentAsync() || forwardDecision == forwardToAsync) && ch.asyncConnector != nil
+		asyncConnectorIsTarget := ch.asyncConnector != nil && ch.asyncConnector.clusterType == ClusterTypeTarget
+		if forwardDecision == forwardToBoth || forwardDecision == forwardToTarget || (sendToAsyncConnector && asyncConnectorIsTarget) {
 			decodedFrame, err := frameContext.GetOrDecodeFrame()
 			if err != nil {
 				return fmt.Errorf("could not decode execute raw frame: %w", err)
@@ -1153,7 +1292,13 @@ func (ch *ClientHandler) executeStatement(
 	}
 
 	reqCtx := NewRequestContext(f, stmtInfo, overallRequestStartTime, customResponseChannel)
-	holder, err := ch.storeRequestContext(reqCtx)
+	var contextHoldersMap *sync.Map
+	if forwardDecision == forwardToAsync {
+		contextHoldersMap = ch.asyncRequestContextHolders
+	} else {
+		contextHoldersMap = ch.requestContextHolders
+	}
+	holder, err := storeRequestContext(contextHoldersMap, reqCtx)
 	if err != nil {
 		return err
 	}
@@ -1166,12 +1311,13 @@ func (ch *ClientHandler) executeStatement(
 		proxyMetrics.InFlightRequestsOrigin.Add(1)
 	case forwardToTarget:
 		proxyMetrics.InFlightRequestsTarget.Add(1)
+	case forwardToNone, forwardToAsync:
 	default:
 		log.Errorf("unexpected forwardDecision %v, unable to track proxy level metrics", forwardDecision)
 	}
 
 	ch.clientHandlerRequestWaitGroup.Add(1)
-	timer := time.AfterFunc(time.Duration(ch.conf.RequestTimeoutMs) * time.Millisecond, func() {
+	timer := time.AfterFunc(requestTimeout, func() {
 		ch.closedRespChannelLock.RLock()
 		defer ch.closedRespChannelLock.RUnlock()
 		if ch.closedRespChannel {
@@ -1181,10 +1327,11 @@ func (ch *ClientHandler) executeStatement(
 			}
 			return
 		}
-		ch.respChannel <- NewTimeoutResponse(f)
+		ch.respChannel <- NewTimeoutResponse(f, forwardDecision == forwardToAsync)
 	})
 	reqCtx.SetTimer(timer)
 
+	sendAsync := stmtInfo.ShouldBeSentAsync() && ch.asyncConnector != nil
 	switch forwardDecision {
 	case forwardToBoth:
 		log.Tracef("Forwarding request with opcode %v for stream %v to %v and %v",
@@ -1199,8 +1346,80 @@ func (ch *ClientHandler) executeStatement(
 		log.Tracef("Forwarding request with opcode %v for stream %v to %v",
 			f.Header.OpCode, f.Header.StreamId, ClusterTypeTarget)
 		ch.targetCassandraConnector.sendRequestToCluster(targetRequest)
+	case forwardToNone:
+	case forwardToAsync:
+		sendAsync = true
 	default:
 		return fmt.Errorf("unknown forward decision %v, stream: %d", forwardDecision, f.Header.StreamId)
+	}
+
+	if !sendAsync {
+		return nil
+	}
+
+	var asyncRequest *frame.RawFrame
+	if ch.conf.ForwardReadsToTarget {
+		asyncRequest = originRequest
+	} else {
+		asyncRequest = targetRequest
+	}
+
+	if !ch.asyncConnector.validateAsyncStateForRequest(asyncRequest) {
+		return nil
+	}
+
+	expectedResponse := true
+	if forwardDecision != forwardToAsync {
+		asyncRequest = asyncRequest.Clone()
+		expectedResponse = false
+	}
+
+	asyncReqCtx := NewAsyncRequestContext(asyncRequest.Header.StreamId, expectedResponse)
+	var newStreamId int16
+	newStreamId, err = ch.asyncPendingRequests.store(asyncReqCtx)
+	var stored bool
+	if err != nil {
+		log.Warnf("Could not send async request due to an error while storing the request state: %v.", err.Error())
+		stored = false
+	} else {
+		stored = true
+		asyncRequest.Header.StreamId = newStreamId
+		if !expectedResponse {
+			ch.clientHandlerRequestWaitGroup.Add(1)
+			timer = time.AfterFunc(requestTimeout, func() {
+				if ch.asyncPendingRequests.timeOut(newStreamId, asyncReqCtx, ch.nodeMetrics, asyncRequest) {
+					ch.clientHandlerRequestWaitGroup.Done()
+					log.Warnf(
+						"Async Request (%v) timed out after %v ms.",
+						asyncRequest.Header.OpCode.String(), requestTimeout.Milliseconds())
+				}
+				return
+			})
+			asyncReqCtx.SetTimer(timer)
+		}
+	}
+
+	if err == nil {
+		log.Tracef("Forwarding ASYNC request with opcode %v for stream %v to %v",
+			f.Header.OpCode, f.Header.StreamId, ch.asyncConnector.clusterType)
+		if !ch.asyncConnector.sendAsyncRequestToCluster(asyncRequest) {
+			err = errors.New("async request was not sent")
+		}
+	}
+
+	if err != nil {
+		if stored {
+			if ch.asyncPendingRequests.cancel(newStreamId, asyncReqCtx) {
+				if !expectedResponse {
+					ch.clientHandlerRequestWaitGroup.Done()
+				}
+			}
+		}
+		if expectedResponse {
+			if reqCtx.Cancel() {
+				ch.cancelRequest(holder, reqCtx)
+			}
+		}
 	}
 
 	return nil
@@ -1325,6 +1544,22 @@ func (ch *ClientHandler) handleClientCredentials(f *frame.RawFrame) (*frame.RawF
 		}
 	}
 
+	ch.asyncHandshakeCreds = clientCreds
+	if ch.asyncConnector != nil {
+		if ch.targetCredsOnClientRequest && ch.asyncConnector.clusterType == ClusterTypeOrigin {
+			ch.asyncHandshakeCreds = &AuthCredentials{
+				Username: ch.originUsername,
+				Password: ch.originPassword,
+			}
+		}
+		if !ch.targetCredsOnClientRequest && ch.asyncConnector.clusterType == ClusterTypeTarget {
+			ch.asyncHandshakeCreds = &AuthCredentials{
+				Username: ch.targetUsername,
+				Password: ch.targetPassword,
+			}
+		}
+	}
+
 	if primaryHandshakeCreds == nil {
 		// client credentials don't need to be replaced
 		return f, nil
@@ -1378,20 +1613,20 @@ func createUnpreparedFrame(errVal *UnpreparedExecuteError) (*frame.RawFrame, err
 
 // Creates request context holder for the provided request context and adds it to the map.
 // If a holder already exists, return it instead.
-func (ch *ClientHandler) getOrCreateRequestContextHolder(streamId int16) *requestContextHolder {
-	reqCtxHolder, ok := ch.requestContextHolders.Load(streamId)
+func getOrCreateRequestContextHolder(contextHoldersMap *sync.Map, streamId int16) *requestContextHolder {
+	reqCtxHolder, ok := contextHoldersMap.Load(streamId)
 	if ok {
 		return reqCtxHolder.(*requestContextHolder)
 	} else {
-		reqCtxHolder, _ := ch.requestContextHolders.LoadOrStore(streamId, NewRequestContextHolder())
+		reqCtxHolder, _ := contextHoldersMap.LoadOrStore(streamId, NewRequestContextHolder())
 		return reqCtxHolder.(*requestContextHolder)
 	}
 }
 
 // Stores the provided request context in a RequestContextHolder. The holder is retrieved using getOrCreateRequestContextHolder,
 // see the documentation on that function for more details.
-func (ch *ClientHandler) storeRequestContext(reqCtx *RequestContext) (*requestContextHolder, error) {
-	requestContextHolder := ch.getOrCreateRequestContextHolder(reqCtx.request.Header.StreamId)
+func storeRequestContext(contextHoldersMap *sync.Map, reqCtx *requestContextImpl) (*requestContextHolder, error) {
+	requestContextHolder := getOrCreateRequestContextHolder(contextHoldersMap, reqCtx.request.Header.StreamId)
 	if requestContextHolder == nil {
 		return nil, fmt.Errorf("could not find request context holder with stream id %d", reqCtx.request.Header.StreamId)
 	}
@@ -1405,7 +1640,7 @@ func (ch *ClientHandler) storeRequestContext(reqCtx *RequestContext) (*requestCo
 }
 
 // Updates cluster level error metrics based on the outcome in the response
-func (ch *ClientHandler) trackClusterErrorMetrics(response *frame.RawFrame, cluster ClusterType) {
+func (ch *ClientHandler) trackClusterErrorMetrics(response *frame.RawFrame, connectorType ClusterConnectorType) {
 	if !isResponseSuccessful(response) {
 		errorMsg, err := decodeErrorResult(response)
 		if err != nil {
@@ -1413,8 +1648,8 @@ func (ch *ClientHandler) trackClusterErrorMetrics(response *frame.RawFrame, clus
 			return
 		}
 
-		switch cluster {
-		case ClusterTypeOrigin:
+		switch connectorType {
+		case ClusterConnectorTypeOrigin:
 			switch errorMsg.GetErrorCode() {
 			case primitive.ErrorCodeUnprepared:
 				ch.nodeMetrics.OriginMetrics.OriginUnpreparedErrors.Add(1)
@@ -1426,7 +1661,7 @@ func (ch *ClientHandler) trackClusterErrorMetrics(response *frame.RawFrame, clus
 				log.Debugf("Recording origin other error: %v", errorMsg)
 				ch.nodeMetrics.OriginMetrics.OriginOtherErrors.Add(1)
 			}
-		case ClusterTypeTarget:
+		case ClusterConnectorTypeTarget:
 			switch errorMsg.GetErrorCode() {
 			case primitive.ErrorCodeUnprepared:
 				ch.nodeMetrics.TargetMetrics.TargetUnpreparedErrors.Add(1)
@@ -1438,8 +1673,9 @@ func (ch *ClientHandler) trackClusterErrorMetrics(response *frame.RawFrame, clus
 					log.Debugf("Recording target other error: %v", errorMsg)
 				ch.nodeMetrics.TargetMetrics.TargetOtherErrors.Add(1)
 				}
+		case ClusterConnectorTypeAsync:
 		default:
-			log.Errorf("unexpected clusterType %v, unable to track node metrics", cluster)
+			log.Errorf("unexpected connectorType %v, unable to track node metrics", connectorType)
 		}
 	}
 }
