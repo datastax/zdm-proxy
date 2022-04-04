@@ -3,6 +3,7 @@ package cloudgateproxy
 import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"testing"
 )
 
@@ -286,7 +287,9 @@ func TestInspectCqlQuery(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			actual := inspectCqlQuery(tt.query)
+			timeUuidGenerator, err := GetDefaultTimeUuidGenerator()
+			require.Nil(t, err)
+			actual := inspectCqlQuery(tt.query, timeUuidGenerator)
 			if actual.getStatementType() != tt.statementType {
 				t.Errorf("inspectCqlQuery().isSelectStatement() actual = %v, expected %v", actual.getStatementType(), tt.statementType)
 			}
@@ -550,11 +553,11 @@ func TestNowFunctionCalls(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 
-			info := inspectCqlQuery(tt.query)
+			info := inspectCqlQuery(tt.query, &fakeTimeUuidGenerator{uid: tt.replacement})
 			assert.Equal(t, tt.statementType, info.getStatementType())
 			assert.Equal(t, tt.hasNow, info.hasNowFunctionCalls())
 
-			modifiedWithLiteral, replacedTerms1 := info.replaceNowFunctionCallsWithLiteral(tt.replacement)
+			modifiedWithLiteral, replacedTerms1 := info.replaceNowFunctionCallsWithLiteral()
 			modifiedWithPositional, replacedTerms2 := info.replaceNowFunctionCallsWithPositionalBindMarkers()
 			modifiedWithNamed, replacedTerms3 := info.replaceNowFunctionCallsWithNamedBindMarkers()
 
@@ -578,4 +581,12 @@ func TestNowFunctionCalls(t *testing.T) {
 			assert.Equal(t, tt.expectedReplacedTerms, replacedTerms3)
 		})
 	}
+}
+
+type fakeTimeUuidGenerator struct {
+	uid uuid.UUID
+}
+
+func (recv *fakeTimeUuidGenerator) GetTimeUuid() uuid.UUID {
+	return recv.uid
 }

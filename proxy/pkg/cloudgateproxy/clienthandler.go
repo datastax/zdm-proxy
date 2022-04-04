@@ -9,6 +9,7 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/google/uuid"
 	"github.com/riptano/cloud-gate/proxy/pkg/config"
 	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
@@ -97,8 +98,9 @@ type ClientHandler struct {
 	forwardAuthToTarget        bool
 	targetCredsOnClientRequest bool
 
-	queryModifier *QueryModifier
+	queryModifier     *QueryModifier
 	parameterModifier *ParameterModifier
+	timeUuidGenerator TimeUuidGenerator
 }
 
 func NewClientHandler(
@@ -232,6 +234,7 @@ func NewClientHandler(
 		targetCredsOnClientRequest:    targetCredsOnClientRequest,
 		queryModifier:                 NewQueryModifier(timeUuidGenerator),
 		parameterModifier:             NewParameterModifier(timeUuidGenerator),
+		timeUuidGenerator:             timeUuidGenerator,
 	}, nil
 }
 
@@ -1090,7 +1093,7 @@ func (ch *ClientHandler) forwardRequest(request *frame.RawFrame, customResponseC
 	}
 	stmtInfo, err := buildStatementInfo(
 		context, replacedTerms, ch.preparedStatementCache, ch.metricHandler, ch.currentKeyspaceName, ch.conf.ForwardReadsToTarget,
-		ch.conf.ForwardSystemQueriesToTarget, ch.topologyConfig.VirtualizationEnabled, ch.forwardAuthToTarget)
+		ch.conf.ForwardSystemQueriesToTarget, ch.topologyConfig.VirtualizationEnabled, ch.forwardAuthToTarget, ch.timeUuidGenerator)
 	if err != nil {
 		if errVal, ok := err.(*UnpreparedExecuteError); ok {
 			unpreparedFrame, err := createUnpreparedFrame(errVal)
@@ -1181,15 +1184,17 @@ func (ch *ClientHandler) executeStatement(
 		preparedData := castedStmtInfo.GetPreparedData()
 		preparedStmtInfo := preparedData.GetPreparedStatementInfo()
 		replacedTerms := preparedStmtInfo.GetReplacedTerms()
+		var replacementTimeUuids []*uuid.UUID
 		if len(replacedTerms) > 0 && (fwdDecision == forwardToBoth || fwdDecision == forwardToOrigin) {
 			clientRequest, err := frameContext.GetOrDecodeFrame()
 			if err != nil {
 				return fmt.Errorf("could not decode execute raw frame: %w", err)
 			}
 
+			replacementTimeUuids = ch.parameterModifier.generateTimeUuids(preparedStmtInfo)
 			newOriginRequest := clientRequest.Clone()
 			_, err = ch.parameterModifier.AddValuesToExecuteFrame(
-				newOriginRequest, preparedStmtInfo, preparedData.GetOriginVariablesMetadata())
+				newOriginRequest, preparedStmtInfo, preparedData.GetOriginVariablesMetadata(), replacementTimeUuids)
 			if err != nil {
 				return fmt.Errorf("could not add values to origin EXECUTE: %w", err)
 			}
@@ -1211,8 +1216,11 @@ func (ch *ClientHandler) executeStatement(
 			newTargetRequest := clientRequest.Clone()
 			var newTargetExecuteMsg *message.Execute
 			if len(replacedTerms) > 0 {
+				if replacementTimeUuids == nil {
+					replacementTimeUuids = ch.parameterModifier.generateTimeUuids(preparedStmtInfo)
+				}
 				newTargetExecuteMsg, err = ch.parameterModifier.AddValuesToExecuteFrame(
-					newTargetRequest, preparedStmtInfo, preparedData.GetTargetVariablesMetadata())
+					newTargetRequest, preparedStmtInfo, preparedData.GetTargetVariablesMetadata(), replacementTimeUuids)
 				if err != nil {
 					return fmt.Errorf("could not add values to target EXECUTE: %w", err)
 				}
@@ -1261,11 +1269,12 @@ func (ch *ClientHandler) executeStatement(
 						return fmt.Errorf("expected Batch but got %v instead", newOriginRequest.Body.Message.GetOpCode())
 					}
 				}
+				replacementTimeUuids := ch.parameterModifier.generateTimeUuids(preparedStmtInfo)
 				err = ch.parameterModifier.addValuesToBatchChild(decodedFrame.Header.Version, newTargetBatchMsg.Children[stmtIdx],
-					preparedData.GetPreparedStatementInfo(), preparedData.GetTargetVariablesMetadata())
+					preparedData.GetPreparedStatementInfo(), preparedData.GetTargetVariablesMetadata(), replacementTimeUuids)
 				if err == nil && newOriginBatchMsg != nil {
 					err = ch.parameterModifier.addValuesToBatchChild(decodedFrame.Header.Version, newOriginBatchMsg.Children[stmtIdx],
-						preparedData.GetPreparedStatementInfo(), preparedData.GetOriginVariablesMetadata())
+						preparedData.GetPreparedStatementInfo(), preparedData.GetOriginVariablesMetadata(), replacementTimeUuids)
 				}
 				if err != nil {
 					return fmt.Errorf("could not add values to batch child statement: %w", err)

@@ -26,7 +26,8 @@ func TestAddValuesToExecuteFrame_NoReplacedTerms(t *testing.T) {
 		Columns:   nil,
 	}
 	fClone := f.Clone()
-	newMsg, err := parameterModifier.AddValuesToExecuteFrame(fClone, preparedStmtInfo, variablesMetadata)
+	replacementTimeUuids := parameterModifier.generateTimeUuids(preparedStmtInfo)
+	newMsg, err := parameterModifier.AddValuesToExecuteFrame(fClone, preparedStmtInfo, variablesMetadata, replacementTimeUuids)
 	require.Same(t, fClone.Body.Message, newMsg)
 	require.NotSame(t, f.Body.Message, newMsg)
 	require.Equal(t, f.Body.Message, newMsg)
@@ -46,7 +47,8 @@ func TestAddValuesToExecuteFrame_InvalidMessageType(t *testing.T) {
 		PkIndices: nil,
 		Columns:   nil,
 	}
-	_, err = parameterModifier.AddValuesToExecuteFrame(f, preparedStmtInfo, variablesMetadata)
+	replacementTimeUuids := parameterModifier.generateTimeUuids(preparedStmtInfo)
+	_, err = parameterModifier.AddValuesToExecuteFrame(f, preparedStmtInfo, variablesMetadata, replacementTimeUuids)
 	require.NotNil(t, err)
 }
 
@@ -205,7 +207,8 @@ func TestAddValuesToExecuteFrame_PositionalValues(t *testing.T) {
 			containsPositionalMarkers := ((len(requestPosVals)+len(replacedTerms)) > 0) && !test.prepareContainsNamedValues
 			preparedStmtInfo := NewPreparedStatementInfo(NewGenericStatementInfo(forwardToBoth), replacedTerms, containsPositionalMarkers)
 
-			executeMsg, err := parameterModifier.AddValuesToExecuteFrame(f, preparedStmtInfo, vm)
+			replacementTimeUuids := parameterModifier.generateTimeUuids(preparedStmtInfo)
+			executeMsg, err := parameterModifier.AddValuesToExecuteFrame(f, preparedStmtInfo, vm, replacementTimeUuids)
 
 			require.Nil(t, err)
 			require.Equal(t, len(requestPosVals) + len(replacedTerms), len(executeMsg.Options.PositionalValues))
@@ -220,7 +223,8 @@ func TestAddValuesToExecuteFrame_PositionalValues(t *testing.T) {
 					if generatedValue == nil {
 						generatedValue = paramVal
 					} else {
-						require.Equal(t, generatedValue, paramVal)
+						require.NotEqual(t, generatedValue, paramVal)
+						generatedValue = paramVal
 					}
 				}
 			}
@@ -348,7 +352,8 @@ func TestAddValuesToExecuteFrame_NamedValues(t *testing.T) {
 			})
 			preparedStmtInfo := NewPreparedStatementInfo(NewGenericStatementInfo(forwardToBoth), replacedTerms, false)
 
-			executeMsg, err := parameterModifier.AddValuesToExecuteFrame(f, preparedStmtInfo, vm)
+			replacementTimeUuids := parameterModifier.generateTimeUuids(preparedStmtInfo)
+			executeMsg, err := parameterModifier.AddValuesToExecuteFrame(f, preparedStmtInfo, vm, replacementTimeUuids)
 
 			require.Nil(t, err)
 			if len(replacedTerms) == 0 {

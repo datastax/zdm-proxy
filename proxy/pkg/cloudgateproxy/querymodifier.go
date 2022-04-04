@@ -20,7 +20,7 @@ func NewQueryModifier(timeUuidGenerator TimeUuidGenerator) *QueryModifier {
 //   * the request is a QUERY or PREPARE
 //   * and it contains now() function calls
 func (recv *QueryModifier) replaceQueryString(context *frameDecodeContext) (*frameDecodeContext, []*statementReplacedTerms, error) {
-	decodedFrame, statementsQueryData, err := context.GetOrDecodeAndInspect()
+	decodedFrame, statementsQueryData, err := context.GetOrDecodeAndInspect(recv.timeUuidGenerator)
 	if err != nil {
 		if errors.Is(err, NotInspectableErr) {
 			return context, []*statementReplacedTerms{}, nil
@@ -72,8 +72,7 @@ func (recv *QueryModifier) replaceQueryInBatchMessage(
 
 	for idx, stmtQueryData := range statementsQueryData {
 		if stmtQueryData.queryData.hasNowFunctionCalls() {
-			timeUUID := recv.timeUuidGenerator.GetTimeUuid()
-			newQueryData, replacedTerms := stmtQueryData.queryData.replaceNowFunctionCallsWithLiteral(timeUUID)
+			newQueryData, replacedTerms := stmtQueryData.queryData.replaceNowFunctionCallsWithLiteral()
 			newStatementsQueryData = append(
 				newStatementsQueryData,
 				&statementQueryData{statementIndex: stmtQueryData.statementIndex, queryData: newQueryData})
@@ -117,8 +116,7 @@ func (recv *QueryModifier) replaceQueryInQueryMessage(
 	if !requiresReplacement {
 		return decodedFrame, []*statementReplacedTerms{}, statementsQueryData, nil
 	}
-	timeUUID := recv.timeUuidGenerator.GetTimeUuid()
-	newQueryData, replacedTerms := stmtQueryData.queryData.replaceNowFunctionCallsWithLiteral(timeUUID)
+	newQueryData, replacedTerms := stmtQueryData.queryData.replaceNowFunctionCallsWithLiteral()
 	newFrame := decodedFrame.Clone()
 	newQueryMsg, ok := newFrame.Body.Message.(*message.Query)
 	if !ok {

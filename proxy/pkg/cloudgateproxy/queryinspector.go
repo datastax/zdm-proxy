@@ -3,7 +3,6 @@ package cloudgateproxy
 import (
 	"fmt"
 	"github.com/antlr/antlr4/runtime/Go/antlr"
-	"github.com/google/uuid"
 	parser "github.com/riptano/cloud-gate/antlr"
 	log "github.com/sirupsen/logrus"
 	"strings"
@@ -75,12 +74,12 @@ type QueryInfo interface {
 	// This will always be false for non-INSERT statements or batches not containing INSERT statements.
 	hasNowFunctionCalls() bool
 
-	replaceNowFunctionCallsWithLiteral(replacement uuid.UUID) (QueryInfo, []*term)
+	replaceNowFunctionCallsWithLiteral() (QueryInfo, []*term)
 	replaceNowFunctionCallsWithPositionalBindMarkers() (QueryInfo, []*term)
 	replaceNowFunctionCallsWithNamedBindMarkers() (QueryInfo, []*term)
 }
 
-func inspectCqlQuery(query string) QueryInfo {
+func inspectCqlQuery(query string, timeUuidGenerator TimeUuidGenerator) QueryInfo {
 	is := antlr.NewInputStream(query)
 	lexer := lexerPool.Get().(*parser.SimplifiedCqlLexer)
 	defer lexerPool.Put(lexer)
@@ -89,7 +88,7 @@ func inspectCqlQuery(query string) QueryInfo {
 	cqlParser := parserPool.Get().(*parser.SimplifiedCqlParser)
 	defer parserPool.Put(cqlParser)
 	cqlParser.SetInputStream(stream)
-	listener := &cqlListener{query: query, statementType: statementTypeOther}
+	listener := &cqlListener{query: query, statementType: statementTypeOther, timeUuidGenerator: timeUuidGenerator}
 	antlr.ParseTreeWalkerDefault.Walk(listener, cqlParser.CqlStatement())
 	return listener
 }
@@ -230,6 +229,8 @@ type cqlListener struct {
 	// internal counters
 	currentPositionalIndex int
 	currentBatchChildIndex int
+
+	timeUuidGenerator TimeUuidGenerator
 }
 
 func (l *cqlListener) getQuery() string {
@@ -654,10 +655,10 @@ func (l *cqlListener) replaceFunctionCalls(replacementFunc func(query string, fu
 	return newQueryInfo, replacedTerms
 }
 
-func (l *cqlListener) replaceNowFunctionCallsWithLiteral(literal uuid.UUID) (QueryInfo, []*term) {
+func (l *cqlListener) replaceNowFunctionCallsWithLiteral() (QueryInfo, []*term) {
 	return l.replaceFunctionCalls(func(query string, functionCall *functionCall) (string, replacementType) {
 		if functionCall.isNow() {
-			return literal.String(), literalReplacement
+			return l.timeUuidGenerator.GetTimeUuid().String(), literalReplacement
 		} else {
 			return "", noReplacement
 		}
@@ -697,6 +698,7 @@ func (l *cqlListener) shallowClone() *cqlListener {
 		nowFunctionCalls:          l.nowFunctionCalls,
 		currentPositionalIndex:    l.currentPositionalIndex,
 		currentBatchChildIndex:    l.currentBatchChildIndex,
+		timeUuidGenerator:         l.timeUuidGenerator,
 	}
 }
 

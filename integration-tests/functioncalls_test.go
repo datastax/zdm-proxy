@@ -1381,6 +1381,7 @@ func TestNowFunctionReplacementPreparedStatement(t *testing.T) {
 				require.Nil(t, err)
 				value, err := codec.Encode(p.value, resp.Header.Version)
 				require.Nil(t, err)
+				queryOpts.PositionalValues = append(queryOpts.PositionalValues, primitive.NewValue(value))
 				if p.name != "" {
 					if queryOptsNamed == nil {
 						queryOptsNamed = &message.QueryOptions{}
@@ -1389,8 +1390,6 @@ func TestNowFunctionReplacementPreparedStatement(t *testing.T) {
 						queryOptsNamed.NamedValues = map[string]*primitive.Value{}
 					}
 					queryOptsNamed.NamedValues[p.name] = primitive.NewValue(value)
-				} else {
-					queryOpts.PositionalValues = append(queryOpts.PositionalValues, primitive.NewValue(value))
 				}
 			}
 
@@ -1403,7 +1402,7 @@ func TestNowFunctionReplacementPreparedStatement(t *testing.T) {
 			resp, err = cqlConn.SendAndReceive(f)
 			require.Nil(t, err)
 
-			assertExecuteModified := func(cluster *simulacron.Cluster, namedParameters bool) {
+			assertExecuteModified := func(cluster *simulacron.Cluster, namedParameters bool, generatedValues []primitive.UUID) []primitive.UUID {
 				matching := getMatchingLogs(cluster, prepared.PreparedQueryId)
 				require.Equal(t, 1, len(matching))
 				if len(test.expectedParams) > 0 {
@@ -1421,6 +1420,11 @@ func TestNowFunctionReplacementPreparedStatement(t *testing.T) {
 							(len(matching[0].Options.PositionalValues) == 0 && len(matching[0].Options.PositionalValues) == 0))
 				}
 
+				assertGeneratedValues := true
+				if generatedValues == nil {
+					assertGeneratedValues = false
+				}
+				assertGeneratedValidIdx := 0
 				var generatedNowValue *primitive.UUID
 				namedParams := map[string]string{}
 				for idx, p := range test.expectedParams {
@@ -1453,20 +1457,29 @@ func TestNowFunctionReplacementPreparedStatement(t *testing.T) {
 						wasNull, err := codec.Decode(timeUuidValue, &decodedVal, resp.Header.Version)
 						require.False(t, wasNull)
 						require.Nil(t, err)
+						require.Greater(t, int64(uuid.UUID(decodedVal).Time()), int64(timeUuidStart.Time()))
 						if generatedNowValue == nil {
 							generatedNowValue = &decodedVal
-							require.Greater(t, int64(uuid.UUID(decodedVal).Time()), int64(timeUuidStart.Time()))
 						} else {
-							require.Equal(t, *generatedNowValue, decodedVal)
+							require.NotEqual(t, *generatedNowValue, decodedVal)
+							generatedNowValue = &decodedVal
+						}
+						if assertGeneratedValues {
+							require.Greater(t, len(generatedValues), assertGeneratedValidIdx)
+							require.Equal(t, generatedValues[assertGeneratedValidIdx], decodedVal)
+							assertGeneratedValidIdx++
+						} else {
+							generatedValues = append(generatedValues, decodedVal)
 						}
 					} else {
 						require.Equal(t, b64ExpectedValue, actualValue)
 					}
 				}
+				return generatedValues
 			}
 
-			assertExecuteModified(simulacronSetup.Origin, false)
-			assertExecuteModified(simulacronSetup.Target, false)
+			generatedVals := assertExecuteModified(simulacronSetup.Origin, false, nil)
+			_ = assertExecuteModified(simulacronSetup.Target, false, generatedVals)
 
 			if queryOptsNamed != nil {
 				err = simulacronSetup.Origin.DeleteLogs()
@@ -1485,11 +1498,11 @@ func TestNowFunctionReplacementPreparedStatement(t *testing.T) {
 					Options:          queryOptsNamed,
 				}
 				f = frame.NewFrame(primitive.ProtocolVersion4, 0, executeMsg)
-				resp, err = cqlConn.SendAndReceive(f)
+				_, err = cqlConn.SendAndReceive(f)
 				require.Nil(t, err)
 
-				assertExecuteModified(simulacronSetup.Origin, true)
-				assertExecuteModified(simulacronSetup.Target, true)
+				generatedVals = assertExecuteModified(simulacronSetup.Origin, true, nil)
+				_ = assertExecuteModified(simulacronSetup.Target, true, generatedVals)
 			}
 
 		})
@@ -2195,13 +2208,18 @@ func TestNowFunctionReplacementBatchStatement(t *testing.T) {
 
 			_, ok := resp.Body.Message.(*message.VoidResult)
 			require.True(t, ok)
-			assertBatchModified := func(cluster *simulacron.Cluster) {
+			assertBatchModified := func(cluster *simulacron.Cluster, generatedValues []primitive.UUID) []primitive.UUID {
 				matching := getBatchMessages(cluster)
 				require.Equal(t, 1, len(matching))
 				require.NotNil(t, matching[0].QueriesOrIds)
 				require.NotNil(t, matching[0].Values)
 				require.Equal(t, len(matching[0].QueriesOrIds), len(matching[0].Values))
 				require.Equal(t, len(test.statements), len(matching[0].QueriesOrIds))
+				assertGeneratedValues := true
+				if generatedValues == nil {
+					assertGeneratedValues = false
+				}
+				assertGeneratedValidIdx := 0
 				for idx, childStatement := range test.statements {
 					actualStmt := matching[0].QueriesOrIds[idx]
 					actualParams := matching[0].Values[idx]
@@ -2242,21 +2260,30 @@ func TestNowFunctionReplacementBatchStatement(t *testing.T) {
 							wasNull, err := codec.Decode(timeUuidValue, &decodedVal, resp.Header.Version)
 							require.False(t, wasNull)
 							require.Nil(t, err)
+							require.Greater(t, int64(uuid.UUID(decodedVal).Time()), int64(timeUuidStart.Time()))
 							if generatedNowValue == nil {
 								generatedNowValue = &decodedVal
-								require.Greater(t, int64(uuid.UUID(decodedVal).Time()), int64(timeUuidStart.Time()))
 							} else {
-								require.Equal(t, *generatedNowValue, decodedVal)
+								require.NotEqual(t, *generatedNowValue, decodedVal)
+								generatedNowValue = &decodedVal
+							}
+							if assertGeneratedValues {
+								require.Greater(t, len(generatedValues), assertGeneratedValidIdx)
+								require.Equal(t, generatedValues[assertGeneratedValidIdx], decodedVal)
+								assertGeneratedValidIdx++
+							} else {
+								generatedValues = append(generatedValues, decodedVal)
 							}
 						} else {
 							require.Equal(t, b64ExpectedValue, actualValue)
 						}
 					}
 				}
+				return generatedValues
 			}
 
-			assertBatchModified(simulacronSetup.Origin)
-			assertBatchModified(simulacronSetup.Target)
+			generatedVals := assertBatchModified(simulacronSetup.Origin, nil)
+			_ = assertBatchModified(simulacronSetup.Target, generatedVals)
 
 			err = simulacronSetup.Origin.DeleteLogs()
 			require.Nil(t, err)

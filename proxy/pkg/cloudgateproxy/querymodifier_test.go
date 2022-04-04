@@ -154,9 +154,9 @@ func TestReplaceQueryString(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			context := &frameDecodeContext{frame: test.f}
-			statementsQueryData, err := context.GetOrInspectAllStatements()
-			require.Nil(t, err)
 			timeUuidGenerator, err := GetDefaultTimeUuidGenerator()
+			require.Nil(t, err)
+			statementsQueryData, err := context.GetOrInspectAllStatements(timeUuidGenerator)
 			require.Nil(t, err)
 			queryModifier := NewQueryModifier(timeUuidGenerator)
 			newContext, statementsReplacedTerms, err := queryModifier.replaceQueryString(context)

@@ -98,10 +98,12 @@ func TestInspectFrame(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			timeUuidGenerator, err := GetDefaultTimeUuidGenerator()
+			require.Nil(t, err)
 			actual, err := buildStatementInfo(&frameDecodeContext{frame: tt.args.f}, []*statementReplacedTerms{{
 				statementIndex: 0,
 				replacedTerms:  tt.args.replacedTerms,
-			}}, tt.args.psCache, tt.args.mh, tt.args.km, tt.args.forwardReadsToTarget, tt.args.forwardSystemQueriesToTarget, false, tt.args.forwardAuthToTarget)
+			}}, tt.args.psCache, tt.args.mh, tt.args.km, tt.args.forwardReadsToTarget, tt.args.forwardSystemQueriesToTarget, false, tt.args.forwardAuthToTarget, timeUuidGenerator)
 			if err != nil {
 				if !reflect.DeepEqual(err.Error(), tt.expected) {
 					t.Errorf("buildStatementInfo() actual = %v, expected %v", err, tt.expected)

@@ -370,13 +370,41 @@ func TestPreparedIdReplacement(t *testing.T) {
 				modifiedOriginExecuteMsg := originExecuteMessages[0].Clone()
 				modifiedOriginExecuteMsg.(*message.Execute).Options.PositionalValues = executeMsg.Options.PositionalValues
 				require.Equal(t, executeMsg, modifiedOriginExecuteMsg)
+				require.Equal(t, originExecuteMessages[0].Options, targetExecuteMessages[0].Options)
 			} else {
 				require.Equal(t, executeMsg, originExecuteMessages[0])
 			}
 			if test.batchQuery != "" {
 				require.Equal(t, expectedBatchPrepareMsg, targetPrepareMessages[1])
 				require.Equal(t, expectedBatchPrepareMsg, originPrepareMessages[1])
-				require.Equal(t, batchMsg, originBatchMessages[0])
+
+				if test.expectedBatchPreparedStmtVariables != nil {
+					require.NotEqual(t, batchMsg.Children[0].QueryOrId, originBatchMessages[0].Children[0].QueryOrId)
+					require.NotEqual(t, batchMsg.Children[0].QueryOrId, targetBatchMessages[0].Children[0].QueryOrId)
+					require.Equal(t, originBatchMessages[0].Children[0].QueryOrId, targetBatchMessages[0].Children[0].QueryOrId)
+					require.Equal(t, 0, len(targetBatchMessages[0].Children[0].Values))
+					require.Equal(t, 0, len(originBatchMessages[0].Children[0].Values))
+					require.Equal(t, 0, len(batchMsg.Children[0].Values))
+
+					require.Equal(t, batchMsg.Children[1].QueryOrId, originBatchMessages[0].Children[1].QueryOrId)
+					require.NotEqual(t, batchMsg.Children[1].QueryOrId, targetBatchMessages[0].Children[1].QueryOrId)
+					require.NotEqual(t, originBatchMessages[0].Children[1].QueryOrId, targetBatchMessages[0].Children[1].QueryOrId)
+					require.Equal(t, targetBatchPreparedId, targetBatchMessages[0].Children[1].QueryOrId)
+					require.Equal(t, originBatchPreparedId, originBatchMessages[0].Children[1].QueryOrId)
+					require.Equal(t, originBatchPreparedId, batchMsg.Children[1].QueryOrId)
+					require.Equal(t, len(test.expectedBatchPreparedStmtVariables.Columns), len(targetBatchMessages[0].Children[1].Values))
+					require.Equal(t, len(test.expectedBatchPreparedStmtVariables.Columns), len(originBatchMessages[0].Children[1].Values))
+					require.Equal(t, 0, len(batchMsg.Children[1].Values))
+					require.NotEqual(t, batchMsg.Children[1].Values, originBatchMessages[0].Children[1].Values)
+					require.NotEqual(t, batchMsg.Children[1].Values, targetBatchMessages[0].Children[1].Values)
+					require.Equal(t, originBatchMessages[0].Children[1].Values, targetBatchMessages[0].Children[1].Values)
+				} else {
+					require.Equal(t, batchMsg, originBatchMessages[0])
+					require.NotEqual(t, batchMsg, targetBatchMessages[0])
+					clonedBatchMsg := targetBatchMessages[0].Clone().(*message.Batch)
+					clonedBatchMsg.Children[1].QueryOrId = originBatchPreparedId
+					require.Equal(t, batchMsg, clonedBatchMsg)
+				}
 			}
 		})
 	}

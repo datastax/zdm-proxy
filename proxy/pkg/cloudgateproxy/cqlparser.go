@@ -59,12 +59,13 @@ func buildStatementInfo(
 	forwardReadsToTarget bool,
 	forwardSystemQueriesToTarget bool,
 	virtualizationEnabled bool,
-	forwardAuthToTarget bool) (StatementInfo, error) {
+	forwardAuthToTarget bool,
+	timeUuidGenerator TimeUuidGenerator) (StatementInfo, error) {
 
 	f := frameContext.GetRawFrame()
 	switch f.Header.OpCode {
 	case primitive.OpCodeQuery:
-		stmtQueryData, err := frameContext.GetOrInspectStatement()
+		stmtQueryData, err := frameContext.GetOrInspectStatement(timeUuidGenerator)
 		if err != nil {
 			return nil, fmt.Errorf("could not inspect QUERY frame: %w", err)
 		}
@@ -72,7 +73,7 @@ func buildStatementInfo(
 			frameContext.GetRawFrame(), currentKeyspaceName, forwardReadsToTarget,
 			forwardSystemQueriesToTarget, virtualizationEnabled, stmtQueryData.queryData), nil
 	case primitive.OpCodePrepare:
-		stmtQueryData, err := frameContext.GetOrInspectStatement()
+		stmtQueryData, err := frameContext.GetOrInspectStatement(timeUuidGenerator)
 		if err != nil {
 			return nil, fmt.Errorf("could not inspect PREPARE frame: %w", err)
 		}
@@ -282,8 +283,8 @@ func (recv *frameDecodeContext) GetOrDecodeFrame() (*frame.Frame, error) {
 	return decodedFrame, nil
 }
 
-func (recv *frameDecodeContext) GetOrInspectStatement() (*statementQueryData, error) {
-	err := recv.inspectStatements()
+func (recv *frameDecodeContext) GetOrInspectStatement(timeUuidGenerator TimeUuidGenerator) (*statementQueryData, error) {
+	err := recv.inspectStatements(timeUuidGenerator)
 	if err != nil {
 		return nil, err
 	}
@@ -295,8 +296,8 @@ func (recv *frameDecodeContext) GetOrInspectStatement() (*statementQueryData, er
 	return recv.statementsQueryData[0], nil
 }
 
-func (recv *frameDecodeContext) GetOrInspectAllStatements() ([]*statementQueryData, error) {
-	err := recv.inspectStatements()
+func (recv *frameDecodeContext) GetOrInspectAllStatements(timeUuidGenerator TimeUuidGenerator) ([]*statementQueryData, error) {
+	err := recv.inspectStatements(timeUuidGenerator)
 	if err != nil {
 		return nil, err
 	}
@@ -304,7 +305,7 @@ func (recv *frameDecodeContext) GetOrInspectAllStatements() ([]*statementQueryDa
 	return recv.statementsQueryData, nil
 }
 
-func (recv *frameDecodeContext) inspectStatements() error {
+func (recv *frameDecodeContext) inspectStatements(timeUuidGenerator TimeUuidGenerator) error {
 	if recv.statementsQueryData != nil {
 		return nil
 	}
@@ -321,13 +322,13 @@ func (recv *frameDecodeContext) inspectStatements() error {
 		if !ok {
 			return fmt.Errorf("expected Query but got %v instead", decodedFrame.Body.Message.GetOpCode().String())
 		}
-		statementsQueryData = []*statementQueryData{&statementQueryData{statementIndex: 0, queryData: inspectCqlQuery(queryMsg.Query)}}
+		statementsQueryData = []*statementQueryData{&statementQueryData{statementIndex: 0, queryData: inspectCqlQuery(queryMsg.Query, timeUuidGenerator)}}
 	case primitive.OpCodePrepare:
 		prepareMsg, ok := decodedFrame.Body.Message.(*message.Prepare)
 		if !ok {
 			return fmt.Errorf("expected Prepare but got %v instead", decodedFrame.Body.Message.GetOpCode().String())
 		}
-		statementsQueryData = []*statementQueryData{&statementQueryData{statementIndex: 0, queryData: inspectCqlQuery(prepareMsg.Query)}}
+		statementsQueryData = []*statementQueryData{&statementQueryData{statementIndex: 0, queryData: inspectCqlQuery(prepareMsg.Query, timeUuidGenerator)}}
 	case primitive.OpCodeBatch:
 		batchMsg, ok := decodedFrame.Body.Message.(*message.Batch)
 		if !ok {
@@ -336,7 +337,7 @@ func (recv *frameDecodeContext) inspectStatements() error {
 		for idx, childStmt := range batchMsg.Children {
 			switch typedQueryOrId := childStmt.QueryOrId.(type) {
 			case string:
-				statementsQueryData = append(statementsQueryData, &statementQueryData{statementIndex: idx, queryData: inspectCqlQuery(typedQueryOrId)})
+				statementsQueryData = append(statementsQueryData, &statementQueryData{statementIndex: idx, queryData: inspectCqlQuery(typedQueryOrId, timeUuidGenerator)})
 			}
 		}
 	default:
@@ -347,13 +348,13 @@ func (recv *frameDecodeContext) inspectStatements() error {
 	return nil
 }
 
-func (recv *frameDecodeContext) GetOrDecodeAndInspect() (*frame.Frame, []*statementQueryData, error) {
+func (recv *frameDecodeContext) GetOrDecodeAndInspect(timeUuidGenerator TimeUuidGenerator) (*frame.Frame, []*statementQueryData, error) {
 	decodedFrame, err := recv.GetOrDecodeFrame()
 	if err != nil {
 		return nil, nil, err
 	}
 
-	stmtsQueryData, err := recv.GetOrInspectAllStatements()
+	stmtsQueryData, err := recv.GetOrInspectAllStatements(timeUuidGenerator)
 	if err != nil {
 		return nil, nil, err
 	}
