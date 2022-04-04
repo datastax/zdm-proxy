@@ -193,6 +193,8 @@ func getStatementInfoFromQueryInfo(
 		}
 	}
 
+	log.Tracef("Forward decision: %s", forwardDecision)
+
 	return NewGenericStatementInfo(forwardDecision)
 }
 
@@ -319,6 +321,9 @@ func (recv *frameDecodeContext) inspectStatements(timeUuidGenerator TimeUuidGene
 	switch decodedFrame.Header.OpCode {
 	case primitive.OpCodeQuery:
 		queryMsg, ok := decodedFrame.Body.Message.(*message.Query)
+
+		log.Tracef("Decoded frame %v", decodedFrame)
+
 		if !ok {
 			return fmt.Errorf("expected Query but got %v instead", decodedFrame.Body.Message.GetOpCode().String())
 		}

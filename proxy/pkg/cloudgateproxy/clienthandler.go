@@ -1086,6 +1086,9 @@ func (ch *ClientHandler) handleRequest(f *frame.RawFrame) {
 // Forwards the request, parsing it and enqueuing it to the appropriate cluster connector(s)' write queue(s).
 func (ch *ClientHandler) forwardRequest(request *frame.RawFrame, customResponseChannel chan *customResponse) error {
 	overallRequestStartTime := time.Now()
+
+	log.Tracef("Request frame: %v", request)
+
 	context := NewFrameDecodeContext(request)
 	context, replacedTerms, err := ch.queryModifier.replaceQueryString(context)
 	if err != nil {
