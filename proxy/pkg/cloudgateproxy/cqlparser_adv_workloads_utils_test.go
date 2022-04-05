@@ -11,7 +11,6 @@ import (
 	"testing"
 )
 
-
 type params struct {
 	psCache                      *PreparedStatementCache
 	mh                           *metrics.MetricHandler
@@ -19,10 +18,14 @@ type params struct {
 	forwardReadsToTarget         bool
 	forwardSystemQueriesToTarget bool
 	forwardAuthToTarget          bool
-	virtualizationEnabled		 bool
+	virtualizationEnabled        bool
+	timeUuidGenerator            TimeUuidGenerator
 }
 
-func getGeneralParamsForTests() params {
+func getGeneralParamsForTests(t *testing.T) params {
+	timeUuidGen, err := GetDefaultTimeUuidGenerator()
+	require.Nil(t, err)
+
 	return params{
 		psCache:                      NewPreparedStatementCache(),
 		mh:                           newFakeMetricHandler(),
@@ -30,12 +33,13 @@ func getGeneralParamsForTests() params {
 		forwardReadsToTarget:         false,
 		forwardSystemQueriesToTarget: false,
 		forwardAuthToTarget:          false,
-		virtualizationEnabled: 		  false,
+		virtualizationEnabled:        false,
+		timeUuidGenerator:            timeUuidGen,
 	}
 }
 
 func buildQueryMessageForTests(queryString string) *message.Query {
-	return  &message.Query{
+	return &message.Query{
 		Query: queryString,
 		Options: &message.QueryOptions{
 			Consistency:       primitive.ConsistencyLevelOne,
@@ -65,8 +69,8 @@ func convertEncodedRequestToRawFrameForTests(queryFrame *frame.Frame, t *testing
 	return queryRawFrame
 }
 
-func parseEncodedRequestForTests(queryRawFrame *frame.RawFrame) (StatementInfo, error){
-	generalParams := getGeneralParamsForTests()
+func parseEncodedRequestForTests(queryRawFrame *frame.RawFrame, t *testing.T) (StatementInfo, error) {
+	generalParams := getGeneralParamsForTests(t)
 
 	return buildStatementInfo(&frameDecodeContext{frame: queryRawFrame},
 		[]*statementReplacedTerms{},
@@ -76,7 +80,8 @@ func parseEncodedRequestForTests(queryRawFrame *frame.RawFrame) (StatementInfo, 
 		generalParams.forwardReadsToTarget,
 		generalParams.forwardSystemQueriesToTarget,
 		generalParams.virtualizationEnabled,
-		generalParams.forwardAuthToTarget)
+		generalParams.forwardAuthToTarget,
+		generalParams.timeUuidGenerator)
 }
 
 func checkExpectedForwardDecisionOrErrorForTests(actualStmtInfo StatementInfo, actualError error, expected interface{}, t *testing.T) {

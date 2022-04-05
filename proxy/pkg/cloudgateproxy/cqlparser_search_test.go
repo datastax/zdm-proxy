@@ -9,12 +9,12 @@ import (
 func TestParseAndInspect_SearchRequests(t *testing.T) {
 
 	type testParams struct {
-		name     		string
-		queryString		string
-		expected interface{}
+		name        string
+		queryString string
+		expected    interface{}
 	}
 
-	tests := []testParams {
+	tests := []testParams{
 		{"Query using CONTAINS",
 			"select * from person where hometown contains 'Bangkok';",
 			NewGenericStatementInfo(forwardToOrigin),
@@ -46,18 +46,17 @@ func TestParseAndInspect_SearchRequests(t *testing.T) {
 
 			queryFrame := &frame.Frame{
 				Header: getSearchQueryHeaderForTests(),
-				Body:   &frame.Body{
+				Body: &frame.Body{
 					Message: buildQueryMessageForTests(tt.queryString),
 				},
 			}
 			queryRawFrame := convertEncodedRequestToRawFrameForTests(queryFrame, t)
-			stmt, err := parseEncodedRequestForTests(queryRawFrame)
+			stmt, err := parseEncodedRequestForTests(queryRawFrame, t)
 			checkExpectedForwardDecisionOrErrorForTests(stmt, err, tt.expected, t)
 		})
 	}
 
 }
-
 
 func getSearchQueryHeaderForTests() *frame.Header {
 	return &frame.Header{
