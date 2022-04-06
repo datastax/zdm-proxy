@@ -93,22 +93,24 @@ func GetLivenessResponse(ipEndPoint string) (int, string, error) {
 	return rsp.StatusCode, buf.String(), nil
 }
 
-func RequireMetricsEndpointResult(t *testing.T, httpAddr string, success bool) {
+func CheckMetricsEndpointResult(httpAddr string, success bool) error {
 	statusCode, rspStr, err := GetMetrics(httpAddr)
-	require.Nil(t, err, "failed to get metrics: %v", err)
-	if success {
-		require.Equal(t, http.StatusOK, statusCode)
-		require.False(
-			t,
-			strings.Contains(rspStr,"Proxy metrics haven't been initialized yet."),
-			"unexpected metrics msg: %v", rspStr)
-	} else {
-		require.Equal(t, http.StatusServiceUnavailable, statusCode)
-		require.True(
-			t,
-			strings.Contains(rspStr,"Proxy metrics haven't been initialized yet."),
-			"unexpected metrics msg: %v", rspStr)
+	if err != nil {
+		return err
 	}
+	expectedCode := http.StatusOK
+	expectedUninitializedMetricsMsg := false
+	if !success {
+		expectedCode = http.StatusServiceUnavailable
+		expectedUninitializedMetricsMsg = true
+	}
+	if expectedCode != statusCode {
+		return fmt.Errorf("expected %v but got %v", expectedCode, statusCode)
+	}
+	if expectedUninitializedMetricsMsg != strings.Contains(rspStr, "Proxy metrics haven't been initialized yet.") {
+		return fmt.Errorf("expected \"contains error message=\"%v but unexpected metrics msg: %v", expectedUninitializedMetricsMsg, rspStr)
+	}
+	return nil
 }
 
 // ConnectToCluster is used to connect to source and destination clusters

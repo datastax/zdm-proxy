@@ -72,9 +72,11 @@ func testHttpEndpointsWithProxyNotInitialized(
 		runner.RunMain(conf, ctx, metricsHandler, healthHandler)
 	}()
 
+	time.Sleep(500 * time.Millisecond)
+
 	httpAddr := fmt.Sprintf("%s:%d", conf.ProxyMetricsAddress, conf.ProxyMetricsPort)
 
-	utils.RequireMetricsEndpointResult(t, httpAddr, false)
+	require.Nil(t, utils.CheckMetricsEndpointResult(httpAddr, false))
 
 	statusCode, report, err := utils.GetReadinessStatusReport(httpAddr)
 	require.Equal(t, http.StatusServiceUnavailable, statusCode)
@@ -109,7 +111,11 @@ func testHttpEndpointsWithProxyInitialized(
 
 	httpAddr := fmt.Sprintf("%s:%d", conf.ProxyMetricsAddress, conf.ProxyMetricsPort)
 
-	utils.RequireMetricsEndpointResult(t, httpAddr, true)
+	utils.RequireWithRetries(t, func() (err error, fatal bool) {
+		fatal = false
+		err = utils.CheckMetricsEndpointResult(httpAddr, true)
+		return
+	}, 10, 100 * time.Millisecond)
 
 	statusCode, report, err := utils.GetReadinessStatusReport(httpAddr)
 	require.Nil(t, err, "failed to get readiness response: %v", err)
@@ -156,7 +162,11 @@ func testHttpEndpointsWithUnavailableNode(
 
 	httpAddr := fmt.Sprintf("%s:%d", conf.ProxyMetricsAddress, conf.ProxyMetricsPort)
 
-	utils.RequireMetricsEndpointResult(t, httpAddr, true)
+	utils.RequireWithRetries(t, func() (err error, fatal bool) {
+		fatal = false
+		err = utils.CheckMetricsEndpointResult(httpAddr, true)
+		return
+	}, 10, 100 * time.Millisecond)
 
 	statusCode, msg, err := utils.GetLivenessResponse(httpAddr)
 	require.Nil(t, err)
@@ -207,7 +217,7 @@ func testHttpEndpointsWithUnavailableNode(
 	require.Equal(t, conf.HeartbeatFailureThreshold, healthReport.TargetStatus.FailureCountThreshold)
 	require.Equal(t, 0, healthReport.TargetStatus.CurrentFailureCount)
 
-	utils.RequireMetricsEndpointResult(t, httpAddr, true)
+	require.Nil(t, utils.CheckMetricsEndpointResult(httpAddr, true))
 
 	healthReportPtr = new(*health.StatusReport)
 	statusCodePtr = new(int)
@@ -241,7 +251,7 @@ func testHttpEndpointsWithUnavailableNode(
 	require.Equal(t, conf.HeartbeatFailureThreshold, healthReport.TargetStatus.FailureCountThreshold)
 	require.Equal(t, 0, healthReport.TargetStatus.CurrentFailureCount)
 
-	utils.RequireMetricsEndpointResult(t, httpAddr, true)
+	require.Nil(t, utils.CheckMetricsEndpointResult(httpAddr, true))
 
 	// stop target node
 	err = simulacronSetup.Target.DisableConnectionListener()
@@ -282,7 +292,7 @@ func testHttpEndpointsWithUnavailableNode(
 	require.Greater(t, healthReport.TargetStatus.CurrentFailureCount, 0)
 	require.Less(t, healthReport.TargetStatus.CurrentFailureCount, healthReport.TargetStatus.FailureCountThreshold)
 
-	utils.RequireMetricsEndpointResult(t, httpAddr, true)
+	require.Nil(t, utils.CheckMetricsEndpointResult(httpAddr, true))
 
 	healthReportPtr = new(*health.StatusReport)
 	statusCodePtr = new(int)
@@ -316,7 +326,7 @@ func testHttpEndpointsWithUnavailableNode(
 	require.Equal(t, conf.HeartbeatFailureThreshold, healthReport.TargetStatus.FailureCountThreshold)
 	require.GreaterOrEqual(t, healthReport.TargetStatus.CurrentFailureCount, healthReport.TargetStatus.FailureCountThreshold)
 
-	utils.RequireMetricsEndpointResult(t, httpAddr, true)
+	require.Nil(t, utils.CheckMetricsEndpointResult(httpAddr, true))
 }
 
 func modifyConfForHealthTests(config *config.Config) {
