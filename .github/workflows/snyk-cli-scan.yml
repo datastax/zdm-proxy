@@ -1,0 +1,99 @@
+name: Snyk cli SCA 
+
+on: 
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:
+
+env:
+  SNYK_SEVERITY_THRESHOLD_LEVEL: critical
+  
+jobs:
+  snyk-cli-scan:
+    env:
+      SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+      SNYK_ORG_ID: ${{ secrets.SNYK_ORG_ID }}
+
+    runs-on: ubuntu-latest
+    steps:
+      - name: Git checkout
+        uses: actions/checkout@v2
+
+      - name: Set up repo branch names (repo_branch) 
+        run: |
+          REAL_BRANCH=${GITHUB_REF_NAME}
+          if [[ ${GITHUB_EVENT_NAME} == "pull_request" ]]; then 
+            REAL_BRANCH=${GITHUB_HEAD_REF} 
+          fi
+          
+          TAG_REPO=${GITHUB_REPOSITORY//\//_}
+          TAG_BRANCH=${REAL_BRANCH//\//_}
+
+          SNYK_GROUP_OPTS="--remote-repo-url=${GITHUB_REPOSITORY} --target-reference=${REAL_BRANCH}"
+          SNYK_TAGS="--tags=repo=${TAG_REPO},branch=${TAG_BRANCH}"
+
+          echo "SNYK_GROUP_OPTS=${SNYK_GROUP_OPTS}" >> $GITHUB_ENV
+          echo "SNYK_TAGS=${SNYK_TAGS}" >> $GITHUB_ENV
+          echo "SNYK_SEVERITY_THRESHOLD=--severity-threshold=${{ env.SNYK_SEVERITY_THRESHOLD_LEVEL }}" >> $GITHUB_ENV
+          echo "SNYK_TEST_PASSED=true" >> $GITHUB_ENV
+          
+          echo "GITHUB_EVENT_NAME is [$GITHUB_EVENT_NAME]"
+          echo "SNYK_GROUP_OPTS is [$SNYK_GROUP_OPTS]"
+          echo "SNYK_TAGS is [$SNYK_TAGS]"
+
+      - name: Set up Snyk
+        uses: snyk/actions/setup@master  
+
+      - name: Set up Go
+        uses: actions/setup-go@v2
+        with:
+          go-version: 1.17
+      
+      - name: Scan golang projects (total 1)
+        run: |
+          git config --global url."https://${GITHUB_TOKEN}:x-oauth-basic@github.com/".insteadOf "https://github.com/"
+          go list  -deps ./...
+          snyk monitor --org=${SNYK_ORG_ID} --file=go.mod \
+            ${SNYK_GROUP_OPTS} ${SNYK_TAGS} --policy-path=$GITHUB_WORKSPACE
+
+          snyk test --org=${SNYK_ORG_ID} --file=go.mod \
+            ${SNYK_SEVERITY_THRESHOLD} --policy-path=$GITHUB_WORKSPACE  \
+            || echo "SNYK_TEST_PASSED=false" >> $GITHUB_ENV
+        env:
+          GOPRIVATE: github.com/riptano
+          GITHUB_TOKEN: ${{ secrets.GB_TOKEN }}
+
+      - name: Construct snyk scan comments
+        run : |
+          snyk_url="https://app.snyk.io/org/riptano/projects"
+          snyk_site="Please see scan report at: <a href=\'${snyk_url}\'>${snyk_url}</a>"
+          good_msg="✅ snyk scan did not find issues with severity level <b><i>${{ env.SNYK_SEVERITY_THRESHOLD_LEVEL }}</i></b> or higher. $snyk_site"
+          bad_msg="🚫 snyk scan found issues with severity level <b><i>${{ env.SNYK_SEVERITY_THRESHOLD_LEVEL }}</i></b> or higher! $snyk_site"
+          
+          if [[ $SNYK_TEST_PASSED == 'true' ]]; then           
+            echo "SNYK_SCAN_COMMENT=$good_msg" >> $GITHUB_ENV 
+          else
+            echo "SNYK_SCAN_COMMENT=$bad_msg" >> $GITHUB_ENV 
+          fi
+
+      - name: Set pull request comment
+        uses: actions/github-script@v6
+        if: github.event_name == 'pull_request'
+        with:
+          github-token: ${{secrets.GITHUB_TOKEN}}
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '${{ env.SNYK_SCAN_COMMENT }}'
+            })
+
+      - name: Decision for the snyk an result, (PR gating if triggered for a PR)
+        run: |
+          echo "$SNYK_SCAN_COMMENT" 
+          if [[ "$SNYK_TEST_PASSED" != 'true' ]]; then
+            exit 1 
+          fi

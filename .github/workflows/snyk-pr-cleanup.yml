@@ -1,0 +1,66 @@
+name: Snyk PR cleanup - merged/closed
+
+on:
+  pull_request:
+    types:
+      - closed
+    branches:    
+      - master
+  workflow_dispatch:    
+  
+jobs:
+  snyk_project_cleanup_when_pr_closed:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Git checkout
+        uses: actions/checkout@v2
+        
+      - name: figure out and set the correct values for repo name and branch name
+        run: |
+          REAL_BRANCH=${GITHUB_REF_NAME}
+          if [[ ${GITHUB_EVENT_NAME} == "pull_request" ]]; then 
+            REAL_BRANCH=${GITHUB_HEAD_REF} 
+          fi
+
+          # replace '/' with '_' for repo and branch names
+          TAG_REPO=${GITHUB_REPOSITORY//\//_}
+          TAG_BRANCH=${REAL_BRANCH//\//_}
+
+          echo "TAG_REPO=${TAG_REPO}" >> $GITHUB_ENV
+          echo "TAG_BRANCH=${TAG_BRANCH}" >> $GITHUB_ENV
+          echo "SNYK_FILTER_FILE=_synk_filter.json" >> $GITHUB_ENV
+
+      - name: use the repo and branch name to create filter file for the snyk projects
+        run: |
+          cat << EOF > ${SNYK_FILTER_FILE}
+          {
+            "filters": {
+              "tags": {
+                "includes": [
+                  {
+                    "key": "repo",
+                    "value": "${TAG_REPO}"
+                  },
+                  {
+                    "key": "branch",
+                    "value": "${TAG_BRANCH}"
+                  }
+                ]
+              }
+            }
+          }
+          EOF
+
+      - name: delete all snyk projects associated with this repo and the guarded branch
+        run: |
+          # retrieve all snyk project ids associated with this repo and the guarded branch
+          ids=$(curl -q -X POST -H "Authorization:${{ secrets.SNYK_TOKEN }}" -H "Content-Type:application/json" \
+                  -d "@${SNYK_FILTER_FILE}" https://snyk.io/api/v1/org/${{ secrets.SNYK_ORG_ID }}/projects  \
+                | jq -r '.projects[].id' )
+
+          # remove the selected snyk project 
+          while read -r id; do
+            curl -i -X DELETE -H "Authorization:${{ secrets.SNYK_TOKEN }}" \
+              "https://snyk.io/api/v1/org/${{ secrets.SNYK_ORG_ID }}/project/$id"
+            echo "deleted snyk project id = [$id]"
+          done <<< "$ids"                 
