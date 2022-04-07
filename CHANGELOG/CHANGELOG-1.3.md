@@ -10,3 +10,4 @@ When cutting a new release, update the `unreleased` heading to the tag being gen
 
 * [ZDM-48](https://datastax.jira.com/browse/ZDM-48) Replace now() function calls in PREPARE/EXECUTE messages
 * [ZDM-252](https://datastax.jira.com/browse/ZDM-252) Replace now() function calls in BATCH messages
+* [ZDM-267](https://datastax.jira.com/browse/ZDM-267) Fix proxy issue with graph requests sent by Fluent APIs in the GraphBinary protocol
