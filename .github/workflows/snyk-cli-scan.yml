@@ -8,7 +8,7 @@ on:
   workflow_dispatch:  
 
 env:
-  SNYK_SEVERITY_THRESHOLD_LEVEL: critical
+  SNYK_SEVERITY_THRESHOLD_LEVEL: high
 
 jobs:
   snyk-cli-scan:
