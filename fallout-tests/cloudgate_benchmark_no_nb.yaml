@@ -1,0 +1,319 @@
+origin_server_product: cassandra
+origin_server_install_type: tarball
+origin_server_version: 3.11.10
+
+target_server_product: cassandra
+target_server_install_type: tarball
+target_server_version: 3.11.10
+
+tenant: moonshot-v2
+instance_type: ms2.small
+
+ttl: 2h
+reuse: false
+
+consul_endpoint: 10.101.36.154:8500
+deregister_metrics: true
+
+# PROXY APP SETTINGS
+
+proxy_branch: master
+forward_reads_to_target: false
+enable_metrics: true
+replace_server_side_functions: false
+enable_profiling: false
+
+# BENCHMARK APP SETTINGS
+
+graphite-address: 10.101.36.154
+concurrent-tasks: 256
+num_connections: 8
+batch-size: 20
+batch-prepared-ratio: 1.1
+iterations: 10000000
+warmup-iterations: -1 # defaults to 1/10 of iterations
+benchmark_branch: main
+
+---
+
+ensemble:
+  servers:
+    - name: origin
+      node.count: 1
+      provisioner:
+        name: ctool
+        properties:
+          cloud.provider: nebula
+          cloud.tenant: {{tenant}}
+          cloud.instance.type: {{instance_type}}
+          mark_for_reuse: {{reuse}}
+          cluster_ttl: {{ttl}}
+      configuration_manager:
+        - name: ctool
+          properties:
+            product.type: {{origin_server_product}}
+            product.install.type: {{origin_server_install_type}}
+            product.version: {{origin_server_version}}
+            enable.graph: false
+            datacenters:
+              dc_origin:
+                size: 1
+                workload: cassandra
+    - name: target
+      node.count: 1
+      provisioner:
+        name: ctool
+        properties:
+          cloud.provider: nebula
+          cloud.tenant: {{tenant}}
+          cloud.instance.type: {{instance_type}}
+          mark_for_reuse: {{reuse}}
+          cluster_ttl: {{ttl}}
+      configuration_manager:
+        - name: ctool
+          properties:
+            product.type: {{target_server_product}}
+            product.install.type: {{target_server_install_type}}
+            product.version: {{target_server_version}}
+            enable.graph: false
+            datacenters:
+              dc_target:
+                size: 1
+                workload: cassandra
+    - name: cloudgate
+      node.count: 1
+      provisioner:
+        name: ctool
+        properties:
+          cloud.provider: nebula
+          cloud.tenant: {{tenant}}
+          cloud.instance.type: {{instance_type}}
+          mark_for_reuse: {{reuse}}
+          cluster_ttl: {{ttl}}
+  client:
+    node.count: 1
+    provisioner:
+      name: ctool
+      properties:
+        cloud.provider: nebula
+        cloud.tenant: {{tenant}}
+        cloud.instance.type: {{instance_type}}
+        kill_cluster_after_test: false
+        mark_for_reuse: {{reuse}}
+        cluster_ttl: {{ttl}}
+    configuration_manager:
+      - name: ctool
+        properties:
+          java.version: "oracle8"
+          install.maven: true
+workload:
+  phases:
+    - install_deps_proxy:
+        module: bash
+        properties: &install_deps-properties
+          target.group: cloudgate
+          timeout: 10m
+          script: |
+            cd $FALLOUT_SCRATCH_DIR
+            set -x
+
+            sudo apt-get install -y jq
+
+            lsb_release -a
+
+            curl -fsSL https://get.docker.com -o get-docker.sh
+            sudo sh get-docker.sh
+            sudo groupadd docker
+            sudo gpasswd -a $USER docker
+      install_deps_clients:
+        module: bash
+        properties:
+          <<: *install_deps-properties
+          target.group: client
+    - setup_keyspaces_origin:
+        module: cqlsh
+        properties:
+          server_group: origin
+          command: |
+            CREATE KEYSPACE benchmark2_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'dc_origin' : 1};
+            CREATE KEYSPACE benchmark1_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'dc_origin' : 1};
+    - setup_keyspaces_target:
+        module: cqlsh
+        properties:
+          server_group: target
+          command: |
+            CREATE KEYSPACE benchmark2_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'dc_target' : 1};
+            CREATE KEYSPACE benchmark1_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'dc_target' : 1};
+    - setup_proxy:
+        module: bash
+        properties:
+          target.group: cloudgate
+          target.ordinals: 0
+          timeout: 1h
+          export_output: true
+          script: |
+            cd $FALLOUT_SCRATCH_DIR
+            ls
+            git clone git@github.com:riptano/cloud-gate.git
+            cd cloud-gate
+            git checkout {{proxy_branch}}
+
+            cat << EOF > ./proxyenv.env
+            ORIGIN_CASSANDRA_CONTACT_POINTS=$FALLOUT_ORIGIN_PRODUCT_CONTACT_POINT
+            ORIGIN_CASSANDRA_USERNAME=cassandra
+            ORIGIN_CASSANDRA_PASSWORD=cassandra
+            ORIGIN_CASSANDRA_PORT=9042
+            TARGET_CASSANDRA_CONTACT_POINTS=$FALLOUT_TARGET_PRODUCT_CONTACT_POINT
+            TARGET_CASSANDRA_USERNAME=cassandra
+            TARGET_CASSANDRA_PASSWORD=cassandra
+            TARGET_CASSANDRA_PORT=9042
+            PROXY_METRICS_PORT=14001
+            PROXY_QUERY_PORT=9045
+            ORIGIN_BUCKETS_MS=0.5,1,1.25,1.5,1.75,2,2.5,3,3.5,4,4.5,5,7.5,10,12.5,15,20,30,50,100,200,500,1000,5000,10000
+            TARGET_BUCKETS_MS=0.5,1,1.25,1.5,1.75,2,2.5,3,3.5,4,4.5,5,7.5,10,12.5,15,20,30,50,100,200,500,1000,5000,10000
+            ENABLE_METRICS={{enable_metrics}}
+            FORWARD_READS_TO_TARGET={{forward_reads_to_target}}
+            REPLACE_SERVER_SIDE_FUNCTIONS={{replace_server_side_functions}}
+            EOF
+
+            cat ./proxyenv.env
+
+            /usr/bin/newgrp docker <<EONG
+              set -x
+              sudo docker build -f ./Dockerfile -t localproxyimg .
+              if [ "{{enable_profiling}}" == "true" ]; then
+                sudo docker run -d --name "${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_CLOUDGATE_NODE0_NODE_INFO_PRIVATENETWORKADDRESS}" --env-file ./proxyenv.env -p 9045:9045 -p 14001:14001 localproxyimg -cpuprofile ./cpu_profile.prof -memprofile ./heap_profile.prof
+              else
+                sudo docker run -d --name "${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_CLOUDGATE_NODE0_NODE_INFO_PRIVATENETWORKADDRESS}" --env-file ./proxyenv.env -p 9045:9045 -p 14001:14001 localproxyimg
+              fi
+              sudo docker logs "${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_CLOUDGATE_NODE0_NODE_INFO_PRIVATENETWORKADDRESS}"
+            EONG
+
+            curl -i -X PUT http://{{consul_endpoint}}/v1/agent/service/register \
+            -H 'Content-Type: application/json; charset=utf-8' \
+            --data-binary @- << EOF
+            {
+              "Id": "proxy-${FALLOUT_SYSTEM_TESTRUN_ID}-${FALLOUT_CLOUDGATE_NODE0_NODE_INFO_PRIVATENETWORKADDRESS}",
+              "Name": "proxy-$FALLOUT_SYSTEM_TESTRUN_ID",
+              "Address": "$FALLOUT_CLOUDGATE_NODE0_NODE_INFO_PRIVATENETWORKADDRESS",
+              "Port": 14001,
+              "Check": {
+                "HTTP": "http://$FALLOUT_CLOUDGATE_NODE0_NODE_INFO_PRIVATENETWORKADDRESS:14001/health/liveness",
+                "Interval": "10s",
+                "Timeout": "5s"
+              }
+            }
+            EOF
+
+            wget https://github.com/prometheus/node_exporter/releases/download/v1.0.1/node_exporter-1.0.1.linux-amd64.tar.gz
+            tar xvfz node_exporter-1.0.1.linux-amd64.tar.gz
+            cd node_exporter-1.0.1.linux-amd64
+            nohup ./node_exporter > foo.out 2> foo.err < /dev/null &
+
+            curl -i -X PUT http://{{consul_endpoint}}/v1/agent/service/register \
+            -H 'Content-Type: application/json; charset=utf-8' \
+            --data-binary @- << EOF
+            {
+              "Id": "node-${FALLOUT_SYSTEM_TESTRUN_ID}-${FALLOUT_CLOUDGATE_NODE0_NODE_INFO_PRIVATENETWORKADDRESS}",
+              "Name": "node-$FALLOUT_SYSTEM_TESTRUN_ID",
+              "Address": "$FALLOUT_CLOUDGATE_NODE0_NODE_INFO_PRIVATENETWORKADDRESS",
+              "Port": 9100
+            }
+            EOF
+
+            /usr/bin/newgrp docker <<EONG
+              set -x
+              sudo docker run \
+                --volume=/:/rootfs:ro \
+                --volume=/var/run:/var/run:ro \
+                --volume=/sys:/sys:ro \
+                --volume=/var/lib/docker/:/var/lib/docker:ro \
+                --volume=/dev/disk/:/dev/disk:ro \
+                --publish=8080:8080 \
+                --detach=true \
+                --name=cadvisor \
+                --privileged \
+                --device=/dev/kmsg \
+                gcr.io/cadvisor/cadvisor:v0.37.0
+            EONG
+
+            curl -i -X PUT http://{{consul_endpoint}}/v1/agent/service/register \
+            -H 'Content-Type: application/json; charset=utf-8' \
+            --data-binary @- << EOF
+            {
+              "Id": "cadvisor-${FALLOUT_SYSTEM_TESTRUN_ID}-${FALLOUT_CLOUDGATE_NODE0_NODE_INFO_PRIVATENETWORKADDRESS}",
+              "Name": "cadvisor-$FALLOUT_SYSTEM_TESTRUN_ID",
+              "Address": "$FALLOUT_CLOUDGATE_NODE0_NODE_INFO_PRIVATENETWORKADDRESS",
+              "Port": 8080
+            }
+            EOF
+    - benchmark-proxy:
+        module: bash
+        properties:
+          target.group: client
+          timeout: 1000m
+          script: |
+            cd $FALLOUT_SCRATCH_DIR
+            ls
+            git clone git@github.com:riptano/cloudgate-benchmark.git
+            cd cloudgate-benchmark
+            git checkout {{benchmark_branch}}
+            mvn package
+            java -Ddatastax-java-driver.advanced.connection.pool.local.size={{num_connections}} -Ddatastax-java-driver.basic.load-balancing-policy.local-datacenter=dc_origin -Ddatastax-java-driver.basic.contact-points.0=${FALLOUT_CLOUDGATE_NODE0_NODE_INFO_PRIVATENETWORKADDRESS}:9045 -Dbenchmark.metrics.graphite.prefix=${FALLOUT_SYSTEM_TESTRUN_ID} -Dbenchmark.metrics.graphite.host={{graphite-address}} -Dbenchmark.iterations={{iterations}} -Dbenchmark.warmup-iterations={{warmup-iterations}} -Dbenchmark.histogram-file=histogram.hdr -Dbenchmark.replication-factor=1 -Dbenchmark.concurrent-tasks={{concurrent-tasks}} -Dbenchmark.batch-size={{batch-size}} -Dbenchmark.batch-prepared-ratio={{batch-prepared-ratio}} -jar ./target/benchmark-1.0-SNAPSHOT.jar
+            cp histogram.hdr $FALLOUT_ARTIFACT_DIR
+    - deregister_proxy:
+        module: bash
+        properties:
+          target.group: cloudgate
+          target.ordinals: 0
+          timeout: 1h
+          export_output: true
+          script: |
+            cd $FALLOUT_SCRATCH_DIR
+            if [ "{{deregister_metrics}}" == "true" ]; then
+            	curl -i -X PUT http://{{consul_endpoint}}/v1/agent/service/deregister/proxy-${FALLOUT_SYSTEM_TESTRUN_ID}-${FALLOUT_CLOUDGATE_NODE0_NODE_INFO_PRIVATENETWORKADDRESS}
+            	curl -i -X PUT http://{{consul_endpoint}}/v1/agent/service/deregister/node-${FALLOUT_SYSTEM_TESTRUN_ID}-${FALLOUT_CLOUDGATE_NODE0_NODE_INFO_PRIVATENETWORKADDRESS}
+            	curl -i -X PUT http://{{consul_endpoint}}/v1/agent/service/deregister/cadvisor-${FALLOUT_SYSTEM_TESTRUN_ID}-${FALLOUT_CLOUDGATE_NODE0_NODE_INFO_PRIVATENETWORKADDRESS}
+            fi
+    - stop_proxy:
+        module: bash
+        properties:
+          target.group: cloudgate
+          target.ordinals: 0
+          timeout: 1h
+          export_output: true
+          script: |
+            echo "Stopping container " ${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_CLOUDGATE_NODE0_NODE_INFO_PRIVATENETWORKADDRESS}
+            sudo docker container stop ${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_CLOUDGATE_NODE0_NODE_INFO_PRIVATENETWORKADDRESS}
+    - capture_profiling_files:
+        module: bash
+        properties:
+          target.group: cloudgate
+          target.ordinals: 0
+          timeout: 1h
+          export_output: true
+          script: |
+            cd $FALLOUT_SCRATCH_DIR
+            if [ "{{enable_profiling}}" == "true" ]; then
+              sudo docker cp ${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_CLOUDGATE_NODE0_NODE_INFO_PRIVATENETWORKADDRESS}:/cpu_profile.prof $FALLOUT_ARTIFACT_DIR
+              sudo docker cp ${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_CLOUDGATE_NODE0_NODE_INFO_PRIVATENETWORKADDRESS}:/heap_profile.prof $FALLOUT_ARTIFACT_DIR
+            fi
+    - capture_proxy_logs:
+        module: bash
+        properties:
+          target.group: cloudgate
+          target.ordinals: 0
+          timeout: 1h
+          export_output: true
+          script: |
+            /usr/bin/newgrp docker <<EONG
+              sudo docker logs ${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_CLOUDGATE_NODE0_NODE_INFO_PRIVATENETWORKADDRESS}
+              sudo docker logs ${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_CLOUDGATE_NODE0_NODE_INFO_PRIVATENETWORKADDRESS} >& myFile.log
+
+            EONG
+  checkers:
+    verify_success:
+      checker: nofail
+  artifact_checkers:
+    process_hdr:
+      artifact_checker: hdrtool
