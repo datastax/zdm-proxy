@@ -10,6 +10,10 @@ The proxy will forward read requests only to the origin cluster, while writes wi
 
 An overview of the proxy architecture and logical flow will be added here soon.
 
+## Frequently Asked Questions
+
+For frequently asked questions, please refer to our separate [faq](faq.md) page.
+
 ## Environment Variables
 
 ```shell
@@ -53,13 +57,11 @@ docker run --name cassandra-dest -p 9043:9042 -d cassandra
 Open cqlsh directly on each of these clusters:
 
 ```shell
-docker exec -it cassandra-source /bin/bash
-cqlsh
+docker exec -it cassandra-source cqlsh
 ```
 
 ```shell
-docker exec -it cassandra-dest /bin/bash
-cqlsh
+docker exec -it cassandra-dest cqlsh
 ```
 
 Create a keyspace + table directly on each cluster, for example:
@@ -111,9 +113,9 @@ Once connected, experiment sending some requests through the proxy. For example:
 ```cql
 INSERT INTO test.keyvalue (key, value) VALUES (1, 'ABC');
 INSERT INTO test.keyvalue (key, value) VALUES (2, 'DEF');
-SELECT * FROM test.keyvalue
+SELECT * FROM test.keyvalue;
 UPDATE test.keyvalue SET value='GYEKJF' WHERE key = 1;
-DELETE FROM test.keyvalue WHERE key = 2
+DELETE FROM test.keyvalue WHERE key = 2;
 ```
 
 And verify that the data is in both clusters by querying them directly through their own cqlsh.
