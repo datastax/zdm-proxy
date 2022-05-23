@@ -2,6 +2,11 @@ package config
 
 import "os"
 
+type envVar struct {
+	vName  string
+	vValue string
+}
+
 func setOriginCredentialsEnvVars() {
 	setEnvVar("ORIGIN_CASSANDRA_USERNAME", "originUser")
 	setEnvVar("ORIGIN_CASSANDRA_PASSWORD", "originPassword")

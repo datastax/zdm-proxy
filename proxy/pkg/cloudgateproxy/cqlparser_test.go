@@ -28,17 +28,17 @@ func TestInspectFrame(t *testing.T) {
 	originCacheEntry := &preparedDataImpl{
 		originPreparedId: []byte("ORIGIN"),
 		targetPreparedId: []byte("ORIGIN_TARGET"),
-		stmtInfo:         NewPreparedStatementInfo(NewGenericStatementInfo(forwardToOrigin), nil, false),
+		stmtInfo:         NewPreparedStatementInfo(NewGenericStatementInfo(forwardToOrigin, false), nil, false, "", ""),
 	}
 	targetCacheEntry := &preparedDataImpl{
 		originPreparedId: []byte("TARGET"),
 		targetPreparedId: []byte("TARGET_TARGET"),
-		stmtInfo:         NewPreparedStatementInfo(NewGenericStatementInfo(forwardToTarget), nil, false),
+		stmtInfo:         NewPreparedStatementInfo(NewGenericStatementInfo(forwardToTarget, false), nil, false, "", ""),
 	}
 	bothCacheEntry := &preparedDataImpl{
 		originPreparedId: []byte("BOTH"),
 		targetPreparedId: []byte("BOTH_TARGET"),
-		stmtInfo:         NewPreparedStatementInfo(NewGenericStatementInfo(forwardToBoth), nil, false),
+		stmtInfo:         NewPreparedStatementInfo(NewGenericStatementInfo(forwardToBoth, false), nil, false, "", ""),
 	}
 	psCache := NewPreparedStatementCache()
 	psCache.cache["BOTH"] = bothCacheEntry
@@ -56,45 +56,51 @@ func TestInspectFrame(t *testing.T) {
 		expected interface{}
 	}{
 		// QUERY
-		{"OpCodeQuery SELECT", args{mockQueryFrame(t, "SELECT blah FROM ks1.t2"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewGenericStatementInfo(forwardToOrigin)},
-		{"OpCodeQuery SELECT forwardReadsToTarget", args{mockQueryFrame(t, "SELECT blah FROM ks1.t1"), []*term{}, psCache, mh, km, forwardReadsToTarget, forwardReadsToTarget, forwardAuthToOrigin}, NewGenericStatementInfo(forwardToTarget)},
-		{"OpCodeQuery SELECT system.local", args{mockQueryFrame(t, "SELECT * FROM system.local"), []*term{}, psCache, mh, km, forwardReadsToTarget, forwardReadsToTarget, forwardAuthToOrigin}, NewGenericStatementInfo(forwardToTarget)},
-		{"OpCodeQuery SELECT system.local", args{mockQueryFrame(t, "SELECT * FROM system.local"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToTarget, forwardAuthToOrigin}, NewGenericStatementInfo(forwardToTarget)},
-		{"OpCodeQuery SELECT system.local forwardSystemQueriesToOrigin", args{mockQueryFrame(t, "SELECT * FROM system.local"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewGenericStatementInfo(forwardToOrigin)},
-		{"OpCodeQuery SELECT system.peers forwardSystemQueriesToOrigin", args{mockQueryFrame(t, "SELECT * FROM system.peers"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewGenericStatementInfo(forwardToOrigin)},
-		{"OpCodeQuery SELECT system.peers", args{mockQueryFrame(t, "SELECT * FROM system.peers"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToTarget, forwardAuthToOrigin}, NewGenericStatementInfo(forwardToTarget)},
-		{"OpCodeQuery SELECT system.peers_v2 forwardSystemQueriesToOrigin", args{mockQueryFrame(t, "SELECT * FROM system.peers_v2"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewGenericStatementInfo(forwardToOrigin)},
-		{"OpCodeQuery SELECT system.peers_v2", args{mockQueryFrame(t, "SELECT * FROM system.peers_v2"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToTarget, forwardAuthToOrigin}, NewGenericStatementInfo(forwardToTarget)},
-		{"OpCodeQuery SELECT system_auth.roles", args{mockQueryFrame(t, "SELECT * FROM system_auth.roles"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewGenericStatementInfo(forwardToOrigin)},
-		{"OpCodeQuery SELECT dse_insights.tokens", args{mockQueryFrame(t, "SELECT * FROM dse_insights.tokens"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewGenericStatementInfo(forwardToOrigin)},
-		{"OpCodeQuery non SELECT", args{mockQueryFrame(t, "INSERT blah"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewGenericStatementInfo(forwardToBoth)},
+		{"OpCodeQuery SELECT", args{mockQueryFrame(t, "SELECT blah FROM ks1.t2"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewGenericStatementInfo(forwardToOrigin, true)},
+		{"OpCodeQuery SELECT forwardReadsToTarget", args{mockQueryFrame(t, "SELECT blah FROM ks1.t1"), []*term{}, psCache, mh, km, forwardReadsToTarget, forwardReadsToTarget, forwardAuthToOrigin}, NewGenericStatementInfo(forwardToTarget, true)},
+		{"OpCodeQuery SELECT system.local", args{mockQueryFrame(t, "SELECT * FROM system.local"), []*term{}, psCache, mh, km, forwardReadsToTarget, forwardReadsToTarget, forwardAuthToOrigin}, NewGenericStatementInfo(forwardToTarget, true)},
+		{"OpCodeQuery SELECT system.local", args{mockQueryFrame(t, "SELECT * FROM system.local"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToTarget, forwardAuthToOrigin}, NewGenericStatementInfo(forwardToTarget, true)},
+		{"OpCodeQuery SELECT system.local forwardSystemQueriesToOrigin", args{mockQueryFrame(t, "SELECT * FROM system.local"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewGenericStatementInfo(forwardToOrigin, true)},
+		{"OpCodeQuery SELECT system.peers forwardSystemQueriesToOrigin", args{mockQueryFrame(t, "SELECT * FROM system.peers"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewGenericStatementInfo(forwardToOrigin, true)},
+		{"OpCodeQuery SELECT system.peers", args{mockQueryFrame(t, "SELECT * FROM system.peers"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToTarget, forwardAuthToOrigin}, NewGenericStatementInfo(forwardToTarget, true)},
+		{"OpCodeQuery SELECT system.peers_v2 forwardSystemQueriesToOrigin", args{mockQueryFrame(t, "SELECT * FROM system.peers_v2"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewGenericStatementInfo(forwardToOrigin, true)},
+		{"OpCodeQuery SELECT system.peers_v2", args{mockQueryFrame(t, "SELECT * FROM system.peers_v2"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToTarget, forwardAuthToOrigin}, NewGenericStatementInfo(forwardToTarget, true)},
+		{"OpCodeQuery SELECT system_auth.roles", args{mockQueryFrame(t, "SELECT * FROM system_auth.roles"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewGenericStatementInfo(forwardToOrigin, true)},
+		{"OpCodeQuery SELECT dse_insights.tokens", args{mockQueryFrame(t, "SELECT * FROM dse_insights.tokens"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewGenericStatementInfo(forwardToOrigin, true)},
+		{"OpCodeQuery INSERT INTO asd (a, b) VALUES (1, 2)", args{mockQueryFrame(t, "INSERT INTO asd (a, b) VALUES (1, 2)"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewGenericStatementInfo(forwardToBoth, false)},
+		{"OpCodeQuery UPDATE asd SET b = 2 WHERE a = 1", args{mockQueryFrame(t, "UPDATE asd SET b = 2 WHERE a = 1"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewGenericStatementInfo(forwardToBoth, false)},
+		{"OpCodeQuery UNKNOWN", args{mockQueryFrame(t, "UNKNOWN"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewGenericStatementInfo(forwardToBoth, false)},
+
 		// PREPARE
-		{"OpCodePrepare SELECT", args{mockPrepareFrame(t, "SELECT blah FROM ks1.t1"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewPreparedStatementInfo(NewGenericStatementInfo(forwardToOrigin), []*term{}, false)},
-		{"OpCodePrepare SELECT system.local forwardSystemQueriesToOrigin", args{mockPrepareFrame(t, "SELECT * FROM system.local"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewPreparedStatementInfo(NewGenericStatementInfo(forwardToOrigin), []*term{}, false)},
-		{"OpCodePrepare SELECT system.peers forwardSystemQueriesToOrigin", args{mockPrepareFrame(t, "SELECT * FROM system.peers"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewPreparedStatementInfo(NewGenericStatementInfo(forwardToOrigin), []*term{}, false)},
-		{"OpCodePrepare SELECT system.local", args{mockPrepareFrame(t, "SELECT * FROM system.local"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToTarget, forwardAuthToOrigin}, NewPreparedStatementInfo(NewGenericStatementInfo(forwardToTarget), []*term{}, false)},
-		{"OpCodePrepare SELECT system.peers", args{mockPrepareFrame(t, "SELECT * FROM system.peers"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToTarget, forwardAuthToOrigin}, NewPreparedStatementInfo(NewGenericStatementInfo(forwardToTarget), []*term{}, false)},
-		{"OpCodePrepare SELECT system.peers_v2", args{mockPrepareFrame(t, "SELECT * FROM system.peers_v2"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToTarget, forwardAuthToOrigin}, NewPreparedStatementInfo(NewGenericStatementInfo(forwardToTarget), []*term{}, false)},
-		{"OpCodePrepare SELECT system.peers_v2 forwardSystemQueriesToOrigin", args{mockPrepareFrame(t, "SELECT * FROM system.peers_v2"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewPreparedStatementInfo(NewGenericStatementInfo(forwardToOrigin), []*term{}, false)},
-		{"OpCodePrepare SELECT system_auth.roles", args{mockPrepareFrame(t, "SELECT * FROM system_auth.roles"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToTarget, forwardAuthToOrigin}, NewPreparedStatementInfo(NewGenericStatementInfo(forwardToTarget), []*term{}, false)},
-		{"OpCodePrepare SELECT dse_insights.tokens", args{mockPrepareFrame(t, "SELECT * FROM dse_insights.tokens"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToTarget, forwardAuthToOrigin}, NewPreparedStatementInfo(NewGenericStatementInfo(forwardToTarget), []*term{}, false)},
-		{"OpCodePrepare non SELECT", args{mockPrepareFrame(t, "INSERT blah"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewPreparedStatementInfo(NewGenericStatementInfo(forwardToBoth), []*term{}, false)},
+		{"OpCodePrepare SELECT", args{mockPrepareFrame(t, "SELECT blah FROM ks1.t1"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewPreparedStatementInfo(NewGenericStatementInfo(forwardToOrigin, true), []*term{}, false, "SELECT blah FROM ks1.t1", "")},
+		{"OpCodePrepare SELECT system.local forwardSystemQueriesToOrigin", args{mockPrepareFrame(t, "SELECT * FROM system.local"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewPreparedStatementInfo(NewGenericStatementInfo(forwardToOrigin, true), []*term{}, false, "SELECT * FROM system.local", "")},
+		{"OpCodePrepare SELECT system.peers forwardSystemQueriesToOrigin", args{mockPrepareFrame(t, "SELECT * FROM system.peers"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewPreparedStatementInfo(NewGenericStatementInfo(forwardToOrigin, true), []*term{}, false, "SELECT * FROM system.peers", "")},
+		{"OpCodePrepare SELECT system.local", args{mockPrepareFrame(t, "SELECT * FROM system.local"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToTarget, forwardAuthToOrigin}, NewPreparedStatementInfo(NewGenericStatementInfo(forwardToTarget, true), []*term{}, false, "SELECT * FROM system.local", "")},
+		{"OpCodePrepare SELECT system.peers", args{mockPrepareFrame(t, "SELECT * FROM system.peers"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToTarget, forwardAuthToOrigin}, NewPreparedStatementInfo(NewGenericStatementInfo(forwardToTarget, true), []*term{}, false, "SELECT * FROM system.peers", "")},
+		{"OpCodePrepare SELECT system.peers_v2", args{mockPrepareFrame(t, "SELECT * FROM system.peers_v2"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToTarget, forwardAuthToOrigin}, NewPreparedStatementInfo(NewGenericStatementInfo(forwardToTarget, true), []*term{}, false, "SELECT * FROM system.peers_v2", "")},
+		{"OpCodePrepare SELECT system.peers_v2 forwardSystemQueriesToOrigin", args{mockPrepareFrame(t, "SELECT * FROM system.peers_v2"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewPreparedStatementInfo(NewGenericStatementInfo(forwardToOrigin, true), []*term{}, false, "SELECT * FROM system.peers_v2", "")},
+		{"OpCodePrepare SELECT system_auth.roles", args{mockPrepareFrame(t, "SELECT * FROM system_auth.roles"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToTarget, forwardAuthToOrigin}, NewPreparedStatementInfo(NewGenericStatementInfo(forwardToTarget, true), []*term{}, false, "SELECT * FROM system_auth.roles", "")},
+		{"OpCodePrepare SELECT dse_insights.tokens", args{mockPrepareFrame(t, "SELECT * FROM dse_insights.tokens"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToTarget, forwardAuthToOrigin}, NewPreparedStatementInfo(NewGenericStatementInfo(forwardToTarget, true), []*term{}, false, "SELECT * FROM dse_insights.tokens", "")},
+		{"OpCodePrepare INSERT INTO asd (a, b) VALUES (1, 2)", args{mockPrepareFrame(t, "INSERT INTO asd (a, b) VALUES (1, 2)"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewPreparedStatementInfo(NewGenericStatementInfo(forwardToBoth, false), []*term{}, false, "INSERT INTO asd (a, b) VALUES (1, 2)", "")},
+		{"OpCodePrepare UPDATE asd SET b = 2 WHERE a = 1", args{mockPrepareFrame(t, "UPDATE asd SET b = 2 WHERE a = 1"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewPreparedStatementInfo(NewGenericStatementInfo(forwardToBoth, false), []*term{}, false, "UPDATE asd SET b = 2 WHERE a = 1", "")},
+		{"OpCodePrepare UNKNOWN", args{mockPrepareFrame(t, "UNKNOWN"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewPreparedStatementInfo(NewGenericStatementInfo(forwardToBoth, false), []*term{}, false, "UNKNOWN", "")},
+
 		// EXECUTE
 		{"OpCodeExecute origin", args{mockExecuteFrame(t, "ORIGIN"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewBoundStatementInfo(originCacheEntry)},
 		{"OpCodeExecute target", args{mockExecuteFrame(t, "TARGET"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewBoundStatementInfo(targetCacheEntry)},
 		{"OpCodeExecute both", args{mockExecuteFrame(t, "BOTH"), []*term{}, psCache, mh, km, forwardReadsToOrigin,forwardReadsToOrigin, forwardAuthToOrigin}, NewBoundStatementInfo(bothCacheEntry)},
 		{"OpCodeExecute unknown", args{mockExecuteFrame(t, "UNKNOWN"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, fmt.Sprintf("The preparedID of the statement to be executed (%v) does not exist in the proxy cache", hex.EncodeToString([]byte("UNKNOWN")))},
 		// REGISTER
-		{"OpCodeRegister", args{mockFrame(t, &message.Register{EventTypes: []primitive.EventType{primitive.EventTypeSchemaChange}}), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewGenericStatementInfo(forwardToBoth)},
+		{"OpCodeRegister", args{mockFrame(t, &message.Register{EventTypes: []primitive.EventType{primitive.EventTypeSchemaChange}}), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewGenericStatementInfo(forwardToBoth, false)},
 		// BATCH
 		{"OpCodeBatch simple", args{mockBatch(t, "simple query"), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewBatchStatementInfo(map[int]PreparedData{})},
 		{"OpCodeBatch prepared", args{mockBatch(t, []byte("BOTH")), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewBatchStatementInfo(map[int]PreparedData{0: bothCacheEntry})},
 		// AUTH_RESPONSE
-		{"OpCodeAuthResponse ForwardAuthToTarget", args{mockAuthResponse(t), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToTarget}, NewGenericStatementInfo(forwardToTarget)},
-		{"OpCodeAuthResponse ForwardAuthToOrigin", args{mockAuthResponse(t), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewGenericStatementInfo(forwardToOrigin)},
+		{"OpCodeAuthResponse ForwardAuthToTarget", args{mockAuthResponse(t), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToTarget}, NewGenericStatementInfo(forwardToTarget, false)},
+		{"OpCodeAuthResponse ForwardAuthToOrigin", args{mockAuthResponse(t), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewGenericStatementInfo(forwardToOrigin, false)},
 		// others
-		{"OpCodeStartup", args{mockFrame(t, message.NewStartup()), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewGenericStatementInfo(forwardToBoth)},
-		{"OpCodeOptions", args{mockFrame(t, &message.Options{}), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewGenericStatementInfo(forwardToBoth)},
+		{"OpCodeStartup", args{mockFrame(t, message.NewStartup()), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewGenericStatementInfo(forwardToBoth, false)},
+		{"OpCodeOptions", args{mockFrame(t, &message.Options{}), []*term{}, psCache, mh, km, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewGenericStatementInfo(forwardToBoth, true)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -166,7 +172,7 @@ func mockFrame(t *testing.T, message message.Message) *frame.RawFrame {
 }
 
 func newFakeMetricHandler() *metrics.MetricHandler {
-	return metrics.NewMetricHandler(noopmetrics.NewNoopMetricFactory(), []float64{}, []float64{}, newFakeProxyMetrics(), nil, nil)
+	return metrics.NewMetricHandler(noopmetrics.NewNoopMetricFactory(), []float64{}, []float64{}, []float64{}, newFakeProxyMetrics(), nil, nil, nil)
 }
 
 func newFakeProxyMetrics() *metrics.ProxyMetrics {

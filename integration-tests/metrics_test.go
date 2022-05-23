@@ -80,62 +80,100 @@ var selectQuery = frame.NewFrame(
 
 func testMetrics(t *testing.T, metricsHandler *httpcloudgate.HandlerWithFallback) {
 
-	originHost := "127.0.1.1"
-	targetHost := "127.0.1.2"
-	originEndpoint := fmt.Sprintf("%v:9042", originHost)
-	targetEndpoint := fmt.Sprintf("%v:9042", targetHost)
-	conf := setup.NewTestConfig(originHost, targetHost)
+	tests := []struct{
+		name                  string
+		dualReadsEnabled      bool
+		asyncReadsOnSecondary bool
+	}{
+		{
+			name:                  "default",
+			dualReadsEnabled:      false,
+			asyncReadsOnSecondary: false,
+		},
+		{
+			name:                  "dual reads, async on secondary",
+			dualReadsEnabled:      true,
+			asyncReadsOnSecondary: true,
+		},
+	}
 
-	testSetup, err := setup.NewCqlServerTestSetup(conf, false, false, false)
-	require.Nil(t, err)
-	defer testSetup.Cleanup()
-	testSetup.Origin.CqlServer.RequestHandlers = []client.RequestHandler{client.RegisterHandler, client.HeartbeatHandler, client.HandshakeHandler, client.NewSystemTablesHandler("cluster1", "dc1"), handleReads, handleWrites}
-	testSetup.Target.CqlServer.RequestHandlers = []client.RequestHandler{client.RegisterHandler, client.HeartbeatHandler, client.HandshakeHandler, client.NewSystemTablesHandler("cluster2", "dc2"), handleWrites}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			originHost := "127.0.1.1"
+			targetHost := "127.0.1.2"
+			originEndpoint := fmt.Sprintf("%v:9042", originHost)
+			targetEndpoint := fmt.Sprintf("%v:9042", targetHost)
+			conf := setup.NewTestConfig(originHost, targetHost)
+			conf.DualReadsEnabled = test.dualReadsEnabled
+			conf.AsyncReadsOnSecondary = test.asyncReadsOnSecondary
 
-	err = testSetup.Start(conf, false, primitive.ProtocolVersion4)
-	require.Nil(t, err)
+			expectedAsyncConnections := 0
+			if conf.AsyncReadsOnSecondary {
+				expectedAsyncConnections = 1
+			}
 
-	wg := &sync.WaitGroup{}
-	defer wg.Wait()
-	srv := startMetricsHandler(t, conf, wg, metricsHandler)
-	defer func() {
-		err := srv.Close()
-		if err != nil {
-			log.Warnf("error cleaning http server: %v", err)
-		}
-	}()
+			asyncEndpoint := targetEndpoint
+			if conf.ForwardReadsToTarget {
+				asyncEndpoint = originEndpoint
+			}
 
-	lines := gatherMetrics(t, conf, false)
-	checkMetrics(t, false, lines, 0, 0, 0, 0, 0, 0, true, true, originEndpoint, targetEndpoint)
+			testSetup, err := setup.NewCqlServerTestSetup(conf, false, false, false)
+			require.Nil(t, err)
+			defer testSetup.Cleanup()
+			testSetup.Origin.CqlServer.RequestHandlers = []client.RequestHandler{client.RegisterHandler, client.HeartbeatHandler, client.HandshakeHandler, client.NewSystemTablesHandler("cluster1", "dc1"), handleReads, handleWrites}
+			testSetup.Target.CqlServer.RequestHandlers = []client.RequestHandler{client.RegisterHandler, client.HeartbeatHandler, client.HandshakeHandler, client.NewSystemTablesHandler("cluster2", "dc2"), handleReads, handleWrites}
 
-	err = testSetup.Client.Connect(primitive.ProtocolVersion4)
-	require.Nil(t, err)
-	clientConn := testSetup.Client.CqlConnection
+			err = testSetup.Start(conf, false, primitive.ProtocolVersion4)
+			require.Nil(t, err)
 
-	lines = gatherMetrics(t, conf, true)
-	// 1 on origin: AUTH_RESPONSE
-	// 1 on target: AUTH_RESPONSE
-	// 1 on both: STARTUP
-	checkMetrics(t, true, lines, 1, 1, 1, 1, 1, 1, true, true, originEndpoint, targetEndpoint)
+			wg := &sync.WaitGroup{}
+			defer wg.Wait()
+			srv := startMetricsHandler(t, conf, wg, metricsHandler)
+			defer func() {
+				err := srv.Close()
+				if err != nil {
+					log.Warnf("error cleaning http server: %v", err)
+				}
+			}()
 
-	_, err = clientConn.SendAndReceive(insertQuery)
-	require.Nil(t, err)
+			lines := gatherMetrics(t, conf, false)
+			checkMetrics(t, false, lines, conf.AsyncReadsOnSecondary, 0, 0, 0, 0, 0, 0, 0, 0, true, true, originEndpoint, targetEndpoint, asyncEndpoint)
 
-	lines = gatherMetrics(t, conf, true)
-	// 1 on origin: AUTH_RESPONSE
-	// 1 on target: AUTH_RESPONSE
-	// 2 on both: STARTUP and QUERY INSERT INTO
-	checkMetrics(t, true, lines, 1, 1, 1, 2, 1, 1, true, true, originEndpoint, targetEndpoint)
+			err = testSetup.Client.Connect(primitive.ProtocolVersion4)
+			require.Nil(t, err)
+			clientConn := testSetup.Client.CqlConnection
 
-	_, err = clientConn.SendAndReceive(selectQuery)
-	require.Nil(t, err)
+			lines = gatherMetrics(t, conf, true)
+			// 1 on origin: AUTH_RESPONSE
+			// 1 on target: AUTH_RESPONSE
+			// 1 on both: STARTUP
+			// 2 on async: AUTH_RESPONSE and STARTUP
+			checkMetrics(t, true, lines, conf.AsyncReadsOnSecondary, 1, 1, 1, expectedAsyncConnections, 1, 1, 1, 2, true, true, originEndpoint, targetEndpoint, asyncEndpoint)
 
-	lines = gatherMetrics(t, conf, true)
-	// 2 on origin: AUTH_RESPONSE and QUERY SELECT
-	// 1 on target: AUTH_RESPONSE
-	// 2 on both: STARTUP and QUERY INSERT INTO
-	checkMetrics(t, true, lines, 1, 1, 1, 2, 2, 1, false, true, originEndpoint, targetEndpoint)
+			_, err = clientConn.SendAndReceive(insertQuery)
+			require.Nil(t, err)
 
+			lines = gatherMetrics(t, conf, true)
+			// 1 on origin: AUTH_RESPONSE
+			// 1 on target: AUTH_RESPONSE
+			// 2 on both: STARTUP and QUERY INSERT INTO
+			// 2 on async: AUTH_RESPONSE and STARTUP
+			checkMetrics(t, true, lines, conf.AsyncReadsOnSecondary, 1, 1, 1, expectedAsyncConnections, 2, 1, 1, 2, true, true, originEndpoint, targetEndpoint, asyncEndpoint)
+
+			_, err = clientConn.SendAndReceive(selectQuery)
+			require.Nil(t, err)
+
+			lines = gatherMetrics(t, conf, true)
+			// 2 on origin: AUTH_RESPONSE and QUERY SELECT
+			// 1 on target: AUTH_RESPONSE
+			// 2 on both: STARTUP and QUERY INSERT INTO
+			// 3 on async: AUTH_RESPONSE, STARTUP AND QUERY SELECT
+			if conf.AsyncReadsOnSecondary {
+				time.Sleep(200 * time.Millisecond)
+			}
+			checkMetrics(t, true, lines, conf.AsyncReadsOnSecondary, 1, 1, 1, expectedAsyncConnections, 2, 2, 1, 3, false, true, originEndpoint, targetEndpoint, asyncEndpoint)
+		})
+	}
 }
 
 func startMetricsHandler(
@@ -177,16 +215,20 @@ func checkMetrics(
 	t *testing.T,
 	checkNodeMetrics bool,
 	lines []string,
+	asyncEnabled bool,
 	openClientConns int,
 	openOriginConns int,
 	openTargetConns int,
+	openAsyncConns int,
 	successBoth int,
 	successOrigin int,
 	successTarget int,
+	successAsync int,
 	handshakeOnlyOrigin bool,
 	handshakeOnlyTarget bool,
 	originHost string,
 	targetHost string,
+	asyncHost string,
 ) {
 	prefix := "cloudgate"
 	require.Contains(t, lines, fmt.Sprintf("%v %v", getPrometheusName(prefix, metrics.OpenClientConnections), openClientConns))
@@ -196,6 +238,7 @@ func checkMetrics(
 	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.FailedRequestsBothFailedOnTargetOnly)))
 	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.FailedRequestsTarget)))
 	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.FailedRequestsOrigin)))
+
 
 	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.InFlightRequestsBoth)))
 	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.InFlightRequestsOrigin)))
@@ -234,17 +277,56 @@ func checkMetrics(
 	require.Contains(t, lines, fmt.Sprintf("%v %v", getPrometheusNameWithSuffix(prefix, metrics.ProxyRequestDurationBoth, "count"), successBoth))
 
 	if checkNodeMetrics {
+		if asyncEnabled {
+			require.Contains(t, lines, fmt.Sprintf("%v %v", getPrometheusNameWithNodeLabel(prefix, metrics.InFlightRequestsAsync, asyncHost), 0))
+		} else {
+			require.NotContains(t, lines, fmt.Sprintf("%v", getPrometheusName(prefix, metrics.InFlightRequestsAsync)))
+		}
+
 		require.Contains(t, lines, fmt.Sprintf("%v{node=\"%v\"} %v", getPrometheusName(prefix, metrics.OpenOriginConnections), originHost, openOriginConns))
 		require.Contains(t, lines, fmt.Sprintf("%v{node=\"%v\"} %v", getPrometheusName(prefix, metrics.OpenTargetConnections), targetHost, openTargetConns))
+
+		if asyncEnabled {
+			require.Contains(t, lines, fmt.Sprintf("%v{node=\"%v\"} %v", getPrometheusName(prefix, metrics.OpenAsyncConnections), asyncHost, openAsyncConns))
+			require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithNodeLabel(prefix, metrics.AsyncReadTimeouts, asyncHost)))
+			require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithNodeLabel(prefix, metrics.AsyncWriteTimeouts, asyncHost)))
+			require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithNodeLabel(prefix, metrics.AsyncOtherErrors, asyncHost)))
+			require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithNodeLabel(prefix, metrics.AsyncClientTimeouts, asyncHost)))
+			require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithNodeLabel(prefix, metrics.AsyncUnavailableErrors, asyncHost)))
+			require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithNodeLabel(prefix, metrics.AsyncReadFailures, asyncHost)))
+			require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithNodeLabel(prefix, metrics.AsyncWriteFailures, asyncHost)))
+			require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithNodeLabel(prefix, metrics.AsyncOverloadedErrors, asyncHost)))
+			require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithNodeLabel(prefix, metrics.AsyncUnpreparedErrors, asyncHost)))
+		} else {
+			require.NotContains(t, lines, fmt.Sprintf("%v", getPrometheusName(prefix, metrics.OpenAsyncConnections)))
+			require.NotContains(t, lines, fmt.Sprintf("%v", getPrometheusName(prefix, metrics.AsyncReadTimeouts)))
+			require.NotContains(t, lines, fmt.Sprintf("%v", getPrometheusName(prefix, metrics.AsyncWriteTimeouts)))
+			require.NotContains(t, lines, fmt.Sprintf("%v", getPrometheusName(prefix, metrics.AsyncOtherErrors)))
+			require.NotContains(t, lines, fmt.Sprintf("%v", getPrometheusName(prefix, metrics.AsyncClientTimeouts)))
+			require.NotContains(t, lines, fmt.Sprintf("%v", getPrometheusName(prefix, metrics.AsyncUnavailableErrors)))
+			require.NotContains(t, lines, fmt.Sprintf("%v", getPrometheusName(prefix, metrics.AsyncReadFailures)))
+			require.NotContains(t, lines, fmt.Sprintf("%v", getPrometheusName(prefix, metrics.AsyncWriteFailures)))
+			require.NotContains(t, lines, fmt.Sprintf("%v", getPrometheusName(prefix, metrics.AsyncOverloadedErrors)))
+			require.NotContains(t, lines, fmt.Sprintf("%v", getPrometheusName(prefix, metrics.AsyncUnpreparedErrors)))
+		}
+
 		require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithNodeLabel(prefix, metrics.OriginReadTimeouts, originHost)))
 		require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithNodeLabel(prefix, metrics.OriginWriteTimeouts, originHost)))
 		require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithNodeLabel(prefix, metrics.OriginOtherErrors, originHost)))
 		require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithNodeLabel(prefix, metrics.OriginClientTimeouts, originHost)))
+		require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithNodeLabel(prefix, metrics.OriginUnavailableErrors, originHost)))
+		require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithNodeLabel(prefix, metrics.OriginReadFailures, originHost)))
+		require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithNodeLabel(prefix, metrics.OriginWriteFailures, originHost)))
+		require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithNodeLabel(prefix, metrics.OriginOverloadedErrors, originHost)))
 
 		require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithNodeLabel(prefix, metrics.TargetReadTimeouts, targetHost)))
 		require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithNodeLabel(prefix, metrics.TargetWriteTimeouts, targetHost)))
 		require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithNodeLabel(prefix, metrics.TargetOtherErrors, targetHost)))
 		require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithNodeLabel(prefix, metrics.TargetClientTimeouts, targetHost)))
+		require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithNodeLabel(prefix, metrics.TargetUnavailableErrors, targetHost)))
+		require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithNodeLabel(prefix, metrics.TargetReadFailures, targetHost)))
+		require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithNodeLabel(prefix, metrics.TargetWriteFailures, targetHost)))
+		require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithNodeLabel(prefix, metrics.TargetOverloadedErrors, targetHost)))
 
 		require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithNodeLabel(prefix, metrics.OriginUnpreparedErrors, originHost)))
 		require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithNodeLabel(prefix, metrics.TargetUnpreparedErrors, targetHost)))
@@ -268,8 +350,25 @@ func checkMetrics(
 			}
 		}
 
+		if successAsync == 0 || !asyncEnabled {
+			if asyncEnabled {
+				require.Contains(t, lines, fmt.Sprintf("%v{node=\"%v\"} 0", getPrometheusNameWithSuffix(prefix, metrics.AsyncRequestDuration, "sum"), asyncHost))
+			} else {
+				require.NotContains(t, lines, fmt.Sprintf("%v", getPrometheusNameWithSuffix(prefix, metrics.AsyncRequestDuration, "sum")))
+			}
+		} else {
+			value, err := findMetricValue(lines, fmt.Sprintf("%v{node=\"%v\"} ", getPrometheusNameWithSuffix(prefix, metrics.AsyncRequestDuration, "sum"), asyncHost))
+			require.Nil(t, err)
+			require.Greater(t, value, 0.0)
+		}
+
 		require.Contains(t, lines, fmt.Sprintf("%v{node=\"%v\"} %v", getPrometheusNameWithSuffix(prefix, metrics.TargetRequestDuration, "count"), targetHost, successTarget+successBoth))
 		require.Contains(t, lines, fmt.Sprintf("%v{node=\"%v\"} %v", getPrometheusNameWithSuffix(prefix, metrics.OriginRequestDuration, "count"), originHost, successOrigin+successBoth))
+		if asyncEnabled {
+			require.Contains(t, lines, fmt.Sprintf("%v{node=\"%v\"} %v", getPrometheusNameWithSuffix(prefix, metrics.AsyncRequestDuration, "count"), asyncHost, successAsync))
+		} else {
+			require.NotContains(t, lines, fmt.Sprintf("%v", getPrometheusNameWithSuffix(prefix, metrics.OriginRequestDuration, "count")))
+		}
 	}
 }
 

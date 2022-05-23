@@ -8,9 +8,11 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
 	"github.com/riptano/cloud-gate/integration-tests/setup"
+	"github.com/riptano/cloud-gate/proxy/pkg/config"
 	"github.com/riptano/cloud-gate/proxy/pkg/health"
 	"github.com/stretchr/testify/require"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -514,10 +516,6 @@ func TestAuth(t *testing.T) {
 			serverConf.OriginCassandraUsername = tt.originUsername
 			serverConf.OriginCassandraPassword = tt.originPassword
 
-			testSetup, err := setup.NewCqlServerTestSetup(serverConf, true, false, false)
-			require.Nil(t, err)
-			defer testSetup.Cleanup()
-
 			proxyConf := setup.NewTestConfig(originAddress, targetAddress)
 			proxyConf.TargetCassandraUsername = tt.proxyTargetUsername
 			proxyConf.TargetCassandraPassword = tt.proxyTargetPassword
@@ -527,47 +525,222 @@ func TestAuth(t *testing.T) {
 				proxyConf.ForwardClientCredentialsToOrigin = *tt.forwardClientCredsToOrigin
 			}
 
-			proxy, err := setup.NewProxyInstanceWithConfig(proxyConf)
-			if proxy != nil {
-				defer proxy.Shutdown()
-			}
+			testFunc := func(t *testing.T, proxyConfig *config.Config) {
+				testSetup, err := setup.NewCqlServerTestSetup(serverConf, false, false, false)
+				require.Nil(t, err)
+				defer testSetup.Cleanup()
 
-			if tt.initError {
-				require.NotNil(t, err)
-				require.Nil(t, proxy)
-				return
-			}
+				originRequestHandler := NewFakeRequestHandler()
+				targetRequestHandler := NewFakeRequestHandler()
 
-			require.Nil(t, err)
-
-			testClient := client.NewCqlClient(
-				fmt.Sprintf("%s:%d", proxyConf.ProxyQueryAddress, proxyConf.ProxyQueryPort),
-				&client.AuthCredentials{
-					Username: tt.clientUsername,
-					Password: tt.clientPassword,
-				})
-			cqlConn, err := testClient.Connect(context.Background())
-			require.Nil(t, err, "client connection failed: %v", err)
-			defer cqlConn.Close()
-
-			err = cqlConn.InitiateHandshake(primitive.ProtocolVersion4, 0)
-
-			if !tt.success {
-				require.NotNil(t, err, "expected failure in handshake")
-				require.True(t, strings.Contains(err.Error(), (&message.AuthenticationError{ErrorMessage: "invalid credentials"}).String()), err.Error())
-			} else {
-				require.Nil(t, err, "handshake failed: %v", err)
-
-				query := &message.Query{
-					Query:   "SELECT * FROM system.peers",
-					Options: &message.QueryOptions{Consistency: primitive.ConsistencyLevelOne},
+				testSetup.Origin.CqlServer.RequestHandlers = []client.RequestHandler{
+					originRequestHandler.HandleRequest,
+					client.NewDriverConnectionInitializationHandler("origin", "dc1", func(_ string) {}),
+				}
+				testSetup.Target.CqlServer.RequestHandlers = []client.RequestHandler{
+					targetRequestHandler.HandleRequest,
+					client.NewDriverConnectionInitializationHandler("target", "dc2", func(_ string) {}),
 				}
 
-				response, err := cqlConn.SendAndReceive(frame.NewFrame(version, 0, query))
-				require.Nil(t, err, "query request send failed: %s", err)
+				err = testSetup.Start(nil, false, primitive.ProtocolVersion4)
+				require.Nil(t, err)
 
-				require.Equal(t, primitive.OpCodeResult, response.Body.Message.GetOpCode(), response.Body.Message)
+				proxy, err := setup.NewProxyInstanceWithConfig(proxyConf)
+				if proxy != nil {
+					defer proxy.Shutdown()
+				}
+
+				if tt.initError {
+					require.NotNil(t, err)
+					require.Nil(t, proxy)
+					return
+				}
+
+				require.Nil(t, err)
+
+				var authCreds *client.AuthCredentials
+				if tt.clientUsername != "" || tt.clientPassword != "" {
+					authCreds = &client.AuthCredentials{
+						Username: tt.clientUsername,
+						Password: tt.clientPassword,
+					}
+				}
+				testClient := client.NewCqlClient(
+					fmt.Sprintf("%s:%d", proxyConf.ProxyQueryAddress, proxyConf.ProxyQueryPort),
+					authCreds)
+				cqlConn, err := testClient.Connect(context.Background())
+				require.Nil(t, err, "client connection failed: %v", err)
+				defer cqlConn.Close()
+
+				err = cqlConn.InitiateHandshake(primitive.ProtocolVersion4, 0)
+
+				originRequestsByConn := originRequestHandler.GetRequests()
+				targetRequestsByConn := targetRequestHandler.GetRequests()
+
+				if !tt.success {
+					require.NotNil(t, err, "expected failure in handshake")
+					if authCreds == nil {
+						require.True(t, strings.Contains(err.Error(), "expected READY, got AUTHENTICATE"), err.Error())
+					} else {
+						require.True(t, strings.Contains(err.Error(), (&message.AuthenticationError{ErrorMessage: "invalid credentials"}).String()), err.Error())
+					}
+				} else {
+					require.Nil(t, err, "handshake failed: %v", err)
+
+					query := &message.Query{
+						Query:   "SELECT * FROM system.peers",
+						Options: &message.QueryOptions{Consistency: primitive.ConsistencyLevelOne},
+					}
+
+					response, err := cqlConn.SendAndReceive(frame.NewFrame(version, 0, query))
+					require.Nil(t, err, "query request send failed: %s", err)
+
+					require.Equal(t, primitive.OpCodeResult, response.Body.Message.GetOpCode(), response.Body.Message)
+				}
+
+				checkedOrigin := false
+				checkedTarget := false
+				secondaryHandshakeIsTarget := true
+				asyncIsTarget := true
+				if proxyConf.ForwardReadsToTarget {
+					asyncIsTarget = false
+				}
+
+				var originRequests []*frame.Frame
+				var targetRequests []*frame.Frame
+				var asyncRequests []*frame.Frame
+
+				controlConnection := 1
+				if proxyConf.DualReadsEnabled {
+					if asyncIsTarget {
+						if len(targetRequestsByConn) == controlConnection + 2 {
+							asyncRequests = targetRequestsByConn[1]
+						}
+					} else {
+						if len(originRequestsByConn) == controlConnection + 2 {
+							asyncRequests = originRequestsByConn[1]
+						}
+					}
+
+					if asyncRequests == nil {
+						require.Equal(t, controlConnection + 1, len(targetRequestsByConn))
+						require.Equal(t, controlConnection + 1, len(originRequestsByConn))
+					}
+				} else {
+					require.Equal(t, controlConnection + 1, len(targetRequestsByConn))
+					require.Equal(t, controlConnection + 1, len(originRequestsByConn))
+				}
+
+				originRequests = originRequestsByConn[1]
+				targetRequests = targetRequestsByConn[1]
+				asyncHandshakeAttempted := true
+
+				forwardClientCredsToOrigin := false
+				if (
+					tt.forwardClientCredsToOrigin != nil &&
+						*tt.forwardClientCredsToOrigin &&
+						tt.proxyOriginUsername != "" &&
+						tt.proxyOriginPassword != "") ||
+					(
+						tt.proxyOriginUsername != "" &&
+							tt.proxyOriginPassword != "" &&
+							tt.proxyTargetUsername == "" &&
+							tt.proxyTargetPassword == "") {
+					forwardClientCredsToOrigin = true
+				}
+
+				if tt.clientPassword == "" && tt.clientUsername == "" {
+					require.Equal(t, 1, len(originRequests))
+					require.Equal(t, 1, len(targetRequests))
+					checkedOrigin = true
+					checkedTarget = true
+					if tt.originUsername != "" || tt.originPassword != "" ||
+						tt.targetUsername != "" || tt.targetPassword != "" {
+						asyncHandshakeAttempted = false
+					}
+				}
+
+				if tt.originUsername == "" && tt.originPassword == "" {
+					require.Equal(t, 1, len(originRequests))
+					checkedOrigin = true
+					if tt.targetUsername != "" || tt.targetPassword != "" {
+						secondaryHandshakeIsTarget = false
+					}
+				}
+
+				if tt.targetUsername == "" && tt.targetPassword == "" {
+					require.Equal(t, 1, len(targetRequests))
+					checkedTarget = true
+				}
+
+				if secondaryHandshakeIsTarget {
+					if forwardClientCredsToOrigin {
+						if tt.clientUsername != tt.originUsername || tt.clientPassword != tt.originPassword {
+							require.Equal(t, 1, len(targetRequests))
+							checkedTarget = true
+							asyncHandshakeAttempted = false
+						}
+					} else if tt.proxyOriginPassword != tt.originPassword || tt.proxyOriginUsername != tt.originUsername {
+						require.Equal(t, 1, len(targetRequests))
+						checkedTarget = true
+						asyncHandshakeAttempted = false
+					}
+				} else {
+					if !forwardClientCredsToOrigin {
+						if tt.clientUsername != tt.targetUsername || tt.clientPassword != tt.targetPassword {
+							require.Equal(t, 1, len(originRequests))
+							checkedOrigin = true
+							asyncHandshakeAttempted = false
+						}
+					} else if tt.proxyTargetPassword != tt.targetPassword || tt.proxyTargetUsername != tt.targetUsername {
+						require.Equal(t, 1, len(originRequests))
+						checkedOrigin = true
+						asyncHandshakeAttempted = false
+					}
+				}
+
+				if !checkedOrigin {
+					require.Equal(t, 2, len(originRequests))
+					require.Equal(t, primitive.OpCodeStartup, originRequests[0].Header.OpCode)
+					require.Equal(t, primitive.OpCodeAuthResponse, originRequests[1].Header.OpCode)
+				}
+
+				if !checkedTarget {
+					require.Equal(t, 2, len(targetRequests))
+					require.Equal(t, primitive.OpCodeStartup, targetRequests[0].Header.OpCode)
+					require.Equal(t, primitive.OpCodeAuthResponse, targetRequests[1].Header.OpCode)
+				}
+
+				if proxyConf.DualReadsEnabled {
+					if asyncHandshakeAttempted {
+						if (asyncIsTarget && len(targetRequests) == 2) || (!asyncIsTarget && len(originRequests) == 2) {
+							require.Equal(t, 2, len(asyncRequests))
+							require.Equal(t, primitive.OpCodeAuthResponse, asyncRequests[1].Header.OpCode)
+						} else {
+							require.Equal(t, 1, len(asyncRequests))
+						}
+						require.Equal(t, primitive.OpCodeStartup, asyncRequests[0].Header.OpCode)
+					} else {
+						require.Equal(t, 0, len(asyncRequests))
+					}
+				}
 			}
+
+			t.Run("NoAsyncReads", func(t *testing.T) {
+				testFunc(t, proxyConf)
+			})
+
+			proxyConf.DualReadsEnabled = true
+			proxyConf.AsyncReadsOnSecondary = true
+			proxyConf.ForwardReadsToTarget = false
+			t.Run("AsyncReadsOnTarget", func(t *testing.T) {
+				testFunc(t, proxyConf)
+			})
+
+			proxyConf.ForwardReadsToTarget = true
+			t.Run("AsyncReadsOnOrigin", func(t *testing.T) {
+				testFunc(t, proxyConf)
+			})
 		})
 	}
 }
@@ -874,4 +1047,58 @@ func TestProxyStartupAndHealthCheckWithAuth(t *testing.T) {
 			}
 		})
 	}
+}
+
+type FakeRequestHandler struct {
+	lock         *sync.Mutex
+	contexts     map[*client.CqlServerConnection]client.RequestHandlerContext
+	orderedConns []*client.CqlServerConnection
+}
+
+func NewFakeRequestHandler() *FakeRequestHandler {
+	return &FakeRequestHandler{
+		lock:     &sync.Mutex{},
+		contexts: map[*client.CqlServerConnection]client.RequestHandlerContext{},
+	}
+}
+
+func (recv *FakeRequestHandler) HandleRequest(
+	request *frame.Frame,
+	conn *client.CqlServerConnection,
+	ctx client.RequestHandlerContext) (response *frame.Frame) {
+	recv.lock.Lock()
+	defer recv.lock.Unlock()
+	reqs := ctx.GetAttribute("requests")
+	if reqs == nil {
+		reqs = make([]*frame.Frame, 0, 1)
+		recv.orderedConns = append(recv.orderedConns, conn)
+	}
+	newReqs := append(reqs.([]*frame.Frame), request)
+	ctx.PutAttribute("requests", newReqs)
+	recv.contexts[conn] = ctx
+	return nil
+}
+
+func (recv *FakeRequestHandler) GetRequests() [][]*frame.Frame {
+	recv.lock.Lock()
+	defer recv.lock.Unlock()
+	output := make([][]*frame.Frame, 0, len(recv.contexts))
+	for _, conn := range recv.orderedConns {
+		reqs := recv.contexts[conn].GetAttribute("requests")
+		if reqs == nil {
+			reqs = make([]*frame.Frame, 0)
+		}
+		output = append(output, reqs.([]*frame.Frame))
+	}
+	return output
+}
+
+func (recv *FakeRequestHandler) Clear() {
+	recv.lock.Lock()
+	defer recv.lock.Unlock()
+	for _, ctx := range recv.contexts {
+		ctx.PutAttribute("requests", nil)
+	}
+	recv.orderedConns = make([]*client.CqlServerConnection, 0)
+	recv.contexts = map[*client.CqlServerConnection]client.RequestHandlerContext{}
 }

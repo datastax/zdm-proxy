@@ -28,6 +28,8 @@ type CloudgateProxy struct {
 
 	timeUuidGenerator TimeUuidGenerator
 
+	readMode config.ReadMode
+
 	proxyRand *rand.Rand
 
 	lock *sync.RWMutex
@@ -50,6 +52,7 @@ type CloudgateProxy struct {
 
 	originBuckets []float64
 	targetBuckets []float64
+	asyncBuckets  []float64
 
 	activeClients int32
 
@@ -266,7 +269,8 @@ func (p *CloudgateProxy) initializeMetricHandler() error {
 	}
 
 	p.metricHandler = metrics.NewMetricHandler(
-		metricFactory, p.originBuckets, p.targetBuckets, proxyMetrics, p.CreateOriginNodeMetrics, p.CreateTargetNodeMetrics)
+		metricFactory, p.originBuckets, p.targetBuckets, p.asyncBuckets, proxyMetrics,
+		p.CreateOriginNodeMetrics, p.CreateTargetNodeMetrics, p.CreateAsyncNodeMetrics)
 
 	return nil
 }
@@ -280,6 +284,19 @@ func (p *CloudgateProxy) initializeGlobalStructures() {
 
 	maxProcs := runtime.GOMAXPROCS(0)
 
+	var err error
+	p.readMode, err = p.Conf.GetReadMode()
+	if err != nil {
+		p.readMode = config.ReadModePrimaryOnly // just to compute workers, proxy.Start() will call validate() and return the error
+	}
+
+	defaultReadWorkers := maxProcs * 8
+	defaultWriteWorkers := maxProcs * 4
+	if p.readMode == config.ReadModeSecondaryAsync {
+		defaultReadWorkers = maxProcs * 12
+		defaultWriteWorkers = maxProcs * 6
+	}
+
 	p.requestResponseNumWorkers = p.Conf.RequestResponseMaxWorkers
 	if p.requestResponseNumWorkers == -1 {
 		p.requestResponseNumWorkers = maxProcs * 4 // default
@@ -291,19 +308,19 @@ func (p *CloudgateProxy) initializeGlobalStructures() {
 
 	p.writeNumWorkers = p.Conf.WriteMaxWorkers
 	if p.writeNumWorkers == -1 {
-		p.writeNumWorkers = maxProcs * 4 // default
+		p.writeNumWorkers = defaultWriteWorkers // default
 	} else if p.writeNumWorkers <= 0 {
-		log.Warnf("Invalid number of write workers %d, using GOMAXPROCS * 4 (%d).", p.writeNumWorkers, maxProcs*4)
-		p.writeNumWorkers = maxProcs * 4
+		log.Warnf("Invalid number of write workers %d, using default (%d).", p.writeNumWorkers, defaultWriteWorkers)
+		p.writeNumWorkers = defaultWriteWorkers
 	}
 	log.Infof("Using %d write workers.", p.writeNumWorkers)
 
 	p.readNumWorkers = p.Conf.ReadMaxWorkers
 	if p.readNumWorkers == -1 {
-		p.readNumWorkers = maxProcs * 8 // default
+		p.readNumWorkers = defaultReadWorkers // default
 	} else if p.readNumWorkers <= 0 {
-		log.Warnf("Invalid number of read workers %d, using GOMAXPROCS * 8 (%d).", p.readNumWorkers, maxProcs*8)
-		p.readNumWorkers = maxProcs * 8
+		log.Warnf("Invalid number of read workers %d, using default (%d).", p.readNumWorkers, defaultReadWorkers)
+		p.readNumWorkers = defaultReadWorkers
 	}
 	log.Infof("Using %d read workers.", p.readNumWorkers)
 
@@ -311,7 +328,7 @@ func (p *CloudgateProxy) initializeGlobalStructures() {
 	if p.listenerNumWorkers == -1 {
 		p.listenerNumWorkers = maxProcs // default
 	} else if p.listenerNumWorkers <= 0 {
-		log.Warnf("Invalid number of cluster connector workers %d, using GOMAXPROCS (%d).", p.listenerNumWorkers, maxProcs)
+		log.Warnf("Invalid number of connection listener workers %d, using GOMAXPROCS (%d).", p.listenerNumWorkers, maxProcs)
 		p.listenerNumWorkers = maxProcs
 	}
 	log.Infof("Using %d listener workers.", p.listenerNumWorkers)
@@ -333,7 +350,6 @@ func (p *CloudgateProxy) initializeGlobalStructures() {
 	p.listenerShutdownWg = &sync.WaitGroup{}
 	p.shutdownClientListenerChan = make(chan bool)
 
-	var err error
 	p.originBuckets, err = p.Conf.ParseOriginBuckets()
 	if err != nil {
 		log.Errorf("Failed to parse origin buckets, falling back to default buckets: %v", err)
@@ -346,6 +362,13 @@ func (p *CloudgateProxy) initializeGlobalStructures() {
 		log.Errorf("Failed to parse target buckets, falling back to default buckets: %v", err)
 	} else {
 		log.Infof("Parsed Target buckets: %v", p.targetBuckets)
+	}
+
+	p.asyncBuckets, err = p.Conf.ParseAsyncBuckets()
+	if err != nil {
+		log.Errorf("Failed to parse async buckets, falling back to default buckets: %v", err)
+	} else {
+		log.Infof("Parsed Async buckets: %v", p.asyncBuckets)
 	}
 
 	p.activeClients = 0
@@ -488,7 +511,8 @@ func (p *CloudgateProxy) handleNewConnection(clientConn net.Conn) {
 		p.clientHandlersShutdownRequestCtx,
 		originHost,
 		targetHost,
-		p.timeUuidGenerator)
+		p.timeUuidGenerator,
+		p.readMode)
 
 	if err != nil {
 		errFunc(err)
@@ -697,7 +721,7 @@ func (p *CloudgateProxy) CreateProxyMetrics(metricFactory metrics.MetricFactory)
 }
 
 func (p *CloudgateProxy) CreateOriginNodeMetrics(
-	metricFactory metrics.MetricFactory, originNodeDescription string, originBuckets []float64) (*metrics.OriginMetrics, error) {
+	metricFactory metrics.MetricFactory, originNodeDescription string, originBuckets []float64) (*metrics.NodeMetricsInstance, error) {
 	originClientTimeouts, err := metrics.CreateCounterNodeMetric(metricFactory, originNodeDescription, metrics.OriginClientTimeouts)
 	if err != nil {
 		return nil, err
@@ -708,12 +732,32 @@ func (p *CloudgateProxy) CreateOriginNodeMetrics(
 		return nil, err
 	}
 
+	originReadFailures, err := metrics.CreateCounterNodeMetric(metricFactory, originNodeDescription, metrics.OriginReadFailures)
+	if err != nil {
+		return nil, err
+	}
+
 	originWriteTimeouts, err := metrics.CreateCounterNodeMetric(metricFactory, originNodeDescription, metrics.OriginWriteTimeouts)
 	if err != nil {
 		return nil, err
 	}
 
+	originWriteFailures, err := metrics.CreateCounterNodeMetric(metricFactory, originNodeDescription, metrics.OriginWriteFailures)
+	if err != nil {
+		return nil, err
+	}
+
 	originUnpreparedErrors, err := metrics.CreateCounterNodeMetric(metricFactory, originNodeDescription, metrics.OriginUnpreparedErrors)
+	if err != nil {
+		return nil, err
+	}
+
+	originOverloadedErrors, err := metrics.CreateCounterNodeMetric(metricFactory, originNodeDescription, metrics.OriginOverloadedErrors)
+	if err != nil {
+		return nil, err
+	}
+
+	originUnavailableErrors, err := metrics.CreateCounterNodeMetric(metricFactory, originNodeDescription, metrics.OriginUnavailableErrors)
 	if err != nil {
 		return nil, err
 	}
@@ -733,19 +777,108 @@ func (p *CloudgateProxy) CreateOriginNodeMetrics(
 		return nil, err
 	}
 
-	return &metrics.OriginMetrics{
-		OriginClientTimeouts:   originClientTimeouts,
-		OriginReadTimeouts:     originReadTimeouts,
-		OriginWriteTimeouts:    originWriteTimeouts,
-		OriginUnpreparedErrors: originUnpreparedErrors,
-		OriginOtherErrors:      originOtherErrors,
-		OriginRequestDuration:  originRequestDuration,
-		OpenOriginConnections:  openOriginConnections,
+	// inflight requests metric for non async requests are implemented as proxy level metrics (not node metrics)
+	inflightRequests, err := noopmetrics.NewNoopMetricFactory().GetOrCreateGauge(nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return &metrics.NodeMetricsInstance{
+		ClientTimeouts:    originClientTimeouts,
+		ReadTimeouts:      originReadTimeouts,
+		ReadFailures:      originReadFailures,
+		WriteTimeouts:     originWriteTimeouts,
+		WriteFailures:     originWriteFailures,
+		UnpreparedErrors:  originUnpreparedErrors,
+		OverloadedErrors:  originOverloadedErrors,
+		UnavailableErrors: originUnavailableErrors,
+		OtherErrors:       originOtherErrors,
+		RequestDuration:   originRequestDuration,
+		OpenConnections:   openOriginConnections,
+		InFlightRequests:  inflightRequests,
+	}, nil
+}
+
+func (p *CloudgateProxy) CreateAsyncNodeMetrics(
+	metricFactory metrics.MetricFactory, asyncNodeDescription string, asyncBuckets []float64) (*metrics.NodeMetricsInstance, error) {
+	asyncClientTimeouts, err := metrics.CreateCounterNodeMetric(metricFactory, asyncNodeDescription, metrics.AsyncClientTimeouts)
+	if err != nil {
+		return nil, err
+	}
+
+	asyncReadTimeouts, err := metrics.CreateCounterNodeMetric(metricFactory, asyncNodeDescription, metrics.AsyncReadTimeouts)
+	if err != nil {
+		return nil, err
+	}
+
+	asyncReadFailures, err := metrics.CreateCounterNodeMetric(metricFactory, asyncNodeDescription, metrics.AsyncReadFailures)
+	if err != nil {
+		return nil, err
+	}
+
+	asyncWriteTimeouts, err := metrics.CreateCounterNodeMetric(metricFactory, asyncNodeDescription, metrics.AsyncWriteTimeouts)
+	if err != nil {
+		return nil, err
+	}
+
+	asyncWriteFailures, err := metrics.CreateCounterNodeMetric(metricFactory, asyncNodeDescription, metrics.AsyncWriteFailures)
+	if err != nil {
+		return nil, err
+	}
+
+	asyncUnpreparedErrors, err := metrics.CreateCounterNodeMetric(metricFactory, asyncNodeDescription, metrics.AsyncUnpreparedErrors)
+	if err != nil {
+		return nil, err
+	}
+
+	asyncOverloadedErrors, err := metrics.CreateCounterNodeMetric(metricFactory, asyncNodeDescription, metrics.AsyncOverloadedErrors)
+	if err != nil {
+		return nil, err
+	}
+
+	asyncUnavailableErrors, err := metrics.CreateCounterNodeMetric(metricFactory, asyncNodeDescription, metrics.AsyncUnavailableErrors)
+	if err != nil {
+		return nil, err
+	}
+
+	asyncOtherErrors, err := metrics.CreateCounterNodeMetric(metricFactory, asyncNodeDescription, metrics.AsyncOtherErrors)
+	if err != nil {
+		return nil, err
+	}
+
+	asyncRequestDuration, err := metrics.CreateHistogramNodeMetric(metricFactory, asyncNodeDescription, metrics.AsyncRequestDuration, asyncBuckets)
+	if err != nil {
+		return nil, err
+	}
+
+	openAsyncConnections, err := metrics.CreateGaugeNodeMetric(metricFactory, asyncNodeDescription, metrics.OpenAsyncConnections)
+	if err != nil {
+		return nil, err
+	}
+
+	inflightRequestsAsync, err := metrics.CreateGaugeNodeMetric(metricFactory, asyncNodeDescription, metrics.InFlightRequestsAsync)
+	if err != nil {
+		return nil, err
+	}
+
+	return &metrics.NodeMetricsInstance{
+		ClientTimeouts:    asyncClientTimeouts,
+		ReadTimeouts:      asyncReadTimeouts,
+		ReadFailures:      asyncReadFailures,
+		WriteTimeouts:     asyncWriteTimeouts,
+		WriteFailures:     asyncWriteFailures,
+		UnpreparedErrors:  asyncUnpreparedErrors,
+		OverloadedErrors:  asyncOverloadedErrors,
+		UnavailableErrors: asyncUnavailableErrors,
+		OtherErrors:       asyncOtherErrors,
+		RequestDuration:   asyncRequestDuration,
+		OpenConnections:   openAsyncConnections,
+		InFlightRequests:  inflightRequestsAsync,
 	}, nil
 }
 
 func (p *CloudgateProxy) CreateTargetNodeMetrics(
-	metricFactory metrics.MetricFactory, targetNodeDescription string, targetBuckets []float64) (*metrics.TargetMetrics, error) {
+	metricFactory metrics.MetricFactory, targetNodeDescription string, targetBuckets []float64) (*metrics.NodeMetricsInstance, error) {
 	targetClientTimeouts, err := metrics.CreateCounterNodeMetric(metricFactory, targetNodeDescription, metrics.TargetClientTimeouts)
 	if err != nil {
 		return nil, err
@@ -756,12 +889,32 @@ func (p *CloudgateProxy) CreateTargetNodeMetrics(
 		return nil, err
 	}
 
+	targetReadFailures, err := metrics.CreateCounterNodeMetric(metricFactory, targetNodeDescription, metrics.TargetReadFailures)
+	if err != nil {
+		return nil, err
+	}
+
 	targetWriteTimeouts, err := metrics.CreateCounterNodeMetric(metricFactory, targetNodeDescription, metrics.TargetWriteTimeouts)
 	if err != nil {
 		return nil, err
 	}
 
+	targetWriteFailures, err := metrics.CreateCounterNodeMetric(metricFactory, targetNodeDescription, metrics.TargetWriteFailures)
+	if err != nil {
+		return nil, err
+	}
+
 	targetUnpreparedErrors, err := metrics.CreateCounterNodeMetric(metricFactory, targetNodeDescription, metrics.TargetUnpreparedErrors)
+	if err != nil {
+		return nil, err
+	}
+
+	targetOverloadedErrors, err := metrics.CreateCounterNodeMetric(metricFactory, targetNodeDescription, metrics.TargetOverloadedErrors)
+	if err != nil {
+		return nil, err
+	}
+
+	targetUnavailableErrors, err := metrics.CreateCounterNodeMetric(metricFactory, targetNodeDescription, metrics.TargetUnavailableErrors)
 	if err != nil {
 		return nil, err
 	}
@@ -781,13 +934,24 @@ func (p *CloudgateProxy) CreateTargetNodeMetrics(
 		return nil, err
 	}
 
-	return &metrics.TargetMetrics{
-		TargetClientTimeouts:   targetClientTimeouts,
-		TargetReadTimeouts:     targetReadTimeouts,
-		TargetWriteTimeouts:    targetWriteTimeouts,
-		TargetUnpreparedErrors: targetUnpreparedErrors,
-		TargetOtherErrors:      targetOtherErrors,
-		TargetRequestDuration:  targetRequestDuration,
-		OpenTargetConnections:  openTargetConnections,
+	// inflight requests metric for non async requests are implemented as proxy level metrics (not node metrics)
+	inflightRequests, err := noopmetrics.NewNoopMetricFactory().GetOrCreateGauge(nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return &metrics.NodeMetricsInstance{
+		ClientTimeouts:    targetClientTimeouts,
+		ReadTimeouts:      targetReadTimeouts,
+		ReadFailures:      targetReadFailures,
+		WriteTimeouts:     targetWriteTimeouts,
+		WriteFailures:     targetWriteFailures,
+		UnpreparedErrors:  targetUnpreparedErrors,
+		OverloadedErrors:  targetOverloadedErrors,
+		UnavailableErrors: targetUnavailableErrors,
+		OtherErrors:       targetOtherErrors,
+		RequestDuration:   targetRequestDuration,
+		OpenConnections:   openTargetConnections,
+		InFlightRequests:  inflightRequests,
 	}, nil
 }

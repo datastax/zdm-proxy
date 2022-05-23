@@ -16,10 +16,11 @@ import (
 type forwardDecision string
 
 const (
-	forwardToOrigin = forwardDecision("origin")
-	forwardToTarget = forwardDecision("target")
-	forwardToBoth   = forwardDecision("both")
-	forwardToNone   = forwardDecision("none")
+	forwardToOrigin    = forwardDecision("origin")
+	forwardToTarget    = forwardDecision("target")
+	forwardToBoth      = forwardDecision("both")
+	forwardToNone      = forwardDecision("none")
+	forwardToAsyncOnly = forwardDecision("async") // for "synchronous" requests that should be sent to the async connector (handshake requests)
 )
 
 type interceptedQueryType string
@@ -77,6 +78,14 @@ func buildStatementInfo(
 		if err != nil {
 			return nil, fmt.Errorf("could not inspect PREPARE frame: %w", err)
 		}
+		decodedFrame, err := frameContext.GetOrDecodeFrame()
+		if err != nil {
+			return nil, fmt.Errorf("could not decode frame: %w", err)
+		}
+		prepareMsg, ok := decodedFrame.Body.Message.(*message.Prepare)
+		if !ok {
+			return nil, fmt.Errorf("unexpected message type when decoding PREPARE message: %v", decodedFrame.Body.Message)
+		}
 		baseStmtInfo := getStatementInfoFromQueryInfo(
 			frameContext.GetRawFrame(), currentKeyspaceName, forwardReadsToTarget,
 			forwardSystemQueriesToTarget, virtualizationEnabled, stmtQueryData.queryData)
@@ -86,7 +95,7 @@ func buildStatementInfo(
 		} else if len(stmtsReplacedTerms) == 1 {
 			replacedTerms = stmtsReplacedTerms[0].replacedTerms
 		}
-		return NewPreparedStatementInfo(baseStmtInfo, replacedTerms, stmtQueryData.queryData.hasPositionalBindMarkers()), nil
+		return NewPreparedStatementInfo(baseStmtInfo, replacedTerms, stmtQueryData.queryData.hasPositionalBindMarkers(), prepareMsg.Query, prepareMsg.Keyspace), nil
 	case primitive.OpCodeBatch:
 		decodedFrame, err := frameContext.GetOrDecodeFrame()
 		if err != nil {
@@ -127,12 +136,14 @@ func buildStatementInfo(
 		}
 	case primitive.OpCodeAuthResponse:
 		if forwardAuthToTarget {
-			return NewGenericStatementInfo(forwardToTarget), nil
+			return NewGenericStatementInfo(forwardToTarget, false), nil
 		} else {
-			return NewGenericStatementInfo(forwardToOrigin), nil
+			return NewGenericStatementInfo(forwardToOrigin, false), nil
 		}
+	case primitive.OpCodeRegister, primitive.OpCodeStartup:
+		return NewGenericStatementInfo(forwardToBoth, false), nil
 	default:
-		return NewGenericStatementInfo(forwardToBoth), nil
+		return NewGenericStatementInfo(forwardToBoth, true), nil
 	}
 }
 
@@ -162,6 +173,7 @@ func getStatementInfoFromQueryInfo(
 	virtualizationEnabled bool,
 	queryInfo QueryInfo) StatementInfo {
 
+	var sendAlsoToAsync bool
 	forwardDecision := forwardToBoth
 	if queryInfo.getStatementType() == statementTypeSelect {
 		if virtualizationEnabled {
@@ -177,6 +189,7 @@ func getStatementInfoFromQueryInfo(
 			}
 		}
 
+		sendAlsoToAsync = true
 		if isSystemQuery(queryInfo, currentKeyspaceName) {
 			log.Debugf("Detected system query: %v with stream id: %v", queryInfo.getQuery(), f.Header.StreamId)
 			if forwardSystemQueriesToTarget {
@@ -191,11 +204,15 @@ func getStatementInfoFromQueryInfo(
 				forwardDecision = forwardToOrigin
 			}
 		}
+	} else if queryInfo.getStatementType() == statementTypeUse {
+		sendAlsoToAsync = true
+	} else {
+		sendAlsoToAsync = false
 	}
 
 	log.Tracef("Forward decision: %s", forwardDecision)
 
-	return NewGenericStatementInfo(forwardDecision)
+	return NewGenericStatementInfo(forwardDecision, sendAlsoToAsync)
 }
 
 func isSystemQuery(info QueryInfo, currentKeyspaceName *atomic.Value) bool {

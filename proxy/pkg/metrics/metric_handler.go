@@ -6,52 +6,57 @@ import (
 	"sync"
 )
 
-type originMetricsBuilder = func(
+type nodeMetricsBuilder = func(
 	metricFactory MetricFactory,
-	originNodeIdentifier string,
-	originBuckets []float64) (*OriginMetrics, error)
-
-type targetMetricsBuilder = func(
-	metricFactory MetricFactory,
-	targetNodeIdentifier string,
-	targetBuckets []float64) (*TargetMetrics, error)
+	nodeIdentifier string,
+	buckets []float64) (*NodeMetricsInstance, error)
 
 type MetricHandler struct {
-	originMetricsBuilder originMetricsBuilder
-	targetMetricsBuilder targetMetricsBuilder
+	originMetricsBuilder nodeMetricsBuilder
+	targetMetricsBuilder nodeMetricsBuilder
+	asyncMetricsBuilder  nodeMetricsBuilder
 
 	proxyMetrics *ProxyMetrics
 
-	originMetrics map[string]*OriginMetrics
-	targetMetrics map[string]*TargetMetrics
+	originMetrics map[string]*NodeMetricsInstance
+	targetMetrics map[string]*NodeMetricsInstance
+	asyncMetrics  map[string]*NodeMetricsInstance
 
 	originRwLock *sync.RWMutex
 	targetRwLock *sync.RWMutex
+	asyncRwLock  *sync.RWMutex
 
 	metricFactory MetricFactory
 
-	originBuckets        []float64
-	targetBuckets        []float64
+	originBuckets []float64
+	targetBuckets []float64
+	asyncBuckets  []float64
 }
 
 func NewMetricHandler(
 	metricFactory MetricFactory,
 	originBuckets []float64,
 	targetBuckets []float64,
+	asyncBuckets []float64,
 	proxyMetrics *ProxyMetrics,
-	originMetricsBuilder originMetricsBuilder,
-	targetMetricsBuilder targetMetricsBuilder) *MetricHandler {
+	originMetricsBuilder nodeMetricsBuilder,
+	targetMetricsBuilder nodeMetricsBuilder,
+	asyncMetricsBuilder nodeMetricsBuilder) *MetricHandler {
 	return &MetricHandler{
+		originMetricsBuilder: originMetricsBuilder,
+		targetMetricsBuilder: targetMetricsBuilder,
+		asyncMetricsBuilder:  asyncMetricsBuilder,
+		proxyMetrics:         proxyMetrics,
+		originMetrics:        make(map[string]*NodeMetricsInstance),
+		targetMetrics:        make(map[string]*NodeMetricsInstance),
+		asyncMetrics:         make(map[string]*NodeMetricsInstance),
+		originRwLock:         &sync.RWMutex{},
+		targetRwLock:         &sync.RWMutex{},
+		asyncRwLock:          &sync.RWMutex{},
 		metricFactory:        metricFactory,
 		originBuckets:        originBuckets,
 		targetBuckets:        targetBuckets,
-		originMetricsBuilder: originMetricsBuilder,
-		targetMetricsBuilder: targetMetricsBuilder,
-		originMetrics:        make(map[string]*OriginMetrics),
-		targetMetrics:        make(map[string]*TargetMetrics),
-		proxyMetrics:         proxyMetrics,
-		originRwLock:         &sync.RWMutex{},
-		targetRwLock:         &sync.RWMutex{},
+		asyncBuckets:         asyncBuckets,
 	}
 }
 
@@ -59,7 +64,7 @@ func (recv *MetricHandler) GetProxyMetrics() *ProxyMetrics {
 	return recv.proxyMetrics
 }
 
-func (recv *MetricHandler) getOriginMetrics(originNodeDescription string) (*OriginMetrics, error) {
+func (recv *MetricHandler) getOriginMetrics(originNodeDescription string) (*NodeMetricsInstance, error) {
 	rwLock := recv.originRwLock
 	m := recv.originMetrics
 	buckets := recv.originBuckets
@@ -90,7 +95,7 @@ func (recv *MetricHandler) getOriginMetrics(originNodeDescription string) (*Orig
 	return newNodeMetrics, nil
 }
 
-func (recv *MetricHandler) getTargetMetrics(targetNodeDescription string) (*TargetMetrics, error) {
+func (recv *MetricHandler) getTargetMetrics(targetNodeDescription string) (*NodeMetricsInstance, error) {
 	rwLock := recv.targetRwLock
 	m := recv.targetMetrics
 	buckets := recv.targetBuckets
@@ -113,7 +118,7 @@ func (recv *MetricHandler) getTargetMetrics(targetNodeDescription string) (*Targ
 	newNodeMetrics, err := builder(recv.metricFactory, targetNodeDescription, buckets)
 	if err != nil {
 		rwLock.Unlock()
-		return nil, fmt.Errorf("failed to create target metrics: %w", err)
+		return nil, fmt.Errorf("failed to create async metrics: %w", err)
 	}
 
 	m[targetNodeDescription] = newNodeMetrics
@@ -121,7 +126,39 @@ func (recv *MetricHandler) getTargetMetrics(targetNodeDescription string) (*Targ
 	return newNodeMetrics, nil
 }
 
-func (recv *MetricHandler) GetNodeMetrics(originNodeDescription string, targetNodeDescription string) (*NodeMetrics, error) {
+func (recv *MetricHandler) getAsyncMetrics(asyncNodeDescription string) (*NodeMetricsInstance, error) {
+	rwLock := recv.asyncRwLock
+	m := recv.asyncMetrics
+	buckets := recv.asyncBuckets
+	builder := recv.asyncMetricsBuilder
+
+	rwLock.RLock()
+	asyncMetrics, ok := m[asyncNodeDescription]
+	rwLock.RUnlock()
+	if ok {
+		return asyncMetrics, nil
+	}
+
+	rwLock.Lock()
+	asyncMetrics, ok = m[asyncNodeDescription]
+	if ok {
+		rwLock.Unlock()
+		return asyncMetrics, nil
+	}
+
+	newNodeMetrics, err := builder(recv.metricFactory, asyncNodeDescription, buckets)
+	if err != nil {
+		rwLock.Unlock()
+		return nil, fmt.Errorf("failed to create target metrics: %w", err)
+	}
+
+	m[asyncNodeDescription] = newNodeMetrics
+	rwLock.Unlock()
+	return newNodeMetrics, nil
+}
+
+func (recv *MetricHandler) GetNodeMetrics(
+	originNodeDescription string, targetNodeDescription string, asyncNodeDescription string) (*NodeMetrics, error) {
 	originMetrics, err := recv.getOriginMetrics(originNodeDescription)
 	if err != nil {
 		return nil, err
@@ -132,7 +169,15 @@ func (recv *MetricHandler) GetNodeMetrics(originNodeDescription string, targetNo
 		return nil, err
 	}
 
-	return &NodeMetrics{OriginMetrics: originMetrics, TargetMetrics: targetMetrics}, nil
+	var asyncMetrics *NodeMetricsInstance
+	if asyncNodeDescription != "" {
+		asyncMetrics, err = recv.getAsyncMetrics(asyncNodeDescription)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return &NodeMetrics{OriginMetrics: originMetrics, TargetMetrics: targetMetrics, AsyncMetrics: asyncMetrics}, nil
 }
 
 func (recv *MetricHandler) UnregisterAllMetrics() error {

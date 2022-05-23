@@ -32,7 +32,7 @@ func (noop *noopMetricFactory) UnregisterAllMetrics() error {
 	return nil
 }
 
-// Returns the http handler implementation for the metrics endpoint.
+// HttpHandler returns the http handler implementation for the metrics endpoint.
 func (noop *noopMetricFactory) HttpHandler() http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		http.Error(writer, "Metrics are disabled on this proxy instance.", http.StatusNotFound)

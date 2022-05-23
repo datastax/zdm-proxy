@@ -6,6 +6,12 @@ When cutting a new release, update the `unreleased` heading to the tag being gen
 
 ## Unreleased
 
+## v1.2.2 - 2022-03-24
+
+### New Features
+
+* [ZDM-278](https://datastax.jira.com/browse/ZDM-278) Add a new flag to enable async reads on secondary cluster
+
 ## v1.2.1 - 2021-11-24
 
 ### Improvements

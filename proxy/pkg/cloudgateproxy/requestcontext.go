@@ -21,7 +21,7 @@ import (
 // This removes the need of deleting key value pairs from the map and therefore we can use a map type that is designed for
 // inserts and updates (not deletes).
 type requestContextHolder struct {
-	reqCtx *RequestContext
+	reqCtx RequestContext
 	lock  *sync.RWMutex
 }
 
@@ -34,7 +34,7 @@ func NewRequestContextHolder() *requestContextHolder {
 
 // SetIfEmpty sets a request context if the request context holder is empty.
 // Returns an error if the holder is not empty.
-func (recv *requestContextHolder) SetIfEmpty(ctx *RequestContext) (err error) {
+func (recv *requestContextHolder) SetIfEmpty(ctx RequestContext) (err error) {
 	recv.lock.Lock()
 	defer recv.lock.Unlock()
 
@@ -47,7 +47,7 @@ func (recv *requestContextHolder) SetIfEmpty(ctx *RequestContext) (err error) {
 }
 
 // Get returns the request context that is being held by the request context holder object or null if it is empty.
-func (recv *requestContextHolder) Get() *RequestContext {
+func (recv *requestContextHolder) Get() RequestContext {
 	recv.lock.RLock()
 	defer recv.lock.RUnlock()
 
@@ -56,7 +56,7 @@ func (recv *requestContextHolder) Get() *RequestContext {
 
 // Clear clears the request context holder if it is not empty and the provided request matches the one that is being held.
 // Returns an error if the holder is empty or if the provided context doesn't match.
-func (recv *requestContextHolder) Clear(ctx *RequestContext) error {
+func (recv *requestContextHolder) Clear(ctx RequestContext) error {
 	recv.lock.Lock()
 	defer recv.lock.Unlock()
 
@@ -79,7 +79,15 @@ const (
 	RequestCanceled
 )
 
-type RequestContext struct {
+type RequestContext interface {
+	SetTimeout(nodeMetrics *metrics.NodeMetrics, req *frame.RawFrame) bool
+	Cancel(nodeMetrics *metrics.NodeMetrics) bool
+	SetResponse(
+		nodeMetrics *metrics.NodeMetrics, f *frame.RawFrame,
+		cluster ClusterType, connectorType ClusterConnectorType) bool
+}
+
+type requestContextImpl struct {
 	request        *frame.RawFrame
 	stmtInfo       StatementInfo
 	originResponse *frame.RawFrame
@@ -91,25 +99,25 @@ type RequestContext struct {
 	customResponseChannel chan *customResponse
 }
 
-func NewRequestContext(req *frame.RawFrame, stmtInfo StatementInfo, starTime time.Time, customResponseChannel chan *customResponse) *RequestContext {
-	return &RequestContext{
-		request:        req,
-		stmtInfo:       stmtInfo,
-		originResponse: nil,
-		targetResponse: nil,
-		state:          RequestPending,
-		timer:          nil,
-		lock:           &sync.Mutex{},
-		startTime:      starTime,
+func NewRequestContext(req *frame.RawFrame, stmtInfo StatementInfo, startTime time.Time, customResponseChannel chan *customResponse) *requestContextImpl {
+	return &requestContextImpl{
+		request:               req,
+		stmtInfo:              stmtInfo,
+		originResponse:        nil,
+		targetResponse:        nil,
+		state:                 RequestPending,
+		timer:                 nil,
+		lock:                  &sync.Mutex{},
+		startTime:             startTime,
 		customResponseChannel: customResponseChannel,
 	}
 }
 
-func (recv *RequestContext) SetTimer(timer *time.Timer) {
+func (recv *requestContextImpl) SetTimer(timer *time.Timer) {
 	recv.timer = timer
 }
 
-func (recv *RequestContext) SetTimeout(nodeMetrics *metrics.NodeMetrics, req *frame.RawFrame) bool {
+func (recv *requestContextImpl) SetTimeout(nodeMetrics *metrics.NodeMetrics, req *frame.RawFrame) bool {
 	recv.lock.Lock()
 	defer recv.lock.Unlock()
 
@@ -133,10 +141,10 @@ func (recv *RequestContext) SetTimeout(nodeMetrics *metrics.NodeMetrics, req *fr
 			sentTarget = true
 		}
 		if sentOrigin && recv.originResponse == nil {
-			nodeMetrics.OriginMetrics.OriginClientTimeouts.Add(1)
+			nodeMetrics.OriginMetrics.ClientTimeouts.Add(1)
 		}
 		if sentTarget && recv.targetResponse == nil {
-			nodeMetrics.TargetMetrics.TargetClientTimeouts.Add(1)
+			nodeMetrics.TargetMetrics.ClientTimeouts.Add(1)
 		}
 		return true
 	}
@@ -144,7 +152,7 @@ func (recv *RequestContext) SetTimeout(nodeMetrics *metrics.NodeMetrics, req *fr
 	return false
 }
 
-func (recv *RequestContext) Cancel() bool {
+func (recv *requestContextImpl) Cancel(_ *metrics.NodeMetrics) bool {
 	recv.lock.Lock()
 	defer recv.lock.Unlock()
 
@@ -154,28 +162,33 @@ func (recv *RequestContext) Cancel() bool {
 	}
 
 	recv.state = RequestCanceled
-	recv.timer.Stop()
+	if recv.timer != nil {
+		recv.timer.Stop()
+	}
 	return true
 }
 
-func (recv *RequestContext) SetResponse(nodeMetrics *metrics.NodeMetrics, f *frame.RawFrame, cluster ClusterType) bool {
+func (recv *requestContextImpl) SetResponse(nodeMetrics *metrics.NodeMetrics, f *frame.RawFrame,
+	cluster ClusterType, connectorType ClusterConnectorType) bool {
 	state, updated := recv.updateInternalState(f, cluster)
 	if !updated {
 		return false
 	}
 
 	finished := state == RequestDone
-	if finished {
+	if finished && recv.timer != nil {
 		recv.timer.Stop() // if timer is not stopped, there's a memory leak because the timer callback holds references!
 	}
 
-	switch cluster {
-	case ClusterTypeOrigin:
-		log.Tracef("Received response from %v for query with stream id %d", ClusterTypeOrigin, f.Header.StreamId)
-		nodeMetrics.OriginMetrics.OriginRequestDuration.Track(recv.startTime)
-	case ClusterTypeTarget:
-		log.Tracef("Received response from %v for query with stream id %d", ClusterTypeTarget, f.Header.StreamId)
-		nodeMetrics.TargetMetrics.TargetRequestDuration.Track(recv.startTime)
+	switch connectorType {
+	case ClusterConnectorTypeOrigin:
+		log.Tracef("Received response from %v for query with stream id %d", cluster, f.Header.StreamId)
+		nodeMetrics.OriginMetrics.RequestDuration.Track(recv.startTime)
+	case ClusterConnectorTypeTarget:
+		log.Tracef("Received response from %v for query with stream id %d", cluster, f.Header.StreamId)
+		nodeMetrics.TargetMetrics.RequestDuration.Track(recv.startTime)
+	case ClusterConnectorTypeAsync:
+		log.Tracef("Received async response from %v for query with stream id %d", cluster, f.Header.StreamId)
 	default:
 		log.Errorf("could not recognize cluster type %v", cluster)
 	}
@@ -183,7 +196,7 @@ func (recv *RequestContext) SetResponse(nodeMetrics *metrics.NodeMetrics, f *fra
 	return finished
 }
 
-func (recv *RequestContext) updateInternalState(f *frame.RawFrame, cluster ClusterType) (state int, updated bool) {
+func (recv *requestContextImpl) updateInternalState(f *frame.RawFrame, cluster ClusterType) (state int, updated bool) {
 	recv.lock.Lock()
 	defer recv.lock.Unlock()
 
@@ -211,6 +224,8 @@ func (recv *RequestContext) updateInternalState(f *frame.RawFrame, cluster Clust
 		done = recv.originResponse != nil && recv.targetResponse != nil
 	case forwardToNone:
 		done = true
+	case forwardToAsyncOnly:
+		done = true
 	default:
 		log.Errorf("unrecognized decision %v", recv.stmtInfo.GetForwardDecision())
 	}
@@ -220,4 +235,84 @@ func (recv *RequestContext) updateInternalState(f *frame.RawFrame, cluster Clust
 	}
 
 	return recv.state, true
+}
+
+type asyncRequestContextImpl struct {
+	state            int
+	timer            *time.Timer
+	lock             *sync.Mutex
+	requestStreamId  int16
+	expectedResponse bool
+	startTime        time.Time
+}
+
+func NewAsyncRequestContext(streamId int16, expectedResponse bool, startTime time.Time) *asyncRequestContextImpl {
+	return &asyncRequestContextImpl{
+		state:            RequestPending,
+		timer:            nil,
+		lock:             &sync.Mutex{},
+		requestStreamId:  streamId,
+		expectedResponse: expectedResponse,
+		startTime:        startTime,
+	}
+}
+
+func (recv *asyncRequestContextImpl) SetTimer(timer *time.Timer) {
+	recv.timer = timer
+}
+
+func (recv *asyncRequestContextImpl) SetTimeout(nodeMetrics *metrics.NodeMetrics, _ *frame.RawFrame) bool {
+	recv.lock.Lock()
+	defer recv.lock.Unlock()
+
+	if recv.state != RequestPending {
+		// already done
+		return false
+	}
+
+	nodeMetrics.AsyncMetrics.InFlightRequests.Subtract(1)
+	nodeMetrics.AsyncMetrics.ClientTimeouts.Add(1)
+
+	recv.state = RequestTimedOut
+	return true
+}
+
+func (recv *asyncRequestContextImpl) Cancel(nodeMetrics *metrics.NodeMetrics) bool {
+	recv.lock.Lock()
+	defer recv.lock.Unlock()
+
+	if recv.state != RequestPending {
+		// already done
+		return false
+	}
+
+	nodeMetrics.AsyncMetrics.InFlightRequests.Subtract(1)
+
+	recv.state = RequestCanceled
+	if recv.timer != nil {
+		recv.timer.Stop() // if timer is not stopped, there's a memory leak because the timer callback holds references!
+	}
+	return true
+}
+
+func (recv *asyncRequestContextImpl) SetResponse(
+	nodeMetrics *metrics.NodeMetrics, _ *frame.RawFrame,
+	_ ClusterType, _ ClusterConnectorType) bool {
+	recv.lock.Lock()
+	defer recv.lock.Unlock()
+
+	if recv.state != RequestPending {
+		// already done
+		return false
+	}
+
+	recv.state = RequestDone
+	if recv.timer != nil {
+		recv.timer.Stop() // if timer is not stopped, there's a memory leak because the timer callback holds references!
+	}
+
+	nodeMetrics.AsyncMetrics.RequestDuration.Track(recv.startTime)
+	nodeMetrics.AsyncMetrics.InFlightRequests.Subtract(1)
+
+	return true
 }

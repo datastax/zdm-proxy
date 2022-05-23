@@ -4,6 +4,7 @@ import "fmt"
 
 type StatementInfo interface {
 	GetForwardDecision() forwardDecision
+	ShouldAlsoBeSentAsync() bool
 }
 
 type baseStatementInfo struct {
@@ -20,38 +21,62 @@ func (recv *baseStatementInfo) GetForwardDecision() forwardDecision {
 
 type GenericStatementInfo struct {
 	*baseStatementInfo
+	shouldAlsoBeSentAsync bool
 }
 
-func NewGenericStatementInfo(decision forwardDecision) *GenericStatementInfo {
-	return &GenericStatementInfo{baseStatementInfo: newBaseStmtInfo(decision)}
+func NewGenericStatementInfo(decision forwardDecision, shouldBeSentAsync bool) *GenericStatementInfo {
+	return &GenericStatementInfo{baseStatementInfo: newBaseStmtInfo(decision), shouldAlsoBeSentAsync: shouldBeSentAsync}
 }
 
 func (recv *GenericStatementInfo) String() string {
-	return fmt.Sprintf("GenericStatementInfo{forwardDecision: %v}", recv.forwardDecision)
+	return fmt.Sprintf("GenericStatementInfo{forwardDecision: %v, shouldAlsoBeSentAsync=%v}", recv.forwardDecision, recv.shouldAlsoBeSentAsync)
+}
+
+func (recv *GenericStatementInfo) ShouldAlsoBeSentAsync() bool {
+	return recv.shouldAlsoBeSentAsync
 }
 
 type PreparedStatementInfo struct {
 	baseStatementInfo         StatementInfo
 	replacedTerms             []*term
 	containsPositionalMarkers bool
+	query                     string
+	keyspace                  string
 }
 
 func NewPreparedStatementInfo(
 	baseStmtInfo StatementInfo,
 	replacedTerms []*term,
-	containsPositionalMarkers bool) *PreparedStatementInfo {
+	containsPositionalMarkers bool,
+	query string,
+	keyspace string) *PreparedStatementInfo {
 	return &PreparedStatementInfo{
 		baseStatementInfo:         baseStmtInfo,
 		replacedTerms:             replacedTerms,
-		containsPositionalMarkers: containsPositionalMarkers}
+		containsPositionalMarkers: containsPositionalMarkers,
+		query:                     query,
+		keyspace:                  keyspace}
 }
 
 func (recv *PreparedStatementInfo) String() string {
-	return fmt.Sprintf("PreparedStatementInfo{baseStatementInfo: %v}", recv.baseStatementInfo)
+	return fmt.Sprintf("PreparedStatementInfo{baseStatementInfo: %v, query: %v, keyspace: %v}",
+		recv.baseStatementInfo, recv.query, recv.keyspace)
+}
+
+func (recv *PreparedStatementInfo) GetQuery() string {
+	return recv.query
+}
+
+func (recv *PreparedStatementInfo) GetKeyspace() string {
+	return recv.keyspace
 }
 
 func (recv *PreparedStatementInfo) GetForwardDecision() forwardDecision {
 	return forwardToBoth // always send PREPARE to both, use origin's ID
+}
+
+func (recv *PreparedStatementInfo) ShouldAlsoBeSentAsync() bool {
+	return recv.GetBaseStatementInfo().ShouldAlsoBeSentAsync()
 }
 
 func (recv *PreparedStatementInfo) GetBaseStatementInfo() StatementInfo {
@@ -86,6 +111,10 @@ func (recv *BoundStatementInfo) GetPreparedData() PreparedData {
 	return recv.preparedData
 }
 
+func (recv *BoundStatementInfo) ShouldAlsoBeSentAsync() bool {
+	return recv.preparedData.GetPreparedStatementInfo().GetBaseStatementInfo().ShouldAlsoBeSentAsync()
+}
+
 type InterceptedStatementInfo struct {
 	*baseStatementInfo
 	interceptedQueryType interceptedQueryType
@@ -103,6 +132,10 @@ func (recv *InterceptedStatementInfo) GetQueryType() interceptedQueryType {
 	return recv.interceptedQueryType
 }
 
+func (recv *InterceptedStatementInfo) ShouldAlsoBeSentAsync() bool {
+	return false
+}
+
 type BatchStatementInfo struct {
 	preparedDataByStmtIdx map[int]PreparedData
 }
@@ -117,6 +150,10 @@ func (recv *BatchStatementInfo) String() string {
 
 func (recv *BatchStatementInfo) GetForwardDecision() forwardDecision {
 	return forwardToBoth // always send BATCH to both, use origin's prepared IDs
+}
+
+func (recv *BatchStatementInfo) ShouldAlsoBeSentAsync() bool {
+	return false
 }
 
 func (recv *BatchStatementInfo) GetPreparedDataByStmtIdx() map[int]PreparedData {

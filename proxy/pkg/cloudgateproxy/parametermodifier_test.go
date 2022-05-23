@@ -20,7 +20,7 @@ func TestAddValuesToExecuteFrame_NoReplacedTerms(t *testing.T) {
 		ResultMetadataId: nil,
 		Options:          &message.QueryOptions{},
 	})
-	preparedStmtInfo := NewPreparedStatementInfo(NewGenericStatementInfo(forwardToBoth), []*term{}, false)
+	preparedStmtInfo := NewPreparedStatementInfo(NewGenericStatementInfo(forwardToBoth, false), []*term{}, false, "", "")
 	variablesMetadata := &message.VariablesMetadata{
 		PkIndices: nil,
 		Columns:   nil,
@@ -42,7 +42,7 @@ func TestAddValuesToExecuteFrame_InvalidMessageType(t *testing.T) {
 		Query:   "SELECT * FROM asd WHERE a = :param1",
 		Options: &message.QueryOptions{},
 	})
-	preparedStmtInfo := NewPreparedStatementInfo(NewGenericStatementInfo(forwardToBoth), []*term{}, false)
+	preparedStmtInfo := NewPreparedStatementInfo(NewGenericStatementInfo(forwardToBoth, false), []*term{}, false, "", "")
 	variablesMetadata := &message.VariablesMetadata{
 		PkIndices: nil,
 		Columns:   nil,
@@ -205,7 +205,7 @@ func TestAddValuesToExecuteFrame_PositionalValues(t *testing.T) {
 				Options:          clonedQueryOpts,
 			})
 			containsPositionalMarkers := ((len(requestPosVals)+len(replacedTerms)) > 0) && !test.prepareContainsNamedValues
-			preparedStmtInfo := NewPreparedStatementInfo(NewGenericStatementInfo(forwardToBoth), replacedTerms, containsPositionalMarkers)
+			preparedStmtInfo := NewPreparedStatementInfo(NewGenericStatementInfo(forwardToBoth, false), replacedTerms, containsPositionalMarkers, "", "")
 
 			replacementTimeUuids := parameterModifier.generateTimeUuids(preparedStmtInfo)
 			executeMsg, err := parameterModifier.AddValuesToExecuteFrame(f, preparedStmtInfo, vm, replacementTimeUuids)
@@ -350,7 +350,7 @@ func TestAddValuesToExecuteFrame_NamedValues(t *testing.T) {
 				ResultMetadataId: nil,
 				Options:          clonedQueryOpts,
 			})
-			preparedStmtInfo := NewPreparedStatementInfo(NewGenericStatementInfo(forwardToBoth), replacedTerms, false)
+			preparedStmtInfo := NewPreparedStatementInfo(NewGenericStatementInfo(forwardToBoth, false), replacedTerms, false, "", "")
 
 			replacementTimeUuids := parameterModifier.generateTimeUuids(preparedStmtInfo)
 			executeMsg, err := parameterModifier.AddValuesToExecuteFrame(f, preparedStmtInfo, vm, replacementTimeUuids)

@@ -415,6 +415,7 @@ func NewTestConfig(originHost string, targetHost string) *config.Config {
 
 	conf.OriginBucketsMs = "1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000"
 	conf.TargetBucketsMs = "1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000"
+	conf.AsyncBucketsMs = "1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000"
 
 	conf.EnableMetrics = true
 
@@ -435,8 +436,14 @@ func NewTestConfig(originHost string, targetHost string) *config.Config {
 
 	conf.EventQueueSizeFrames = 12
 
+	conf.AsyncConnectorWriteQueueSizeFrames = 2048
+	conf.AsyncConnectorWriteBufferSizeBytes = 4096
+
 	conf.ForwardReadsToTarget = false
 	conf.ForwardSystemQueriesToTarget = false
+	conf.DualReadsEnabled = false
+	conf.AsyncReadsOnSecondary = false
+	conf.AsyncHandshakeTimeoutMs = 4000
 
 	conf.RequestTimeoutMs = 10000
 

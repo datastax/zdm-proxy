@@ -6,6 +6,12 @@ Build artifacts are available at [Docker Hub](https://hub.docker.com/repository/
 
 For additional details on the changes included in a specific release, see the associated CHANGELOG-x.x.md file.
 
+## v1.2.2 - 2022-03-24
+
+Adds a new mode for reads where the proxy also sends reads to the secondary cluster but in an "async"/"fire and forget" way that doesn't cause any impact to the client.
+
+[Changelog](CHANGELOG/CHANGELOG-1.2.md#v122---2022-03-24)
+
 ## v1.2.1 - 2021-11-24
 
 Improves performance of the UUID generator and fixes a bug where partial socket reads could happen (which caused native protocol errors).
