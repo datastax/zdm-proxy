@@ -1245,7 +1245,12 @@ func (ch *ClientHandler) forwardRequest(request *frame.RawFrame, customResponseC
 	log.Tracef("Request frame: %v", request)
 
 	context := NewFrameDecodeContext(request)
-	context, replacedTerms, err := ch.queryModifier.replaceQueryString(context)
+	var replacedTerms []*statementReplacedTerms
+	var err error
+	if ch.conf.ReplaceServerSideFunctions {
+		context, replacedTerms, err = ch.queryModifier.replaceQueryString(context)
+	}
+
 	if err != nil {
 		return err
 	}

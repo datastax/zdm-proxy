@@ -12,3 +12,4 @@ When cutting a new release, update the `unreleased` heading to the tag being gen
 * [ZDM-252](https://datastax.jira.com/browse/ZDM-252) Replace now() function calls in BATCH messages
 * [ZDM-267](https://datastax.jira.com/browse/ZDM-267) Fix proxy issue with graph requests sent by Fluent APIs in the GraphBinary protocol
 * [ZDM-288](https://datastax.jira.com/browse/ZDM-288) Add a new flag to enable async reads on secondary cluster with metrics
+* [ZDM-285](https://datastax.jira.com/browse/ZDM-285) Add a feature toggle to enable now() function call replacement (with false as default)

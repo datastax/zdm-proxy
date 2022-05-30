@@ -190,6 +190,7 @@ func TestPreparedIdReplacement(t *testing.T) {
 		read                               bool
 		dualReadsEnabled                   bool
 		asyncReadsOnSecondary              bool
+		replaceServerSideFunctions         bool
 	}
 	tests := []test{
 		{
@@ -201,6 +202,7 @@ func TestPreparedIdReplacement(t *testing.T) {
 			"",
 			nil,
 			true,
+			false,
 			false,
 			false,
 		},
@@ -215,6 +217,7 @@ func TestPreparedIdReplacement(t *testing.T) {
 			true,
 			true,
 			true,
+			false,
 		},
 		{
 			"writes",
@@ -227,9 +230,10 @@ func TestPreparedIdReplacement(t *testing.T) {
 			false,
 			false,
 			false,
+			false,
 		},
 		{
-			"writes_function_call",
+			"writes_function_call_now_replacement_enabled",
 			"INSERT INTO ks1.tb1 (key, value) VALUES ('key', now())",
 			"INSERT INTO ks1.tb1 (key, value) VALUES ('key', ?)",
 			&message.VariablesMetadata{
@@ -261,13 +265,29 @@ func TestPreparedIdReplacement(t *testing.T) {
 			false,
 			false,
 			false,
-		}}
+			true,
+		},
+		{
+			"writes_function_call_now_replacement_disabled",
+			"INSERT INTO ks1.tb1 (key, value) VALUES ('key', now())",
+			"INSERT INTO ks1.tb1 (key, value) VALUES ('key', now())",
+			nil,
+			"INSERT INTO ks1.tb1 (key, value) VALUES ('key2', now())",
+			"INSERT INTO ks1.tb1 (key, value) VALUES ('key2', now())",
+			nil,
+			false,
+			false,
+			false,
+			false,
+		},
+	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			conf := setup.NewTestConfig("127.0.1.1", "127.0.1.2")
 			conf.DualReadsEnabled = test.dualReadsEnabled
 			conf.AsyncReadsOnSecondary = test.asyncReadsOnSecondary
+			conf.ReplaceServerSideFunctions = test.replaceServerSideFunctions
 			testSetup, err := setup.NewCqlServerTestSetup(conf, false, false, false)
 			require.Nil(t, err)
 			defer testSetup.Cleanup()

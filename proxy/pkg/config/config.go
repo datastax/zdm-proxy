@@ -65,6 +65,8 @@ type Config struct {
 	ForwardReadsToTarget         bool `default:"false" split_words:"true"`
 	ForwardSystemQueriesToTarget bool `default:"false" split_words:"true"`
 
+	ReplaceServerSideFunctions	bool `default:"false" split_words:"true"`
+
 	DualReadsEnabled        bool `default:"false" split_words:"true"`
 	AsyncReadsOnSecondary   bool `default:"false" split_words:"true"`
 	AsyncHandshakeTimeoutMs int  `default:"4000" split_words:"true"`

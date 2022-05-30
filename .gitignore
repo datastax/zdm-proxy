@@ -22,3 +22,4 @@ vendor
 # vscode
 __debug_bin
 .vscode
+/proxy/proxy
