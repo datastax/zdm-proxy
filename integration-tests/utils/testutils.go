@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -133,4 +134,34 @@ func NewCluster(hostname string, username string, password string, port int) *go
 	}
 	cluster.Port = port
 	return cluster
+}
+
+type ThreadsafeBuffer struct {
+	b bytes.Buffer
+	m sync.Mutex
+}
+
+func NewThreadsafeBuffer() *ThreadsafeBuffer {
+	return &ThreadsafeBuffer{
+		b: bytes.Buffer{},
+		m: sync.Mutex{},
+	}
+}
+
+func (b *ThreadsafeBuffer) Read(p []byte) (n int, err error) {
+	b.m.Lock()
+	defer b.m.Unlock()
+	return b.b.Read(p)
+}
+
+func (b *ThreadsafeBuffer) Write(p []byte) (n int, err error) {
+	b.m.Lock()
+	defer b.m.Unlock()
+	return b.b.Write(p)
+}
+
+func (b *ThreadsafeBuffer) String() string {
+	b.m.Lock()
+	defer b.m.Unlock()
+	return b.b.String()
 }

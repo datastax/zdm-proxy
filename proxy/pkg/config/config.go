@@ -47,6 +47,11 @@ type Config struct {
 	TargetTlsClientCertPath string `split_words:"true"`
 	TargetTlsClientKeyPath  string `split_words:"true"`
 
+	ProxyTlsCaPath            string `split_words:"true"`
+	ProxyTlsCertPath          string `split_words:"true"`
+	ProxyTlsKeyPath           string `split_words:"true"`
+	ProxyTlsRequireClientAuth bool   `split_words:"true"`
+
 	ProxyMetricsAddress string `default:"localhost" split_words:"true"`
 	ProxyMetricsPort    int    `default:"14001" split_words:"true"`
 	ProxyQueryPort      int    `default:"14002" split_words:"true"`
@@ -217,6 +222,11 @@ func (c *Config) Validate() error {
 	}
 
 	_, err = c.ParseTargetTlsConfig(false)
+	if err != nil {
+		return err
+	}
+
+	_, err = c.ParseProxyTlsConfig(false)
 	if err != nil {
 		return err
 	}
@@ -395,7 +405,7 @@ func (c *Config) ParseOriginTlsConfig(displayLogMessages bool) (*ClusterTlsConfi
 		}, nil
 	}
 
-	return &ClusterTlsConfig{}, fmt.Errorf("Incomplete TLS configuration for Origin: when using mutual TLS, please specify Server CA path, Client Cert path and Client Key path.")
+	return &ClusterTlsConfig{}, fmt.Errorf("incomplete TLS configuration for Origin: when using mutual TLS, please specify Server CA path, Client Cert path and Client Key path")
 
 }
 
@@ -452,7 +462,36 @@ func (c *Config) ParseTargetTlsConfig(displayLogMessages bool) (*ClusterTlsConfi
 		}, nil
 	}
 
-	return &ClusterTlsConfig{}, fmt.Errorf("Incomplete TLS configuration for Target: when using mutual TLS, please specify Server CA path, Client Cert path and Client Key path.")
+	return &ClusterTlsConfig{}, fmt.Errorf("incomplete TLS configuration for Target: when using mutual TLS, please specify Server CA path, Client Cert path and Client Key path")
+}
+
+func (c *Config) ParseProxyTlsConfig(displayLogMessages bool) (*ProxyTlsConfig, error) {
+
+	if isNotDefined(c.ProxyTlsCaPath) &&
+		isNotDefined(c.ProxyTlsCertPath) &&
+		isNotDefined(c.ProxyTlsKeyPath) {
+		if displayLogMessages {
+			log.Info("Proxy TLS was not configured.")
+		}
+		return &ProxyTlsConfig{
+			TlsEnabled: false,
+		}, nil
+	}
+
+	if isDefined(c.ProxyTlsCaPath) && isDefined(c.ProxyTlsCertPath) && isDefined(c.ProxyTlsKeyPath) {
+		if displayLogMessages {
+			log.Info("Proxy TLS configured. Please note that hostname verification is not currently supported.")
+		}
+		return &ProxyTlsConfig{
+			TlsEnabled:    true,
+			ProxyCaPath:   c.ProxyTlsCaPath,
+			ProxyCertPath: c.ProxyTlsCertPath,
+			ProxyKeyPath:  c.ProxyTlsKeyPath,
+			ClientAuth:    c.ProxyTlsRequireClientAuth,
+		}, nil
+	}
+
+	return &ProxyTlsConfig{}, fmt.Errorf("incomplete Proxy TLS configuration: when enabling proxy TLS, please specify CA path, Cert path and Key path")
 }
 
 func (c *Config) GetReadMode() (ReadMode, error) {
@@ -510,8 +549,24 @@ type ClusterTlsConfig struct {
 }
 
 func (recv *ClusterTlsConfig) String() string {
-	return fmt.Sprintf("ClusterTlsConfig{TlsEnabled=%v, ServerCaPath=%v, ClientCertPath=%v, ClientKeyPath=%v}",
+	return fmt.Sprintf("ClusterTlsConfig{TlsEnabled=%v, ProxyCaPath=%v, ClientCertPath=%v, ClientKeyPath=%v}",
 		recv.TlsEnabled, recv.ServerCaPath, recv.ClientCertPath, recv.ClientKeyPath)
+}
+
+// ProxyTlsConfig contains all TLS configuration parameters to enable TLS at proxy level
+//   - TLS enabled is an internal flag that is automatically set based on the configuration provided
+//   - All three properties (ProxyCaPath, ProxyCertPath and ProxyKeyPath) are required for proxy TLS to be enabled
+type ProxyTlsConfig struct {
+	TlsEnabled    bool
+	ProxyCaPath   string
+	ProxyCertPath string
+	ProxyKeyPath  string
+	ClientAuth    bool
+}
+
+func (recv *ProxyTlsConfig) String() string {
+	return fmt.Sprintf("ProxyTlsConfig{TlsEnabled=%v, ProxyCaPath=%v, ProxyCertPath=%v, ProxyKeyPath=%v, ClientAuth=%v}",
+		recv.TlsEnabled, recv.ProxyCaPath, recv.ProxyCertPath, recv.ProxyKeyPath, recv.ClientAuth)
 
 }
 

@@ -30,7 +30,7 @@ func InitializeConnectionConfig(clusterTlsConfig *config.ClusterTlsConfig, conta
 		if clusterTlsConfig.SecureConnectBundlePath != "" {
 			return initializeAstraConnectionConfig(connTimeoutInMs, clusterType, clusterTlsConfig.SecureConnectBundlePath, ctx)
 		} else {
-			tlsConfig, err = initializeTlsConfigFromProxyClusterTlsConfig(clusterTlsConfig, clusterType)
+			tlsConfig, err = getClientSideTlsConfigFromProxyClusterTlsConfig(clusterTlsConfig, clusterType)
 			if err != nil {
 				return nil, err
 			}

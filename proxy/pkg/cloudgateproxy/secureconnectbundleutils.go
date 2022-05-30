@@ -68,5 +68,5 @@ func retrieveConfigParameterAsString(configMap map[string]interface{}, paramName
 }
 
 func initializeTlsConfigurationFromSecureConnectBundle(fileMap map[string][]byte, metadataServiceHostName string, clusterType ClusterType) (*tls.Config, error) {
-	return initializeTlsConfiguration(fileMap["ca.crt"], fileMap["cert"], fileMap["key"], metadataServiceHostName, clusterType)
+	return getClientSideTlsConfig(fileMap["ca.crt"], fileMap["cert"], fileMap["key"], metadataServiceHostName, metadataServiceHostName, clusterType)
 }

@@ -2,6 +2,7 @@ package cloudgateproxy
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"github.com/jpillora/backoff"
@@ -25,6 +26,8 @@ type CloudgateProxy struct {
 
 	originConnectionConfig ConnectionConfig
 	targetConnectionConfig ConnectionConfig
+
+	proxyTlsConfig *config.ProxyTlsConfig
 
 	timeUuidGenerator TimeUuidGenerator
 
@@ -101,6 +104,23 @@ func (p *CloudgateProxy) Start(ctx context.Context) error {
 		return fmt.Errorf("could not create timeuuid generator: %w", err)
 	}
 
+	p.lock.Lock()
+	p.proxyTlsConfig, err = p.Conf.ParseProxyTlsConfig(true)
+	p.lock.Unlock()
+
+	if err != nil {
+		return fmt.Errorf("could not initialize proxy TLS configuration: %w", err)
+	}
+
+	var serverSideTlsConfig *tls.Config
+	if p.proxyTlsConfig.TlsEnabled {
+		serverSideTlsConfig, err = getServerSideTlsConfigFromProxyClusterTlsConfig(p.proxyTlsConfig)
+
+		if err != nil {
+			return fmt.Errorf("could not create server side tls.Config object: %w", err)
+		}
+	}
+
 	log.Infof("Starting proxy...")
 
 	err = p.initializeControlConnections(ctx)
@@ -139,7 +159,7 @@ func (p *CloudgateProxy) Start(ctx context.Context) error {
 		return err
 	}
 
-	err = p.acceptConnectionsFromClients(p.Conf.ProxyQueryAddress, p.Conf.ProxyQueryPort)
+	err = p.acceptConnectionsFromClients(p.Conf.ProxyQueryAddress, p.Conf.ProxyQueryPort, serverSideTlsConfig)
 	if err != nil {
 		return err
 	}
@@ -377,8 +397,19 @@ func (p *CloudgateProxy) initializeGlobalStructures() {
 
 // acceptConnectionsFromClients creates a listener on the passed in port argument, and every connection
 // that is received over that port instantiates a ClientHandler that then takes over managing that connection
-func (p *CloudgateProxy) acceptConnectionsFromClients(address string, port int) error {
-	l, err := net.Listen("tcp", fmt.Sprintf("%s:%d", address, port))
+func (p *CloudgateProxy) acceptConnectionsFromClients(address string, port int, serverSideTlsConfig *tls.Config) error {
+
+	protocol := "tcp"
+	listenAddr := fmt.Sprintf("%s:%d", address, port)
+
+	var l net.Listener
+	var err error
+	if serverSideTlsConfig == nil {
+		l, err = net.Listen(protocol, listenAddr)
+	} else {
+		l, err = tls.Listen(protocol, listenAddr, serverSideTlsConfig)
+	}
+
 	if err != nil {
 		return err
 	}
