@@ -13,3 +13,8 @@ When cutting a new release, update the `unreleased` heading to the tag being gen
 * [ZDM-267](https://datastax.jira.com/browse/ZDM-267) Fix proxy issue with graph requests sent by Fluent APIs in the GraphBinary protocol
 * [ZDM-288](https://datastax.jira.com/browse/ZDM-288) Add a new flag to enable async reads on secondary cluster with metrics
 * [ZDM-285](https://datastax.jira.com/browse/ZDM-285) Add a feature toggle to enable now() function call replacement (with false as default)
+* [ZDM-262](https://datastax.jira.com/browse/ZDM-262) Client to Proxy Encryption
+
+### Bug Fixes
+
+* [ZDM-265](https://datastax.jira.com/browse/ZDM-265) Cluster server certificates (TLS) are not being verified
