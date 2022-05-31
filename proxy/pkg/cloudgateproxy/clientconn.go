@@ -3,7 +3,6 @@ package cloudgateproxy
 import (
 	"bufio"
 	"context"
-	"errors"
 	"fmt"
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
@@ -38,6 +37,8 @@ type ClientConnector struct {
 	clientHandlerContext    context.Context
 	clientHandlerCancelFunc context.CancelFunc
 
+	clientHandlerShutdownRequestCancelFn context.CancelFunc
+
 	writeCoalescer *writeCoalescer
 
 	responsesDoneChan <-chan bool
@@ -63,7 +64,8 @@ func NewClientConnector(
 	eventsDoneChan <-chan bool,
 	readScheduler *Scheduler,
 	writeScheduler *Scheduler,
-	shutdownRequestCtx context.Context) *ClientConnector {
+	shutdownRequestCtx context.Context,
+	clientHandlerShutdownRequestCancelFn context.CancelFunc) *ClientConnector {
 	return &ClientConnector{
 		connection:              connection,
 		conf:                    conf,
@@ -81,12 +83,13 @@ func NewClientConnector(
 			false,
 			false,
 			writeScheduler),
-		responsesDoneChan:               responsesDoneChan,
-		requestsDoneCtx:                 requestsDoneCtx,
-		eventsDoneChan:                  eventsDoneChan,
-		clientConnectorRequestsDoneChan: make(chan bool, 1),
-		readScheduler:                   readScheduler,
-		shutdownRequestCtx:              shutdownRequestCtx,
+		responsesDoneChan:                    responsesDoneChan,
+		requestsDoneCtx:                      requestsDoneCtx,
+		eventsDoneChan:                       eventsDoneChan,
+		clientConnectorRequestsDoneChan:      make(chan bool, 1),
+		readScheduler:                        readScheduler,
+		shutdownRequestCtx:                   shutdownRequestCtx,
+		clientHandlerShutdownRequestCancelFn: clientHandlerShutdownRequestCancelFn,
 	}
 }
 
@@ -122,6 +125,7 @@ func (cc *ClientConnector) run(activeClients *int32) {
 	}()
 }
 
+
 func (cc *ClientConnector) listenForRequests() {
 
 	log.Tracef("[%s] listenForRequests for client %v", ClientConnectorLogPrefix, cc.connection.RemoteAddr())
@@ -138,6 +142,15 @@ func (cc *ClientConnector) listenForRequests() {
 		lock := &sync.Mutex{}
 		closed := false
 
+		setDrainModeNowFunc := func() {
+			lock.Lock()
+			if !closed {
+				close(cc.requestChannel)
+				closed = true
+			}
+			lock.Unlock()
+		}
+
 		cc.clientHandlerWg.Add(1)
 		go func() {
 			defer cc.clientHandlerWg.Done()
@@ -147,10 +160,7 @@ func (cc *ClientConnector) listenForRequests() {
 				log.Debugf("[%s] Entering \"draining\" mode of request listener %v", ClientConnectorLogPrefix, cc.connection.RemoteAddr())
 			}
 
-			lock.Lock()
-			close(cc.requestChannel)
-			closed = true
-			lock.Unlock()
+			setDrainModeNowFunc()
 		}()
 
 		bufferedReader := bufio.NewReaderSize(cc.connection, cc.conf.RequestWriteBufferSizeBytes)
@@ -159,25 +169,19 @@ func (cc *ClientConnector) listenForRequests() {
 		for cc.clientHandlerContext.Err() == nil {
 			f, err := readRawFrame(bufferedReader, connectionAddr, cc.clientHandlerContext)
 
-			if protocolErrOccurred {
-				log.Infof("[%s] Request received after a protocol error occured, " +
-					"forcibly closing the client connection.", ClientConnectorLogPrefix)
-				cc.clientHandlerCancelFunc()
-				break
-			}
-
+			protocolErrResponseFrame, err := checkProtocolError(f, err, protocolErrOccurred, ClientConnectorLogPrefix)
 			if err != nil {
-				protocolVersionErr := &frame.ProtocolVersionErr{}
-				if errors.As(err, &protocolVersionErr) {
+				handleConnectionError(
+					err, cc.clientHandlerContext, cc.clientHandlerCancelFunc, ClientConnectorLogPrefix, "reading", connectionAddr)
+				break
+			} else if protocolErrResponseFrame != nil {
+				f = protocolErrResponseFrame
+				if !protocolErrOccurred {
 					protocolErrOccurred = true
-					if !cc.handleUnsupportedProtocol(protocolVersionErr, protocolVersionErr.Version, protocolVersionErr.UseBeta) {
-						break
-					}
+					cc.sendResponseToClient(protocolErrResponseFrame)
+					cc.clientHandlerShutdownRequestCancelFn()
+					setDrainModeNowFunc()
 					continue
-				} else {
-					handleConnectionError(
-						err, cc.clientHandlerContext, cc.clientHandlerCancelFunc, ClientConnectorLogPrefix, "reading", connectionAddr)
-					break
 				}
 			}
 
@@ -207,34 +211,45 @@ func (cc *ClientConnector) listenForRequests() {
 	}()
 }
 
-// handleUnsupportedProtocol was necessary when the native protocol library did not support v5 but now the function is here just
-// in case the library throws an error while decoding the version (maybe the client tries to use v1 or v6)
-func (cc *ClientConnector) handleUnsupportedProtocol(err error, version primitive.ProtocolVersion, useBetaFlag bool) bool {
+func checkProtocolError(f *frame.RawFrame, connErr error, protocolErrorOccurred bool, prefix string) (protocolErrResponse *frame.RawFrame, fatalErr error) {
 	var protocolErrMsg *message.ProtocolError
-	if version.IsBeta() && !useBetaFlag {
-		protocolErrMsg = &message.ProtocolError{
-			ErrorMessage: fmt.Sprintf("Beta version of the protocol used (%d/v%d-beta), but USE_BETA flag is unset",
-				version, version)}
+	var streamId int16
+	var logMsg string
+	if connErr != nil {
+		protocolErrMsg = checkUnsupportedProtocolError(connErr)
+		logMsg = fmt.Sprintf("Protocol error detected while decoding a frame: %v.", connErr)
+		streamId = 0
 	} else {
-		protocolErrMsg = &message.ProtocolError{
-			ErrorMessage: fmt.Sprintf("Invalid or unsupported protocol version (%d)", version)}
+		protocolErrMsg = checkProtocolVersion(f.Header.Version)
+		logMsg = "Protocol v5 detected while decoding a frame."
+		streamId = f.Header.StreamId
 	}
 
-	log.Infof("[%s] Protocol error detected while decoding a frame: %v. " +
-		"Returning a protocol error to the client: %v.", ClientConnectorLogPrefix, err, protocolErrMsg)
+	if protocolErrMsg != nil {
+		if !protocolErrorOccurred {
+			log.Debugf("[%v] %v Returning a protocol error to the client to force a downgrade: %v.", prefix, logMsg, protocolErrMsg)
+		}
+		rawProtocolErrResponse, err := generateProtocolErrorResponseFrame(streamId, protocolErrMsg)
+		if err != nil {
+			return nil, fmt.Errorf("could not generate protocol error response raw frame (%v): %v", protocolErrMsg, err)
+		} else {
+			return rawProtocolErrResponse, nil
+		}
+	} else {
+		return nil, connErr
+	}
+}
 
+func generateProtocolErrorResponseFrame(streamId int16, protocolErrMsg *message.ProtocolError) (*frame.RawFrame, error) {
 	// ideally we would use the maximum version between the versions used by both control connections if
 	// control connections implemented protocol version negotiation
-	response := frame.NewFrame(primitive.ProtocolVersion4, 0, protocolErrMsg)
+	response := frame.NewFrame(primitive.ProtocolVersion4, streamId, protocolErrMsg)
 	rawResponse, err := defaultCodec.ConvertToRawFrame(response)
 	if err != nil {
-		log.Errorf("[%s] Could not convert frame (%v) to raw frame: %v", ClientConnectorLogPrefix, response, err)
-		cc.clientHandlerCancelFunc()
-		return false
+		return nil, err
 	}
 
-	cc.sendResponseToClient(rawResponse)
-	return true
+	return rawResponse, nil
 }
 
 func (cc *ClientConnector) sendResponseToClient(frame *frame.RawFrame) {

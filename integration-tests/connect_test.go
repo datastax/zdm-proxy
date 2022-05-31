@@ -3,13 +3,16 @@ package integration_tests
 import (
 	"bytes"
 	"context"
+	client2 "github.com/datastax/go-cassandra-native-protocol/client"
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
 	"github.com/riptano/cloud-gate/integration-tests/client"
 	"github.com/riptano/cloud-gate/integration-tests/setup"
 	"github.com/riptano/cloud-gate/integration-tests/utils"
+	"github.com/riptano/cloud-gate/proxy/pkg/config"
 	"github.com/stretchr/testify/require"
+	"sync/atomic"
 	"testing"
 )
 
@@ -74,51 +77,166 @@ func TestMaxClientsThreshold(t *testing.T) {
 	t.Fatal("Expected failure in last session connection but it was successful.")
 }
 
-func TestProtocolVersionNegotiation(t *testing.T) {
-	testSetup, err := setup.NewSimulacronTestSetupWithSession(true, false)
-	require.Nil(t, err)
-	defer testSetup.Cleanup()
+func TestRequestedProtocolVersionUnsupportedByProxy(t *testing.T) {
+	tests := []struct{
+		name            string
+		requestVersion  primitive.ProtocolVersion
+		expectedVersion primitive.ProtocolVersion
+		errExpected     string
+	}{
+		{
+			"request v5, response v4",
+			primitive.ProtocolVersion5,
+			primitive.ProtocolVersion4,
+			"Invalid or unsupported protocol version (5)",
+		},
+		{
+			"request v1, response v4",
+			primitive.ProtocolVersion(0x1),
+			primitive.ProtocolVersion4,
+			"Invalid or unsupported protocol version (1)",
+		},
+	}
 
-	testClient, err := client.NewTestClient(context.Background(), "127.0.0.1:14002")
-	require.True(t, err == nil, "testClient setup failed: %s", err)
-	defer testClient.Shutdown()
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := setup.NewTestConfig("127.0.1.1", "127.0.1.2")
+			testSetup, err := setup.NewCqlServerTestSetup(cfg, false, false, false)
+			require.Nil(t, err)
+			defer testSetup.Cleanup()
 
-	startup := message.NewStartup()
-	f := frame.NewFrame(primitive.ProtocolVersion5, 0, startup)
-	codec := frame.NewCodec()
-	buf := bytes.Buffer{}
-	codec.EncodeFrame(f, &buf)
-	bytes := buf.Bytes()
-	bytes[1] = 0
-	rsp, err := testClient.SendRawRequest(context.Background(), 0, bytes)
-	require.Nil(t, err)
-	protocolErr, ok := rsp.Body.Message.(*message.ProtocolError)
-	require.True(t, ok)
-	require.Equal(t, "Invalid or unsupported protocol version", protocolErr.ErrorMessage)
-	require.Equal(t, int16(0), rsp.Header.StreamId)
-	require.Equal(t, primitive.ProtocolVersion4, rsp.Header.Version)
+			testSetup.Origin.CqlServer.RequestHandlers = []client2.RequestHandler{client2.NewDriverConnectionInitializationHandler("origin", "dc1", func(_ string) {})}
+			testSetup.Target.CqlServer.RequestHandlers = []client2.RequestHandler{client2.NewDriverConnectionInitializationHandler("target", "dc1", func(_ string) {})}
+
+			err = testSetup.Start(cfg, false, primitive.ProtocolVersion3)
+			require.Nil(t, err)
+
+			testClient, err := client.NewTestClient(context.Background(), "127.0.0.1:14002")
+			require.Nil(t, err)
+
+			encodedFrame, err := createFrameWithUnsupportedVersion(test.requestVersion, 0,false)
+			require.Nil(t, err)
+			rsp, err := testClient.SendRawRequest(context.Background(), 0, encodedFrame)
+			require.Nil(t, err)
+			protocolErr, ok := rsp.Body.Message.(*message.ProtocolError)
+			require.True(t, ok)
+			require.Equal(t, test.errExpected, protocolErr.ErrorMessage)
+			require.Equal(t, int16(0), rsp.Header.StreamId)
+			require.Equal(t, test.expectedVersion, rsp.Header.Version)
+		})
+	}
 }
 
-func TestProtocolVersionUnsupportedByProxy(t *testing.T) {
-	testSetup, err := setup.NewSimulacronTestSetupWithSession(true, false)
-	require.Nil(t, err)
-	defer testSetup.Cleanup()
+func TestReturnedProtocolVersionUnsupportedByProxy(t *testing.T) {
+	type test struct{
+		name            string
+		requestVersion  primitive.ProtocolVersion
+		returnedVersion primitive.ProtocolVersion
+		expectedVersion primitive.ProtocolVersion
+		errExpected     string
+	}
+	tests := []*test{
+		{
+			"DSE_V2 request, v5 returned, v4 expected",
+			primitive.ProtocolVersionDse2,
+			primitive.ProtocolVersion5,
+			primitive.ProtocolVersion4,
+			"Invalid or unsupported protocol version (5)",
+		},
+		{
+			"DSE_V2 request, v1 returned, v4 expected",
+			primitive.ProtocolVersionDse2,
+			primitive.ProtocolVersion(0x01),
+			primitive.ProtocolVersion4,
+			"Invalid or unsupported protocol version (1)",
+		},
+	}
 
-	testClient, err := client.NewTestClient(context.Background(), "127.0.0.1:14002")
-	require.True(t, err == nil, "testClient setup failed: %s", err)
-	defer testClient.Shutdown()
+	runTestFunc := func(t *testing.T, test *test, cfg *config.Config ) {
+		testSetup, err := setup.NewCqlServerTestSetup(cfg, false, false, false)
+		require.Nil(t, err)
+		defer testSetup.Cleanup()
 
-	startup := message.NewStartup()
-	f := frame.NewFrame(primitive.ProtocolVersion2, 0, startup)
+		enableHandlers := atomic.Value{}
+		enableHandlers.Store(false)
+
+		rawHandler := func(request *frame.Frame, conn *client2.CqlServerConnection, ctx client2.RequestHandlerContext) (response []byte) {
+			if enableHandlers.Load().(bool) && request.Header.Version == test.requestVersion {
+				encodedFrame, err := createFrameWithUnsupportedVersion(test.returnedVersion, request.Header.StreamId, true)
+				if err != nil {
+					t.Logf("failed to encode response: %v", err)
+				} else {
+					return encodedFrame
+				}
+			}
+			return nil
+		}
+
+		testSetup.Origin.CqlServer.RequestRawHandlers = []client2.RawRequestHandler{rawHandler}
+		testSetup.Target.CqlServer.RequestRawHandlers = []client2.RawRequestHandler{rawHandler}
+
+		err = testSetup.Start(cfg, false, primitive.ProtocolVersion4)
+		require.Nil(t, err)
+
+		testClient, err := client.NewTestClient(context.Background(), "127.0.0.1:14002")
+		require.Nil(t, err)
+
+		enableHandlers.Store(true)
+
+		request := frame.NewFrame(test.requestVersion, 0, message.NewStartup())
+		rsp, _, err := testClient.SendRequest(context.Background(), request)
+		require.Nil(t, err)
+		protocolErr, ok := rsp.Body.Message.(*message.ProtocolError)
+		require.True(t, ok)
+		require.Equal(t, test.errExpected, protocolErr.ErrorMessage)
+		require.Equal(t, int16(0), rsp.Header.StreamId)
+		require.Equal(t, test.expectedVersion, rsp.Header.Version)
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Run("no async reads", func(t *testing.T) {
+				cfg := setup.NewTestConfig("127.0.1.1", "127.0.1.2")
+				cfg.DualReadsEnabled = false
+				cfg.AsyncReadsOnSecondary = false
+				runTestFunc(t, test, cfg)
+			})
+			t.Run("async reads", func(t *testing.T) {
+				cfg := setup.NewTestConfig("127.0.1.1", "127.0.1.2")
+				cfg.DualReadsEnabled = true
+				cfg.AsyncReadsOnSecondary = true
+				runTestFunc(t, test, cfg)
+			})
+		})
+	}
+}
+
+func createFrameWithUnsupportedVersion(version primitive.ProtocolVersion, streamId int16, isResponse bool) ([]byte, error) {
+	mostSimilarVersion := primitive.ProtocolVersion4
+	if version > primitive.ProtocolVersionDse2 {
+		mostSimilarVersion = primitive.ProtocolVersionDse2
+	} else if version < primitive.ProtocolVersion2 {
+		mostSimilarVersion = primitive.ProtocolVersion2
+	}
+
+	var msg message.Message
+	if isResponse {
+		msg = &message.Ready{}
+	} else {
+		msg = message.NewStartup()
+	}
+	f := frame.NewFrame(mostSimilarVersion, streamId, msg)
 	codec := frame.NewCodec()
 	buf := bytes.Buffer{}
-	codec.EncodeFrame(f, &buf)
+	err := codec.EncodeFrame(f, &buf)
+	if err != nil {
+		return nil, err
+	}
 	encoded := buf.Bytes()
-	encoded[0] = byte(primitive.ProtocolVersion(1))
-	rsp, err := testClient.SendRawRequest(context.Background(), 0, encoded)
-	protocolErr, ok := rsp.Body.Message.(*message.ProtocolError)
-	require.True(t, ok)
-	require.Equal(t, "Invalid or unsupported protocol version (1)", protocolErr.ErrorMessage)
-	require.Equal(t, int16(0), rsp.Header.StreamId)
-	require.Equal(t, primitive.ProtocolVersion4, rsp.Header.Version)
+	encoded[0] = byte(version)
+	if isResponse {
+		encoded[0] |= 0b1000_0000
+	}
+	encoded[1] = 0
+	return encoded, nil
 }

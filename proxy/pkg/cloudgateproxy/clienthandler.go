@@ -52,6 +52,7 @@ type ClientHandler struct {
 	clientHandlerCancelFunc context.CancelFunc
 
 	currentKeyspaceName *atomic.Value
+	handshakeDone       *atomic.Value
 
 	authErrorMessage *message.AuthenticationError
 
@@ -109,6 +110,8 @@ type ClientHandler struct {
 	queryModifier     *QueryModifier
 	parameterModifier *ParameterModifier
 	timeUuidGenerator TimeUuidGenerator
+
+	clientHandlerShutdownRequestCancelFn context.CancelFunc
 }
 
 func NewClientHandler(
@@ -169,11 +172,12 @@ func NewClientHandler(
 
 	respChannel := make(chan *Response, numWorkers)
 	clientHandlerRequestWg := &sync.WaitGroup{}
+	handshakeDone := &atomic.Value{}
 
 	originConnector, err := NewClusterConnector(
 		originCassandraConnInfo, conf, psCache, nodeMetrics, localClientHandlerWg, clientHandlerRequestWg,
 		clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler, requestsDoneCtx,
-		false, nil)
+		false, nil, handshakeDone)
 	if err != nil {
 		clientHandlerCancelFunc()
 		return nil, err
@@ -182,7 +186,7 @@ func NewClientHandler(
 	targetConnector, err := NewClusterConnector(
 		targetCassandraConnInfo, conf, psCache, nodeMetrics, localClientHandlerWg, clientHandlerRequestWg,
 		clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler, requestsDoneCtx,
-		false, nil)
+		false, nil, handshakeDone)
 	if err != nil {
 		clientHandlerCancelFunc()
 		return nil, err
@@ -200,7 +204,7 @@ func NewClientHandler(
 		asyncConnector, err = NewClusterConnector(
 			asyncConnInfo, conf, psCache, nodeMetrics, localClientHandlerWg, clientHandlerRequestWg,
 			clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler, requestsDoneCtx,
-			true, asyncPendingRequests)
+			true, asyncPendingRequests, handshakeDone)
 		if err != nil {
 			log.Errorf("Could not create async cluster connector to %s, async requests will not be forwarded: %s", asyncConnInfo.connConfig.GetClusterType(), err.Error())
 			asyncConnector = nil
@@ -235,49 +239,52 @@ func NewClientHandler(
 			eventsDoneChan,
 			readScheduler,
 			writeScheduler,
-			clientHandlerShutdownRequestContext),
+			clientHandlerShutdownRequestContext,
+			clientHandlerShutdownRequestCancelFn),
 
-		asyncConnector:                asyncConnector,
-		originCassandraConnector:      originConnector,
-		targetCassandraConnector:      targetConnector,
-		originControlConn:             originControlConn,
-		targetControlConn:             targetControlConn,
-		preparedStatementCache:        psCache,
-		metricHandler:                 metricHandler,
-		nodeMetrics:                   nodeMetrics,
-		clientHandlerContext:          clientHandlerContext,
-		clientHandlerCancelFunc:       clientHandlerCancelFunc,
-		currentKeyspaceName:           &atomic.Value{},
-		authErrorMessage:              nil,
-		startupRequest:                nil,
-		targetUsername:                targetUsername,
-		targetPassword:                targetPassword,
-		originUsername:                originUsername,
-		originPassword:                originPassword,
-		requestContextHolders:         &sync.Map{},
-		asyncRequestContextHolders:    &sync.Map{},
-		asyncPendingRequests:          asyncPendingRequests,
-		reqChannel:                    requestsChannel,
-		respChannel:                   respChannel,
-		clientHandlerRequestWaitGroup: clientHandlerRequestWg,
-		closedRespChannel:             false,
-		closedRespChannelLock:         &sync.RWMutex{},
-		responsesDoneChan:             responsesDoneChan,
-		eventsDoneChan:                eventsDoneChan,
-		requestsDoneCancelFn:          requestsDoneCancelFn,
-		requestResponseScheduler:      requestResponseScheduler,
-		conf:                          conf,
-		localClientHandlerWg:          localClientHandlerWg,
-		topologyConfig:                topologyConfig,
-		originHost:                    originHost,
-		targetHost:                    targetHost,
-		originObserver:                originObserver,
-		targetObserver:                targetObserver,
-		forwardAuthToTarget:           forwardAuthToTarget,
-		targetCredsOnClientRequest:    targetCredsOnClientRequest,
-		queryModifier:                 NewQueryModifier(timeUuidGenerator),
-		parameterModifier:             NewParameterModifier(timeUuidGenerator),
-		timeUuidGenerator:             timeUuidGenerator,
+		asyncConnector:                       asyncConnector,
+		originCassandraConnector:             originConnector,
+		targetCassandraConnector:             targetConnector,
+		originControlConn:                    originControlConn,
+		targetControlConn:                    targetControlConn,
+		preparedStatementCache:               psCache,
+		metricHandler:                        metricHandler,
+		nodeMetrics:                          nodeMetrics,
+		clientHandlerContext:                 clientHandlerContext,
+		clientHandlerCancelFunc:              clientHandlerCancelFunc,
+		currentKeyspaceName:                  &atomic.Value{},
+		handshakeDone:                        handshakeDone,
+		authErrorMessage:                     nil,
+		startupRequest:                       nil,
+		targetUsername:                       targetUsername,
+		targetPassword:                       targetPassword,
+		originUsername:                       originUsername,
+		originPassword:                       originPassword,
+		requestContextHolders:                &sync.Map{},
+		asyncRequestContextHolders:           &sync.Map{},
+		asyncPendingRequests:                 asyncPendingRequests,
+		reqChannel:                           requestsChannel,
+		respChannel:                          respChannel,
+		clientHandlerRequestWaitGroup:        clientHandlerRequestWg,
+		closedRespChannel:                    false,
+		closedRespChannelLock:                &sync.RWMutex{},
+		responsesDoneChan:                    responsesDoneChan,
+		eventsDoneChan:                       eventsDoneChan,
+		requestsDoneCancelFn:                 requestsDoneCancelFn,
+		requestResponseScheduler:             requestResponseScheduler,
+		conf:                                 conf,
+		localClientHandlerWg:                 localClientHandlerWg,
+		topologyConfig:                       topologyConfig,
+		originHost:                           originHost,
+		targetHost:                           targetHost,
+		originObserver:                       originObserver,
+		targetObserver:                       targetObserver,
+		forwardAuthToTarget:                  forwardAuthToTarget,
+		targetCredsOnClientRequest:           targetCredsOnClientRequest,
+		queryModifier:                        NewQueryModifier(timeUuidGenerator),
+		parameterModifier:                    NewParameterModifier(timeUuidGenerator),
+		timeUuidGenerator:                    timeUuidGenerator,
+		clientHandlerShutdownRequestCancelFn: clientHandlerShutdownRequestCancelFn,
 	}, nil
 }
 
@@ -370,6 +377,7 @@ func (ch *ClientHandler) requestLoop() {
 					log.Error(err)
 				}
 				if ready {
+					ch.handshakeDone.Store(true)
 					log.Infof(
 						"Handshake successful with client %s", connectionAddr)
 				}
@@ -532,6 +540,8 @@ func (ch *ClientHandler) responseLoop() {
 		wg := &sync.WaitGroup{}
 		defer wg.Wait()
 
+		protocolErrOccurred := int32(0)
+
 		for {
 			response, ok := <- ch.respChannel
 			if !ok {
@@ -553,16 +563,7 @@ func (ch *ClientHandler) responseLoop() {
 				}
 
 				if response.connectorType != ClusterConnectorTypeAsync {
-					errMsg, err := decodeError(response.responseFrame)
-					if err != nil {
-						log.Errorf("Could not validate if error from %v is a protocol error (%v), skipping it.",
-							responseClusterType, response.responseFrame.Header.String())
-						return
-					}
-					if errMsg != nil && errMsg.GetErrorCode() == primitive.ErrorCodeProtocolError {
-						log.Infof("Protocol error detected (%v) on %v, forwarding it to the client.",
-							errMsg, responseClusterType)
-						ch.clientConnector.sendResponseToClient(response.responseFrame)
+					if ch.tryProcessProtocolError(response, &protocolErrOccurred) {
 						return
 					}
 				}
@@ -604,6 +605,32 @@ func (ch *ClientHandler) responseLoop() {
 
 		log.Debugf("Shutting down responseLoop.")
 	}()
+}
+
+// Checks if response is a protocol error. Returns true if it processes this response. If it returns false,
+// then the response wasn't processed and it should be processed by another function.
+func (ch *ClientHandler) tryProcessProtocolError(response *Response, protocolErrOccurred *int32) bool {
+	errMsg, err := decodeError(response.responseFrame)
+	if err != nil {
+		log.Errorf("Could not check if error from %v was protocol error: %v, skipping it.",
+			response.connectorType, response.responseFrame.Header)
+		return false
+	} else if errMsg != nil && errMsg.GetErrorCode() == primitive.ErrorCodeProtocolError {
+		if atomic.CompareAndSwapInt32(protocolErrOccurred, 0, 1) {
+			if ch.handshakeDone.Load() != nil {
+				log.Errorf("[ClientHandler] Protocol error detected (%v) on %v, forwarding it to the client.",
+					errMsg, response.connectorType)
+			} else {
+				log.Debugf("[ClientHandler] Protocol version downgrade detected (%v) on %v, forwarding it to the client.",
+					errMsg, response.connectorType)
+			}
+			ch.clientConnector.sendResponseToClient(response.responseFrame)
+			ch.clientHandlerShutdownRequestCancelFn()
+		}
+		return true
+	}
+
+	return false
 }
 
 func decodeError(responseFrame *frame.RawFrame) (message.Error, error) {
@@ -1830,7 +1857,7 @@ func storeRequestContext(contextHoldersMap *sync.Map, reqCtx *requestContextImpl
 
 // Updates cluster level error metrics based on the outcome in the response
 func trackClusterErrorMetrics(
-	response *frame.RawFrame, 
+	response *frame.RawFrame,
 	connectorType ClusterConnectorType,
 	nodeMetrics *metrics.NodeMetrics) {
 	if !isResponseSuccessful(response) {
@@ -1905,6 +1932,38 @@ func forwardAuthToTarget(
 	} else {
 		return false, !forwardClientCredsToOrigin
 	}
+}
+
+// checkUnsupportedProtocolError handles the case where the protocol library throws an error while decoding the version (maybe the client tries to use v1 or v6)
+func checkUnsupportedProtocolError(err error) *message.ProtocolError {
+	protocolVersionErr := &frame.ProtocolVersionErr{}
+	if errors.As(err, &protocolVersionErr) {
+		var protocolErrMsg *message.ProtocolError
+		if protocolVersionErr.Version.IsBeta() && !protocolVersionErr.UseBeta {
+			protocolErrMsg = &message.ProtocolError{
+				ErrorMessage: fmt.Sprintf("Beta version of the protocol used (%d/v%d-beta), but USE_BETA flag is unset",
+					protocolVersionErr.Version, protocolVersionErr.Version)}
+		} else {
+			protocolErrMsg = &message.ProtocolError{
+				ErrorMessage: fmt.Sprintf("Invalid or unsupported protocol version (%d)", protocolVersionErr.Version)}
+		}
+
+		return protocolErrMsg
+	}
+
+	return nil
+}
+
+// checkProtocolVersion handles the case where the protocol library does not return an error but the proxy does not support a specific version
+func checkProtocolVersion(version primitive.ProtocolVersion) *message.ProtocolError {
+	if version < primitive.ProtocolVersion5 || version.IsDse() {
+		return nil
+	}
+
+	protocolErrMsg := &message.ProtocolError{
+		ErrorMessage: fmt.Sprintf("Invalid or unsupported protocol version (%d)", version)}
+
+	return protocolErrMsg
 }
 
 type customResponse struct {

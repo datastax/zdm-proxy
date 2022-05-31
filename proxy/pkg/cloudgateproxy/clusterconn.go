@@ -71,6 +71,8 @@ type ClusterConnector struct {
 	writeCoalescer              *writeCoalescer
 	doneChan                    chan bool
 
+	handshakeDone *atomic.Value
+
 	asyncConnector      bool
 	asyncConnectorState  ConnectorState
 	asyncPendingRequests *pendingRequests
@@ -100,7 +102,8 @@ func NewClusterConnector(
 	writeScheduler *Scheduler,
 	requestsDoneCtx context.Context,
 	asyncConnector bool,
-	asyncPendingRequests *pendingRequests) (*ClusterConnector, error) {
+	asyncPendingRequests *pendingRequests,
+	handshakeDone *atomic.Value) (*ClusterConnector, error) {
 
 	var connectorType ClusterConnectorType
 	var clusterType ClusterType
@@ -173,6 +176,7 @@ func NewClusterConnector(
 		asyncConnector:              asyncConnector,
 		asyncConnectorState:         ConnectorStateHandshake,
 		asyncPendingRequests:        asyncPendingRequests,
+		handshakeDone:               handshakeDone,
 	}, nil
 }
 
@@ -236,12 +240,23 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 		connectionAddr := cc.connection.RemoteAddr().String()
 		wg := &sync.WaitGroup{}
 		defer wg.Wait()
+		protocolErrOccurred := false
 		for {
 			response, err := readRawFrame(bufferedReader, connectionAddr, cc.clusterConnContext)
+
+			protocolErrResponseFrame, err := checkProtocolError(response, err, protocolErrOccurred, string(cc.connectorType))
 			if err != nil {
 				handleConnectionError(
 					err, cc.clusterConnContext, cc.cancelFunc, string(cc.connectorType), "reading", connectionAddr)
 				break
+			} else {
+				if protocolErrOccurred {
+					log.Debugf("[%v] Data received after protocol error occured, ignoring it.", string(cc.connectorType))
+					continue
+				} else if protocolErrResponseFrame != nil {
+					response = protocolErrResponseFrame
+					protocolErrOccurred = true
+				}
 			}
 
 			wg.Add(1)
@@ -278,7 +293,11 @@ func (cc *ClusterConnector) handleAsyncResponse(response *frame.RawFrame) *frame
 	}
 
 	if errMsg != nil && errMsg.GetErrorCode() == primitive.ErrorCodeProtocolError {
-		log.Errorf("[%s] Protocol error occured in async connector, async requests will not be forwarded: %v.", cc.connectorType, err)
+		if cc.handshakeDone.Load() != nil {
+			log.Errorf("[%s] Protocol error occured in async connector, async requests will not be forwarded: %v.", cc.connectorType, errMsg)
+		} else {
+			log.Debugf("[%s] Protocol version downgrade detected in async connector, async requests will not be forwarded: %v.", cc.connectorType, errMsg)
+		}
 		cc.Shutdown()
 		return nil
 	}

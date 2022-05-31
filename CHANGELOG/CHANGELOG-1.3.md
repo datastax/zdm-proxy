@@ -6,6 +6,10 @@ When cutting a new release, update the `unreleased` heading to the tag being gen
 
 ## Unreleased
 
+### Improvements
+
+* [ZDM-244](https://datastax.jira.com/browse/ZDM-244) Force the downgrade to v4 if a cluster responds with v5 during the handshake
+
 ### New Features
 
 * [ZDM-48](https://datastax.jira.com/browse/ZDM-48) Replace now() function calls in PREPARE/EXECUTE messages

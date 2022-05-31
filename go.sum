@@ -15,12 +15,8 @@ github.com/bmizerany/assert v0.0.0-20160611221934-b7ed37b82869/go.mod h1:Ekp36dR
 github.com/cespare/xxhash/v2 v2.1.1 h1:6MnRN8NT7+YBpUIWxHtefFZOKTAPgGjpQSxqLNn0+qY=
 github.com/cespare/xxhash/v2 v2.1.1/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XLFGgcrjCOs=
 github.com/coreos/go-systemd v0.0.0-20190321100706-95778dfbb74e/go.mod h1:F5haX7vjVVG0kc13fIWeqUViNPyEJxv/OmvnBo0Yme4=
-github.com/datastax/go-cassandra-native-protocol v0.0.0-20220307162633-898f01f251aa h1:vVU/dWCyUzl2jgtCSO+fqJER2rhVBYZeHhGgvcIynmY=
-github.com/datastax/go-cassandra-native-protocol v0.0.0-20220307162633-898f01f251aa/go.mod h1:yFD0OKoVV9d1QW7Es58c1Gv6ijrqTGPcxgHv27wdC4Q=
-github.com/datastax/go-cassandra-native-protocol v0.0.0-20220311183904-7a212f2eb050 h1:4wBnjjkWTTZMgOuLFAFoOKtMWLny8mhETV5O/wmUfjA=
-github.com/datastax/go-cassandra-native-protocol v0.0.0-20220311183904-7a212f2eb050/go.mod h1:yFD0OKoVV9d1QW7Es58c1Gv6ijrqTGPcxgHv27wdC4Q=
-github.com/datastax/go-cassandra-native-protocol v0.0.0-20220512171201-177f43ca494e h1:SqDM/2CnPuNbSh4Z9Ms2m1VSkJRYJUnVsK9ove1xRjQ=
-github.com/datastax/go-cassandra-native-protocol v0.0.0-20220512171201-177f43ca494e/go.mod h1:yFD0OKoVV9d1QW7Es58c1Gv6ijrqTGPcxgHv27wdC4Q=
+github.com/datastax/go-cassandra-native-protocol v0.0.0-20220525125956-6158d9e218b8 h1:NKLtNzC76ssf68VOenDAzMyQGg+QkxuD2QCubX+GvLk=
+github.com/datastax/go-cassandra-native-protocol v0.0.0-20220525125956-6158d9e218b8/go.mod h1:yFD0OKoVV9d1QW7Es58c1Gv6ijrqTGPcxgHv27wdC4Q=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=

@@ -50,8 +50,8 @@ These environment variables must be set and exported for the proxy to work. They
 Launch two Cassandra single-node clusters as docker containers, one listening on port `9042` and the other on `9043`:
 
 ```shell
-docker run --name cassandra-source -p 9042:9042 -d cassandra
-docker run --name cassandra-dest -p 9043:9042 -d cassandra
+docker run --name cassandra-source --env CASSANDRA_BROADCAST_ADDRESS=127.0.0.1 -p 9042:9042 -d cassandra
+docker run --name cassandra-dest --env CASSANDRA_BROADCAST_ADDRESS=127.0.0.1 -p 9043:9042 -d cassandra
 ```
 
 Open cqlsh directly on each of these clusters:

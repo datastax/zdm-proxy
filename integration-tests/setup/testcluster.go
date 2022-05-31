@@ -360,12 +360,12 @@ func (setup *CqlServerTestSetup) Cleanup() {
 
 	err := setup.Target.Close()
 	if err != nil {
-		log.Errorf("remove target ccm cluster error: %s", err)
+		log.Errorf("close target cql server error: %s", err)
 	}
 
 	err = setup.Origin.Close()
 	if err != nil {
-		log.Errorf("remove origin ccm cluster error: %s", err)
+		log.Errorf("close origin cql server error: %s", err)
 	}
 }
 
