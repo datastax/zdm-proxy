@@ -264,6 +264,25 @@ Also note that any of the test flags can also be provided via environment variab
 [simulacronreleases]: https://github.com/datastax/simulacron/releases
 [ccm-windows-blog]: https://www.datastax.com/blog/2015/01/ccm-20-and-windows
 
+### Building the proxy with CPU and memory profiling support 
+
+To add built-in support for CPU and memory profiling (strictly for development only), build the proxy as follows:
+
+```shell
+go build -tags profiling
+```
+
+This will add two flags that can be optionally specified at proxy startup to enable CPU and / or memory profiling:
+
+```shell
+./proxy -cpu_profile cpu.prof -mem_profile heap.prof 
+```
+
+Where `cpu.prof` and `heap.prof` are the names of the files in which the profiling data will be stored.
+Note that these files will be created when the proxy is stopped.
+
+These files can then be accessed using `go tool pprof` (see [here](https://go.dev/blog/pprof)).
+
 ## Project Dependencies
 
 For information on the packaged dependencies of the Zero Downtime Migration (Cloud-Gate) Proxy and their licenses, check out our [open source report](https://app.fossa.com/reports/910065e9-5620-4ed7-befb-b69c45ebce6e).

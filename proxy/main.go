@@ -1,46 +1,9 @@
+// +build !profiling
+
+// Note: do NOT remove the blank line above, as it is needed by the build directive
+
 package main
 
-import (
-	"context"
-	"github.com/riptano/cloud-gate/proxy/pkg/config"
-	"github.com/riptano/cloud-gate/proxy/pkg/runner"
-	log "github.com/sirupsen/logrus"
-	"os"
-	"os/signal"
-	"syscall"
-)
-
 func main() {
-	conf, err := config.New().ParseEnvVars()
-	if err != nil {
-		log.Errorf("Error loading configuration: %v. Aborting startup.", err)
-		os.Exit(-1)
-	}
-
-	logLevel, err := conf.ParseLogLevel()
-	if err != nil {
-		log.Errorf("Error loading log level configuration: %v. Aborting startup.", err)
-		os.Exit(-1)
-	}
-	log.SetLevel(logLevel)
-
-	ctx, cancelFunc := context.WithCancel(context.Background())
-	runSignalListener(cancelFunc)
-	log.Info("SIGINT/SIGTERM listener started.")
-
-	metricsHandler, readinessHandler := runner.SetupHandlers()
-	runner.RunMain(conf, ctx, metricsHandler, readinessHandler)
-}
-
-func runSignalListener(cancelFunc context.CancelFunc) {
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-
-	go func() {
-		sig := <-sigCh
-		log.Debug("received signal:", sig)
-
-		// let sub-task know to wrap up: cancel
-		cancelFunc()
-	}()
+	launchProxy(false)
 }
