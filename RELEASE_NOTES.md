@@ -6,6 +6,13 @@ Build artifacts are available at [Docker Hub](https://hub.docker.com/repository/
 
 For additional details on the changes included in a specific release, see the associated CHANGELOG-x.x.md file.
 
+## v1.3.0 - 2022-06-13
+
+Adds support for the replacement of now() function calls and introduces a toggle to optionally enable it. Adds support for client to proxy mTLS/TLS encryption. 
+Search (CQL API) and Graph (Gremlin) requests were tested with this release and a fix was included to enhance support for Gremlin requests (see the changelog for more details).
+
+[Changelog](CHANGELOG/CHANGELOG-1.3.md#v130---2022-06-13)
+
 ## v1.2.2 - 2022-03-24
 
 Adds a new mode for reads where the proxy also sends reads to the secondary cluster but in an "async"/"fire and forget" way that doesn't cause any impact to the client.

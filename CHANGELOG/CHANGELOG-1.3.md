@@ -6,6 +6,8 @@ When cutting a new release, update the `unreleased` heading to the tag being gen
 
 ## Unreleased
 
+## v.1.3.0 - 2022-06-13
+
 ### Improvements
 
 * [ZDM-244](https://datastax.jira.com/browse/ZDM-244) Force the downgrade to v4 if a cluster responds with v5 during the handshake
