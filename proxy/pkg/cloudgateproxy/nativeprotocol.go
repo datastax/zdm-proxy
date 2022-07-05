@@ -335,7 +335,7 @@ func NewSystemLocalRowsResult(
 	overrideValueAndColumnIfExists(&row, &columns, nativeTransportAddressColumn, virtualHost.Host.NativeTransportAddress, virtualHost.Addr)
 	overrideValueAndColumnIfExists(&row, &columns, nativeTransportPortColumn, virtualHost.Host.NativeTransportPort, proxyPort)
 	overrideValueAndColumnIfExists(&row, &columns, nativeTransportPortSslColumn, virtualHost.Host.NativeTransportPortSsl, proxyPort)
-	addValueAndColumnIfExists(&row, &columns, partitionerColumn, systemLocalInfo.partitioner)
+	addValueAndColumn(&row, &columns, partitionerColumn, virtualHost.Partitioner)
 	addValueAndColumn(&row, &columns, rackColumn, virtualHost.Rack)
 	addValueAndColumn(&row, &columns, releaseVersionColumn, virtualHost.Host.ReleaseVersion)
 	addValueAndColumn(&row, &columns, rpcAddressColumn, virtualHost.Addr)

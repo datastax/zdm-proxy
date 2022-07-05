@@ -54,6 +54,7 @@ type ControlConn struct {
 }
 
 const ProxyVirtualRack = "rack0"
+const ProxyVirtualPartitioner = "org.apache.cassandra.dht.Murmur3Partitioner"
 const ccProtocolVersion = primitive.ProtocolVersion3
 const ccWriteTimeout = 5 * time.Second
 const ccReadTimeout = 10 * time.Second
@@ -109,7 +110,7 @@ func (cc *ControlConn) Start(wg *sync.WaitGroup, ctx context.Context) error {
 	go func() {
 		defer wg.Done()
 		defer log.Infof("Shutting down refresh topology debouncer of control connection %v.", cc.connConfig.GetClusterType())
-		for ; cc.context.Err() == nil; {
+		for cc.context.Err() == nil {
 			var eventConnection CqlConnection
 			select {
 			case <-cc.context.Done():
@@ -393,7 +394,11 @@ func (cc *ControlConn) RefreshHosts(conn CqlConnection, ctx context.Context) ([]
 
 	partitioner := localInfo.partitioner.AsNillableString()
 	if partitioner != nil && !strings.Contains(*partitioner, "Murmur3Partitioner") && cc.topologyConfig.VirtualizationEnabled {
-		return nil, fmt.Errorf("virtualization is enabled and partitioner is not Murmur3 but instead %v", *partitioner)
+		if strings.Contains(*partitioner, "RandomPartitioner") {
+			log.Debugf("Cluster %v uses the Random partitioner, but the proxy will return Murmur3 to the client instead. This is the expected behaviour.", cc.connConfig.GetClusterType())
+		} else {
+			return nil, fmt.Errorf("virtualization is enabled and partitioner is not Murmur3 or Random but instead %v", *partitioner)
+		}
 	}
 
 	peersQuery, err := conn.Query("SELECT * FROM system.peers", GetDefaultGenericTypeCodec(), ccProtocolVersion, ctx)
@@ -696,11 +701,12 @@ func computeVirtualHosts(topologyConfig *config.TopologyConfig, orderedHosts []*
 
 		host := assignedHostsForVirtualization[i]
 		virtualHosts[i] = &VirtualHost{
-			Tokens:     tokens,
-			Addr:       proxyAddresses[i],
-			Host:       host,
-			HostId:     &primitiveHostId,
-			Rack:       ProxyVirtualRack,
+			Tokens:      tokens,
+			Addr:        proxyAddresses[i],
+			Host:        host,
+			HostId:      &primitiveHostId,
+			Rack:        ProxyVirtualRack,
+			Partitioner: ProxyVirtualPartitioner,
 		}
 	}
 	return virtualHosts, nil
@@ -756,20 +762,22 @@ func computeAssignedHostsForVirtualization(count int, orderedHosts []*Host) []*H
 }
 
 type VirtualHost struct {
-	Tokens     []string
-	Addr       net.IP
-	Host       *Host
-	HostId     *primitive.UUID
-	Rack       string
+	Tokens      []string
+	Addr        net.IP
+	Host        *Host
+	HostId      *primitive.UUID
+	Rack        string
+	Partitioner string
 }
 
 func (recv *VirtualHost) String() string {
-	return fmt.Sprintf("VirtualHost{addr: %v, host_id: %v, rack: %v, tokens: %v, host: %v}",
+	return fmt.Sprintf("VirtualHost{addr: %v, host_id: %v, rack: %v, tokens: %v, host: %v, partitioner: %v}",
 		recv.Addr,
 		recv.HostId,
 		recv.Rack,
 		recv.Tokens,
-		recv.Host)
+		recv.Host,
+		recv.Partitioner)
 }
 
 type ProtocolEventObserver interface {

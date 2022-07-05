@@ -3,9 +3,15 @@ package integration_tests
 import (
 	"context"
 	"fmt"
+	"github.com/datastax/go-cassandra-native-protocol/client"
+	"github.com/datastax/go-cassandra-native-protocol/datacodec"
+	"github.com/datastax/go-cassandra-native-protocol/frame"
+	"github.com/datastax/go-cassandra-native-protocol/message"
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
 	"github.com/gocql/gocql"
 	"github.com/riptano/cloud-gate/integration-tests/env"
 	"github.com/riptano/cloud-gate/integration-tests/setup"
+	"github.com/riptano/cloud-gate/integration-tests/utils"
 	"github.com/riptano/cloud-gate/proxy/pkg/cloudgateproxy"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
@@ -23,6 +29,7 @@ type connectObserver struct {
 	closed   *bool
 	chanLock *sync.Mutex
 }
+
 func (recv *connectObserver) ObserveConnect(a gocql.ObservedConnect) {
 	recv.chanLock.Lock()
 	defer recv.chanLock.Unlock()
@@ -54,9 +61,9 @@ func TestVirtualizationNumberOfConnections(t *testing.T) {
 
 	tests := []test{
 		{
-			name:                        "3 nodes, 3 instances, 3 virtual hosts, assignment enabled",
-			proxyIndexes:                []int{0, 1, 2},
-			proxyAddresses:              [][]string{
+			name:         "3 nodes, 3 instances, 3 virtual hosts, assignment enabled",
+			proxyIndexes: []int{0, 1, 2},
+			proxyAddresses: [][]string{
 				{"127.0.0.1", "127.0.0.2", "127.0.0.3"},
 				{"127.0.0.1", "127.0.0.2", "127.0.0.3"},
 				{"127.0.0.1", "127.0.0.2", "127.0.0.3"}},
@@ -67,9 +74,9 @@ func TestVirtualizationNumberOfConnections(t *testing.T) {
 			expectedConns:               []int{3, 1, 1},
 		},
 		{
-			name:                        "3 nodes, 4 instances, 4 virtual hosts, assignment enabled",
-			proxyIndexes:                []int{0, 1, 2, 3},
-			proxyAddresses:              [][]string{
+			name:         "3 nodes, 4 instances, 4 virtual hosts, assignment enabled",
+			proxyIndexes: []int{0, 1, 2, 3},
+			proxyAddresses: [][]string{
 				{"127.0.0.1", "127.0.0.2", "127.0.0.3", "127.0.0.4"},
 				{"127.0.0.1", "127.0.0.2", "127.0.0.3", "127.0.0.4"},
 				{"127.0.0.1", "127.0.0.2", "127.0.0.3", "127.0.0.4"},
@@ -83,7 +90,7 @@ func TestVirtualizationNumberOfConnections(t *testing.T) {
 		{
 			name:                        "3 nodes, 3 instances, 1 virtual host, assignment enabled",
 			proxyIndexes:                []int{0, 0, 0},
-			proxyAddresses:              [][]string{{"127.0.0.1"},{"127.0.0.2"},{"127.0.0.3"}},
+			proxyAddresses:              [][]string{{"127.0.0.1"}, {"127.0.0.2"}, {"127.0.0.3"}},
 			proxyInstanceCount:          3,
 			proxyInstanceCreationCount:  3,
 			hostAssignmentEnabledOrigin: true,
@@ -96,7 +103,7 @@ func TestVirtualizationNumberOfConnections(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			proxies := make([]*cloudgateproxy.CloudgateProxy, tt.proxyInstanceCreationCount)
 			for i := 0; i < tt.proxyInstanceCreationCount; i++ {
-				proxies[i], err = LaunchProxyWithTopologyConfig(
+				proxies[i], err = launchProxyWithTopologyConfig(
 					strings.Join(tt.proxyAddresses[i], ","), tt.proxyIndexes[i], tt.proxyInstanceCount,
 					fmt.Sprintf("%s%d", "127.0.0.", i+1), 8, testSetup.Origin, testSetup.Target)
 				j := i
@@ -116,7 +123,7 @@ func TestVirtualizationNumberOfConnections(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				for {
-					observedConnect, ok := <- observeChannel
+					observedConnect, ok := <-observeChannel
 					if !ok {
 						return
 					}
@@ -167,7 +174,7 @@ func TestVirtualizationNumberOfConnections(t *testing.T) {
 
 			for i := 1; i < tt.proxyInstanceCreationCount; i++ {
 				// single request connection for other hosts
-				require.Equal(t, tt.expectedConns[i], hostsMap[fmt.Sprintf("%s%d", "127.0.0.", i + 1)], "hostsMap = %v", hostsMap)
+				require.Equal(t, tt.expectedConns[i], hostsMap[fmt.Sprintf("%s%d", "127.0.0.", i+1)], "hostsMap = %v", hostsMap)
 			}
 		})
 	}
@@ -253,10 +260,10 @@ func TestVirtualizationTokenAwareness(t *testing.T) {
 		fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s.test_virtualization (key int PRIMARY KEY)", setup.TestKeyspace)).Exec()
 	require.Nil(t, err)
 
-	ctx, cancelFn := context.WithTimeout(context.Background(), 10 * time.Second)
+	ctx, cancelFn := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelFn()
 	err = origin.GetSession().AwaitSchemaAgreement(ctx)
-	ctx2, cancelFn2 := context.WithTimeout(context.Background(), 10 * time.Second)
+	ctx2, cancelFn2 := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelFn2()
 	err = origin.GetSession().AwaitSchemaAgreement(ctx2)
 
@@ -264,7 +271,7 @@ func TestVirtualizationTokenAwareness(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			proxies := make([]*cloudgateproxy.CloudgateProxy, tt.proxyInstanceCreationCount)
 			for i := 0; i < tt.proxyInstanceCreationCount; i++ {
-				proxies[i], err = LaunchProxyWithTopologyConfig(
+				proxies[i], err = launchProxyWithTopologyConfig(
 					strings.Join(tt.proxyAddresses[i], ","), tt.proxyIndexes[i], tt.proxyInstanceCount,
 					fmt.Sprintf("%s%d", "127.0.0.", i+1), tt.numTokens, origin, target)
 				j := i
@@ -287,7 +294,7 @@ func TestVirtualizationTokenAwareness(t *testing.T) {
 				murmur3Token int64
 			}
 
-			queries := []query {
+			queries := []query{
 				{fmt.Sprintf("SELECT * FROM %s.test_virtualization WHERE key = ?", setup.TestKeyspace), 1, -4069959284402364209}, // token: -4069959284402364209
 				{fmt.Sprintf("SELECT * FROM %s.test_virtualization WHERE key = ?", setup.TestKeyspace), 2, -3248873570005575792}, // -3248873570005575792
 				{fmt.Sprintf("SELECT * FROM %s.test_virtualization WHERE key = ?", setup.TestKeyspace), 3, 9010454139840013625},  // 9010454139840013625
@@ -326,7 +333,164 @@ func TestVirtualizationTokenAwareness(t *testing.T) {
 	}
 }
 
-func LaunchProxyWithTopologyConfig(
+func TestVirtualizationPartitioner(t *testing.T) {
+
+	type test struct {
+		name               string
+		originPartitioner  string
+		targetPartitioner  string
+		proxyShouldStartUp bool
+	}
+
+	tests := []test{
+		{
+			name:               "Origin Random, Target Murmur3",
+			originPartitioner:  randomPartitioner,
+			targetPartitioner:  murmur3Partitioner,
+			proxyShouldStartUp: true,
+		},
+		{
+			name:               "Origin Murmur3, Target Murmur3",
+			originPartitioner:  murmur3Partitioner,
+			targetPartitioner:  murmur3Partitioner,
+			proxyShouldStartUp: true,
+		},
+		{
+			name:               "Origin ByteOrdered, Target Murmur3",
+			originPartitioner:  byteOrderedPartitioner,
+			targetPartitioner:  murmur3Partitioner,
+			proxyShouldStartUp: false,
+		},
+		{
+			name:               "Origin Murmur3, Target Random",
+			originPartitioner:  murmur3Partitioner,
+			targetPartitioner:  randomPartitioner,
+			proxyShouldStartUp: true,
+		},
+		{
+			name:               "Origin Murmur3, Target ByteOrdered",
+			originPartitioner:  murmur3Partitioner,
+			targetPartitioner:  byteOrderedPartitioner,
+			proxyShouldStartUp: false,
+		},
+		{
+			name:               "Origin Random, Target ByteOrdered",
+			originPartitioner:  randomPartitioner,
+			targetPartitioner:  byteOrderedPartitioner,
+			proxyShouldStartUp: false,
+		},
+		{
+			name:               "Origin ByteOrdered, Target Random",
+			originPartitioner:  byteOrderedPartitioner,
+			targetPartitioner:  randomPartitioner,
+			proxyShouldStartUp: false,
+		},
+		{
+			name:               "Origin Random, Target Random",
+			originPartitioner:  randomPartitioner,
+			targetPartitioner:  randomPartitioner,
+			proxyShouldStartUp: true,
+		},
+		{
+			name:               "Origin ByteOrdered, Target ByteOrdered",
+			originPartitioner:  byteOrderedPartitioner,
+			targetPartitioner:  byteOrderedPartitioner,
+			proxyShouldStartUp: false,
+		},
+	}
+
+	originAddress := "127.0.1.1"
+	targetAddress := "127.0.1.2"
+	proxyAddress := "127.0.0.1"
+
+	credentials := &client.AuthCredentials{
+		Username: "cassandra",
+		Password: "cassandra",
+	}
+
+	runTestWithSystemQueryForwarding := func(originPartitioner string, targetPartitioner string, systemQueriesToTarget bool, proxyShouldStartUp bool) {
+
+		serverConf := setup.NewTestConfig(originAddress, targetAddress)
+
+		testSetup, err := setup.NewCqlServerTestSetup(serverConf, false, false, false)
+		require.Nil(t, err)
+		defer testSetup.Cleanup()
+
+		originSystemLocalRequestHandler := NewCustomSystemTablesHandler("origin", "dc1", originAddress, map[string]int{"dc1": 0}, originPartitioner)
+		targetSystemLocalRequestHandler := NewCustomSystemTablesHandler("target", "dc2", targetAddress, map[string]int{"dc2": 0}, targetPartitioner)
+
+		testSetup.Origin.CqlServer.RequestHandlers = []client.RequestHandler{
+			originSystemLocalRequestHandler,
+			client.NewDriverConnectionInitializationHandler("origin", "dc1", func(_ string) {}),
+		}
+
+		testSetup.Target.CqlServer.RequestHandlers = []client.RequestHandler{
+			targetSystemLocalRequestHandler,
+			client.NewDriverConnectionInitializationHandler("target", "dc2", func(_ string) {}),
+		}
+
+		err = testSetup.Start(nil, false, primitive.ProtocolVersion4)
+		require.Nil(t, err)
+
+		validatePartitionerFromSystemLocal(t, originAddress+":9042", credentials, originPartitioner)
+		validatePartitionerFromSystemLocal(t, targetAddress+":9042", credentials, targetPartitioner)
+
+		var buffer *utils.ThreadsafeBuffer
+		if proxyShouldStartUp {
+			buffer = createLogHooks(log.InfoLevel)
+		} else {
+			buffer = createLogHooks(log.WarnLevel)
+		}
+		defer log.StandardLogger().ReplaceHooks(make(log.LevelHooks))
+
+		require.NotNil(t, buffer)
+
+		proxyConfig := setup.NewTestConfig(originAddress, targetAddress)
+		proxyConfig.ProxyAddresses = "127.0.0.1" // needed to enable virtualization. TODO Remove once ZDM-321 is fixed
+		proxyConfig.ForwardSystemQueriesToTarget = systemQueriesToTarget
+		proxy, err := setup.NewProxyInstanceWithConfig(proxyConfig)
+		defer func() {
+			if proxy != nil {
+				proxy.Shutdown()
+			}
+		}()
+
+		logMessages := buffer.String()
+		if proxyShouldStartUp {
+			require.Nil(t, err, "proxy failed to start due to ", err)
+			require.NotNil(t, proxy, "proxy failed to start and is nil")
+		} else {
+			require.NotNil(t, err, "proxy should have failed to start but did not")
+			require.Nil(t, proxy, "proxy should have failed to start but did not")
+
+			if originPartitioner == byteOrderedPartitioner {
+				require.True(t, strings.Contains(logMessages, "Error while initializing a new cql connection for the control connection of ORIGIN: "+
+					"virtualization is enabled and partitioner is not Murmur3 or Random but instead org.apache.cassandra.dht.ByteOrderedPartitioner"),
+					"Unsupported partitioner warning message not found")
+			} else if targetPartitioner == byteOrderedPartitioner {
+				require.True(t, strings.Contains(logMessages, "Error while initializing a new cql connection for the control connection of TARGET: "+
+					"virtualization is enabled and partitioner is not Murmur3 or Random but instead org.apache.cassandra.dht.ByteOrderedPartitioner"),
+					"Unsupported partitioner warning message not found")
+			} else {
+				t.Fatal("The proxy failed to start with an unexpected type of partitioner for at least one cluster. " +
+					"Please check the proxy logs and the test configuration")
+			}
+			return
+		}
+
+		validatePartitionerFromSystemLocal(t, proxyAddress+":14002", credentials, murmur3Partitioner)
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runTestWithSystemQueryForwarding(tt.originPartitioner, tt.targetPartitioner, false, tt.proxyShouldStartUp)
+			runTestWithSystemQueryForwarding(tt.originPartitioner, tt.targetPartitioner, true, tt.proxyShouldStartUp)
+		})
+	}
+
+}
+
+func launchProxyWithTopologyConfig(
 	proxyAddresses string, proxyIndex int, instanceCount int, listenAddress string, numTokens int,
 	origin setup.TestCluster, target setup.TestCluster) (*cloudgateproxy.CloudgateProxy, error) {
 	conf := setup.NewTestConfig(origin.GetInitialContactPoint(), target.GetInitialContactPoint())
@@ -383,4 +547,38 @@ func computeReplicas(n int, numTokens int) []*replica {
 		return replicas[i].token < replicas[j].token
 	})
 	return replicas
+}
+
+func validatePartitionerFromSystemLocal(t *testing.T, remoteEndpoint string, credentials *client.AuthCredentials, expectedPartitioner string) {
+
+	testClient := client.NewCqlClient(remoteEndpoint, credentials)
+	cqlConn, err := testClient.ConnectAndInit(context.Background(), primitive.ProtocolVersion4, 1)
+	require.Nil(t, err, "testClient setup failed", err)
+	require.NotNil(t, cqlConn, "cql connection could not be opened")
+	defer func() {
+		if cqlConn != nil {
+			_ = cqlConn.Close()
+		}
+	}()
+
+	requestMsg := &message.Query{
+		Query: fmt.Sprintf("SELECT * FROM system.local"),
+		Options: &message.QueryOptions{
+			Consistency: primitive.ConsistencyLevelOne,
+		},
+	}
+
+	queryFrame := frame.NewFrame(primitive.ProtocolVersion4, 0, requestMsg)
+	response, err := cqlConn.SendAndReceive(queryFrame)
+	require.Nil(t, err)
+
+	systemLocalRowsResult, ok := response.Body.Message.(*message.RowsResult)
+	require.True(t, ok, "The response is of an unexpected result type")
+	require.NotNil(t, systemLocalRowsResult.Metadata.Columns[7])
+	require.Equal(t, "partitioner", systemLocalRowsResult.Metadata.Columns[7].Name)
+
+	var decodedPartitionerValue string
+	datacodec.Varchar.Decode(systemLocalRowsResult.Data[0][7], &decodedPartitionerValue, response.Header.Version)
+	require.Equal(t, expectedPartitioner, decodedPartitionerValue)
+
 }

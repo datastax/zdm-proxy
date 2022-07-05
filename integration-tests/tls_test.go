@@ -11,10 +11,8 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
 	"github.com/riptano/cloud-gate/integration-tests/env"
 	"github.com/riptano/cloud-gate/integration-tests/setup"
-	"github.com/riptano/cloud-gate/integration-tests/utils"
 	"github.com/riptano/cloud-gate/proxy/pkg/config"
 	log "github.com/sirupsen/logrus"
-	"github.com/sirupsen/logrus/hooks/writer"
 	"github.com/stretchr/testify/require"
 	"io/ioutil"
 	"path/filepath"
@@ -991,16 +989,7 @@ func testProxyClusterTlsInvalidCertificate(t *testing.T, ccmSetup *setup.CcmTest
 	proxyConfig = applyProxyTlsConfiguration(
 		proxyTlsConfig.expiredTargetCa, proxyTlsConfig.incorrectTargetCa, true, false, proxyConfig, t)
 
-
-	buffer := utils.NewThreadsafeBuffer()
-
-	hook := &writer.Hook{
-		Writer: buffer,
-		LogLevels: []log.Level{
-			log.WarnLevel,
-		},
-	}
-	log.AddHook(hook)
+	buffer := createLogHooks(log.WarnLevel)
 	defer log.StandardLogger().ReplaceHooks(make(log.LevelHooks))
 
 	proxy, err := setup.NewProxyInstanceWithConfig(proxyConfig)
@@ -1055,16 +1044,7 @@ func testProxyClientTls(t *testing.T, ccmSetup *setup.CcmTestSetup,
 	require.Nil(t, err, "Error while instantiating the proxy with the required configuration", err)
 	require.NotNil(t, proxy)
 
-	buffer := utils.NewThreadsafeBuffer()
-
-	hook := &writer.Hook{
-		Writer: buffer,
-		LogLevels: []log.Level{
-			log.WarnLevel,
-			log.ErrorLevel,
-		},
-	}
-	log.AddHook(hook)
+	buffer := createLogHooks(log.WarnLevel, log.ErrorLevel)
 	defer log.StandardLogger().ReplaceHooks(make(log.LevelHooks))
 
 	cqlConn, err := createTestClientConnection("127.0.0.1:14002", tlsCfg)
