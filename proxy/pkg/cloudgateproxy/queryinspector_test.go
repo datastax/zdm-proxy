@@ -289,7 +289,7 @@ func TestInspectCqlQuery(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			timeUuidGenerator, err := GetDefaultTimeUuidGenerator()
 			require.Nil(t, err)
-			actual := inspectCqlQuery(tt.query, timeUuidGenerator)
+			actual := inspectCqlQuery(tt.query, "", timeUuidGenerator)
 			if actual.getStatementType() != tt.statementType {
 				t.Errorf("inspectCqlQuery().isSelectStatement() actual = %v, expected %v", actual.getStatementType(), tt.statementType)
 			}
@@ -553,7 +553,7 @@ func TestNowFunctionCalls(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 
-			info := inspectCqlQuery(tt.query, &fakeTimeUuidGenerator{uid: tt.replacement})
+			info := inspectCqlQuery(tt.query, "", &fakeTimeUuidGenerator{uid: tt.replacement})
 			assert.Equal(t, tt.statementType, info.getStatementType())
 			assert.Equal(t, tt.hasNow, info.hasNowFunctionCalls())
 

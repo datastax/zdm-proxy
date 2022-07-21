@@ -50,8 +50,8 @@ func TestGetHosts(t *testing.T) {
 			require.True(t, addressInMap, fmt.Sprintf("%s does not match a node address in %v", endpt, nodesByAddress))
 			require.Equal(t, 9042, h.Port)
 			require.Equal(t, "rack1", h.Rack)
-			require.Equal(t, env.DseVersion, *(h.DseVersion.AsNillableString()))
-			require.Equal(t, env.CassandraVersion, *h.ReleaseVersion)
+			require.Equal(t, env.DseVersion, *(h.ColumnData["dse_version"].AsNillableString()))
+			require.Equal(t, env.CassandraVersion, *(h.ColumnData["release_version"].AsNillableString()))
 			require.Equal(t, "dc1", h.Datacenter)
 			require.NotNil(t, h.Tokens)
 			require.Equal(t, 1, len(h.Tokens))
@@ -754,7 +754,6 @@ func TestRefreshTopologyEventHandler(t *testing.T) {
 			proxy := testSetup.Proxy
 			beforeSleepTestFunc(t, proxy.GetOriginControlConn(), originHandler, "cluster1", tt.oldOriginLocalHostDc, tt.newOriginLocalHostDc, "127.0.1.1", tt.oldOriginPeersCount, tt.newOriginPeersCount, tt.expectedOldOriginHostsCount)
 			beforeSleepTestFunc(t, proxy.GetTargetControlConn(), targetHandler, "cluster2", tt.oldTargetLocalHostDc, tt.newTargetLocalHostDc, "127.0.1.2", tt.oldTargetPeersCount, tt.newTargetPeersCount, tt.expectedOldTargetHostsCount)
-			time.Sleep(5 * time.Second)
 			afterSleepTestFunc(t, proxy.GetOriginControlConn(), originHandler, testSetup.Origin.CqlServer, "cluster1", tt.oldOriginLocalHostDc, tt.newOriginLocalHostDc, "127.0.1.1", tt.oldOriginPeersCount, tt.newOriginPeersCount, tt.expectedOldOriginHostsCount, tt.expectedNewOriginHostsCount)
 			afterSleepTestFunc(t, proxy.GetTargetControlConn(), targetHandler, testSetup.Target.CqlServer, "cluster2", tt.oldTargetLocalHostDc, tt.newTargetLocalHostDc, "127.0.1.2", tt.oldTargetPeersCount, tt.newTargetPeersCount, tt.expectedOldTargetHostsCount, tt.expectedNewTargetHostsCount)
 			checkRegisterMessages(t, originRegisterMessages, originRegisterLock)

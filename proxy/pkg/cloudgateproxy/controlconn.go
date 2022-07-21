@@ -44,8 +44,7 @@ type ControlConn struct {
 	assignedHosts            []*Host
 	currentAssignment        int64
 	refreshHostsDebouncer    chan CqlConnection
-	systemLocalInfo          *systemLocalInfo
-	preferredIpColumnExists  bool
+	systemLocalColumnData    map[string]*optionalColumn
 	virtualHosts             []*VirtualHost
 	proxyRand                *rand.Rand
 	reconnectCh              chan bool
@@ -90,8 +89,7 @@ func NewControlConn(ctx context.Context, defaultPort int, connConfig ConnectionC
 		assignedHosts:            nil,
 		currentAssignment:        0,
 		refreshHostsDebouncer:    make(chan CqlConnection, 1),
-		systemLocalInfo:          nil,
-		preferredIpColumnExists:  false,
+		systemLocalColumnData:    nil,
 		virtualHosts:             nil,
 		proxyRand:                proxyRand,
 		reconnectCh:              make(chan bool, 1),
@@ -392,7 +390,11 @@ func (cc *ControlConn) RefreshHosts(conn CqlConnection, ctx context.Context) ([]
 		return nil, err
 	}
 
-	partitioner := localInfo.partitioner.AsNillableString()
+	partitionerColValue, partitionerExists := localInfo[partitionerColumn.Name]
+	var partitioner *string
+	if partitionerExists {
+		partitioner = partitionerColValue.AsNillableString()
+	}
 	if partitioner != nil && !strings.Contains(*partitioner, "Murmur3Partitioner") && cc.topologyConfig.VirtualizationEnabled {
 		if strings.Contains(*partitioner, "RandomPartitioner") {
 			log.Debugf("Cluster %v uses the Random partitioner, but the proxy will return Murmur3 to the client instead. This is the expected behaviour.", cc.connConfig.GetClusterType())
@@ -406,7 +408,7 @@ func (cc *ControlConn) RefreshHosts(conn CqlConnection, ctx context.Context) ([]
 		return nil, fmt.Errorf("could not fetch information from system.peers table: %w", err)
 	}
 
-	hostsById, preferredIpExists := ParseSystemPeersResult(peersQuery, cc.defaultPort, false)
+	hostsById := ParseSystemPeersResult(peersQuery, cc.defaultPort, false)
 
 	oldLocalhost, localHostExists := hostsById[localHost.HostId]
 	if localHostExists {
@@ -459,8 +461,7 @@ func (cc *ControlConn) RefreshHosts(conn CqlConnection, ctx context.Context) ([]
 	cc.orderedHostsInLocalDc = orderedLocalHosts
 	cc.hostsInLocalDcById = hostsById
 	cc.assignedHosts = assignedHosts
-	cc.systemLocalInfo = localInfo
-	cc.preferredIpColumnExists = preferredIpExists
+	cc.systemLocalColumnData = localInfo
 	cc.virtualHosts = virtualHosts
 
 	if oldHosts != nil && len(oldHosts) > 0 {
@@ -551,26 +552,23 @@ func (cc *ControlConn) GetClusterName() string {
 	cc.topologyLock.RLock()
 	defer cc.topologyLock.RUnlock()
 
-	clusterName := cc.systemLocalInfo.clusterName.AsNillableString()
-	if clusterName == nil {
-		return ""
+	clusterNameCol, clusterNameExists := cc.systemLocalColumnData[clusterNameColumn.Name]
+	clusterName := ""
+	if clusterNameExists {
+		clusterNameValue := clusterNameCol.AsNillableString()
+		if clusterNameValue != nil {
+			clusterName = *clusterNameValue
+		}
 	}
 
-	return *clusterName
+	return clusterName
 }
 
-func (cc *ControlConn) PreferredIpColumnExists() bool {
+func (cc *ControlConn) GetSystemLocalColumnData() map[string]*optionalColumn {
 	cc.topologyLock.RLock()
 	defer cc.topologyLock.RUnlock()
 
-	return cc.preferredIpColumnExists
-}
-
-func (cc *ControlConn) GetSystemLocalInfo() *systemLocalInfo {
-	cc.topologyLock.RLock()
-	defer cc.topologyLock.RUnlock()
-
-	return cc.systemLocalInfo
+	return cc.systemLocalColumnData
 }
 
 func (cc *ControlConn) GetCurrentContactPoint() Endpoint {

@@ -65,10 +65,10 @@ func TestShutdownInFlightRequests(t *testing.T) {
 
 			testSetup.Origin.Prime(
 				simulacron.WhenQuery("SELECT * FROM test1", simulacron.NewWhenQueryOptions()).
-					ThenSuccess().WithDelay(2 * time.Second))
+					ThenSuccess().WithDelay(1 * time.Second))
 			testSetup.Origin.Prime(
 				simulacron.WhenQuery("SELECT * FROM test2", simulacron.NewWhenQueryOptions()).
-					ThenSuccess().WithDelay(7 * time.Second))
+					ThenSuccess().WithDelay(3 * time.Second))
 
 			queryMsg1 := &message.Query{
 				Query:   "SELECT * FROM test1",
@@ -112,8 +112,8 @@ func TestShutdownInFlightRequests(t *testing.T) {
 				t.Fatalf("test timed out after 10 seconds")
 			}
 
-			// 1 second instead of 2 just in case there is a time precision issue
-			require.GreaterOrEqual(t, time.Now().Sub(beginTimestamp).Nanoseconds(), (1 * time.Second).Nanoseconds())
+			// 0.5 second instead of 1 just in case there is a time precision issue
+			require.GreaterOrEqual(t, time.Now().Sub(beginTimestamp).Nanoseconds(), (500 * time.Millisecond).Nanoseconds())
 
 			select {
 			case <-shutdownComplete:
@@ -144,8 +144,8 @@ func TestShutdownInFlightRequests(t *testing.T) {
 				t.Fatalf("test timed out after 15 seconds")
 			}
 
-			// 4 seconds instead of 5 just in case there is a time precision issue
-			require.GreaterOrEqual(t, time.Now().Sub(beginTimestamp).Nanoseconds(), (4 * time.Second).Nanoseconds())
+			// 2 seconds instead of 3 just in case there is a time precision issue
+			require.GreaterOrEqual(t, time.Now().Sub(beginTimestamp).Nanoseconds(), (2 * time.Second).Nanoseconds())
 
 			select {
 			case <-shutdownComplete:
@@ -345,7 +345,7 @@ func TestStressShutdown(t *testing.T) {
 				}
 			}
 
-			for testCount := 1; testCount <= 100; testCount++ {
+			for testCount := 1; testCount <= 20; testCount++ {
 				f()
 			}
 		})

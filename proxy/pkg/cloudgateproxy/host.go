@@ -10,25 +10,14 @@ import (
 )
 
 type Host struct {
-	Address                net.IP
-	Port                   int
-	HostId                 uuid.UUID
-	Datacenter             string
-	Rack                   string
-	ReleaseVersion         *string
-	DseVersion             *optionalColumn
-	Tokens                 []string
-	SchemaVersion          *uuid.UUID
-	Graph                  *optionalColumn
-	JmxPort                *optionalColumn
-	ServerId               *optionalColumn
-	StoragePort            *optionalColumn
-	StoragePortSsl         *optionalColumn
-	Workload               *optionalColumn
-	Workloads              *optionalColumn
-	NativeTransportAddress *optionalColumn
-	NativeTransportPort    *optionalColumn
-	NativeTransportPortSsl *optionalColumn
+	Address       net.IP
+	Port          int
+	HostId        uuid.UUID
+	Datacenter    string
+	Rack          string
+	Tokens        []string
+	SchemaVersion *uuid.UUID
+	ColumnData    map[string]*optionalColumn
 }
 
 func NewHost(
@@ -37,40 +26,18 @@ func NewHost(
 	hostId uuid.UUID,
 	datacenter string,
 	rack string,
-	releaseVersion *string,
-	dseVersion *optionalColumn,
 	tokens []string,
 	schemaVersion *uuid.UUID,
-	graph *optionalColumn,
-	jmxPort *optionalColumn,
-	serverId *optionalColumn,
-	storagePort *optionalColumn,
-	storagePortSsl *optionalColumn,
-	workload *optionalColumn,
-	workloads *optionalColumn,
-	nativeTransportAddress *optionalColumn,
-	nativeTransportPort *optionalColumn,
-	nativeTransportPortSsl *optionalColumn) *Host {
+	columnData map[string]*optionalColumn) *Host {
 	return &Host{
-		Address:                address,
-		Port:                   port,
-		HostId:                 hostId,
-		Datacenter:             datacenter,
-		Rack:                   rack,
-		ReleaseVersion:         releaseVersion,
-		DseVersion:             dseVersion,
-		Tokens:                 tokens,
-		SchemaVersion:          schemaVersion,
-		Graph:                  graph,
-		JmxPort:                jmxPort,
-		ServerId:               serverId,
-		StoragePort:            storagePort,
-		StoragePortSsl:         storagePortSsl,
-		Workload:               workload,
-		Workloads:              workloads,
-		NativeTransportAddress: nativeTransportAddress,
-		NativeTransportPort:    nativeTransportPort,
-		NativeTransportPortSsl: nativeTransportPortSsl,
+		Address:       address,
+		Port:          port,
+		HostId:        hostId,
+		Datacenter:    datacenter,
+		Rack:          rack,
+		Tokens:        tokens,
+		SchemaVersion: schemaVersion,
+		ColumnData:    columnData,
 	}
 }
 
@@ -81,7 +48,7 @@ func (recv *Host) String() string {
 		hex.EncodeToString(recv.HostId[:]))
 }
 
-func ParseSystemLocalResult(rs *ParsedRowSet, defaultPort int) (*systemLocalInfo, *Host, error) {
+func ParseSystemLocalResult(rs *ParsedRowSet, defaultPort int) (map[string]*optionalColumn, *Host, error) {
 	if len(rs.Rows) < 1 {
 		return nil, nil, fmt.Errorf("could not parse system local query result: query returned %d rows", len(rs.Rows))
 	}
@@ -102,36 +69,27 @@ func ParseSystemLocalResult(rs *ParsedRowSet, defaultPort int) (*systemLocalInfo
 		return nil, nil, err
 	}
 
-	key := NewOptionalColumn(parseNillableString(row, "key"))
-	bootstrapped := NewOptionalColumn(parseNillableString(row, "bootstrapped"))
-	cqlVersion := NewOptionalColumn(parseNillableString(row, "cql_version"))
-	gossipGeneration := NewOptionalColumn(parseNillableInt(row, "gossip_generation"))
-	lastNodesyncCheckpoint := NewOptionalColumn(parseNillableBigInt(row, "last_nodesync_checkpoint_time"))
-	nativeProtocolVersion := NewOptionalColumn(parseNillableString(row, "native_protocol_version"))
-	partitioner := NewOptionalColumn(parseNillableString(row, "partitioner"))
-	thriftVersion := NewOptionalColumn(parseNillableString(row, "thrift_version"))
-
-	clusterName := NewOptionalColumn(parseNillableString(row, "cluster_name"))
-	if !clusterName.exists || clusterName.column == nil {
-		log.Warnf("could not get cluster_name using host %v", addr)
+	sysLocalCols := map[string]*optionalColumn{
+		keyColumn.Name: NewOptionalColumn(parseNillableString(row, keyColumn.Name)),
+		bootstrappedColumn.Name: NewOptionalColumn(parseNillableString(row, bootstrappedColumn.Name)),
+		cqlVersionColumn.Name: NewOptionalColumn(parseNillableString(row, cqlVersionColumn.Name)),
+		gossipGenerationColumn.Name: NewOptionalColumn(parseNillableInt(row, gossipGenerationColumn.Name)),
+		lastNodesyncCheckpointTimeColumn.Name: NewOptionalColumn(parseNillableBigInt(row, lastNodesyncCheckpointTimeColumn.Name)),
+		nativeProtocolVersionColumn.Name: NewOptionalColumn(parseNillableString(row, nativeProtocolVersionColumn.Name)),
+		partitionerColumn.Name: NewOptionalColumn(parseNillableString(row, partitionerColumn.Name)),
+		thriftVersionColumn.Name: NewOptionalColumn(parseNillableString(row, thriftVersionColumn.Name)),
+		clusterNameColumn.Name: NewOptionalColumn(parseNillableString(row, clusterNameColumn.Name)),
 	}
 
-	return &systemLocalInfo{
-		key:                        key,
-		clusterName:                clusterName,
-		bootstrapped:               bootstrapped,
-		cqlVersion:                 cqlVersion,
-		gossipGeneration:           gossipGeneration,
-		lastNodesyncCheckpointTime: lastNodesyncCheckpoint,
-		nativeProtocolVersion:      nativeProtocolVersion,
-		thriftVersion:              thriftVersion,
-		partitioner:                partitioner,
-	}, host, nil
+	if clusterName, exists := sysLocalCols[clusterNameColumn.Name]; !exists || clusterName.column == nil {
+		log.Warnf("could not get %v using host %v", clusterNameColumn.Name, addr)
+	}
+
+	return sysLocalCols, host, nil
 }
 
-func ParseSystemPeersResult(rs *ParsedRowSet, defaultPort int, isPeersV2 bool) (hosts map[uuid.UUID]*Host, preferredIpColExists bool) {
-	hosts = make(map[uuid.UUID]*Host)
-	first := true
+func ParseSystemPeersResult(rs *ParsedRowSet, defaultPort int, isPeersV2 bool) map[uuid.UUID]*Host {
+	hosts := make(map[uuid.UUID]*Host)
 	for _, row := range rs.Rows {
 		addr, port, err := ParseRpcAddress(isPeersV2, row, defaultPort)
 		if err != nil {
@@ -145,11 +103,6 @@ func ParseSystemPeersResult(rs *ParsedRowSet, defaultPort int, isPeersV2 bool) (
 			continue
 		}
 
-		if first {
-			first = false
-			_, preferredIpColExists = row.GetByColumn("preferred_ip")
-		}
-
 		oldHost, hostExists := hosts[host.HostId]
 		if hostExists {
 			log.Warnf("Duplicate host found: %v vs %v. Ignoring the former one.", oldHost, host)
@@ -157,7 +110,7 @@ func ParseSystemPeersResult(rs *ParsedRowSet, defaultPort int, isPeersV2 bool) (
 		hosts[host.HostId] = host
 	}
 
-	return hosts, preferredIpColExists
+	return hosts
 }
 
 func parseHost(addr net.IP, port int, row *ParsedRow) (*Host, error) {
@@ -172,13 +125,6 @@ func parseHost(addr net.IP, port int, row *ParsedRow) (*Host, error) {
 	}
 
 	tokens, _ := parseNillableStringSlice(row, "tokens")
-
-	releaseVersion, _ := parseNillableString(row, "release_version")
-	if releaseVersion == nil {
-		log.Warnf("could not parse release_version of host %v", addr)
-	}
-
-	dseVersion := NewOptionalColumn(parseNillableString(row, "dse_version"))
 
 	hostId, _, err := parseNillableUuid(row, "host_id")
 	if hostId == nil {
@@ -198,16 +144,21 @@ func parseHost(addr net.IP, port int, row *ParsedRow) (*Host, error) {
 		}
 	}
 
-	graph := NewOptionalColumn(parseNillableBool(row, "graph"))
-	jmxPort := NewOptionalColumn(parseNillableInt(row, "jmx_port"))
-	serverId := NewOptionalColumn(parseNillableString(row, "server_id"))
-	storagePort := NewOptionalColumn(parseNillableInt(row, "storage_port"))
-	storagePortSsl := NewOptionalColumn(parseNillableInt(row, "storage_port_ssl"))
-	workload := NewOptionalColumn(parseNillableString(row, "workload"))
-	workloads := NewOptionalColumn(parseNillableStringSlice(row, "workloads"))
-	nativeTransportAddress := NewOptionalColumn(row.GetByColumn("native_transport_address"))
-	nativeTransportPort := NewOptionalColumn(parseNillableInt(row, "native_transport_port"))
-	nativeTransportPortSsl := NewOptionalColumn(parseNillableInt(row, "native_transport_port_ssl"))
+	columnData := map[string]*optionalColumn {
+		releaseVersionPeersColumn.Name:         NewOptionalColumn(parseNillableString(row, releaseVersionPeersColumn.Name)),
+		dseVersionPeersColumn.Name:             NewOptionalColumn(parseNillableString(row, dseVersionPeersColumn.Name)),
+		graphPeersColumn.Name:                  NewOptionalColumn(parseNillableBool(row, graphPeersColumn.Name)),
+		jmxPortPeersColumn.Name:                NewOptionalColumn(parseNillableInt(row, jmxPortPeersColumn.Name)),
+		serverIdPeersColumn.Name:               NewOptionalColumn(parseNillableString(row, serverIdPeersColumn.Name)),
+		storagePortPeersColumn.Name:            NewOptionalColumn(parseNillableInt(row, storagePortPeersColumn.Name)),
+		storagePortSslPeersColumn.Name:         NewOptionalColumn(parseNillableInt(row, storagePortSslPeersColumn.Name)),
+		workloadPeersColumn.Name:               NewOptionalColumn(parseNillableString(row, workloadPeersColumn.Name)),
+		workloadsPeersColumn.Name:              NewOptionalColumn(parseNillableStringSlice(row, workloadsPeersColumn.Name)),
+		nativeTransportAddressPeersColumn.Name: NewOptionalColumn(row.GetByColumn(nativeTransportAddressPeersColumn.Name)),
+		nativeTransportPortPeersColumn.Name:    NewOptionalColumn(parseNillableInt(row, nativeTransportPortPeersColumn.Name)),
+		nativeTransportPortSslPeersColumn.Name: NewOptionalColumn(parseNillableInt(row, nativeTransportPortSslPeersColumn.Name)),
+		preferredIpPeersColumn.Name:            NewOptionalColumn(row.GetByColumn(preferredIpPeersColumn.Name)),
+	}
 
 	return NewHost(
 		addr,
@@ -215,20 +166,9 @@ func parseHost(addr net.IP, port int, row *ParsedRow) (*Host, error) {
 		*hostId,
 		datacenter,
 		rack,
-		releaseVersion,
-		dseVersion,
 		tokens,
 		schemaId,
-		graph,
-		jmxPort,
-		serverId,
-		storagePort,
-		storagePortSsl,
-		workload,
-		workloads,
-		nativeTransportAddress,
-		nativeTransportPort,
-		nativeTransportPortSsl), nil
+		columnData), nil
 }
 
 func ParseRpcAddress(isPeersV2 bool, row *ParsedRow, defaultPort int) (net.IP, int, error) {

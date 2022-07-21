@@ -31,6 +31,14 @@ const (
 	local   = interceptedQueryType("local")
 )
 
+const (
+	systemPeersTableName = "peers"
+	systemPeersV2TableName = "peers_v2"
+	systemLocalTableName = "local"
+	systemKeyspaceName = "system"
+	nowFunctionName = "now"
+)
+
 type UnpreparedExecuteError struct {
 	Header     *frame.Header
 	Body       *frame.Body
@@ -66,7 +74,7 @@ func buildStatementInfo(
 	f := frameContext.GetRawFrame()
 	switch f.Header.OpCode {
 	case primitive.OpCodeQuery:
-		stmtQueryData, err := frameContext.GetOrInspectStatement(timeUuidGenerator)
+		stmtQueryData, err := frameContext.GetOrInspectStatement(currentKeyspaceName, timeUuidGenerator)
 		if err != nil {
 			return nil, fmt.Errorf("could not inspect QUERY frame: %w", err)
 		}
@@ -74,7 +82,7 @@ func buildStatementInfo(
 			frameContext.GetRawFrame(), currentKeyspaceName, forwardReadsToTarget,
 			forwardSystemQueriesToTarget, virtualizationEnabled, stmtQueryData.queryData), nil
 	case primitive.OpCodePrepare:
-		stmtQueryData, err := frameContext.GetOrInspectStatement(timeUuidGenerator)
+		stmtQueryData, err := frameContext.GetOrInspectStatement(currentKeyspaceName, timeUuidGenerator)
 		if err != nil {
 			return nil, fmt.Errorf("could not inspect PREPARE frame: %w", err)
 		}
@@ -177,15 +185,16 @@ func getStatementInfoFromQueryInfo(
 	forwardDecision := forwardToBoth
 	if queryInfo.getStatementType() == statementTypeSelect {
 		if virtualizationEnabled {
+			parsedSelectClause := queryInfo.getParsedSelectClause()
 			if isSystemLocal(queryInfo, currentKeyspaceName) {
 				log.Debugf("Detected system local query: %v with stream id: %v", queryInfo.getQuery(), f.Header.StreamId)
-				return NewInterceptedStatementInfo(local)
+				return NewInterceptedStatementInfo(local, parsedSelectClause)
 			} else if isSystemPeersV1(queryInfo, currentKeyspaceName) {
 				log.Debugf("Detected system peers query: %v with stream id: %v", queryInfo.getQuery(), f.Header.StreamId)
-				return NewInterceptedStatementInfo(peersV1)
+				return NewInterceptedStatementInfo(peersV1, parsedSelectClause)
 			} else if isSystemPeersV2(queryInfo, currentKeyspaceName) {
 				log.Debugf("Detected system peers_v2 query: %v with stream id: %v", queryInfo.getQuery(), f.Header.StreamId)
-				return NewInterceptedStatementInfo(peersV2)
+				return NewInterceptedStatementInfo(peersV2, parsedSelectClause)
 			}
 		}
 
@@ -224,7 +233,7 @@ func isSystemQuery(info QueryInfo, currentKeyspaceName *atomic.Value) bool {
 		}
 	}
 
-	return keyspaceName == "system" ||
+	return isSystemKeyspace(keyspaceName) ||
 		strings.HasPrefix(keyspaceName, "system_") ||
 		strings.HasPrefix(keyspaceName, "dse_")
 }
@@ -238,7 +247,11 @@ func isSystemPeersV1(info QueryInfo, currentKeyspaceName *atomic.Value) bool {
 		}
 	}
 
-	return keyspaceName == "system" && info.getTableName() == "peers"
+	return isSystemKeyspace(keyspaceName) && isPeersV1Table(info.getTableName())
+}
+
+func isPeersV1Table(tableName string) bool {
+	return tableName == systemPeersTableName
 }
 
 func isSystemPeersV2(info QueryInfo, currentKeyspaceName *atomic.Value) bool {
@@ -250,7 +263,11 @@ func isSystemPeersV2(info QueryInfo, currentKeyspaceName *atomic.Value) bool {
 		}
 	}
 
-	return keyspaceName == "system" && info.getTableName() == "peers_v2"
+	return isSystemKeyspace(keyspaceName) && isPeersV2Table(info.getTableName())
+}
+
+func isPeersV2Table(tableName string) bool {
+	return tableName == systemPeersV2TableName
 }
 
 func isSystemLocal(info QueryInfo, currentKeyspaceName *atomic.Value) bool {
@@ -262,7 +279,15 @@ func isSystemLocal(info QueryInfo, currentKeyspaceName *atomic.Value) bool {
 		}
 	}
 
-	return keyspaceName == "system" && info.getTableName() == "local"
+	return isSystemKeyspace(keyspaceName) && isLocalTable(info.getTableName())
+}
+
+func isLocalTable(tableName string) bool {
+	return tableName == systemLocalTableName
+}
+
+func isSystemKeyspace(keyspace string) bool {
+	return keyspace == systemKeyspaceName
 }
 
 type frameDecodeContext struct {
@@ -302,8 +327,8 @@ func (recv *frameDecodeContext) GetOrDecodeFrame() (*frame.Frame, error) {
 	return decodedFrame, nil
 }
 
-func (recv *frameDecodeContext) GetOrInspectStatement(timeUuidGenerator TimeUuidGenerator) (*statementQueryData, error) {
-	err := recv.inspectStatements(timeUuidGenerator)
+func (recv *frameDecodeContext) GetOrInspectStatement(currentKeyspace *atomic.Value, timeUuidGenerator TimeUuidGenerator) (*statementQueryData, error) {
+	err := recv.inspectStatements(currentKeyspace, timeUuidGenerator)
 	if err != nil {
 		return nil, err
 	}
@@ -315,8 +340,8 @@ func (recv *frameDecodeContext) GetOrInspectStatement(timeUuidGenerator TimeUuid
 	return recv.statementsQueryData[0], nil
 }
 
-func (recv *frameDecodeContext) GetOrInspectAllStatements(timeUuidGenerator TimeUuidGenerator) ([]*statementQueryData, error) {
-	err := recv.inspectStatements(timeUuidGenerator)
+func (recv *frameDecodeContext) GetOrInspectAllStatements(currentKeyspace *atomic.Value, timeUuidGenerator TimeUuidGenerator) ([]*statementQueryData, error) {
+	err := recv.inspectStatements(currentKeyspace, timeUuidGenerator)
 	if err != nil {
 		return nil, err
 	}
@@ -324,7 +349,7 @@ func (recv *frameDecodeContext) GetOrInspectAllStatements(timeUuidGenerator Time
 	return recv.statementsQueryData, nil
 }
 
-func (recv *frameDecodeContext) inspectStatements(timeUuidGenerator TimeUuidGenerator) error {
+func (recv *frameDecodeContext) inspectStatements(currentKeyspace *atomic.Value, timeUuidGenerator TimeUuidGenerator) error {
 	if recv.statementsQueryData != nil {
 		return nil
 	}
@@ -334,6 +359,11 @@ func (recv *frameDecodeContext) inspectStatements(timeUuidGenerator TimeUuidGene
 		return fmt.Errorf("could not decode frame: %w", err)
 	}
 
+	currentKeyspaceVal := currentKeyspace.Load()
+	currentKeyspaceStr := ""
+	if currentKeyspaceVal != nil {
+		currentKeyspaceStr = currentKeyspaceVal.(string)
+	}
 	var statementsQueryData []*statementQueryData
 	switch decodedFrame.Header.OpCode {
 	case primitive.OpCodeQuery:
@@ -344,13 +374,13 @@ func (recv *frameDecodeContext) inspectStatements(timeUuidGenerator TimeUuidGene
 		if !ok {
 			return fmt.Errorf("expected Query but got %v instead", decodedFrame.Body.Message.GetOpCode().String())
 		}
-		statementsQueryData = []*statementQueryData{&statementQueryData{statementIndex: 0, queryData: inspectCqlQuery(queryMsg.Query, timeUuidGenerator)}}
+		statementsQueryData = []*statementQueryData{&statementQueryData{statementIndex: 0, queryData: inspectCqlQuery(queryMsg.Query, currentKeyspaceStr, timeUuidGenerator)}}
 	case primitive.OpCodePrepare:
 		prepareMsg, ok := decodedFrame.Body.Message.(*message.Prepare)
 		if !ok {
 			return fmt.Errorf("expected Prepare but got %v instead", decodedFrame.Body.Message.GetOpCode().String())
 		}
-		statementsQueryData = []*statementQueryData{&statementQueryData{statementIndex: 0, queryData: inspectCqlQuery(prepareMsg.Query, timeUuidGenerator)}}
+		statementsQueryData = []*statementQueryData{&statementQueryData{statementIndex: 0, queryData: inspectCqlQuery(prepareMsg.Query, currentKeyspaceStr, timeUuidGenerator)}}
 	case primitive.OpCodeBatch:
 		batchMsg, ok := decodedFrame.Body.Message.(*message.Batch)
 		if !ok {
@@ -359,7 +389,7 @@ func (recv *frameDecodeContext) inspectStatements(timeUuidGenerator TimeUuidGene
 		for idx, childStmt := range batchMsg.Children {
 			switch typedQueryOrId := childStmt.QueryOrId.(type) {
 			case string:
-				statementsQueryData = append(statementsQueryData, &statementQueryData{statementIndex: idx, queryData: inspectCqlQuery(typedQueryOrId, timeUuidGenerator)})
+				statementsQueryData = append(statementsQueryData, &statementQueryData{statementIndex: idx, queryData: inspectCqlQuery(typedQueryOrId, currentKeyspaceStr, timeUuidGenerator)})
 			}
 		}
 	default:
@@ -370,13 +400,13 @@ func (recv *frameDecodeContext) inspectStatements(timeUuidGenerator TimeUuidGene
 	return nil
 }
 
-func (recv *frameDecodeContext) GetOrDecodeAndInspect(timeUuidGenerator TimeUuidGenerator) (*frame.Frame, []*statementQueryData, error) {
+func (recv *frameDecodeContext) GetOrDecodeAndInspect(currentKeyspace *atomic.Value, timeUuidGenerator TimeUuidGenerator) (*frame.Frame, []*statementQueryData, error) {
 	decodedFrame, err := recv.GetOrDecodeFrame()
 	if err != nil {
 		return nil, nil, err
 	}
 
-	stmtsQueryData, err := recv.GetOrInspectAllStatements(timeUuidGenerator)
+	stmtsQueryData, err := recv.GetOrInspectAllStatements(currentKeyspace, timeUuidGenerator)
 	if err != nil {
 		return nil, nil, err
 	}

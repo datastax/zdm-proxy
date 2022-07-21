@@ -118,14 +118,19 @@ func (recv *BoundStatementInfo) ShouldAlsoBeSentAsync() bool {
 type InterceptedStatementInfo struct {
 	*baseStatementInfo
 	interceptedQueryType interceptedQueryType
+	parsedSelectClause   *selectClause
 }
 
-func NewInterceptedStatementInfo(queryType interceptedQueryType) *InterceptedStatementInfo {
-	return &InterceptedStatementInfo{baseStatementInfo: newBaseStmtInfo(forwardToNone), interceptedQueryType: queryType}
+func NewInterceptedStatementInfo(queryType interceptedQueryType, parsedSelectClause *selectClause) *InterceptedStatementInfo {
+	return &InterceptedStatementInfo{
+		baseStatementInfo:    newBaseStmtInfo(forwardToNone),
+		interceptedQueryType: queryType,
+		parsedSelectClause:   parsedSelectClause}
 }
 
 func (recv *InterceptedStatementInfo) String() string {
-	return fmt.Sprintf("InterceptedStatementInfo{interceptedQueryType: %v}", recv.interceptedQueryType)
+	return fmt.Sprintf("InterceptedStatementInfo{interceptedQueryType: %v, parsedSelectClause: %v}",
+		recv.interceptedQueryType, recv.parsedSelectClause)
 }
 
 func (recv *InterceptedStatementInfo) GetQueryType() interceptedQueryType {
@@ -134,6 +139,10 @@ func (recv *InterceptedStatementInfo) GetQueryType() interceptedQueryType {
 
 func (recv *InterceptedStatementInfo) ShouldAlsoBeSentAsync() bool {
 	return false
+}
+
+func (recv *InterceptedStatementInfo) GetParsedSelectClause() *selectClause {
+	return recv.parsedSelectClause
 }
 
 type BatchStatementInfo struct {

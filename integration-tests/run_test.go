@@ -2,9 +2,12 @@ package integration_tests
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"github.com/jpillora/backoff"
 	"github.com/riptano/cloud-gate/integration-tests/client"
 	"github.com/riptano/cloud-gate/integration-tests/setup"
+	"github.com/riptano/cloud-gate/integration-tests/utils"
 	"github.com/riptano/cloud-gate/proxy/pkg/cloudgateproxy"
 	"github.com/stretchr/testify/require"
 	"sync"
@@ -42,7 +45,8 @@ func TestRunWithRetries(t *testing.T) {
 	waitGroup.Add(1)
 	go func() {
 		defer waitGroup.Done()
-		p, err := cloudgateproxy.RunWithRetries(setup.NewTestConfig(testSetup.Origin.GetInitialContactPoint(), testSetup.Target.GetInitialContactPoint()), ctx, b)
+		p, err := cloudgateproxy.RunWithRetries(
+			setup.NewTestConfig(testSetup.Origin.GetInitialContactPoint(), testSetup.Target.GetInitialContactPoint()), ctx, b)
 		if err == nil {
 			proxy.Store(&p)
 			<-ctx.Done()
@@ -50,32 +54,43 @@ func TestRunWithRetries(t *testing.T) {
 		}
 	}()
 
-	time.Sleep(1 * time.Second)
-
-	testClient, err := client.NewTestClient(context.Background(), "127.0.0.1:14002")
-	if err == nil {
-		testClient.Shutdown()
-		t.Fatal("expected client tcp connection failure but proxy accepted connection")
+	expectedFailureFunc := func(errMsg string) (err error, fatal bool) {
+		testClient, err := client.NewTestClient(context.Background(), "127.0.0.1:14002")
+		if err == nil {
+			testClient.Shutdown()
+			return errors.New(errMsg), false
+		}
+		if proxy.Load() != nil {
+			return errors.New("expected RunWithRetries to not return but it did"), false
+		}
+		return nil, false
 	}
-	require.True(t, proxy.Load() == nil, "expected RunWithRetries to not return but it did")
+
+	utils.RequireWithRetries(t,
+		func() (error, bool) {
+			return expectedFailureFunc("expected client tcp connection failure but proxy accepted connection")
+		}, 10, 100)
 
 	err = testSetup.Origin.EnableConnectionListener()
+	require.Nil(t, err)
 
-	time.Sleep(1 * time.Second)
-
-	testClient, err = client.NewTestClient(context.Background(), "127.0.0.1:14002")
-	if err == nil {
-		testClient.Shutdown()
-		t.Fatal("expected client tcp connection failure after origin enable listener but proxy accepted connection")
-	}
-	require.True(t, proxy.Load() == nil, "expected RunWithRetries to not return but it did")
+	utils.RequireWithRetries(t,
+		func() (error, bool) {
+			return expectedFailureFunc("expected client tcp connection failure after origin enable listener but proxy accepted connection")
+		}, 10, 100)
 
 	err = testSetup.Target.EnableConnectionListener()
+	require.Nil(t, err)
 
-	time.Sleep(1 * time.Second)
-
-	testClient, err = client.NewTestClient(context.Background(), "127.0.0.1:14002")
-	require.True(t, err == nil, "expected successful connection attempt but proxy refused")
-	defer testClient.Shutdown()
-	require.True(t, proxy.Load() != nil, "expected RunWithRetries to return but it did not")
+	utils.RequireWithRetries(t, func() (err error, fatal bool) {
+		testClient, err := client.NewTestClient(context.Background(), "127.0.0.1:14002")
+		if err != nil {
+			return fmt.Errorf("expected successful connection attempt but proxy refused: %w", err), false
+		}
+		defer testClient.Shutdown()
+		if proxy.Load() == nil {
+			return errors.New("expected RunWithRetries to return but it did not"), false
+		}
+		return nil, false
+	}, 10, 100)
 }

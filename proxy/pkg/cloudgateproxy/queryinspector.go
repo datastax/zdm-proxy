@@ -60,6 +60,10 @@ type QueryInfo interface {
 	// the slice will contain as many elements as there are child statements.
 	getParsedStatements() []*parsedStatement
 
+	// Returns a parsed select cause object. This is non nil only for intercepted SELECT statements like
+	// queries on system.local and system.peers tables.
+	getParsedSelectClause() *selectClause
+
 	// Whether the query contains positional bind markers. Only one of hasPositionalBindMarkers and hasNamedBindMarkers
 	// can return true for a given query, never both.
 	// This will always be false for non-INSERT statements or batches not containing INSERT statements.
@@ -79,7 +83,7 @@ type QueryInfo interface {
 	replaceNowFunctionCallsWithNamedBindMarkers() (QueryInfo, []*term)
 }
 
-func inspectCqlQuery(query string, timeUuidGenerator TimeUuidGenerator) QueryInfo {
+func inspectCqlQuery(query string, currentKeyspace string, timeUuidGenerator TimeUuidGenerator) QueryInfo {
 	is := antlr.NewInputStream(query)
 	lexer := lexerPool.Get().(*parser.SimplifiedCqlLexer)
 	defer lexerPool.Put(lexer)
@@ -88,7 +92,12 @@ func inspectCqlQuery(query string, timeUuidGenerator TimeUuidGenerator) QueryInf
 	cqlParser := parserPool.Get().(*parser.SimplifiedCqlParser)
 	defer parserPool.Put(cqlParser)
 	cqlParser.SetInputStream(stream)
-	listener := &cqlListener{query: query, statementType: statementTypeOther, timeUuidGenerator: timeUuidGenerator}
+	listener := &cqlListener {
+		query: query,
+		statementType: statementTypeOther,
+		timeUuidGenerator: timeUuidGenerator,
+		connectionKeyspace: currentKeyspace,
+	}
 	antlr.ParseTreeWalkerDefault.Walk(listener, cqlParser.CqlStatement())
 	return listener
 }
@@ -112,7 +121,7 @@ func NewFunctionCall(keyspace string, name string, arity int, startIndex int, st
 }
 
 func (f *functionCall) isNow() bool {
-	return (f.keyspace == "" || f.keyspace == "system") && f.name == "now" && f.arity == 0
+	return (f.keyspace == "" || f.keyspace == systemKeyspaceName) && f.name == nowFunctionName && f.arity == 0
 }
 
 // parsedStatement contains all the information stored by the cqlListener while processing a particular statement.
@@ -130,6 +139,76 @@ func (recv *parsedStatement) ShallowClone() *parsedStatement {
 		statementType:  recv.statementType,
 		terms:          recv.terms,
 	}
+}
+
+type selectClause struct {
+	selectors []selector
+}
+
+func newStarSelectClause() *selectClause {
+	return &selectClause{}
+}
+
+func newSelectClauseWithSelectors(selectors []selector) *selectClause {
+	return &selectClause{selectors: selectors}
+}
+
+func (recv *selectClause) IsStarSelectClause() bool {
+	return recv.selectors == nil
+}
+
+func (recv *selectClause) GetSelectors() []selector {
+	return recv.selectors
+}
+
+
+// selector represents a selector in the cql grammar. 'term' and 'K_CAST' selectors are not supported.
+//   selector
+//      : unaliasedSelector ( K_AS identifier )?
+//      ;
+//
+//   unaliasedSelector
+//      : identifier
+//      | term
+//      | K_COUNT '(' '*' ')'
+//      | K_CAST '(' unaliasedSelector K_AS primitiveType ')'
+//      ;
+type selector interface {
+	Name() string
+}
+
+// idSelector represents an unaliased identifier selector:
+//   unaliasedSelector
+//      : identifier
+type idSelector struct {
+	name string
+}
+
+func (recv *idSelector) Name() string {
+	return recv.name
+}
+
+// countSelector represents an unaliased count(*) selector:
+//   K_COUNT '(' '*' ')'
+type countSelector struct {
+	name string
+}
+
+func (recv *countSelector) Name() string {
+	return recv.name
+}
+
+// aliasedSelector represents an unaliased selector combined with an alias:
+//   selector
+//      : unaliasedSelector ( K_AS identifier )?
+//      ;
+type aliasedSelector struct {
+	selector selector
+	alias    string
+}
+
+func (recv *aliasedSelector) Name() string {
+	return recv.alias
 }
 
 // A term can be one of the following:
@@ -220,6 +299,9 @@ type cqlListener struct {
 	keyspaceName  string
 	tableName     string
 
+	// Only filled in for SELECT statements on system.local or system.peers tables
+	parsedSelectClause *selectClause
+
 	// Only filled in for INSERT, DELETE, UPDATE and BATCH statements
 	parsedStatements      []*parsedStatement
 	positionalBindMarkers bool
@@ -231,6 +313,8 @@ type cqlListener struct {
 	currentBatchChildIndex int
 
 	timeUuidGenerator TimeUuidGenerator
+
+	connectionKeyspace string
 }
 
 func (l *cqlListener) getQuery() string {
@@ -251,6 +335,10 @@ func (l *cqlListener) getTableName() string {
 
 func (l *cqlListener) getParsedStatements() []*parsedStatement {
 	return l.parsedStatements
+}
+
+func (l *cqlListener) getParsedSelectClause() *selectClause {
+	return l.parsedSelectClause
 }
 
 func (l *cqlListener) hasPositionalBindMarkers() bool {
@@ -284,6 +372,46 @@ func (l *cqlListener) EnterCqlStatement(ctx *parser.CqlStatementContext) {
 		l.statementType = statementTypeSelect
 	case parser.IUseStatementContext:
 		l.statementType = statementTypeUse
+	}
+}
+
+func (l *cqlListener) ExitSelectStatement(ctx *parser.SelectStatementContext) {
+	if l.getKeyspaceName() == "" && !isSystemKeyspace(l.connectionKeyspace) {
+		return
+	}
+
+	if l.getKeyspaceName() != "" && !isSystemKeyspace(l.getKeyspaceName()) {
+		return
+	}
+
+	if !isLocalTable(l.getTableName()) && !isPeersV1Table(l.getTableName()) && !isPeersV2Table(l.getTableName()) {
+		return
+	}
+
+	for i := 0; i < ctx.GetChildCount(); i++ {
+		child := ctx.GetChild(i)
+		if child == nil {
+			break
+		}
+		switch typedChild := child.(type) {
+		case antlr.TerminalNode:
+			if typedChild.GetSymbol().GetTokenType() == parser.SimplifiedCqlParserK_JSON ||
+				typedChild.GetSymbol().GetTokenType() == parser.SimplifiedCqlParserK_DISTINCT {
+				log.Warnf("Proxy does not support 'JSON' or 'DISTINCT' for system.local and system.peers queries: %v", ctx.GetText())
+				return
+			}
+		case *parser.SelectClauseContext:
+			parsedSelectClause, err := extractSelectClause(typedChild)
+			if err != nil {
+				log.Warnf("Proxy could not parse select clause of system.local/system.peers query: %v", err.Error())
+				return
+			}
+			l.parsedSelectClause = parsedSelectClause
+			return
+		default:
+			log.Errorf("Proxy could not parse SELECT query for system.local/peers: %v", ctx.GetText())
+			return
+		}
 	}
 }
 
@@ -392,6 +520,63 @@ func (l *cqlListener) EnterTableName(ctx *parser.TableNameContext) {
 	}
 }
 
+func extractSelectClause(selectClauseCtx *parser.SelectClauseContext) (*selectClause, error) {
+	child := selectClauseCtx.GetChild(0)
+	switch typedChild := child.(type) {
+	case antlr.TerminalNode:
+		return newStarSelectClause(), nil
+	case *parser.SelectorsContext:
+		selectors, err := extractSelectors(typedChild)
+		if err != nil {
+			return nil, err
+		}
+		return newSelectClauseWithSelectors(selectors), nil
+	}
+	return nil, fmt.Errorf("unexpected select clause: %v", selectClauseCtx.GetText())
+}
+
+func extractSelectors(selectorsCtx *parser.SelectorsContext) ([]selector, error) {
+	selectors := make([]selector, 0)
+	for i := 0; i < selectorsCtx.GetChildCount(); i++ {
+		child := selectorsCtx.GetChild(i)
+		switch typedChild := child.(type) {
+		case *parser.SelectorContext:
+			parsedSelector, err := extractSelector(typedChild)
+			if err != nil {
+				return nil, err
+			}
+			selectors = append(selectors, parsedSelector)
+		default:
+		}
+	}
+	return selectors, nil
+}
+
+func extractSelector(selectorCtx *parser.SelectorContext) (selector, error) {
+	var parsedSelector selector
+	unaliasedSelector := selectorCtx.GetChild(0).(*parser.UnaliasedSelectorContext)
+	switch unaliasedSelectorChild := unaliasedSelector.GetChild(0).(type) {
+	case *parser.IdentifierContext:
+		parsedSelector = &idSelector{name: extractIdentifier(unaliasedSelectorChild)}
+	case *parser.TermContext:
+		return nil, fmt.Errorf("term selector (%v) not supported", unaliasedSelectorChild.GetText())
+	case antlr.TerminalNode:
+		if unaliasedSelectorChild.GetSymbol().GetTokenType() == parser.SimplifiedCqlParserK_COUNT {
+			parsedSelector = &countSelector{name: unaliasedSelectorChild.GetText()}
+		} else {
+			return nil, fmt.Errorf("unrecognized terminal node when parsing selector (%v)", unaliasedSelectorChild.GetText())
+		}
+	}
+	if selectorCtx.GetChildCount() == 3 {
+		return &aliasedSelector{
+			selector: parsedSelector,
+			alias:    extractIdentifier(selectorCtx.GetChild(2).(*parser.IdentifierContext)),
+		}, nil
+	} else {
+		return parsedSelector, nil
+	}
+}
+
 func (l *cqlListener) extractAllTerms(termsCtx []antlr.Tree) []*term {
 	var terms []*term
 	for _, termCtx := range termsCtx {
@@ -452,7 +637,7 @@ func (l *cqlListener) extractBindMarker(bindMarkerCtx antlr.Tree) *term {
 			return newTerm
 		case parser.INamedBindMarkerContext:
 			l.namedBindMarkers = true
-			bindMarkerName := extractIdentifier(childCtx.GetChild(1))
+			bindMarkerName := extractIdentifier(childCtx.GetChild(1).(*parser.IdentifierContext))
 			return NewNamedBindMarkerTerm(bindMarkerName, l.currentPositionalIndex - 1)
 		}
 	}
@@ -579,7 +764,7 @@ func extractFunctionCall(ctx *parser.FunctionCallContext) *functionCall {
 // Returns the identifier in the context object, in its internal form.
 // For unquoted identifiers and unreserved keywords, the internal form is the form in full lower case;
 // for quoted ones, the internal form is the unquoted string, in its exact case.
-func extractIdentifier(identifierContext antlr.Tree) string {
+func extractIdentifier(identifierContext *parser.IdentifierContext) string {
 	childCtx := identifierContext.GetChild(0)
 	switch typedChildCtx := childCtx.(type) {
 	case antlr.TerminalNode:
@@ -699,6 +884,7 @@ func (l *cqlListener) shallowClone() *cqlListener {
 		currentPositionalIndex:    l.currentPositionalIndex,
 		currentBatchChildIndex:    l.currentBatchChildIndex,
 		timeUuidGenerator:         l.timeUuidGenerator,
+		connectionKeyspace:        l.connectionKeyspace,
 	}
 }
 

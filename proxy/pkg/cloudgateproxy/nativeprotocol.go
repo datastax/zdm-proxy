@@ -1,10 +1,12 @@
 package cloudgateproxy
 
 import (
+	"errors"
 	"fmt"
 	"github.com/datastax/go-cassandra-native-protocol/datatype"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"strings"
 )
 
 type ParsedRow struct {
@@ -211,36 +213,36 @@ CREATE TABLE system.local (
 */
 
 var (
-	keyColumn                        = &message.ColumnMetadata{Keyspace: "system", Table: "local", Name: "key", Type: datatype.Varchar}
-	bootstrappedColumn               = &message.ColumnMetadata{Keyspace: "system", Table: "local", Name: "bootstrapped", Type: datatype.Varchar}
-	broadcastAddressColumn           = &message.ColumnMetadata{Keyspace: "system", Table: "local", Name: "broadcast_address", Type: datatype.Inet}
-	clusterNameColumn                = &message.ColumnMetadata{Keyspace: "system", Table: "local", Name: "cluster_name", Type: datatype.Varchar}
-	cqlVersionColumn                 = &message.ColumnMetadata{Keyspace: "system", Table: "local", Name: "cql_version", Type: datatype.Varchar}
-	datacenterColumn                 = &message.ColumnMetadata{Keyspace: "system", Table: "local", Name: "data_center", Type: datatype.Varchar}
-	dseVersionColumn                 = &message.ColumnMetadata{Keyspace: "system", Table: "local", Name: "dse_version", Type: datatype.Varchar}
-	gossipGenerationColumn           = &message.ColumnMetadata{Keyspace: "system", Table: "local", Name: "gossip_generation", Type: datatype.Int}
-	graphColumn                      = &message.ColumnMetadata{Keyspace: "system", Table: "local", Name: "graph", Type: datatype.Boolean}
-	hostIdColumn                     = &message.ColumnMetadata{Keyspace: "system", Table: "local", Name: "host_id", Type: datatype.Uuid}
-	jmxPortColumn                    = &message.ColumnMetadata{Keyspace: "system", Table: "local", Name: "jmx_port", Type: datatype.Int}
-	lastNodesyncCheckpointTimeColumn = &message.ColumnMetadata{Keyspace: "system", Table: "local", Name: "last_nodesync_checkpoint_time", Type: datatype.Bigint}
-	listenAddressColumn              = &message.ColumnMetadata{Keyspace: "system", Table: "local", Name: "listen_address", Type: datatype.Inet}
-	nativeProtocolVersionColumn      = &message.ColumnMetadata{Keyspace: "system", Table: "local", Name: "native_protocol_version", Type: datatype.Varchar}
-	nativeTransportAddressColumn     = &message.ColumnMetadata{Keyspace: "system", Table: "local", Name: "native_transport_address", Type: datatype.Inet}
-	nativeTransportPortColumn        = &message.ColumnMetadata{Keyspace: "system", Table: "local", Name: "native_transport_port", Type: datatype.Int}
-	nativeTransportPortSslColumn     = &message.ColumnMetadata{Keyspace: "system", Table: "local", Name: "native_transport_port_ssl", Type: datatype.Int}
-	partitionerColumn                = &message.ColumnMetadata{Keyspace: "system", Table: "local", Name: "partitioner", Type: datatype.Varchar}
-	rackColumn                       = &message.ColumnMetadata{Keyspace: "system", Table: "local", Name: "rack", Type: datatype.Varchar}
-	releaseVersionColumn             = &message.ColumnMetadata{Keyspace: "system", Table: "local", Name: "release_version", Type: datatype.Varchar}
-	rpcAddressColumn                 = &message.ColumnMetadata{Keyspace: "system", Table: "local", Name: "rpc_address", Type: datatype.Inet}
-	schemaVersionColumn              = &message.ColumnMetadata{Keyspace: "system", Table: "local", Name: "schema_version", Type: datatype.Uuid}
-	serverIdColumn                   = &message.ColumnMetadata{Keyspace: "system", Table: "local", Name: "server_id", Type: datatype.Varchar}
-	storagePortColumn                = &message.ColumnMetadata{Keyspace: "system", Table: "local", Name: "storage_port", Type: datatype.Int}
-	storagePortSslColumn             = &message.ColumnMetadata{Keyspace: "system", Table: "local", Name: "storage_port_ssl", Type: datatype.Int}
-	thriftVersionColumn              = &message.ColumnMetadata{Keyspace: "system", Table: "local", Name: "thrift_version", Type: datatype.Varchar}
-	tokensColumn                     = &message.ColumnMetadata{Keyspace: "system", Table: "local", Name: "tokens", Type: datatype.NewSetType(datatype.Varchar)}
-	truncatedAtColumn                = &message.ColumnMetadata{Keyspace: "system", Table: "local", Name: "truncated_at", Type: datatype.NewMapType(datatype.Uuid, datatype.Blob)}
-	workloadColumn                   = &message.ColumnMetadata{Keyspace: "system", Table: "local", Name: "workload", Type: datatype.Varchar}
-	workloadsColumn                  = &message.ColumnMetadata{Keyspace: "system", Table: "local", Name: "workloads", Type: datatype.NewSetType(datatype.Varchar)}
+	keyColumn                        = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemLocalTableName, Name: "key", Type: datatype.Varchar}
+	bootstrappedColumn               = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemLocalTableName, Name: "bootstrapped", Type: datatype.Varchar}
+	broadcastAddressColumn           = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemLocalTableName, Name: "broadcast_address", Type: datatype.Inet}
+	clusterNameColumn                = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemLocalTableName, Name: "cluster_name", Type: datatype.Varchar}
+	cqlVersionColumn                 = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemLocalTableName, Name: "cql_version", Type: datatype.Varchar}
+	datacenterColumn                 = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemLocalTableName, Name: "data_center", Type: datatype.Varchar}
+	dseVersionColumn                 = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemLocalTableName, Name: "dse_version", Type: datatype.Varchar}
+	gossipGenerationColumn           = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemLocalTableName, Name: "gossip_generation", Type: datatype.Int}
+	graphColumn                      = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemLocalTableName, Name: "graph", Type: datatype.Boolean}
+	hostIdColumn                     = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemLocalTableName, Name: "host_id", Type: datatype.Uuid}
+	jmxPortColumn                    = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemLocalTableName, Name: "jmx_port", Type: datatype.Int}
+	lastNodesyncCheckpointTimeColumn = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemLocalTableName, Name: "last_nodesync_checkpoint_time", Type: datatype.Bigint}
+	listenAddressColumn              = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemLocalTableName, Name: "listen_address", Type: datatype.Inet}
+	nativeProtocolVersionColumn      = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemLocalTableName, Name: "native_protocol_version", Type: datatype.Varchar}
+	nativeTransportAddressColumn     = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemLocalTableName, Name: "native_transport_address", Type: datatype.Inet}
+	nativeTransportPortColumn        = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemLocalTableName, Name: "native_transport_port", Type: datatype.Int}
+	nativeTransportPortSslColumn     = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemLocalTableName, Name: "native_transport_port_ssl", Type: datatype.Int}
+	partitionerColumn                = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemLocalTableName, Name: "partitioner", Type: datatype.Varchar}
+	rackColumn                       = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemLocalTableName, Name: "rack", Type: datatype.Varchar}
+	releaseVersionColumn             = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemLocalTableName, Name: "release_version", Type: datatype.Varchar}
+	rpcAddressColumn                 = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemLocalTableName, Name: "rpc_address", Type: datatype.Inet}
+	schemaVersionColumn              = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemLocalTableName, Name: "schema_version", Type: datatype.Uuid}
+	serverIdColumn                   = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemLocalTableName, Name: "server_id", Type: datatype.Varchar}
+	storagePortColumn                = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemLocalTableName, Name: "storage_port", Type: datatype.Int}
+	storagePortSslColumn             = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemLocalTableName, Name: "storage_port_ssl", Type: datatype.Int}
+	thriftVersionColumn              = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemLocalTableName, Name: "thrift_version", Type: datatype.Varchar}
+	tokensColumn                     = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemLocalTableName, Name: "tokens", Type: datatype.NewSetType(datatype.Varchar)}
+	truncatedAtColumn                = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemLocalTableName, Name: "truncated_at", Type: datatype.NewMapType(datatype.Uuid, datatype.Blob)}
+	workloadColumn                   = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemLocalTableName, Name: "workload", Type: datatype.Varchar}
+	workloadsColumn                  = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemLocalTableName, Name: "workloads", Type: datatype.NewSetType(datatype.Varchar)}
 )
 
 var systemLocalColumns = []*message.ColumnMetadata{
@@ -276,18 +278,6 @@ var systemLocalColumns = []*message.ColumnMetadata{
 	workloadsColumn,
 }
 
-type systemLocalInfo struct {
-	key                        *optionalColumn
-	clusterName                *optionalColumn
-	bootstrapped               *optionalColumn
-	cqlVersion                 *optionalColumn
-	gossipGeneration           *optionalColumn
-	lastNodesyncCheckpointTime *optionalColumn
-	nativeProtocolVersion      *optionalColumn
-	thriftVersion              *optionalColumn
-	partitioner                *optionalColumn
-}
-
 type optionalColumn struct {
 	column interface{}
 	exists bool
@@ -312,68 +302,198 @@ func (recv *optionalColumn) AsNillableInt() *int {
 	return recv.column.(*int)
 }
 
-func NewSystemLocalRowsResult(
-	genericTypeCodec *GenericTypeCodec, version primitive.ProtocolVersion, systemLocalInfo *systemLocalInfo,
-	virtualHost *VirtualHost, proxyPort int) (*message.RowsResult, error) {
+type ColumnNotFoundErr struct {
+	Name string
+}
 
-	columns := make([]*message.ColumnMetadata, 0, len(systemLocalColumns))
-	row := make([]interface{}, 0, len(systemLocalColumns))
-	addValueAndColumnIfExists(&row, &columns, keyColumn, systemLocalInfo.key)
-	addValueAndColumnIfExists(&row, &columns, bootstrappedColumn, systemLocalInfo.bootstrapped)
-	addValueAndColumn(&row, &columns, broadcastAddressColumn, virtualHost.Addr)
-	addValueAndColumnIfExists(&row, &columns, clusterNameColumn, systemLocalInfo.clusterName)
-	addValueAndColumnIfExists(&row, &columns, cqlVersionColumn, systemLocalInfo.cqlVersion)
-	addValueAndColumn(&row, &columns, datacenterColumn, virtualHost.Host.Datacenter)
-	addValueAndColumnIfExists(&row, &columns, dseVersionColumn, virtualHost.Host.DseVersion)
-	addValueAndColumnIfExists(&row, &columns, gossipGenerationColumn, systemLocalInfo.gossipGeneration)
-	addValueAndColumnIfExists(&row, &columns, graphColumn, virtualHost.Host.Graph)
-	addValueAndColumn(&row, &columns, hostIdColumn, virtualHost.HostId)
-	addValueAndColumnIfExists(&row, &columns, jmxPortColumn, virtualHost.Host.JmxPort)
-	addValueAndColumnIfExists(&row, &columns, lastNodesyncCheckpointTimeColumn, systemLocalInfo.lastNodesyncCheckpointTime)
-	addValueAndColumn(&row, &columns, listenAddressColumn, virtualHost.Addr)
-	addValueAndColumnIfExists(&row, &columns, nativeProtocolVersionColumn, systemLocalInfo.nativeProtocolVersion)
-	overrideValueAndColumnIfExists(&row, &columns, nativeTransportAddressColumn, virtualHost.Host.NativeTransportAddress, virtualHost.Addr)
-	overrideValueAndColumnIfExists(&row, &columns, nativeTransportPortColumn, virtualHost.Host.NativeTransportPort, proxyPort)
-	overrideValueAndColumnIfExists(&row, &columns, nativeTransportPortSslColumn, virtualHost.Host.NativeTransportPortSsl, proxyPort)
-	addValueAndColumn(&row, &columns, partitionerColumn, virtualHost.Partitioner)
-	addValueAndColumn(&row, &columns, rackColumn, virtualHost.Rack)
-	addValueAndColumn(&row, &columns, releaseVersionColumn, virtualHost.Host.ReleaseVersion)
-	addValueAndColumn(&row, &columns, rpcAddressColumn, virtualHost.Addr)
-	if virtualHost.Host.SchemaVersion == nil {
-		addValueAndColumn(&row, &columns, schemaVersionColumn, nil)
-	} else {
-		schemaId := primitive.UUID(*virtualHost.Host.SchemaVersion)
-		addValueAndColumn(&row, &columns, schemaVersionColumn, &schemaId)
+func (recv *ColumnNotFoundErr) Error() string {
+	return fmt.Sprintf("could not find column: %v", recv.Name)
+}
+
+func findColumnMetadata(cols []*message.ColumnMetadata, name string) *message.ColumnMetadata {
+	for _, col := range cols {
+		if col.Name == name {
+			return col
+		}
 	}
-	addValueAndColumnIfExists(&row, &columns, serverIdColumn, virtualHost.Host.ServerId)
-	addValueAndColumnIfExists(&row, &columns, storagePortColumn, virtualHost.Host.StoragePort)
-	addValueAndColumnIfExists(&row, &columns, storagePortSslColumn, virtualHost.Host.StoragePortSsl)
-	addValueAndColumnIfExists(&row, &columns, thriftVersionColumn, systemLocalInfo.thriftVersion)
-	addValueAndColumn(&row, &columns, tokensColumn, virtualHost.Tokens)
-	addValueAndColumn(&row, &columns, truncatedAtColumn, nil)
-	addValueAndColumnIfExists(&row, &columns, workloadColumn, virtualHost.Host.Workload)
-	addValueAndColumnIfExists(&row, &columns, workloadsColumn, virtualHost.Host.Workloads)
+	return nil
+}
+
+func columnFromSelector(
+	cols []*message.ColumnMetadata, parsedSelector selector,
+	keyspace string, table string) (resultColumn *message.ColumnMetadata, isCountSelector bool, err error) {
+	switch s := parsedSelector.(type) {
+	case *countSelector:
+		return &message.ColumnMetadata{
+				Keyspace: keyspace,
+				Table:    table,
+				Name:     s.name,
+				Type:     datatype.Int,
+			}, true, nil
+	case *idSelector:
+		if column := findColumnMetadata(cols, s.name); column != nil {
+			return column, false, nil
+		} else {
+			return nil, false, &ColumnNotFoundErr{Name: s.name}
+		}
+	case *aliasedSelector:
+		// aliasedSelector contains the unaliasedSelector + an alias, we need to retrieve the unaliasedSelector
+		resultColumn, isCountSelector, err = columnFromSelector(cols, s.selector, keyspace, table)
+		if err != nil {
+			return nil, false, err
+		}
+
+		// we are assuming here that resultColumn always refers to an unaliased column because the cql grammar doesn't support alias recursion
+		aliasedColumn := resultColumn.Clone()
+		aliasedColumn.Name = s.alias
+		return aliasedColumn, isCountSelector, nil
+	default:
+		return nil, false, errors.New("unhandled selector type")
+	}
+}
+
+func unaliasedColumnNameFromSelector(parsedSelector selector) (string, error) {
+	switch s := parsedSelector.(type) {
+	case *countSelector:
+		return s.name, nil
+	case *idSelector:
+		return s.name, nil
+	case *aliasedSelector:
+		return s.selector.Name(), nil
+	default:
+		return "", fmt.Errorf("unhandled selector type: %T", s)
+	}
+}
+
+func addSystemColumnValue(
+	isStarSelector bool, first bool, row *[]interface{}, columns *[]*message.ColumnMetadata, addedColumns *[]string, columnIndex int,
+	col *message.ColumnMetadata, unaliasedColumnName string, systemColumnData map[string]*optionalColumn, virtualHost *VirtualHost, proxyPort int, rowCount int) error {
+	switch unaliasedColumnName {
+	case peerColumn.Name, broadcastAddressColumn.Name, listenAddressColumn.Name, rpcAddressColumn.Name, preferredIpPeersColumn.Name:
+		return addColumn(isStarSelector, first, row, columns, addedColumns, columnIndex, col, virtualHost.Addr)
+	case datacenterColumn.Name:
+		return addColumn(isStarSelector, first, row, columns, addedColumns, columnIndex, col, virtualHost.Host.Datacenter)
+	case hostIdColumn.Name:
+		return addColumn(isStarSelector, first, row, columns, addedColumns, columnIndex, col, virtualHost.HostId)
+	case rackColumn.Name:
+		return addColumn(isStarSelector, first, row, columns, addedColumns, columnIndex, col, virtualHost.Rack)
+	case tokensColumn.Name:
+		return addColumn(isStarSelector, first, row, columns, addedColumns, columnIndex, col, virtualHost.Tokens)
+	case truncatedAtColumn.Name:
+		return addColumn(isStarSelector, first, row, columns, addedColumns, columnIndex, col, nil)
+	case partitionerColumn.Name:
+		return addColumn(isStarSelector, first, row, columns, addedColumns, columnIndex, col, virtualHost.Partitioner)
+	case schemaVersionColumn.Name:
+		if virtualHost.Host.SchemaVersion == nil {
+			return addColumn(isStarSelector, first, row, columns, addedColumns, columnIndex, col, nil)
+		} else {
+			schemaId := primitive.UUID(*virtualHost.Host.SchemaVersion)
+			return addColumn(isStarSelector, first, row, columns, addedColumns, columnIndex, col, &schemaId)
+		}
+	}
+
+	if optionalCol, ok := virtualHost.Host.ColumnData[unaliasedColumnName]; ok {
+		switch unaliasedColumnName {
+		case nativeTransportAddressColumn.Name:
+			return overrideColumnIfExists(isStarSelector, first, row, columns, addedColumns, columnIndex, col, optionalCol, virtualHost.Addr)
+		case nativeTransportPortColumn.Name:
+			return overrideColumnIfExists(isStarSelector, first, row, columns, addedColumns, columnIndex, col, optionalCol, proxyPort)
+		case nativeTransportPortSslColumn.Name:
+			return overrideColumnIfExists(isStarSelector, first, row, columns, addedColumns, columnIndex, col, optionalCol, proxyPort)
+		default:
+			return addColumnIfExists(isStarSelector, first, row, columns, addedColumns, columnIndex, col, optionalCol)
+		}
+	} else if optionalCol, ok = systemColumnData[unaliasedColumnName]; ok {
+		return addColumnIfExists(isStarSelector, first, row, columns, addedColumns, columnIndex, col, optionalCol)
+	} else if strings.ToLower(unaliasedColumnName) == "count" {
+		return addColumn(isStarSelector, first, row, columns, addedColumns, columnIndex, col, rowCount)
+	} else {
+		return fmt.Errorf("no column value for %s", unaliasedColumnName)
+	}
+}
+
+func filterSystemColumns(
+	parsedSelectClause *selectClause, systemTableColumns []*message.ColumnMetadata,
+	tableName string) (resultCols []*message.ColumnMetadata, hasCountSelector bool, err error) {
+	clonedSystemColumns := make([]*message.ColumnMetadata, len(systemTableColumns))
+	copy(clonedSystemColumns, systemTableColumns)
+
+	if parsedSelectClause.IsStarSelectClause() {
+		resultCols = clonedSystemColumns
+		hasCountSelector = false
+	} else {
+		selectors := parsedSelectClause.GetSelectors()
+		resultCols = make([]*message.ColumnMetadata, 0, len(selectors))
+		for _, parsedSelector := range selectors {
+			col, isCountSelector, err := columnFromSelector(clonedSystemColumns, parsedSelector, systemKeyspaceName, tableName)
+			if err != nil {
+				return nil, false, err
+			}
+			hasCountSelector = hasCountSelector || isCountSelector
+			resultCols = append(resultCols, col)
+		}
+	}
+
+	return resultCols, hasCountSelector, nil
+}
+
+func getFilteredSystemValues(
+	table string, parsedSelectClause *selectClause, first bool, columns *[]*message.ColumnMetadata, addedColumns *[]string,
+	resultColumns []*message.ColumnMetadata, systemLocalColumnData map[string]*optionalColumn, virtualHost *VirtualHost,
+	proxyPort int, rowCount int) ([]interface{}, error) {
+
+	row := make([]interface{}, 0, len(resultColumns))
+	if parsedSelectClause.IsStarSelectClause() {
+		for i, col := range resultColumns {
+			err := addSystemColumnValue(
+				true, first, &row, columns, addedColumns, i, col, col.Name, systemLocalColumnData,
+				virtualHost, proxyPort, rowCount)
+
+			if err != nil {
+				return nil, fmt.Errorf("errors adding columns for system %v result: %w", table, err)
+			}
+		}
+	} else {
+		if len(parsedSelectClause.selectors) != len(resultColumns) {
+			return nil, fmt.Errorf("mismatch between number of selectors and result columns; selectors=%v, resultColumns=%v",
+				len(parsedSelectClause.selectors), len(resultColumns))
+		}
+		for i, col := range parsedSelectClause.selectors {
+			unaliasedColumnName, err := unaliasedColumnNameFromSelector(col)
+			if err == nil {
+				err = addSystemColumnValue(
+					false, first, &row, columns, addedColumns, i, resultColumns[i], unaliasedColumnName, systemLocalColumnData,
+					virtualHost, proxyPort, rowCount)
+			}
+
+			if err != nil {
+				return nil, fmt.Errorf("errors adding columns for system %v result: %w", table, err)
+			}
+		}
+	}
+	return row, nil
+}
+
+func NewSystemLocalRowsResult(
+	genericTypeCodec *GenericTypeCodec, version primitive.ProtocolVersion, systemLocalColumnData map[string]*optionalColumn,
+	parsedSelectClause *selectClause, virtualHost *VirtualHost, proxyPort int) (*message.RowsResult, error) {
+
+	resultCols, _, err := filterSystemColumns(parsedSelectClause, systemLocalColumns, systemLocalTableName)
+	if err != nil {
+		return nil, err
+	}
+	rowCount := 1
+
+	addedColumns := make([]string, 0, len(resultCols))
+	columns := make([]*message.ColumnMetadata, 0, len(resultCols))
+	row, err := getFilteredSystemValues(
+		"local", parsedSelectClause, true, &columns, &addedColumns, resultCols,
+		systemLocalColumnData, virtualHost, proxyPort, rowCount)
+	if err != nil {
+		return nil, fmt.Errorf("errors adding columns for system local result: %w", err)
+	}
 
 	return EncodeRowsResult(genericTypeCodec, version, columns, [][]interface{}{row})
-}
-
-func addValueAndColumnIfExists(row *[]interface{}, columns *[]*message.ColumnMetadata, columnMetadata *message.ColumnMetadata, col *optionalColumn) {
-	if col.exists {
-		*columns = append(*columns, columnMetadata)
-		*row = append(*row, convertNullableToValue(col.column))
-	}
-}
-
-func overrideValueAndColumnIfExists(row *[]interface{}, columns *[]*message.ColumnMetadata, columnMetadata *message.ColumnMetadata, col *optionalColumn, val interface{}) {
-	if col.exists {
-		*columns = append(*columns, columnMetadata)
-		*row = append(*row, convertNullableToValue(val))
-	}
-}
-
-func addValueAndColumn(row *[]interface{}, columns *[]*message.ColumnMetadata, columnMetadata *message.ColumnMetadata, val interface{}) {
-	*row = append(*row, convertNullableToValue(val))
-	*columns = append(*columns, columnMetadata)
 }
 
 /*
@@ -418,26 +538,26 @@ CREATE TABLE system.peers (
 */
 
 var (
-	peerColumn                        = &message.ColumnMetadata{Keyspace: "system", Table: "peers", Name: "peer", Type: datatype.Inet}
-	datacenterPeersColumn             = &message.ColumnMetadata{Keyspace: "system", Table: "peers", Name: "data_center", Type: datatype.Varchar}
-	dseVersionPeersColumn             = &message.ColumnMetadata{Keyspace: "system", Table: "peers", Name: "dse_version", Type: datatype.Varchar}
-	graphPeersColumn                  = &message.ColumnMetadata{Keyspace: "system", Table: "peers", Name: "graph", Type: datatype.Boolean}
-	hostIdPeersColumn                 = &message.ColumnMetadata{Keyspace: "system", Table: "peers", Name: "host_id", Type: datatype.Uuid}
-	jmxPortPeersColumn                = &message.ColumnMetadata{Keyspace: "system", Table: "peers", Name: "jmx_port", Type: datatype.Int}
-	nativeTransportAddressPeersColumn = &message.ColumnMetadata{Keyspace: "system", Table: "peers", Name: "native_transport_address", Type: datatype.Inet}
-	nativeTransportPortPeersColumn    = &message.ColumnMetadata{Keyspace: "system", Table: "peers", Name: "native_transport_port", Type: datatype.Int}
-	nativeTransportPortSslPeersColumn = &message.ColumnMetadata{Keyspace: "system", Table: "peers", Name: "native_transport_port_ssl", Type: datatype.Int}
-	preferredIpPeersColumn            = &message.ColumnMetadata{Keyspace: "system", Table: "peers", Name: "preferred_ip", Type: datatype.Inet}
-	rackPeersColumn                   = &message.ColumnMetadata{Keyspace: "system", Table: "peers", Name: "rack", Type: datatype.Varchar}
-	releaseVersionPeersColumn         = &message.ColumnMetadata{Keyspace: "system", Table: "peers", Name: "release_version", Type: datatype.Varchar}
-	rpcAddressPeersColumn             = &message.ColumnMetadata{Keyspace: "system", Table: "peers", Name: "rpc_address", Type: datatype.Inet}
-	schemaVersionPeersColumn          = &message.ColumnMetadata{Keyspace: "system", Table: "peers", Name: "schema_version", Type: datatype.Uuid}
-	serverIdPeersColumn               = &message.ColumnMetadata{Keyspace: "system", Table: "peers", Name: "server_id", Type: datatype.Varchar}
-	storagePortPeersColumn            = &message.ColumnMetadata{Keyspace: "system", Table: "peers", Name: "storage_port", Type: datatype.Int}
-	storagePortSslPeersColumn         = &message.ColumnMetadata{Keyspace: "system", Table: "peers", Name: "storage_port_ssl", Type: datatype.Int}
-	tokensPeersColumn                 = &message.ColumnMetadata{Keyspace: "system", Table: "peers", Name: "tokens", Type: datatype.NewSetType(datatype.Varchar)}
-	workloadPeersColumn               = &message.ColumnMetadata{Keyspace: "system", Table: "peers", Name: "workload", Type: datatype.Varchar}
-	workloadsPeersColumn              = &message.ColumnMetadata{Keyspace: "system", Table: "peers", Name: "workloads", Type: datatype.NewSetType(datatype.Varchar)}
+	peerColumn                        = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemPeersTableName, Name: "peer", Type: datatype.Inet}
+	datacenterPeersColumn             = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemPeersTableName, Name: "data_center", Type: datatype.Varchar}
+	dseVersionPeersColumn             = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemPeersTableName, Name: "dse_version", Type: datatype.Varchar}
+	graphPeersColumn                  = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemPeersTableName, Name: "graph", Type: datatype.Boolean}
+	hostIdPeersColumn                 = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemPeersTableName, Name: "host_id", Type: datatype.Uuid}
+	jmxPortPeersColumn                = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemPeersTableName, Name: "jmx_port", Type: datatype.Int}
+	nativeTransportAddressPeersColumn = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemPeersTableName, Name: "native_transport_address", Type: datatype.Inet}
+	nativeTransportPortPeersColumn    = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemPeersTableName, Name: "native_transport_port", Type: datatype.Int}
+	nativeTransportPortSslPeersColumn = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemPeersTableName, Name: "native_transport_port_ssl", Type: datatype.Int}
+	preferredIpPeersColumn            = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemPeersTableName, Name: "preferred_ip", Type: datatype.Inet}
+	rackPeersColumn                   = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemPeersTableName, Name: "rack", Type: datatype.Varchar}
+	releaseVersionPeersColumn         = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemPeersTableName, Name: "release_version", Type: datatype.Varchar}
+	rpcAddressPeersColumn             = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemPeersTableName, Name: "rpc_address", Type: datatype.Inet}
+	schemaVersionPeersColumn          = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemPeersTableName, Name: "schema_version", Type: datatype.Uuid}
+	serverIdPeersColumn               = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemPeersTableName, Name: "server_id", Type: datatype.Varchar}
+	storagePortPeersColumn            = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemPeersTableName, Name: "storage_port", Type: datatype.Int}
+	storagePortSslPeersColumn         = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemPeersTableName, Name: "storage_port_ssl", Type: datatype.Int}
+	tokensPeersColumn                 = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemPeersTableName, Name: "tokens", Type: datatype.NewSetType(datatype.Varchar)}
+	workloadPeersColumn               = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemPeersTableName, Name: "workload", Type: datatype.Varchar}
+	workloadsPeersColumn              = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemPeersTableName, Name: "workloads", Type: datatype.NewSetType(datatype.Varchar)}
 )
 
 var systemPeersColumns = []*message.ColumnMetadata{
@@ -464,103 +584,115 @@ var systemPeersColumns = []*message.ColumnMetadata{
 }
 
 func NewSystemPeersRowsResult(
-	genericTypeCodec *GenericTypeCodec, version primitive.ProtocolVersion, virtualHosts []*VirtualHost,
-	localVirtualHostIndex int, proxyPort int, preferredIpColExists bool) (*message.RowsResult, error) {
+	genericTypeCodec *GenericTypeCodec, version primitive.ProtocolVersion, systemLocalColumnData map[string]*optionalColumn,
+	parsedSelectClause *selectClause, virtualHosts []*VirtualHost, localVirtualHostIndex int, proxyPort int) (*message.RowsResult, error) {
 
-	columns := make([]*message.ColumnMetadata, 0, len(systemPeersColumns))
-	addedColumns := make(map[string]interface{})
+	resultCols, hasCountSelector, err := filterSystemColumns(parsedSelectClause, systemPeersColumns, systemPeersTableName)
+	if err != nil {
+		return nil, err
+	}
+	columns := make([]*message.ColumnMetadata, 0, len(resultCols))
+	addedColumns := make([]string, 0, len(resultCols))
 	rows := make([][]interface{}, 0, len(virtualHosts) - 1)
-	first := true
-	for i := 0; i < len(virtualHosts); i++ {
-		errors := make([]error, 0)
+	isFirstRow := true
 
-		if i == localVirtualHostIndex && i != 0 && len(virtualHosts) != 1 {
+	// at least 1 iteration of this for cycle should be executed even if there is no peers rows to be returned
+	// so that the column metadata slice is filled
+	for i := 0; i < len(virtualHosts); i++ {
+
+		// skip this iteration if the current index matches the local proxy instance (so that it doesn't add itself to the peers table)
+		// but don't skip if this proxy instance is the only one (there are no peers) so that the columns are added
+		// we delete the row data afterwards if this resulted in the proxy adding itself to the peers row result
+		if i == localVirtualHostIndex && len(virtualHosts) != 1 {
 			continue
 		}
 
 		virtualHost := virtualHosts[i]
 
-		proxyAddress := virtualHost.Addr
-		host := virtualHost.Host
-		tokens := virtualHost.Tokens
+		row, err := getFilteredSystemValues(
+			systemPeersTableName, parsedSelectClause, isFirstRow, &columns, &addedColumns, resultCols,
+			systemLocalColumnData, virtualHost, proxyPort, len(virtualHosts)-1)
+		if err != nil {
+			return nil, fmt.Errorf("errors adding columns for system peers result: %w", err)
+		}
 
-		row := make([]interface{}, 0, len(columns))
-
-		addPeerColumn(first, &row, &columns, addedColumns, peerColumn, proxyAddress, &errors)
-		addPeerColumn(first, &row, &columns, addedColumns, datacenterPeersColumn, host.Datacenter, &errors)
-		addPeerColumnIfExists(first, &row, &columns, addedColumns, dseVersionPeersColumn, host.DseVersion, &errors)
-		addPeerColumnIfExists(first, &row, &columns, addedColumns, graphPeersColumn, host.Graph, &errors)
-		addPeerColumn(first, &row, &columns, addedColumns, hostIdPeersColumn, virtualHost.HostId, &errors)
-		addPeerColumnIfExists(first, &row, &columns, addedColumns, jmxPortPeersColumn, host.JmxPort, &errors)
-		overridePeerColumnIfExists(first, &row, &columns, addedColumns, nativeTransportAddressPeersColumn, host.NativeTransportAddress, proxyAddress, &errors)
-		overridePeerColumnIfExists(first, &row, &columns, addedColumns, nativeTransportPortPeersColumn, host.NativeTransportPort, proxyPort, &errors)
-		overridePeerColumnIfExists(first, &row, &columns, addedColumns, nativeTransportPortSslPeersColumn, host.NativeTransportPortSsl, proxyPort, &errors)
-		if preferredIpColExists {
-			addPeerColumn(first, &row, &columns, addedColumns, preferredIpPeersColumn, proxyAddress, &errors)
-		}
-		addPeerColumn(first, &row, &columns, addedColumns, rackPeersColumn, virtualHost.Rack, &errors)
-		addPeerColumn(first, &row, &columns, addedColumns, releaseVersionPeersColumn, host.ReleaseVersion, &errors)
-		addPeerColumn(first, &row, &columns, addedColumns, rpcAddressPeersColumn, proxyAddress, &errors)
-		if host.SchemaVersion == nil {
-			addPeerColumn(first, &row, &columns, addedColumns, schemaVersionPeersColumn, nil, &errors)
-		} else {
-			schemaId := primitive.UUID(*host.SchemaVersion)
-			addPeerColumn(first, &row, &columns, addedColumns, schemaVersionPeersColumn, &schemaId, &errors)
-		}
-		addPeerColumnIfExists(first, &row, &columns, addedColumns, serverIdPeersColumn, host.ServerId, &errors)
-		addPeerColumnIfExists(first, &row, &columns, addedColumns, storagePortPeersColumn, host.StoragePort, &errors)
-		addPeerColumnIfExists(first, &row, &columns, addedColumns, storagePortSslPeersColumn, host.StoragePortSsl, &errors)
-		addPeerColumn(first, &row, &columns, addedColumns, tokensPeersColumn, tokens, &errors)
-		addPeerColumnIfExists(first, &row, &columns, addedColumns, workloadPeersColumn, host.Workload, &errors)
-		addPeerColumnIfExists(first, &row, &columns, addedColumns, workloadsPeersColumn, host.Workloads, &errors)
-		if len(errors) > 0 {
-			return nil, fmt.Errorf("errors adding peer columns for host %v: %v", host.Address.String(), errors)
-		}
 		rows = append(rows, row)
-		first = false
+		isFirstRow = false
+		if hasCountSelector {
+			break
+		}
 	}
 
-	if localVirtualHostIndex == 0 && len(virtualHosts) == 1 {
+	// delete rows if the proxy added itself to the peers rows result
+	if localVirtualHostIndex == 0 && len(virtualHosts) == 1 && !hasCountSelector {
 		rows = [][]interface{}{}
+	} else if hasCountSelector && len(virtualHosts) == 1 {
+		for i, parsedSelector := range parsedSelectClause.GetSelectors() {
+			isCountSelector := false
+			switch typedSelector := parsedSelector.(type) {
+			case *countSelector:
+				isCountSelector = true
+			case *aliasedSelector:
+				_, ok := typedSelector.selector.(*countSelector)
+				isCountSelector = ok
+			}
+			if !isCountSelector {
+				rows[0][i] = nil
+			}
+		}
 	}
 
 	return EncodeRowsResult(genericTypeCodec, version, columns, rows)
 }
 
-func addPeerColumnHelper(first bool, row *[]interface{}, columns *[]*message.ColumnMetadata, addedColumnsByName map[string]interface{}, columnMetadata *message.ColumnMetadata, colExists bool, val interface{}, errors *[]error) {
+func addColumnHelper(
+	isStarSelector bool, first bool, row *[]interface{}, columns *[]*message.ColumnMetadata,
+	columnIndex int, processedColumns *[]string, columnMetadata *message.ColumnMetadata,
+	colExists bool, val interface{}) error {
 	if first {
 		if colExists {
 			*columns = append(*columns, columnMetadata)
 			*row = append(*row, convertNullableToValue(val))
-			addedColumnsByName[columnMetadata.Name] = true
+			*processedColumns = append(*processedColumns, columnMetadata.Name)
+		} else if !isStarSelector {
+			return fmt.Errorf("could not find value for column %s", columnMetadata.Name)
+		} else {
+			*processedColumns = append(*processedColumns, columnMetadata.Name)
 		}
 	} else {
-		_, columnIsAdded := addedColumnsByName[columnMetadata.Name]
-		if columnIsAdded != colExists {
-			*errors = append(*errors, fmt.Errorf("columns mismatch between hosts: " +
-				"columnIsAdded=%v existsInHost=%v name=%v", columnIsAdded, colExists, columnMetadata.Name))
-			return
+		if len(*processedColumns) <= columnIndex {
+			return fmt.Errorf("column length mismatch between hosts: " +
+				"processedColumns.len=%v columnIndex=%v name=%v", len(*processedColumns), columnIndex, columnMetadata.Name)
+		}
+
+		processedColumn := (*processedColumns)[columnIndex]
+		if processedColumn != columnMetadata.Name {
+			return fmt.Errorf("columns mismatch between hosts: " +
+				"processedColumn=%v columnToBeAdded=%v", processedColumn, columnMetadata.Name)
 		}
 
 		if colExists {
 			*row = append(*row, convertNullableToValue(val))
+		} else if !isStarSelector {
+			return fmt.Errorf("could not find value for column %s", columnMetadata.Name)
 		}
 	}
+	return nil
 }
 
-func addPeerColumnIfExists(first bool, row *[]interface{}, columns *[]*message.ColumnMetadata,
-	addedColumnsByName map[string]interface{}, columnMetadata *message.ColumnMetadata, col *optionalColumn, errors *[]error) {
-	addPeerColumnHelper(first, row, columns, addedColumnsByName, columnMetadata, col.exists, col.column, errors)
+func addColumnIfExists(isStarSelector bool, first bool, row *[]interface{}, columns *[]*message.ColumnMetadata,
+	addedColumns *[]string, columnIndex int, columnMetadata *message.ColumnMetadata, col *optionalColumn) error {
+	return addColumnHelper(isStarSelector, first, row, columns, columnIndex, addedColumns, columnMetadata, col.exists, col.column)
 }
 
-func overridePeerColumnIfExists(first bool, row *[]interface{}, columns *[]*message.ColumnMetadata,
-	addedColumnsByName map[string]interface{}, columnMetadata *message.ColumnMetadata, col *optionalColumn, val interface{}, errors *[]error) {
-	addPeerColumnHelper(first, row, columns, addedColumnsByName, columnMetadata, col.exists, val, errors)
+func overrideColumnIfExists(isStarSelector bool, first bool, row *[]interface{}, columns *[]*message.ColumnMetadata,
+	addedColumns *[]string, columnIndex int, columnMetadata *message.ColumnMetadata, col *optionalColumn, val interface{}) error {
+	return addColumnHelper(isStarSelector, first, row, columns, columnIndex, addedColumns, columnMetadata, col.exists, val)
 }
 
-func addPeerColumn(first bool, row *[]interface{}, columns *[]*message.ColumnMetadata,
-	addedColumnsByName map[string]interface{}, columnMetadata *message.ColumnMetadata, val interface{}, errors *[]error) {
-	addPeerColumnHelper(first, row, columns, addedColumnsByName, columnMetadata, true, val, errors)
+func addColumn(isStarSelector bool, first bool, row *[]interface{}, columns *[]*message.ColumnMetadata,
+	addedColumns *[]string, columnIndex int, columnMetadata *message.ColumnMetadata, val interface{}) error {
+	return addColumnHelper(isStarSelector, first, row, columns, columnIndex, addedColumns, columnMetadata, true, val)
 }
 
 func convertNullableToValue(val interface{}) interface{} {

@@ -5,6 +5,7 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
 	"github.com/stretchr/testify/require"
+	"sync/atomic"
 	"testing"
 )
 
@@ -156,10 +157,10 @@ func TestReplaceQueryString(t *testing.T) {
 			context := &frameDecodeContext{frame: test.f}
 			timeUuidGenerator, err := GetDefaultTimeUuidGenerator()
 			require.Nil(t, err)
-			statementsQueryData, err := context.GetOrInspectAllStatements(timeUuidGenerator)
+			statementsQueryData, err := context.GetOrInspectAllStatements(&atomic.Value{}, timeUuidGenerator)
 			require.Nil(t, err)
 			queryModifier := NewQueryModifier(timeUuidGenerator)
-			newContext, statementsReplacedTerms, err := queryModifier.replaceQueryString(context)
+			newContext, statementsReplacedTerms, err := queryModifier.replaceQueryString(&atomic.Value{}, context)
 			require.Nil(t, err)
 			require.Equal(t, len(test.positionsReplaced), len(statementsReplacedTerms))
 			require.Equal(t, len(test.replacedTerms), len(statementsReplacedTerms))

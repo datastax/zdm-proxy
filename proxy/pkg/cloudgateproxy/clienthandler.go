@@ -1275,7 +1275,7 @@ func (ch *ClientHandler) forwardRequest(request *frame.RawFrame, customResponseC
 	var replacedTerms []*statementReplacedTerms
 	var err error
 	if ch.conf.ReplaceServerSideFunctions {
-		context, replacedTerms, err = ch.queryModifier.replaceQueryString(context)
+		context, replacedTerms, err = ch.queryModifier.replaceQueryString(ch.currentKeyspaceName, context)
 	}
 
 	if err != nil {
@@ -1347,21 +1347,34 @@ func (ch *ClientHandler) executeStatement(
 				ErrorMessage: "unconfigured table peers_v2",
 			}
 		case peersV1:
-			interceptedQueryResponse, err = NewSystemPeersRowsResult(
-				typeCodec, f.Header.Version, virtualHosts, controlConn.GetLocalVirtualHostIndex(),
-				ch.conf.ProxyQueryPort, controlConn.PreferredIpColumnExists())
-			if err != nil {
-				return err
+			parsedSelectClause := castedStmtInfo.GetParsedSelectClause()
+			if parsedSelectClause == nil {
+				return fmt.Errorf("unable to intercept system.peers query because parsed select clause is nil")
 			}
+			interceptedQueryResponse, err = NewSystemPeersRowsResult(
+				typeCodec, f.Header.Version, controlConn.GetSystemLocalColumnData(), parsedSelectClause,
+				virtualHosts, controlConn.GetLocalVirtualHostIndex(), ch.conf.ProxyQueryPort)
 		case local:
+			parsedSelectClause := castedStmtInfo.GetParsedSelectClause()
+			if parsedSelectClause == nil {
+				return fmt.Errorf("unable to intercept system.local query because parsed select clause is nil")
+			}
 			localVirtualHost := virtualHosts[controlConn.GetLocalVirtualHostIndex()]
 			interceptedQueryResponse, err = NewSystemLocalRowsResult(
-				typeCodec, f.Header.Version, controlConn.GetSystemLocalInfo(), localVirtualHost, ch.conf.ProxyQueryPort)
-			if err != nil {
-				return err
-			}
+				typeCodec, f.Header.Version, controlConn.GetSystemLocalColumnData(), parsedSelectClause,
+				localVirtualHost, ch.conf.ProxyQueryPort)
 		default:
 			return fmt.Errorf("expected intercepted query type: %v", interceptedQueryType)
+		}
+
+		if err != nil {
+			if errVal, ok := err.(*ColumnNotFoundErr); ok {
+				interceptedQueryResponse = &message.Invalid{
+					ErrorMessage: fmt.Sprintf("Undefined column name %v", errVal.Name),
+				}
+			} else {
+				return err
+			}
 		}
 
 		interceptedResponseFrame := frame.NewFrame(f.Header.Version, f.Header.StreamId, interceptedQueryResponse)
