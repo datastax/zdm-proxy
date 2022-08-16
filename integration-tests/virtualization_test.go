@@ -397,14 +397,16 @@ func TestInterceptedQueries(t *testing.T) {
 
 	numTokens := 8
 
-	tests := []struct {
+	type testDefinition struct {
 		query              string
 		expectedCols       []string
 		expectedValues     [][]interface{}
 		errExpected        message.Message
 		proxyInstanceCount int
 		connectProxyIndex  int
-	}{
+	}
+
+	tests := []testDefinition{
 		{
 			query:        "SELECT * FROM system.local",
 			expectedCols: expectedLocalCols,
@@ -644,6 +646,47 @@ func TestInterceptedQueries(t *testing.T) {
 			connectProxyIndex:  0,
 		},
 	}
+
+	checkRowsResultFunc := func(t *testing.T, testVars testDefinition, queryResponseFrame *frame.Frame) {
+		queryRowsResult, ok := queryResponseFrame.Body.Message.(*message.RowsResult)
+		require.True(t, ok, queryResponseFrame.Body.Message)
+		require.Equal(t, len(testVars.expectedValues), len(queryRowsResult.Data))
+		var resultCols []string
+		for _, colMetadata := range queryRowsResult.Metadata.Columns {
+			resultCols = append(resultCols, colMetadata.Name)
+		}
+		require.Equal(t, testVars.expectedCols, resultCols)
+		for i, row := range queryRowsResult.Data {
+			require.Equal(t, len(testVars.expectedValues[i]), len(row))
+			for j, value := range row {
+				dcodec, err := datacodec.NewCodec(queryRowsResult.Metadata.Columns[j].Type)
+				require.Nil(t, err)
+				var dest interface{}
+				wasNull, err := dcodec.Decode(value, &dest, primitive.ProtocolVersion4)
+				require.Nil(t, err)
+				switch queryRowsResult.Metadata.Columns[j].Name {
+				case "schema_version":
+					require.IsType(t, primitive.UUID{}, dest)
+					require.NotNil(t, dest)
+					require.NotEqual(t, primitive.UUID{}, dest)
+				case "tokens":
+					tokens, ok := dest.([]*string)
+					require.True(t, ok)
+					require.Equal(t, numTokens, len(tokens))
+					for _, token := range tokens {
+						require.NotNil(t, token)
+						require.NotEqual(t, "", *token)
+					}
+				default:
+					if wasNull {
+						require.Nil(t, testVars.expectedValues[i][j], queryRowsResult.Metadata.Columns[j].Name)
+					} else {
+						require.Equal(t, testVars.expectedValues[i][j], dest, queryRowsResult.Metadata.Columns[j].Name)
+					}
+				}
+			}
+		}
+	}
 	for _, testVars := range tests {
 		t.Run(fmt.Sprintf("%s_proxy%d_%dtotalproxies", testVars.query, testVars.connectProxyIndex, testVars.proxyInstanceCount), func(t *testing.T) {
 			proxyInstanceCount := 3
@@ -676,44 +719,30 @@ func TestInterceptedQueries(t *testing.T) {
 			if testVars.errExpected != nil {
 				require.Equal(t, testVars.errExpected, queryResponseFrame.Body.Message)
 			} else {
-				queryRowsResult, ok := queryResponseFrame.Body.Message.(*message.RowsResult)
-				require.True(t, ok, queryResponseFrame.Body.Message)
-				require.Equal(t, len(testVars.expectedValues), len(queryRowsResult.Data))
-				var resultCols []string
-				for _, colMetadata := range queryRowsResult.Metadata.Columns {
-					resultCols = append(resultCols, colMetadata.Name)
+				checkRowsResultFunc(t, testVars, queryResponseFrame)
+			}
+
+			prepareMsg := &message.Prepare{
+				Query:    testVars.query,
+				Keyspace: "",
+			}
+			prepareFrame := frame.NewFrame(primitive.ProtocolVersion4, 0, prepareMsg)
+			prepareResponseFrame, err := cqlConnection.SendAndReceive(prepareFrame)
+			require.Nil(t, err)
+			if testVars.errExpected != nil {
+				require.Equal(t, testVars.errExpected, prepareResponseFrame.Body.Message)
+			} else {
+				preparedMsg, ok := prepareResponseFrame.Body.Message.(*message.PreparedResult)
+				require.True(t, ok, prepareResponseFrame.Body.Message)
+				executeMsg := &message.Execute{
+					QueryId:          preparedMsg.PreparedQueryId,
+					ResultMetadataId: preparedMsg.ResultMetadataId,
+					Options:          nil,
 				}
-				require.Equal(t, testVars.expectedCols, resultCols)
-				for i, row := range queryRowsResult.Data {
-					require.Equal(t, len(testVars.expectedValues[i]), len(row))
-					for j, value := range row {
-						dcodec, err := datacodec.NewCodec(queryRowsResult.Metadata.Columns[j].Type)
-						require.Nil(t, err)
-						var dest interface{}
-						wasNull, err := dcodec.Decode(value, &dest, primitive.ProtocolVersion4)
-						require.Nil(t, err)
-						switch queryRowsResult.Metadata.Columns[j].Name {
-						case "schema_version":
-							require.IsType(t, primitive.UUID{}, dest)
-							require.NotNil(t, dest)
-							require.NotEqual(t, primitive.UUID{}, dest)
-						case "tokens":
-							tokens, ok := dest.([]*string)
-							require.True(t, ok)
-							require.Equal(t, numTokens, len(tokens))
-							for _, token := range tokens {
-								require.NotNil(t, token)
-								require.NotEqual(t, "", *token)
-							}
-						default:
-							if wasNull {
-								require.Nil(t, testVars.expectedValues[i][j], queryRowsResult.Metadata.Columns[j].Name)
-							} else {
-								require.Equal(t, testVars.expectedValues[i][j], dest, queryRowsResult.Metadata.Columns[j].Name)
-							}
-						}
-					}
-				}
+				executeFrame := frame.NewFrame(primitive.ProtocolVersion4, 0, executeMsg)
+				executeResponseFrame, err := cqlConnection.SendAndReceive(executeFrame)
+				require.Nil(t, err)
+				checkRowsResultFunc(t, testVars, executeResponseFrame)
 			}
 		})
 	}

@@ -52,6 +52,14 @@ type QueryInfo interface {
 	getKeyspaceName() string
 	getTableName() string
 
+	// Returns the "current" keyspace when this request was parsed. This could have been set by a "USE" request beforehand
+	// or by using the keyspace query/prepare flag in v5 or DseV2.
+	getRequestKeyspace() string
+
+	// Returns the keyspace name in the query string if present (getKeyspaceName()). Otherwise, it returns the "current" keyspace
+	// when this request was parsed (getRequestKeyspace()).
+	getApplicableKeyspace() string
+
 	// Below methods are only relevant for INSERT statements,
 	// or BATCH statements containing INSERT statements.
 
@@ -93,10 +101,10 @@ func inspectCqlQuery(query string, currentKeyspace string, timeUuidGenerator Tim
 	defer parserPool.Put(cqlParser)
 	cqlParser.SetInputStream(stream)
 	listener := &cqlListener {
-		query: query,
-		statementType: statementTypeOther,
+		query:             query,
+		statementType:     statementTypeOther,
 		timeUuidGenerator: timeUuidGenerator,
-		connectionKeyspace: currentKeyspace,
+		requestKeyspace:   currentKeyspace,
 	}
 	antlr.ParseTreeWalkerDefault.Walk(listener, cqlParser.CqlStatement())
 	return listener
@@ -314,7 +322,7 @@ type cqlListener struct {
 
 	timeUuidGenerator TimeUuidGenerator
 
-	connectionKeyspace string
+	requestKeyspace string
 }
 
 func (l *cqlListener) getQuery() string {
@@ -331,6 +339,18 @@ func (l *cqlListener) getKeyspaceName() string {
 
 func (l *cqlListener) getTableName() string {
 	return l.tableName
+}
+
+func (l *cqlListener) getRequestKeyspace() string {
+	return l.requestKeyspace
+}
+
+func (l *cqlListener) getApplicableKeyspace() string {
+	keyspaceName := l.getKeyspaceName()
+	if keyspaceName != "" {
+		return keyspaceName
+	}
+	return l.getRequestKeyspace()
 }
 
 func (l *cqlListener) getParsedStatements() []*parsedStatement {
@@ -376,11 +396,7 @@ func (l *cqlListener) EnterCqlStatement(ctx *parser.CqlStatementContext) {
 }
 
 func (l *cqlListener) ExitSelectStatement(ctx *parser.SelectStatementContext) {
-	if l.getKeyspaceName() == "" && !isSystemKeyspace(l.connectionKeyspace) {
-		return
-	}
-
-	if l.getKeyspaceName() != "" && !isSystemKeyspace(l.getKeyspaceName()) {
+	if !isSystemKeyspace(l.getApplicableKeyspace()) {
 		return
 	}
 
@@ -884,7 +900,8 @@ func (l *cqlListener) shallowClone() *cqlListener {
 		currentPositionalIndex:    l.currentPositionalIndex,
 		currentBatchChildIndex:    l.currentBatchChildIndex,
 		timeUuidGenerator:         l.timeUuidGenerator,
-		connectionKeyspace:        l.connectionKeyspace,
+		requestKeyspace:           l.requestKeyspace,
+		parsedSelectClause:        l.parsedSelectClause,
 	}
 }
 

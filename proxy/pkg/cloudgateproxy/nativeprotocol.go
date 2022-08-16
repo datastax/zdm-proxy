@@ -1,6 +1,7 @@
 package cloudgateproxy
 
 import (
+	"crypto/md5"
 	"errors"
 	"fmt"
 	"github.com/datastax/go-cassandra-native-protocol/datatype"
@@ -152,6 +153,28 @@ func (recv *ParsedRow) IsNull(column string) bool {
 	}
 
 	return val == nil
+}
+
+func EncodePreparedResult(
+	prepareRequestInfo *PrepareRequestInfo, connectionKeyspace string, columns []*message.ColumnMetadata) (
+	*message.PreparedResult, error) {
+	if len(columns) == 0 {
+		return nil, errors.New("could not compute column metadata for system peers prepared result")
+	}
+
+	query := prepareRequestInfo.GetQuery()
+	keyspace := prepareRequestInfo.GetKeyspace()
+	if keyspace == "" {
+		keyspace = connectionKeyspace
+	}
+	id := md5.Sum([]byte(query + keyspace))
+	return &message.PreparedResult{
+		PreparedQueryId: id[:],
+		ResultMetadata: &message.RowsMetadata{
+			ColumnCount: int32(len(columns)),
+			Columns:     columns,
+		},
+	}, nil
 }
 
 /*
@@ -474,9 +497,12 @@ func getFilteredSystemValues(
 	return row, nil
 }
 
-func NewSystemLocalRowsResult(
-	genericTypeCodec *GenericTypeCodec, version primitive.ProtocolVersion, systemLocalColumnData map[string]*optionalColumn,
-	parsedSelectClause *selectClause, virtualHost *VirtualHost, proxyPort int) (*message.RowsResult, error) {
+// NewSystemLocalResult returns a PreparedResult if the prepareRequestInfo parameter is not nil and it returns a
+// RowsResult if prepareRequestInfo is nil.
+func NewSystemLocalResult(
+	prepareRequestInfo *PrepareRequestInfo, connectionKeyspace string, genericTypeCodec *GenericTypeCodec,
+	version primitive.ProtocolVersion, systemLocalColumnData map[string]*optionalColumn,
+	parsedSelectClause *selectClause, virtualHost *VirtualHost, proxyPort int) (message.Result, error) {
 
 	resultCols, _, err := filterSystemColumns(parsedSelectClause, systemLocalColumns, systemLocalTableName)
 	if err != nil {
@@ -490,10 +516,14 @@ func NewSystemLocalRowsResult(
 		"local", parsedSelectClause, true, &columns, &addedColumns, resultCols,
 		systemLocalColumnData, virtualHost, proxyPort, rowCount)
 	if err != nil {
-		return nil, fmt.Errorf("errors adding columns for system local result: %w", err)
+		return nil, fmt.Errorf("errors adding columns for system local result (prepare=%v): %w", prepareRequestInfo != nil, err)
 	}
 
-	return EncodeRowsResult(genericTypeCodec, version, columns, [][]interface{}{row})
+	if prepareRequestInfo != nil {
+		return EncodePreparedResult(prepareRequestInfo, connectionKeyspace, columns)
+	} else {
+		return EncodeRowsResult(genericTypeCodec, version, columns, [][]interface{}{row})
+	}
 }
 
 /*
@@ -583,9 +613,12 @@ var systemPeersColumns = []*message.ColumnMetadata{
 	workloadsPeersColumn,
 }
 
-func NewSystemPeersRowsResult(
-	genericTypeCodec *GenericTypeCodec, version primitive.ProtocolVersion, systemLocalColumnData map[string]*optionalColumn,
-	parsedSelectClause *selectClause, virtualHosts []*VirtualHost, localVirtualHostIndex int, proxyPort int) (*message.RowsResult, error) {
+// NewSystemPeersResult returns a PreparedResult if the prepareRequestInfo parameter is not nil and it returns a
+// RowsResult if prepareRequestInfo is nil.
+func NewSystemPeersResult(
+	prepareRequestInfo *PrepareRequestInfo, connectionKeyspace string, genericTypeCodec *GenericTypeCodec,
+	version primitive.ProtocolVersion, systemLocalColumnData map[string]*optionalColumn, parsedSelectClause *selectClause,
+	virtualHosts []*VirtualHost, localVirtualHostIndex int, proxyPort int) (message.Result, error) {
 
 	resultCols, hasCountSelector, err := filterSystemColumns(parsedSelectClause, systemPeersColumns, systemPeersTableName)
 	if err != nil {
@@ -616,11 +649,20 @@ func NewSystemPeersRowsResult(
 			return nil, fmt.Errorf("errors adding columns for system peers result: %w", err)
 		}
 
+		if prepareRequestInfo != nil {
+			// we only need column metadata and only 1 iteration needed to compute that
+			break
+		}
+
 		rows = append(rows, row)
 		isFirstRow = false
 		if hasCountSelector {
 			break
 		}
+	}
+
+	if prepareRequestInfo != nil {
+		return EncodePreparedResult(prepareRequestInfo, connectionKeyspace, columns)
 	}
 
 	// delete rows if the proxy added itself to the peers rows result

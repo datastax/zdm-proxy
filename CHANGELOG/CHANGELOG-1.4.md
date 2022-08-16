@@ -10,3 +10,4 @@ When cutting a new release, update the `unreleased` heading to the tag being gen
 
 * [ZDM-322](https://datastax.jira.com/browse/ZDM-322) Enable the proxy to also connect to clusters that use the RandomPartitioner
 * [ZDM-254](https://datastax.jira.com/browse/ZDM-254) Filter result set columns of intercepted queries according to the query
+* [ZDM-255](https://datastax.jira.com/browse/ZDM-255) Intercept prepared statements for system.local and system.peers tables

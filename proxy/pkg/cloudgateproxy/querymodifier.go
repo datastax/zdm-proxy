@@ -6,7 +6,6 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"sync/atomic"
 )
 
 type QueryModifier struct {
@@ -20,7 +19,7 @@ func NewQueryModifier(timeUuidGenerator TimeUuidGenerator) *QueryModifier {
 // replaceQueryString modifies the incoming request in certain conditions:
 //   * the request is a QUERY or PREPARE
 //   * and it contains now() function calls
-func (recv *QueryModifier) replaceQueryString(currentKeyspace *atomic.Value, context *frameDecodeContext) (*frameDecodeContext, []*statementReplacedTerms, error) {
+func (recv *QueryModifier) replaceQueryString(currentKeyspace string, context *frameDecodeContext) (*frameDecodeContext, []*statementReplacedTerms, error) {
 	decodedFrame, statementsQueryData, err := context.GetOrDecodeAndInspect(currentKeyspace, recv.timeUuidGenerator)
 	if err != nil {
 		if errors.Is(err, NotInspectableErr) {

@@ -20,14 +20,14 @@ func TestAddValuesToExecuteFrame_NoReplacedTerms(t *testing.T) {
 		ResultMetadataId: nil,
 		Options:          &message.QueryOptions{},
 	})
-	preparedStmtInfo := NewPreparedStatementInfo(NewGenericStatementInfo(forwardToBoth, false), []*term{}, false, "", "")
+	prepareRequestInfo := NewPrepareRequestInfo(NewGenericRequestInfo(forwardToBoth, false), []*term{}, false, "", "")
 	variablesMetadata := &message.VariablesMetadata{
 		PkIndices: nil,
 		Columns:   nil,
 	}
 	fClone := f.Clone()
-	replacementTimeUuids := parameterModifier.generateTimeUuids(preparedStmtInfo)
-	newMsg, err := parameterModifier.AddValuesToExecuteFrame(fClone, preparedStmtInfo, variablesMetadata, replacementTimeUuids)
+	replacementTimeUuids := parameterModifier.generateTimeUuids(prepareRequestInfo)
+	newMsg, err := parameterModifier.AddValuesToExecuteFrame(fClone, prepareRequestInfo, variablesMetadata, replacementTimeUuids)
 	require.Same(t, fClone.Body.Message, newMsg)
 	require.NotSame(t, f.Body.Message, newMsg)
 	require.Equal(t, f.Body.Message, newMsg)
@@ -42,13 +42,13 @@ func TestAddValuesToExecuteFrame_InvalidMessageType(t *testing.T) {
 		Query:   "SELECT * FROM asd WHERE a = :param1",
 		Options: &message.QueryOptions{},
 	})
-	preparedStmtInfo := NewPreparedStatementInfo(NewGenericStatementInfo(forwardToBoth, false), []*term{}, false, "", "")
+	prepareRequestInfo := NewPrepareRequestInfo(NewGenericRequestInfo(forwardToBoth, false), []*term{}, false, "", "")
 	variablesMetadata := &message.VariablesMetadata{
 		PkIndices: nil,
 		Columns:   nil,
 	}
-	replacementTimeUuids := parameterModifier.generateTimeUuids(preparedStmtInfo)
-	_, err = parameterModifier.AddValuesToExecuteFrame(f, preparedStmtInfo, variablesMetadata, replacementTimeUuids)
+	replacementTimeUuids := parameterModifier.generateTimeUuids(prepareRequestInfo)
+	_, err = parameterModifier.AddValuesToExecuteFrame(f, prepareRequestInfo, variablesMetadata, replacementTimeUuids)
 	require.NotNil(t, err)
 }
 
@@ -205,10 +205,10 @@ func TestAddValuesToExecuteFrame_PositionalValues(t *testing.T) {
 				Options:          clonedQueryOpts,
 			})
 			containsPositionalMarkers := ((len(requestPosVals)+len(replacedTerms)) > 0) && !test.prepareContainsNamedValues
-			preparedStmtInfo := NewPreparedStatementInfo(NewGenericStatementInfo(forwardToBoth, false), replacedTerms, containsPositionalMarkers, "", "")
+			prepareRequestInfo := NewPrepareRequestInfo(NewGenericRequestInfo(forwardToBoth, false), replacedTerms, containsPositionalMarkers, "", "")
 
-			replacementTimeUuids := parameterModifier.generateTimeUuids(preparedStmtInfo)
-			executeMsg, err := parameterModifier.AddValuesToExecuteFrame(f, preparedStmtInfo, vm, replacementTimeUuids)
+			replacementTimeUuids := parameterModifier.generateTimeUuids(prepareRequestInfo)
+			executeMsg, err := parameterModifier.AddValuesToExecuteFrame(f, prepareRequestInfo, vm, replacementTimeUuids)
 
 			require.Nil(t, err)
 			require.Equal(t, len(requestPosVals) + len(replacedTerms), len(executeMsg.Options.PositionalValues))
@@ -350,10 +350,10 @@ func TestAddValuesToExecuteFrame_NamedValues(t *testing.T) {
 				ResultMetadataId: nil,
 				Options:          clonedQueryOpts,
 			})
-			preparedStmtInfo := NewPreparedStatementInfo(NewGenericStatementInfo(forwardToBoth, false), replacedTerms, false, "", "")
+			prepareRequestInfo := NewPrepareRequestInfo(NewGenericRequestInfo(forwardToBoth, false), replacedTerms, false, "", "")
 
-			replacementTimeUuids := parameterModifier.generateTimeUuids(preparedStmtInfo)
-			executeMsg, err := parameterModifier.AddValuesToExecuteFrame(f, preparedStmtInfo, vm, replacementTimeUuids)
+			replacementTimeUuids := parameterModifier.generateTimeUuids(prepareRequestInfo)
+			executeMsg, err := parameterModifier.AddValuesToExecuteFrame(f, prepareRequestInfo, vm, replacementTimeUuids)
 
 			require.Nil(t, err)
 			if len(replacedTerms) == 0 {

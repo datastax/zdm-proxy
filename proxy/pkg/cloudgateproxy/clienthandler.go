@@ -663,7 +663,7 @@ func (ch *ClientHandler) finishRequest(holder *requestContextHolder, reqCtx *req
 	}
 
 	proxyMetrics := ch.metricHandler.GetProxyMetrics()
-	switch reqCtx.stmtInfo.GetForwardDecision() {
+	switch reqCtx.requestInfo.GetForwardDecision() {
 	case forwardToBoth:
 		proxyMetrics.ProxyRequestDurationBoth.Track(reqCtx.startTime)
 		proxyMetrics.InFlightRequestsBoth.Subtract(1)
@@ -675,12 +675,12 @@ func (ch *ClientHandler) finishRequest(holder *requestContextHolder, reqCtx *req
 		proxyMetrics.InFlightRequestsTarget.Subtract(1)
 	case forwardToAsyncOnly, forwardToNone:
 	default:
-		log.Errorf("unexpected forwardDecision %v, unable to track proxy level metrics", reqCtx.stmtInfo.GetForwardDecision())
+		log.Errorf("unexpected forwardDecision %v, unable to track proxy level metrics", reqCtx.requestInfo.GetForwardDecision())
 	}
 
 	aggregatedResponse, responseClusterType, err := ch.computeClientResponse(reqCtx)
 	finalResponse := aggregatedResponse
-	if err == nil && reqCtx.stmtInfo.GetForwardDecision() != forwardToAsyncOnly {
+	if err == nil && reqCtx.requestInfo.GetForwardDecision() != forwardToAsyncOnly {
 		// async only requests can't have "PREPARED", "SETKEYSPACE" or "UNPREPARED" responses so skip this
 		finalResponse, err = ch.processClientResponse(aggregatedResponse, responseClusterType, reqCtx)
 	}
@@ -720,7 +720,7 @@ func (ch *ClientHandler) cancelRequest(holder *requestContextHolder, reqCtx *req
 	}
 
 	proxyMetrics := ch.metricHandler.GetProxyMetrics()
-	switch reqCtx.stmtInfo.GetForwardDecision() {
+	switch reqCtx.requestInfo.GetForwardDecision() {
 	case forwardToBoth:
 		proxyMetrics.InFlightRequestsBoth.Subtract(1)
 	case forwardToOrigin:
@@ -729,7 +729,7 @@ func (ch *ClientHandler) cancelRequest(holder *requestContextHolder, reqCtx *req
 		proxyMetrics.InFlightRequestsTarget.Subtract(1)
 	case forwardToAsyncOnly, forwardToNone:
 	default:
-		log.Errorf("unexpected forwardDecision %v, unable to track proxy level metrics", reqCtx.stmtInfo.GetForwardDecision())
+		log.Errorf("unexpected forwardDecision %v, unable to track proxy level metrics", reqCtx.requestInfo.GetForwardDecision())
 	}
 
 	if reqCtx.customResponseChannel != nil {
@@ -741,7 +741,7 @@ func (ch *ClientHandler) cancelRequest(holder *requestContextHolder, reqCtx *req
 
 // Computes the response to be sent to the client based on the forward decision of the request.
 func (ch *ClientHandler) computeClientResponse(requestContext *requestContextImpl) (*frame.RawFrame, ClusterType, error) {
-	fwdDecision := requestContext.stmtInfo.GetForwardDecision()
+	fwdDecision := requestContext.requestInfo.GetForwardDecision()
 	switch fwdDecision {
 	case forwardToOrigin:
 		if requestContext.originResponse == nil {
@@ -837,7 +837,7 @@ func (ch *ClientHandler) processClientResponse(
 			if bodyMsg.Keyspace == "" {
 				log.Warnf("unexpected set keyspace empty")
 			} else {
-				ch.currentKeyspaceName.Store(bodyMsg.Keyspace)
+				ch.StoreCurrentKeyspace(bodyMsg.Keyspace)
 			}
 		case *message.Unprepared:
 			var unpreparedId []byte
@@ -885,9 +885,9 @@ func (ch *ClientHandler) processPreparedResponse(
 	response *frame.Frame, bodyMsg *message.PreparedResult, reqCtx *requestContextImpl) (*frame.Frame, error) {
 	if bodyMsg.PreparedQueryId == nil {
 		return nil, errors.New("unexpected prepared query id nil")
-	} else if reqCtx.stmtInfo == nil {
+	} else if reqCtx.requestInfo == nil {
 		return nil, errors.New("unexpected statement info nil on request context")
-	} else if preparedStmtInfo, ok := reqCtx.stmtInfo.(*PreparedStatementInfo); !ok {
+	} else if prepareRequestInfo, ok := reqCtx.requestInfo.(*PrepareRequestInfo); !ok {
 		return nil, errors.New("unexpected request context statement info is not prepared statement info")
 	} else if reqCtx.targetResponse == nil {
 		return nil, errors.New("unexpected target response nil")
@@ -903,7 +903,7 @@ func (ch *ClientHandler) processPreparedResponse(
 		}
 
 		newResponse := response
-		if len(preparedStmtInfo.replacedTerms) > 0 {
+		if len(prepareRequestInfo.replacedTerms) > 0 {
 			if bodyMsg.VariablesMetadata == nil {
 				return nil, fmt.Errorf("replaced terms in the prepared statement but prepared result doesn't have variables metadata: %v", bodyMsg)
 			}
@@ -915,10 +915,10 @@ func (ch *ClientHandler) processPreparedResponse(
 					"cloned PreparedResult is of different type: %v", newResponse.Body)
 			}
 
-			if preparedStmtInfo.ContainsPositionalMarkers() {
-				positionalMarkersToRemove := make([]int, 0, len(preparedStmtInfo.replacedTerms))
+			if prepareRequestInfo.ContainsPositionalMarkers() {
+				positionalMarkersToRemove := make([]int, 0, len(prepareRequestInfo.replacedTerms))
 				positionalMarkerOffset := 0
-				for _, replacedTerm := range preparedStmtInfo.replacedTerms {
+				for _, replacedTerm := range prepareRequestInfo.replacedTerms {
 					positionalMarkersToRemove = append(
 						positionalMarkersToRemove,
 						positionalMarkerOffset+replacedTerm.previousPositionalIndex+1)
@@ -991,7 +991,7 @@ func (ch *ClientHandler) processPreparedResponse(
 			}
 		}
 
-		ch.preparedStatementCache.Store(bodyMsg, targetPreparedResult, preparedStmtInfo)
+		ch.preparedStatementCache.Store(bodyMsg, targetPreparedResult, prepareRequestInfo)
 		return newResponse, nil
 	}
 }
@@ -1271,18 +1271,19 @@ func (ch *ClientHandler) forwardRequest(request *frame.RawFrame, customResponseC
 
 	log.Tracef("Request frame: %v", request)
 
+	currentKeyspace := ch.LoadCurrentKeyspace()
 	context := NewFrameDecodeContext(request)
 	var replacedTerms []*statementReplacedTerms
 	var err error
 	if ch.conf.ReplaceServerSideFunctions {
-		context, replacedTerms, err = ch.queryModifier.replaceQueryString(ch.currentKeyspaceName, context)
+		context, replacedTerms, err = ch.queryModifier.replaceQueryString(currentKeyspace, context)
 	}
 
 	if err != nil {
 		return err
 	}
-	stmtInfo, err := buildStatementInfo(
-		context, replacedTerms, ch.preparedStatementCache, ch.metricHandler, ch.currentKeyspaceName, ch.conf.ForwardReadsToTarget,
+	requestInfo, err := buildRequestInfo(
+		context, replacedTerms, ch.preparedStatementCache, ch.metricHandler, currentKeyspace, ch.conf.ForwardReadsToTarget,
 		ch.conf.ForwardSystemQueriesToTarget, ch.topologyConfig.VirtualizationEnabled, ch.forwardAuthToTarget, ch.timeUuidGenerator)
 	if err != nil {
 		if errVal, ok := err.(*UnpreparedExecuteError); ok {
@@ -1303,212 +1304,40 @@ func (ch *ClientHandler) forwardRequest(request *frame.RawFrame, customResponseC
 	}
 
 	requestTimeout := time.Duration(ch.conf.RequestTimeoutMs) * time.Millisecond
-	err = ch.executeStatement(context, stmtInfo, overallRequestStartTime, customResponseChannel, requestTimeout)
+	err = ch.executeRequest(context, requestInfo, currentKeyspace, overallRequestStartTime, customResponseChannel, requestTimeout)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-// executeStatement executes the forward decision and waits for one or two responses, then returns the response
+// executeRequest executes the forward decision and waits for one or two responses, then returns the response
 // that should be sent back to the client.
-func (ch *ClientHandler) executeStatement(
-	frameContext *frameDecodeContext, stmtInfo StatementInfo, overallRequestStartTime time.Time,
-	customResponseChannel chan *customResponse, requestTimeout time.Duration) error {
-	fwdDecision := stmtInfo.GetForwardDecision()
+func (ch *ClientHandler) executeRequest(
+	frameContext *frameDecodeContext, requestInfo RequestInfo, currentKeyspace string,
+	overallRequestStartTime time.Time, customResponseChannel chan *customResponse, requestTimeout time.Duration) error {
+	fwdDecision := requestInfo.GetForwardDecision()
 	log.Tracef("Opcode: %v, Forward decision: %v", frameContext.GetRawFrame().Header.OpCode, fwdDecision)
 
 	f := frameContext.GetRawFrame()
 	originRequest := f
 	targetRequest := f
 	var clientResponse *frame.RawFrame
+	var err error
 
-	switch castedStmtInfo := stmtInfo.(type) {
-	case *InterceptedStatementInfo:
-		interceptedQueryType := castedStmtInfo.GetQueryType()
-		var interceptedQueryResponse message.Message
-		var err error
-		var controlConn *ControlConn
-		if ch.conf.ForwardSystemQueriesToTarget {
-			controlConn = ch.targetControlConn
-		} else {
-			controlConn = ch.originControlConn
-		}
-		virtualHosts, err := controlConn.GetVirtualHosts()
-		if err != nil {
-			return err
-		}
+	switch castedRequestInfo := requestInfo.(type) {
+	case *InterceptedRequestInfo:
+		clientResponse, err = ch.handleInterceptedRequest(castedRequestInfo, frameContext, currentKeyspace)
+	case *PrepareRequestInfo:
+		clientResponse, originRequest, targetRequest, err = ch.handlePrepareRequest(castedRequestInfo, frameContext, currentKeyspace)
+	case *ExecuteRequestInfo:
+		clientResponse, originRequest, targetRequest, err = ch.handleExecuteRequest(castedRequestInfo, frameContext, currentKeyspace)
+	case *BatchRequestInfo:
+		originRequest, targetRequest, err = ch.handleBatchRequest(castedRequestInfo, frameContext)
+	}
 
-		typeCodec := GetDefaultGenericTypeCodec()
-
-		switch interceptedQueryType {
-		case peersV2:
-			interceptedQueryResponse = &message.Invalid {
-				ErrorMessage: "unconfigured table peers_v2",
-			}
-		case peersV1:
-			parsedSelectClause := castedStmtInfo.GetParsedSelectClause()
-			if parsedSelectClause == nil {
-				return fmt.Errorf("unable to intercept system.peers query because parsed select clause is nil")
-			}
-			interceptedQueryResponse, err = NewSystemPeersRowsResult(
-				typeCodec, f.Header.Version, controlConn.GetSystemLocalColumnData(), parsedSelectClause,
-				virtualHosts, controlConn.GetLocalVirtualHostIndex(), ch.conf.ProxyQueryPort)
-		case local:
-			parsedSelectClause := castedStmtInfo.GetParsedSelectClause()
-			if parsedSelectClause == nil {
-				return fmt.Errorf("unable to intercept system.local query because parsed select clause is nil")
-			}
-			localVirtualHost := virtualHosts[controlConn.GetLocalVirtualHostIndex()]
-			interceptedQueryResponse, err = NewSystemLocalRowsResult(
-				typeCodec, f.Header.Version, controlConn.GetSystemLocalColumnData(), parsedSelectClause,
-				localVirtualHost, ch.conf.ProxyQueryPort)
-		default:
-			return fmt.Errorf("expected intercepted query type: %v", interceptedQueryType)
-		}
-
-		if err != nil {
-			if errVal, ok := err.(*ColumnNotFoundErr); ok {
-				interceptedQueryResponse = &message.Invalid{
-					ErrorMessage: fmt.Sprintf("Undefined column name %v", errVal.Name),
-				}
-			} else {
-				return err
-			}
-		}
-
-		interceptedResponseFrame := frame.NewFrame(f.Header.Version, f.Header.StreamId, interceptedQueryResponse)
-		interceptedResponseRawFrame, err := defaultCodec.ConvertToRawFrame(interceptedResponseFrame)
-		if err != nil {
-			return fmt.Errorf("could not convert intercepted response frame %v: %w", interceptedResponseFrame, err)
-		}
-
-		clientResponse = interceptedResponseRawFrame
-	case *BoundStatementInfo:
-		sendToAsyncConnector := (castedStmtInfo.ShouldAlsoBeSentAsync() || fwdDecision == forwardToAsyncOnly) && ch.asyncConnector != nil
-		preparedData := castedStmtInfo.GetPreparedData()
-		preparedStmtInfo := preparedData.GetPreparedStatementInfo()
-		replacedTerms := preparedStmtInfo.GetReplacedTerms()
-		asyncConnectorIsOrigin := ch.asyncConnector != nil && ch.asyncConnector.clusterType == ClusterTypeOrigin
-		var replacementTimeUuids []*uuid.UUID
-		if len(replacedTerms) > 0 && (fwdDecision == forwardToBoth || fwdDecision == forwardToOrigin || (sendToAsyncConnector && asyncConnectorIsOrigin)) {
-			clientRequest, err := frameContext.GetOrDecodeFrame()
-			if err != nil {
-				return fmt.Errorf("could not decode execute raw frame: %w", err)
-			}
-
-			replacementTimeUuids = ch.parameterModifier.generateTimeUuids(preparedStmtInfo)
-			newOriginRequest := clientRequest.Clone()
-			_, err = ch.parameterModifier.AddValuesToExecuteFrame(
-				newOriginRequest, preparedStmtInfo, preparedData.GetOriginVariablesMetadata(), replacementTimeUuids)
-			if err != nil {
-				return fmt.Errorf("could not add values to origin EXECUTE: %w", err)
-			}
-
-			originExecuteRequestRaw, err := defaultCodec.ConvertToRawFrame(newOriginRequest)
-			if err != nil {
-				return fmt.Errorf("could not convert origin EXECUTE response to raw frame: %w", err)
-			}
-
-			originRequest = originExecuteRequestRaw
-		}
-
-		asyncConnectorIsTarget := ch.asyncConnector != nil && ch.asyncConnector.clusterType == ClusterTypeTarget
-		if fwdDecision == forwardToBoth || fwdDecision == forwardToTarget || (sendToAsyncConnector && asyncConnectorIsTarget) {
-			clientRequest, err := frameContext.GetOrDecodeFrame()
-			if err != nil {
-				return fmt.Errorf("could not decode execute raw frame: %w", err)
-			}
-
-			newTargetRequest := clientRequest.Clone()
-			var newTargetExecuteMsg *message.Execute
-			if len(replacedTerms) > 0 {
-				if replacementTimeUuids == nil {
-					replacementTimeUuids = ch.parameterModifier.generateTimeUuids(preparedStmtInfo)
-				}
-				newTargetExecuteMsg, err = ch.parameterModifier.AddValuesToExecuteFrame(
-					newTargetRequest, preparedStmtInfo, preparedData.GetTargetVariablesMetadata(), replacementTimeUuids)
-				if err != nil {
-					return fmt.Errorf("could not add values to target EXECUTE: %w", err)
-				}
-			} else {
-				var ok bool
-				newTargetExecuteMsg, ok = newTargetRequest.Body.Message.(*message.Execute)
-				if !ok {
-					return fmt.Errorf("expected Execute but got %v instead", newTargetRequest.Body.Message.GetOpCode())
-				}
-			}
-
-			originalQueryId := newTargetExecuteMsg.QueryId
-			newTargetExecuteMsg.QueryId = preparedData.GetTargetPreparedId()
-			log.Tracef("Replacing prepared ID %s with %s for target cluster.",
-				hex.EncodeToString(originalQueryId), hex.EncodeToString(newTargetExecuteMsg.QueryId))
-
-			newTargetRequestRaw, err := defaultCodec.ConvertToRawFrame(newTargetRequest)
-			if err != nil {
-				return fmt.Errorf("could not convert target EXECUTE response to raw frame: %w", err)
-			}
-
-			targetRequest = newTargetRequestRaw
-		}
-	case *BatchStatementInfo:
-		decodedFrame, err := frameContext.GetOrDecodeFrame()
-		if err != nil {
-			return fmt.Errorf("could not decode batch raw frame: %w", err)
-		}
-
-		var newOriginRequest *frame.Frame
-		var newOriginBatchMsg *message.Batch
-
-		newTargetRequest := decodedFrame.Clone()
-		newTargetBatchMsg, ok := newTargetRequest.Body.Message.(*message.Batch)
-		if !ok {
-			return fmt.Errorf("expected Batch but got %v instead", newTargetRequest.Body.Message.GetOpCode())
-		}
-
-		for stmtIdx, preparedData := range castedStmtInfo.GetPreparedDataByStmtIdx() {
-			preparedStmtInfo := preparedData.GetPreparedStatementInfo()
-			if len(preparedStmtInfo.GetReplacedTerms()) > 0 {
-				if newOriginRequest == nil {
-					newOriginRequest = decodedFrame.Clone()
-					newOriginBatchMsg, ok = newOriginRequest.Body.Message.(*message.Batch)
-					if !ok {
-						return fmt.Errorf("expected Batch but got %v instead", newOriginRequest.Body.Message.GetOpCode())
-					}
-				}
-				replacementTimeUuids := ch.parameterModifier.generateTimeUuids(preparedStmtInfo)
-				err = ch.parameterModifier.addValuesToBatchChild(decodedFrame.Header.Version, newTargetBatchMsg.Children[stmtIdx],
-					preparedData.GetPreparedStatementInfo(), preparedData.GetTargetVariablesMetadata(), replacementTimeUuids)
-				if err == nil && newOriginBatchMsg != nil {
-					err = ch.parameterModifier.addValuesToBatchChild(decodedFrame.Header.Version, newOriginBatchMsg.Children[stmtIdx],
-						preparedData.GetPreparedStatementInfo(), preparedData.GetOriginVariablesMetadata(), replacementTimeUuids)
-				}
-				if err != nil {
-					return fmt.Errorf("could not add values to batch child statement: %w", err)
-				}
-			}
-
-			originalQueryId := newTargetBatchMsg.Children[stmtIdx].QueryOrId.([]byte)
-			newTargetBatchMsg.Children[stmtIdx].QueryOrId = preparedData.GetTargetPreparedId()
-			log.Tracef("Replacing prepared ID %s within a BATCH with %s for target cluster.",
-				hex.EncodeToString(originalQueryId), hex.EncodeToString(preparedData.GetTargetPreparedId()))
-		}
-
-		if newOriginRequest != nil {
-			originBatchRequest, err := defaultCodec.ConvertToRawFrame(newOriginRequest)
-			if err != nil {
-				return fmt.Errorf("could not convert origin BATCH response to raw frame: %w", err)
-			}
-
-			originRequest = originBatchRequest
-		}
-
-		targetBatchRequest, err := defaultCodec.ConvertToRawFrame(newTargetRequest)
-		if err != nil {
-			return fmt.Errorf("could not convert target BATCH response to raw frame: %w", err)
-		}
-
-		targetRequest = targetBatchRequest
+	if err != nil {
+		return err
 	}
 
 	if fwdDecision == forwardToNone {
@@ -1525,7 +1354,7 @@ func (ch *ClientHandler) executeStatement(
 		return nil
 	}
 
-	reqCtx := NewRequestContext(f, stmtInfo, overallRequestStartTime, customResponseChannel)
+	reqCtx := NewRequestContext(f, requestInfo, overallRequestStartTime, customResponseChannel)
 	var contextHoldersMap *sync.Map
 	if fwdDecision == forwardToAsyncOnly {
 		contextHoldersMap = ch.asyncRequestContextHolders // different map because of stream id collision
@@ -1567,7 +1396,7 @@ func (ch *ClientHandler) executeStatement(
 		reqCtx.SetTimer(timer)
 	}
 
-	sendAlsoToAsync := stmtInfo.ShouldAlsoBeSentAsync() && ch.asyncConnector != nil
+	sendAlsoToAsync := requestInfo.ShouldAlsoBeSentAsync() && ch.asyncConnector != nil
 	switch fwdDecision {
 	case forwardToBoth:
 		log.Tracef("Forwarding request with opcode %v for stream %v to %v and %v",
@@ -1596,6 +1425,281 @@ func (ch *ClientHandler) executeStatement(
 	// or a request that ONLY needs to be sent to the async connector (and a response is expected, i.e. not fire and forget)
 	// like async connector handshake requests
 
+	return ch.sendToAsyncConnector(
+		frameContext, originRequest, targetRequest, fwdDecision, reqCtx, holder, sendAlsoToAsync,
+		overallRequestStartTime, requestTimeout)
+}
+
+func (ch *ClientHandler) handleInterceptedRequest(
+	requestInfo RequestInfo, frameContext *frameDecodeContext, currentKeyspace string) (*frame.RawFrame, error) {
+
+	prepared := false
+	var interceptedRequestInfo *InterceptedRequestInfo
+	prepareRequestInfo, ok := requestInfo.(*PrepareRequestInfo)
+	if ok {
+		interceptedRequestInfo, ok = prepareRequestInfo.GetBaseRequestInfo().(*InterceptedRequestInfo)
+		if !ok {
+			return nil, fmt.Errorf("expected intercepted request info on prepare request info but got %v", prepareRequestInfo.GetBaseRequestInfo())
+		}
+		prepared = true
+	} else {
+		interceptedRequestInfo, ok = requestInfo.(*InterceptedRequestInfo)
+		if !ok {
+			return nil, fmt.Errorf("expected intercepted request info but got %v", requestInfo)
+		}
+	}
+
+	f := frameContext.GetRawFrame()
+	interceptedQueryType := interceptedRequestInfo.GetQueryType()
+	var interceptedQueryResponse message.Message
+	var controlConn *ControlConn
+	if ch.conf.ForwardSystemQueriesToTarget {
+		controlConn = ch.targetControlConn
+	} else {
+		controlConn = ch.originControlConn
+	}
+	virtualHosts, err := controlConn.GetVirtualHosts()
+	if err != nil {
+		return nil, err
+	}
+
+	typeCodec := GetDefaultGenericTypeCodec()
+
+	switch interceptedQueryType {
+	case peersV2:
+		interceptedQueryResponse = &message.Invalid {
+			ErrorMessage: "unconfigured table peers_v2",
+		}
+	case peersV1:
+		parsedSelectClause := interceptedRequestInfo.GetParsedSelectClause()
+		if parsedSelectClause == nil {
+			return nil, fmt.Errorf("unable to intercept system.peers query (prepared=%v) because parsed select clause is nil", prepared)
+		}
+		interceptedQueryResponse, err = NewSystemPeersResult(prepareRequestInfo, currentKeyspace,
+			typeCodec, f.Header.Version, controlConn.GetSystemLocalColumnData(), parsedSelectClause,
+			virtualHosts, controlConn.GetLocalVirtualHostIndex(), ch.conf.ProxyQueryPort)
+	case local:
+		parsedSelectClause := interceptedRequestInfo.GetParsedSelectClause()
+		if parsedSelectClause == nil {
+			return nil, fmt.Errorf("unable to intercept system.local query (prepared=%v) because parsed select clause is nil", prepared)
+		}
+		localVirtualHost := virtualHosts[controlConn.GetLocalVirtualHostIndex()]
+		interceptedQueryResponse, err = NewSystemLocalResult(prepareRequestInfo, currentKeyspace,
+			typeCodec, f.Header.Version, controlConn.GetSystemLocalColumnData(), parsedSelectClause,
+			localVirtualHost, ch.conf.ProxyQueryPort)
+	default:
+		return nil, fmt.Errorf("expected intercepted query type: %v", interceptedQueryType)
+	}
+
+	if err != nil {
+		if errVal, ok := err.(*ColumnNotFoundErr); ok {
+			interceptedQueryResponse = &message.Invalid{
+				ErrorMessage: fmt.Sprintf("Undefined column name %v", errVal.Name),
+			}
+		} else {
+			return nil, err
+		}
+	}
+
+	interceptedResponseFrame := frame.NewFrame(f.Header.Version, f.Header.StreamId, interceptedQueryResponse)
+	interceptedResponseRawFrame, err := defaultCodec.ConvertToRawFrame(interceptedResponseFrame)
+	if err != nil {
+		return nil, fmt.Errorf("could not convert intercepted response frame %v: %w", interceptedResponseFrame, err)
+	}
+
+	preparedMsg, ok := interceptedQueryResponse.(*message.PreparedResult)
+	if ok {
+		ch.preparedStatementCache.StoreIntercepted(preparedMsg, prepareRequestInfo)
+	}
+
+	return interceptedResponseRawFrame, nil
+}
+
+func (ch *ClientHandler) handlePrepareRequest(
+	castedRequestInfo *PrepareRequestInfo, frameContext *frameDecodeContext, currentKeyspace string) (
+	clientResponse *frame.RawFrame, originRequest *frame.RawFrame, targetRequest *frame.RawFrame, err error) {
+
+	f := frameContext.GetRawFrame()
+	switch castedRequestInfo.GetBaseRequestInfo().(type) {
+	case *InterceptedRequestInfo:
+		clientResponse, err = ch.handleInterceptedRequest(castedRequestInfo, frameContext, currentKeyspace)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		originRequest = nil
+		targetRequest = nil
+	default:
+		originRequest = f
+		targetRequest = f
+	}
+	return clientResponse, originRequest, targetRequest, nil
+}
+
+func (ch *ClientHandler) handleExecuteRequest(
+	castedRequestInfo *ExecuteRequestInfo, frameContext *frameDecodeContext, currentKeyspace string) (
+	clientResponse *frame.RawFrame, originRequest *frame.RawFrame, targetRequest *frame.RawFrame, err error) {
+
+	f := frameContext.GetRawFrame()
+	originRequest = f
+	targetRequest = f
+
+	preparedData := castedRequestInfo.GetPreparedData()
+	prepareRequestInfo := preparedData.GetPrepareRequestInfo()
+	fwdDecision := castedRequestInfo.GetForwardDecision()
+
+	if fwdDecision == forwardToNone {
+		interceptedRequestInfo, ok := prepareRequestInfo.GetBaseRequestInfo().(*InterceptedRequestInfo)
+		if !ok {
+			return nil, nil, nil, fmt.Errorf(
+				"expected intercepted statement info while handling bound statement but got %v", prepareRequestInfo.GetBaseRequestInfo())
+		}
+		clientResponse, err = ch.handleInterceptedRequest(interceptedRequestInfo, frameContext, currentKeyspace)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+
+		return clientResponse, nil, nil, err
+	}
+
+	sendToAsyncConnector := (castedRequestInfo.ShouldAlsoBeSentAsync() || fwdDecision == forwardToAsyncOnly) && ch.asyncConnector != nil
+	replacedTerms := prepareRequestInfo.GetReplacedTerms()
+	asyncConnectorIsOrigin := ch.asyncConnector != nil && ch.asyncConnector.clusterType == ClusterTypeOrigin
+	var replacementTimeUuids []*uuid.UUID
+	if len(replacedTerms) > 0 && (fwdDecision == forwardToBoth || fwdDecision == forwardToOrigin || (sendToAsyncConnector && asyncConnectorIsOrigin)) {
+		clientRequest, err := frameContext.GetOrDecodeFrame()
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("could not decode execute raw frame: %w", err)
+		}
+
+		replacementTimeUuids = ch.parameterModifier.generateTimeUuids(prepareRequestInfo)
+		newOriginRequest := clientRequest.Clone()
+		_, err = ch.parameterModifier.AddValuesToExecuteFrame(
+			newOriginRequest, prepareRequestInfo, preparedData.GetOriginVariablesMetadata(), replacementTimeUuids)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("could not add values to origin EXECUTE: %w", err)
+		}
+
+		originExecuteRequestRaw, err := defaultCodec.ConvertToRawFrame(newOriginRequest)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("could not convert origin EXECUTE response to raw frame: %w", err)
+		}
+
+		originRequest = originExecuteRequestRaw
+	}
+
+	asyncConnectorIsTarget := ch.asyncConnector != nil && ch.asyncConnector.clusterType == ClusterTypeTarget
+	if fwdDecision == forwardToBoth || fwdDecision == forwardToTarget || (sendToAsyncConnector && asyncConnectorIsTarget) {
+		clientRequest, err := frameContext.GetOrDecodeFrame()
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("could not decode execute raw frame: %w", err)
+		}
+
+		newTargetRequest := clientRequest.Clone()
+		var newTargetExecuteMsg *message.Execute
+		if len(replacedTerms) > 0 {
+			if replacementTimeUuids == nil {
+				replacementTimeUuids = ch.parameterModifier.generateTimeUuids(prepareRequestInfo)
+			}
+			newTargetExecuteMsg, err = ch.parameterModifier.AddValuesToExecuteFrame(
+				newTargetRequest, prepareRequestInfo, preparedData.GetTargetVariablesMetadata(), replacementTimeUuids)
+			if err != nil {
+				return nil, nil, nil, fmt.Errorf("could not add values to target EXECUTE: %w", err)
+			}
+		} else {
+			var ok bool
+			newTargetExecuteMsg, ok = newTargetRequest.Body.Message.(*message.Execute)
+			if !ok {
+				return nil, nil, nil, fmt.Errorf("expected Execute but got %v instead", newTargetRequest.Body.Message.GetOpCode())
+			}
+		}
+
+		originalQueryId := newTargetExecuteMsg.QueryId
+		newTargetExecuteMsg.QueryId = preparedData.GetTargetPreparedId()
+		log.Tracef("Replacing prepared ID %s with %s for target cluster.",
+			hex.EncodeToString(originalQueryId), hex.EncodeToString(newTargetExecuteMsg.QueryId))
+
+		newTargetRequestRaw, err := defaultCodec.ConvertToRawFrame(newTargetRequest)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("could not convert target EXECUTE response to raw frame: %w", err)
+		}
+
+		targetRequest = newTargetRequestRaw
+	}
+
+	return nil, originRequest, targetRequest, nil
+}
+
+func (ch *ClientHandler) handleBatchRequest(
+	castedRequestInfo *BatchRequestInfo, frameContext *frameDecodeContext) (
+	originRequest *frame.RawFrame, targetRequest *frame.RawFrame, err error) {
+	f := frameContext.GetRawFrame()
+	originRequest = f
+	targetRequest = f
+	decodedFrame, err := frameContext.GetOrDecodeFrame()
+	if err != nil {
+		return nil, nil, fmt.Errorf("could not decode batch raw frame: %w", err)
+	}
+
+	var newOriginRequest *frame.Frame
+	var newOriginBatchMsg *message.Batch
+
+	newTargetRequest := decodedFrame.Clone()
+	newTargetBatchMsg, ok := newTargetRequest.Body.Message.(*message.Batch)
+	if !ok {
+		return nil, nil, fmt.Errorf("expected Batch but got %v instead", newTargetRequest.Body.Message.GetOpCode())
+	}
+
+	for stmtIdx, preparedData := range castedRequestInfo.GetPreparedDataByStmtIdx() {
+		prepareRequestInfo := preparedData.GetPrepareRequestInfo()
+		if len(prepareRequestInfo.GetReplacedTerms()) > 0 {
+			if newOriginRequest == nil {
+				newOriginRequest = decodedFrame.Clone()
+				newOriginBatchMsg, ok = newOriginRequest.Body.Message.(*message.Batch)
+				if !ok {
+					return nil, nil, fmt.Errorf("expected Batch but got %v instead", newOriginRequest.Body.Message.GetOpCode())
+				}
+			}
+			replacementTimeUuids := ch.parameterModifier.generateTimeUuids(prepareRequestInfo)
+			err = ch.parameterModifier.addValuesToBatchChild(decodedFrame.Header.Version, newTargetBatchMsg.Children[stmtIdx],
+				preparedData.GetPrepareRequestInfo(), preparedData.GetTargetVariablesMetadata(), replacementTimeUuids)
+			if err == nil && newOriginBatchMsg != nil {
+				err = ch.parameterModifier.addValuesToBatchChild(decodedFrame.Header.Version, newOriginBatchMsg.Children[stmtIdx],
+					preparedData.GetPrepareRequestInfo(), preparedData.GetOriginVariablesMetadata(), replacementTimeUuids)
+			}
+			if err != nil {
+				return nil, nil, fmt.Errorf("could not add values to batch child statement: %w", err)
+			}
+		}
+
+		originalQueryId := newTargetBatchMsg.Children[stmtIdx].QueryOrId.([]byte)
+		newTargetBatchMsg.Children[stmtIdx].QueryOrId = preparedData.GetTargetPreparedId()
+		log.Tracef("Replacing prepared ID %s within a BATCH with %s for target cluster.",
+			hex.EncodeToString(originalQueryId), hex.EncodeToString(preparedData.GetTargetPreparedId()))
+	}
+
+	if newOriginRequest != nil {
+		originBatchRequest, err := defaultCodec.ConvertToRawFrame(newOriginRequest)
+		if err != nil {
+			return nil, nil, fmt.Errorf("could not convert origin BATCH response to raw frame: %w", err)
+		}
+
+		originRequest = originBatchRequest
+	}
+
+	targetBatchRequest, err := defaultCodec.ConvertToRawFrame(newTargetRequest)
+	if err != nil {
+		return nil, nil, fmt.Errorf("could not convert target BATCH response to raw frame: %w", err)
+	}
+
+	targetRequest = targetBatchRequest
+
+	return originRequest, targetRequest, nil
+}
+
+func (ch *ClientHandler) sendToAsyncConnector(
+	frameContext *frameDecodeContext, originRequest *frame.RawFrame, targetRequest *frame.RawFrame,
+	fwdDecision forwardDecision, reqCtx *requestContextImpl, holder *requestContextHolder, sendAlsoToAsync bool,
+	overallRequestStartTime time.Time, requestTimeout time.Duration) error {
 	var asyncRequest *frame.RawFrame
 	if ch.conf.ForwardReadsToTarget {
 		asyncRequest = originRequest
@@ -1622,6 +1726,8 @@ func (ch *ClientHandler) executeStatement(
 	if isFireAndForget {
 		ch.clientHandlerRequestWaitGroup.Add(1)
 	}
+
+	f := frameContext.GetRawFrame()
 
 	sent := ch.asyncConnector.sendAsyncRequest(
 		asyncRequest, !isFireAndForget, overallRequestStartTime, requestTimeout, func() {
@@ -1802,6 +1908,19 @@ func (ch *ClientHandler) handleClientCredentials(f *frame.RawFrame) (*frame.RawF
 	}
 
 	return f, nil
+}
+
+func (ch *ClientHandler) LoadCurrentKeyspace() string {
+	ks := ch.currentKeyspaceName.Load()
+	if ks != nil {
+		return ks.(string)
+	} else {
+		return ""
+	}
+}
+
+func (ch *ClientHandler) StoreCurrentKeyspace(keyspace string) {
+	ch.currentKeyspaceName.Store(keyspace)
 }
 
 func decodeErrorResult(frame *frame.RawFrame) (message.Error, error) {

@@ -333,8 +333,8 @@ func (cc *ClusterConnector) handleAsyncResponse(response *frame.RawFrame) *frame
 							"but could not find prepared data.", hex.EncodeToString(msg.Id))
 					} else {
 						prepare := &message.Prepare{
-							Query: preparedData.GetPreparedStatementInfo().GetQuery(),
-							Keyspace: preparedData.GetPreparedStatementInfo().GetKeyspace(),
+							Query: preparedData.GetPrepareRequestInfo().GetQuery(),
+							Keyspace: preparedData.GetPrepareRequestInfo().GetKeyspace(),
 						}
 						prepareFrame := frame.NewFrame(response.Header.Version, response.Header.StreamId, prepare)
 						prepareRawFrame, err := defaultCodec.ConvertToRawFrame(prepareFrame)

@@ -7,14 +7,13 @@ import (
 	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
 	"github.com/stretchr/testify/require"
 	"reflect"
-	"sync/atomic"
 	"testing"
 )
 
 type params struct {
 	psCache                      *PreparedStatementCache
 	mh                           *metrics.MetricHandler
-	kn                           *atomic.Value
+	kn                           string
 	forwardReadsToTarget         bool
 	forwardSystemQueriesToTarget bool
 	forwardAuthToTarget          bool
@@ -29,7 +28,7 @@ func getGeneralParamsForTests(t *testing.T) params {
 	return params{
 		psCache:                      NewPreparedStatementCache(),
 		mh:                           newFakeMetricHandler(),
-		kn:                           new(atomic.Value),
+		kn:                           "",
 		forwardReadsToTarget:         false,
 		forwardSystemQueriesToTarget: false,
 		forwardAuthToTarget:          false,
@@ -69,10 +68,10 @@ func convertEncodedRequestToRawFrameForTests(queryFrame *frame.Frame, t *testing
 	return queryRawFrame
 }
 
-func parseEncodedRequestForTests(queryRawFrame *frame.RawFrame, t *testing.T) (StatementInfo, error) {
+func parseEncodedRequestForTests(queryRawFrame *frame.RawFrame, t *testing.T) (RequestInfo, error) {
 	generalParams := getGeneralParamsForTests(t)
 
-	return buildStatementInfo(&frameDecodeContext{frame: queryRawFrame},
+	return buildRequestInfo(&frameDecodeContext{frame: queryRawFrame},
 		[]*statementReplacedTerms{},
 		generalParams.psCache,
 		generalParams.mh,
@@ -84,10 +83,10 @@ func parseEncodedRequestForTests(queryRawFrame *frame.RawFrame, t *testing.T) (S
 		generalParams.timeUuidGenerator)
 }
 
-func checkExpectedForwardDecisionOrErrorForTests(actualStmtInfo StatementInfo, actualError error, expected interface{}, t *testing.T) {
+func checkExpectedForwardDecisionOrErrorForTests(actualRequestInfo RequestInfo, actualError error, expected interface{}, t *testing.T) {
 	if actualError != nil {
-		require.True(t, reflect.DeepEqual(actualError.Error(), expected), "buildStatementInfo() actual error = %v, expected error %v", actualError, expected)
+		require.True(t, reflect.DeepEqual(actualError.Error(), expected), "buildRequestInfo() actual error = %v, expected error %v", actualError, expected)
 	} else {
-		require.True(t, reflect.DeepEqual(actualStmtInfo, expected), "buildStatementInfo() actual statement = %v, expected statement %v", actualStmtInfo, expected)
+		require.True(t, reflect.DeepEqual(actualRequestInfo, expected), "buildRequestInfo() actual statement = %v, expected statement %v", actualRequestInfo, expected)
 	}
 }

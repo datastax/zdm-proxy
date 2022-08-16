@@ -89,7 +89,7 @@ type RequestContext interface {
 
 type requestContextImpl struct {
 	request        *frame.RawFrame
-	stmtInfo       StatementInfo
+	requestInfo    RequestInfo
 	originResponse *frame.RawFrame
 	targetResponse *frame.RawFrame
 	state          int
@@ -99,10 +99,10 @@ type requestContextImpl struct {
 	customResponseChannel chan *customResponse
 }
 
-func NewRequestContext(req *frame.RawFrame, stmtInfo StatementInfo, startTime time.Time, customResponseChannel chan *customResponse) *requestContextImpl {
+func NewRequestContext(req *frame.RawFrame, requestInfo RequestInfo, startTime time.Time, customResponseChannel chan *customResponse) *requestContextImpl {
 	return &requestContextImpl{
 		request:               req,
-		stmtInfo:              stmtInfo,
+		requestInfo:           requestInfo,
 		originResponse:        nil,
 		targetResponse:        nil,
 		state:                 RequestPending,
@@ -131,7 +131,7 @@ func (recv *requestContextImpl) SetTimeout(nodeMetrics *metrics.NodeMetrics, req
 		recv.state = RequestTimedOut
 		sentOrigin := false
 		sentTarget := false
-		switch recv.stmtInfo.GetForwardDecision() {
+		switch recv.requestInfo.GetForwardDecision() {
 		case forwardToBoth:
 			sentOrigin = true
 			sentTarget = true
@@ -215,7 +215,7 @@ func (recv *requestContextImpl) updateInternalState(f *frame.RawFrame, cluster C
 	}
 
 	done := false
-	switch recv.stmtInfo.GetForwardDecision() {
+	switch recv.requestInfo.GetForwardDecision() {
 	case forwardToTarget:
 		done = recv.targetResponse != nil
 	case forwardToOrigin:
@@ -227,7 +227,7 @@ func (recv *requestContextImpl) updateInternalState(f *frame.RawFrame, cluster C
 	case forwardToAsyncOnly:
 		done = true
 	default:
-		log.Errorf("unrecognized decision %v", recv.stmtInfo.GetForwardDecision())
+		log.Errorf("unrecognized decision %v", recv.requestInfo.GetForwardDecision())
 	}
 
 	if done {
