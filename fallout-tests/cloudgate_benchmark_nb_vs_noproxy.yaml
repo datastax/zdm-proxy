@@ -370,6 +370,28 @@ workload:
               sudo docker logs ${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_CLOUDGATE_NODE0_NODE_INFO_PRIVATENETWORKADDRESS} >& myFile.log
 
             EONG
+    - truncate-origin:
+        module: cqlsh
+        properties:
+          server_group: origin
+          command: |
+            TRUNCATE benchmark1_ks.keyvalue;
+            TRUNCATE benchmark1_ks.keyvalue;
+    - benchmark-origin:
+        module: bash
+        properties:
+          target.group: client
+          timeout: 1000m
+          script: |
+            cd $FALLOUT_SCRATCH_DIR
+            set -x
+            sudo docker ps
+            /usr/bin/newgrp docker <<EONG
+              set -x
+              ./nb run driver=cql workload={{activity_file}} keyspace=benchmark1_ks hosts=$FALLOUT_ORIGIN_PRODUCT_CONTACT_POINT tags=phase:rampup -v pooling={{num_connections}}:{{num_connections}}:2048 cycles={{rampup_cycles}} threads={{num_threads}}
+              ./nb run driver=cql workload={{activity_file}} keyspace=benchmark1_ks hosts=$FALLOUT_ORIGIN_PRODUCT_CONTACT_POINT tags=phase:main --log-histograms $FALLOUT_ARTIFACT_DIR/nb_bench.hdr pooling={{num_connections}}:{{num_connections}}:2048 cycles={{main_cycles}} threads={{num_threads}} --log-histostats $FALLOUT_ARTIFACT_DIR/nb_bench.csv -v
+
+            EONG
   checkers:
     verify_success:
       checker: nofail
