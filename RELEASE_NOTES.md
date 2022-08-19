@@ -6,6 +6,12 @@ Build artifacts are available at [Docker Hub](https://hub.docker.com/repository/
 
 For additional details on the changes included in a specific release, see the associated CHANGELOG-x.x.md file.
 
+## v1.4.0 - 2022-08-19
+Enables column filtering and the usage of prepared statements for queries to system tables. Adds support for clusters using the RandomPartitioner.
+
+[Changelog](CHANGELOG/CHANGELOG-1.4.md#v140---2022-08-19)
+
+
 ## v1.3.0 - 2022-06-13
 
 Adds support for the replacement of now() function calls and introduces a toggle to optionally enable it. Adds support for client to proxy mTLS/TLS encryption. 

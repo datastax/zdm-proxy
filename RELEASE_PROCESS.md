@@ -12,6 +12,8 @@ The [RELEASE_NOTES.md](RELEASE_NOTES.md) file should be updated so that it conta
 
 The `CHANGELOG.md` file associated with the release (in the [CHANGELOG](CHANGELOG) folder) should be updated so that tickets in the `UNRELEASED` section are moved to a new section (in the same file) that is specific to the new release.
 
+These changes should be done on a branch so that a PR can be opened for review prior to merging them.
+
 ### Building and publishing the docker image
 
 Periodically, "official"/"stable" releases with standard semantic versioning applied are released to capture milestones for the project.  This process happens in automated fashion through the use of the GH Action workflow found in [release.yml](.github/workflows/release.yml).
@@ -34,7 +36,7 @@ The result of that workflow is the creation and publishing of a Docker image wit
 
 ### Create an official `Release` in GitHub
 
-Once the tag has been push to the repository and the build has been verified, a `Release` should be created within GitHub matching the tag.  This is a manual step that must be completed after the automation.
+Once the tag has been pushed to the repository and the build has been verified, a `Release` should be created within GitHub matching the tag.  This is a manual step that must be completed after the automation.
 
 1. Navigate in a browser to [https://github.com/riptano/cloud-gate/releases](https://github.com/riptano/cloud-gate/releases) and select the `Draft a new release` button.
 2. Select the `Choose a tag` button and select the previously pushed tag, in our example, `v1.1.0` from the dropdown.

@@ -6,6 +6,8 @@ When cutting a new release, update the `unreleased` heading to the tag being gen
 
 ## Unreleased
 
+## v.1.4.0 - 2022-08-19
+
 ### New Features
 
 * [ZDM-322](https://datastax.jira.com/browse/ZDM-322) Enable the proxy to also connect to clusters that use the RandomPartitioner
