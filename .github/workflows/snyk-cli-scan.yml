@@ -2,9 +2,9 @@ name: 🔬 Snyk cli SCA
 
 on: 
   push:
-    branches: [ master ]
+    branches: [ main ]
   pull_request:
-    branches: [ master ]
+    branches: [ main ]
   workflow_dispatch:  
 
 env:

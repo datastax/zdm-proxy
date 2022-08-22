@@ -2,7 +2,7 @@ name: Dependency and License Scan
 on:
   push:
     branches:
-      - master
+      - main
 jobs:
   scan-repo:
     runs-on: ubuntu-latest

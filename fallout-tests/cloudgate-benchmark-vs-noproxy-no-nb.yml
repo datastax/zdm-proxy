@@ -17,7 +17,7 @@ deregister_metrics: true
 
 # PROXY APP SETTINGS
 
-proxy_branch: master
+proxy_branch: main
 forward_reads_to_target: false
 enable_metrics: true
 replace_server_side_functions: false

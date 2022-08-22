@@ -6,7 +6,7 @@ target_server_product: dse
 target_server_install_type: tarball
 target_server_version: 6.8.25
 
-proxy_branch: master
+proxy_branch: main
 tenant: moonshot-v2
 instance_type: ms2.small
 

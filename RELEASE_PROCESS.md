@@ -46,12 +46,12 @@ Once the tag has been pushed to the repository and the build has been verified, 
 
 ## Per-Merge Releases
 
-To support easier testing workflows, every commit that is pushed to the primary `master` branch will trigger a build and publish of a non official release.
+To support easier testing workflows, every commit that is pushed to the primary `main` branch will trigger a build and publish of a non official release.
 
 This happens automatically and requires no manual steps.  This process is provided for through the use of the same GH Action workflow that is used for official releases, i.e., [release.yml](.github/workflows/release.yml).
 
-The result of this workflow is the creation and publishing of a Docker image with only the `master` tag applied to it (no `latest`).
+The result of this workflow is the creation and publishing of a Docker image with only the `main` tag applied to it (no `latest`).
 
 ## Manually triggered test releases on any branch
 
-To support easier testing workflows without requiring a merge to `master`, you can manually trigger the [push-release.yml](.github/workflows/push-release.yml) workflow (selecting which branch you want to use in the Github UI) which will result in the creation and publishing of a Docker image with a tag specific to the SHA of the commit from which it was built (e.g. `sha-3758gd2b`).
+To support easier testing workflows without requiring a merge to `main`, you can manually trigger the [push-release.yml](.github/workflows/push-release.yml) workflow (selecting which branch you want to use in the Github UI) which will result in the creation and publishing of a Docker image with a tag specific to the SHA of the commit from which it was built (e.g. `sha-3758gd2b`).
