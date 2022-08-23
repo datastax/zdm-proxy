@@ -10,9 +10,9 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/datastax/zdm-proxy/integration-tests/setup"
+	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
 	"github.com/google/uuid"
-	"github.com/riptano/cloud-gate/integration-tests/setup"
-	"github.com/riptano/cloud-gate/integration-tests/simulacron"
 	"github.com/stretchr/testify/require"
 	"regexp"
 	"testing"
@@ -214,11 +214,11 @@ func TestNowFunctionReplacementSimpleStatement(t *testing.T) {
 
 	}
 
-	t.Run("now replacement enabled", func (t *testing.T) {
+	t.Run("now replacement enabled", func(t *testing.T) {
 		runTests(tests, true, t)
 	})
 
-	t.Run("now replacement disabled", func (t *testing.T) {
+	t.Run("now replacement disabled", func(t *testing.T) {
 		runTests(tests, false, t)
 	})
 }
@@ -1589,11 +1589,11 @@ func TestNowFunctionReplacementPreparedStatement(t *testing.T) {
 		}
 	}
 
-	t.Run("now replacement enabled", func (t *testing.T) {
+	t.Run("now replacement enabled", func(t *testing.T) {
 		runTests(tests, true, &timeUuidStart, t)
 	})
 
-	t.Run("now replacement disabled", func (t *testing.T) {
+	t.Run("now replacement disabled", func(t *testing.T) {
 		runTests(tests, false, nil, t)
 	})
 
@@ -1640,7 +1640,7 @@ func TestNowFunctionReplacementBatchStatement(t *testing.T) {
 				},
 				{
 					prepared:      true,
-					originalQuery:         "DELETE c[1], a[?], b[now()] FROM blah WHERE b = 123 AND a = now()",
+					originalQuery: "DELETE c[1], a[?], b[now()] FROM blah WHERE b = 123 AND a = now()",
 					modifiedQuery: "DELETE c[1], a[?], b[?] FROM blah WHERE b = 123 AND a = ?",
 					params: []*param{
 						{
@@ -2411,11 +2411,11 @@ func TestNowFunctionReplacementBatchStatement(t *testing.T) {
 
 	}
 
-	t.Run("now replacement enabled", func (t *testing.T) {
+	t.Run("now replacement enabled", func(t *testing.T) {
 		runTests(tests, true, &timeUuidStart, t)
 	})
 
-	t.Run("now replacement disabled", func (t *testing.T) {
+	t.Run("now replacement disabled", func(t *testing.T) {
 		runTests(tests, false, nil, t)
 	})
 }

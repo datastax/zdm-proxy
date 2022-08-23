@@ -3,13 +3,13 @@ package integration_tests
 import (
 	"context"
 	"fmt"
-	"github.com/riptano/cloud-gate/integration-tests/setup"
-	"github.com/riptano/cloud-gate/integration-tests/utils"
-	"github.com/riptano/cloud-gate/proxy/pkg/config"
-	"github.com/riptano/cloud-gate/proxy/pkg/health"
-	"github.com/riptano/cloud-gate/proxy/pkg/httpcloudgate"
-	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
-	"github.com/riptano/cloud-gate/proxy/pkg/runner"
+	"github.com/datastax/zdm-proxy/integration-tests/setup"
+	"github.com/datastax/zdm-proxy/integration-tests/utils"
+	"github.com/datastax/zdm-proxy/proxy/pkg/config"
+	"github.com/datastax/zdm-proxy/proxy/pkg/health"
+	"github.com/datastax/zdm-proxy/proxy/pkg/httpcloudgate"
+	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
+	"github.com/datastax/zdm-proxy/proxy/pkg/runner"
 	"github.com/stretchr/testify/require"
 	"net/http"
 	"sync"
@@ -115,7 +115,7 @@ func testHttpEndpointsWithProxyInitialized(
 		fatal = false
 		err = utils.CheckMetricsEndpointResult(httpAddr, true)
 		return
-	}, 10, 100 * time.Millisecond)
+	}, 10, 100*time.Millisecond)
 
 	statusCode, report, err := utils.GetReadinessStatusReport(httpAddr)
 	require.Nil(t, err, "failed to get readiness response: %v", err)
@@ -166,7 +166,7 @@ func testHttpEndpointsWithUnavailableNode(
 		fatal = false
 		err = utils.CheckMetricsEndpointResult(httpAddr, true)
 		return
-	}, 10, 100 * time.Millisecond)
+	}, 10, 100*time.Millisecond)
 
 	statusCode, msg, err := utils.GetLivenessResponse(httpAddr)
 	require.Nil(t, err)

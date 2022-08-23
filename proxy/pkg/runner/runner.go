@@ -4,19 +4,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/datastax/zdm-proxy/proxy/pkg/cloudgateproxy"
+	"github.com/datastax/zdm-proxy/proxy/pkg/config"
+	"github.com/datastax/zdm-proxy/proxy/pkg/health"
+	"github.com/datastax/zdm-proxy/proxy/pkg/httpcloudgate"
+	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
 	"github.com/jpillora/backoff"
-	"github.com/riptano/cloud-gate/proxy/pkg/cloudgateproxy"
-	"github.com/riptano/cloud-gate/proxy/pkg/config"
-	"github.com/riptano/cloud-gate/proxy/pkg/health"
-	"github.com/riptano/cloud-gate/proxy/pkg/httpcloudgate"
-	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
 	"net/http"
 	"sync"
 	"time"
 )
 
-func SetupHandlers() (metricsHandler *httpcloudgate.HandlerWithFallback, readinessHandler *httpcloudgate.HandlerWithFallback){
+func SetupHandlers() (metricsHandler *httpcloudgate.HandlerWithFallback, readinessHandler *httpcloudgate.HandlerWithFallback) {
 	metricsHandler = httpcloudgate.NewHandlerWithFallback(metrics.DefaultHttpHandler())
 	readinessHandler = httpcloudgate.NewHandlerWithFallback(health.DefaultReadinessHandler())
 
@@ -60,7 +60,7 @@ func RunMain(
 	}
 
 	log.Info("Shutting down httpcloudgate server, waiting up to 5 seconds.")
-	srvShutdownCtx, _ := context.WithTimeout(context.Background(), 5 * time.Second)
+	srvShutdownCtx, _ := context.WithTimeout(context.Background(), 5*time.Second)
 	if err := srv.Shutdown(srvShutdownCtx); err != nil {
 		log.Errorf("Failed to gracefully shutdown httpcloudgate server: %v", err)
 	}

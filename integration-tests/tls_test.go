@@ -9,9 +9,9 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/riptano/cloud-gate/integration-tests/env"
-	"github.com/riptano/cloud-gate/integration-tests/setup"
-	"github.com/riptano/cloud-gate/proxy/pkg/config"
+	"github.com/datastax/zdm-proxy/integration-tests/env"
+	"github.com/datastax/zdm-proxy/integration-tests/setup"
+	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
 	"io/ioutil"
@@ -64,13 +64,13 @@ type proxyClusterIncorrectTlsConfiguration struct {
 }
 
 const (
-	IncorrectCaCertRelPath  = "../integration-tests/resources/myCA.pem"
+	IncorrectCaCertRelPath = "../integration-tests/resources/myCA.pem"
 
-	ExpiredCaCertRelPath    = "../integration-tests/resources/node1_ca.crt"
-	ExpiredKeystoreRelPath  = "../integration-tests/resources/server.keystore"
+	ExpiredCaCertRelPath     = "../integration-tests/resources/node1_ca.crt"
+	ExpiredKeystoreRelPath   = "../integration-tests/resources/server.keystore"
 	ExpiredTruststoreRelPath = "../integration-tests/resources/server.truststore"
 	ExpiredClientCertRelPath = "../integration-tests/resources/client.crt"
-	ExpiredClientKeyRelPath = "../integration-tests/resources/client.key"
+	ExpiredClientKeyRelPath  = "../integration-tests/resources/client.key"
 
 	OriginClientCertRelPath = "../integration-tests/resources/client1-zdm.crt"
 	OriginClientKeyRelPath  = "../integration-tests/resources/client1-zdm.key"
@@ -81,9 +81,9 @@ const (
 	AppClientCertRelPath = "../integration-tests/resources/appclient.crt"
 	AppClientKeyRelPath  = "../integration-tests/resources/appclient.key"
 
-	OriginCaCertRelPath     = "../integration-tests/resources/rootcazdm.crt"
-	TargetCaCertRelPath     = "../integration-tests/resources/rootcazdm2.crt"
-	ProxyCaCertRelPath     = "../integration-tests/resources/rootcaproxy.crt"
+	OriginCaCertRelPath = "../integration-tests/resources/rootcazdm.crt"
+	TargetCaCertRelPath = "../integration-tests/resources/rootcazdm2.crt"
+	ProxyCaCertRelPath  = "../integration-tests/resources/rootcaproxy.crt"
 
 	OriginKeystoreRelPath   = "../integration-tests/resources/node1-zdm-keystore.jks"
 	OriginTruststoreRelPath = "../integration-tests/resources/node1-truststore.jks"
@@ -92,12 +92,12 @@ const (
 	TargetTruststoreRelPath = "../integration-tests/resources/node2-truststore.jks"
 
 	ProxyServerCertRelPath = "../integration-tests/resources/proxycert.crt"
-	ProxyServerKeyRelPath = "../integration-tests/resources/proxycert.key"
+	ProxyServerKeyRelPath  = "../integration-tests/resources/proxycert.key"
 
-	ExpiredKeystorePassword = "fakePasswordForTests"
+	ExpiredKeystorePassword   = "fakePasswordForTests"
 	ExpiredTruststorePassword = "fakePasswordForTests"
-	OriginKeystorePassword  = "zdmzdm"
-	TargetKeystorePassword  = "zdmzdm"
+	OriginKeystorePassword    = "zdmzdm"
+	TargetKeystorePassword    = "zdmzdm"
 	OriginTruststorePassword  = "zdmzdm"
 	TargetTruststorePassword  = "zdmzdm"
 )
@@ -329,7 +329,7 @@ func TestTls_OneWayOrigin_MutualTarget(t *testing.T) {
 				"Failed to open control connection to ORIGIN",
 				"certificate signed by unknown authority",
 			},
-			errMsgExpected:    "failed to initialize origin control connection: could not open control connection to ORIGIN",
+			errMsgExpected: "failed to initialize origin control connection: could not open control connection to ORIGIN",
 		},
 		{
 			name:              "Proxy: mutual TLS for Origin, mutual TLS for Target (INCORRECT CA)",
@@ -341,7 +341,7 @@ func TestTls_OneWayOrigin_MutualTarget(t *testing.T) {
 				"Failed to open control connection to TARGET",
 				"certificate signed by unknown authority",
 			},
-			errMsgExpected:    "failed to initialize target control connection: could not open control connection to TARGET",
+			errMsgExpected: "failed to initialize target control connection: could not open control connection to TARGET",
 		},
 	}
 
@@ -354,7 +354,7 @@ func TestTls_OneWayOrigin_MutualTarget(t *testing.T) {
 			mutualTlsOnTest:     false,
 			serverName:          "",
 			errExpected:         true,
-			errWarningsExpected: []string{ "tls: first record does not look like a TLS handshake" },
+			errWarningsExpected: []string{"tls: first record does not look like a TLS handshake"},
 			errMsgExpected:      "",
 		},
 		{
@@ -398,7 +398,7 @@ func TestTls_OneWayOrigin_MutualTarget(t *testing.T) {
 			mutualTlsOnTest:     false,
 			serverName:          "",
 			errExpected:         true,
-			errWarningsExpected: []string{ "tls: first record does not look like a TLS handshake" },
+			errWarningsExpected: []string{"tls: first record does not look like a TLS handshake"},
 			errMsgExpected:      "",
 		},
 		{
@@ -409,7 +409,7 @@ func TestTls_OneWayOrigin_MutualTarget(t *testing.T) {
 			mutualTlsOnTest:     false,
 			serverName:          "",
 			errExpected:         true,
-			errWarningsExpected: []string { "tls: client didn't provide a certificate" },
+			errWarningsExpected: []string{"tls: client didn't provide a certificate"},
 			errMsgExpected:      "",
 		},
 		{
@@ -489,7 +489,7 @@ func TestTls_ExpiredCA(t *testing.T) {
 				"Failed to open control connection to ORIGIN",
 				"x509: certificate has expired or is not yet valid",
 			},
-			errMsgExpected:    "failed to initialize origin control connection: could not open control connection to ORIGIN",
+			errMsgExpected: "failed to initialize origin control connection: could not open control connection to ORIGIN",
 		},
 	}
 
@@ -1127,8 +1127,8 @@ func getTlsYamlChanges(isMutualTls bool, t *testing.T,
 	if isMutualTls {
 		serverTruststoreAbsPath := loadAbsoluteFilePath(serverTruststorePath, t)
 		yamlChanges = append(yamlChanges, "client_encryption_options.require_client_auth: true")
-		yamlChanges = append(yamlChanges, "client_encryption_options.truststore: " + serverTruststoreAbsPath)
-		yamlChanges = append(yamlChanges, "client_encryption_options.truststore_password: " + truststorePassword)
+		yamlChanges = append(yamlChanges, "client_encryption_options.truststore: "+serverTruststoreAbsPath)
+		yamlChanges = append(yamlChanges, "client_encryption_options.truststore_password: "+truststorePassword)
 	} else {
 		yamlChanges = append(yamlChanges, "client_encryption_options.require_client_auth: false")
 	}
@@ -1330,8 +1330,8 @@ func getClientSideVerifyConnectionCallback(rootCAs *x509.CertPool) func(cs tls.C
 	return func(cs tls.ConnectionState) error {
 		dnsName := cs.ServerName
 		opts := x509.VerifyOptions{
-			DNSName:       dnsName,
-			Roots:         rootCAs,
+			DNSName: dnsName,
+			Roots:   rootCAs,
 		}
 		if len(cs.PeerCertificates) > 0 {
 			opts.Intermediates = x509.NewCertPool()

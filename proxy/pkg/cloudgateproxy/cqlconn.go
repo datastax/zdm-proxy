@@ -17,14 +17,15 @@ import (
 )
 
 const (
-	numberOfStreamIds  = int16(2048)
-	eventQueueLength   = 2048
+	numberOfStreamIds = int16(2048)
+	eventQueueLength  = 2048
 
 	maxIncomingPending = 2048
 	maxOutgoingPending = 2048
 
-	timeOutsThreshold  = 1024
+	timeOutsThreshold = 1024
 )
+
 type CqlConnection interface {
 	IsInitialized() bool
 	InitializeContext(version primitive.ProtocolVersion, ctx context.Context) error
@@ -208,8 +209,8 @@ func (c *cqlConn) StartEventLoop() {
 		defer c.wg.Done()
 		defer log.Debugf("Shutting down event loop on %v.", c)
 
-		event, ok := <- c.eventsQueue
-		for ; ok; event, ok = <- c.eventsQueue {
+		event, ok := <-c.eventsQueue
+		for ; ok; event, ok = <-c.eventsQueue {
 			c.eventHandlerLock.Lock()
 			if c.eventHandler != nil {
 				c.eventHandler(event, c)
@@ -373,7 +374,7 @@ func (c *cqlConn) PerformHandshake(version primitive.ProtocolVersion, ctx contex
 func (c *cqlConn) Query(
 	cql string, genericTypeCodec *GenericTypeCodec, version primitive.ProtocolVersion, ctx context.Context) (*ParsedRowSet, error) {
 	queryMsg := &message.Query{
-		Query:   cql,
+		Query: cql,
 		Options: &message.QueryOptions{
 			Consistency: primitive.ConsistencyLevelLocalQuorum,
 		},

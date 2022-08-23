@@ -70,15 +70,15 @@ func ParseSystemLocalResult(rs *ParsedRowSet, defaultPort int) (map[string]*opti
 	}
 
 	sysLocalCols := map[string]*optionalColumn{
-		keyColumn.Name: NewOptionalColumn(parseNillableString(row, keyColumn.Name)),
-		bootstrappedColumn.Name: NewOptionalColumn(parseNillableString(row, bootstrappedColumn.Name)),
-		cqlVersionColumn.Name: NewOptionalColumn(parseNillableString(row, cqlVersionColumn.Name)),
-		gossipGenerationColumn.Name: NewOptionalColumn(parseNillableInt(row, gossipGenerationColumn.Name)),
+		keyColumn.Name:                        NewOptionalColumn(parseNillableString(row, keyColumn.Name)),
+		bootstrappedColumn.Name:               NewOptionalColumn(parseNillableString(row, bootstrappedColumn.Name)),
+		cqlVersionColumn.Name:                 NewOptionalColumn(parseNillableString(row, cqlVersionColumn.Name)),
+		gossipGenerationColumn.Name:           NewOptionalColumn(parseNillableInt(row, gossipGenerationColumn.Name)),
 		lastNodesyncCheckpointTimeColumn.Name: NewOptionalColumn(parseNillableBigInt(row, lastNodesyncCheckpointTimeColumn.Name)),
-		nativeProtocolVersionColumn.Name: NewOptionalColumn(parseNillableString(row, nativeProtocolVersionColumn.Name)),
-		partitionerColumn.Name: NewOptionalColumn(parseNillableString(row, partitionerColumn.Name)),
-		thriftVersionColumn.Name: NewOptionalColumn(parseNillableString(row, thriftVersionColumn.Name)),
-		clusterNameColumn.Name: NewOptionalColumn(parseNillableString(row, clusterNameColumn.Name)),
+		nativeProtocolVersionColumn.Name:      NewOptionalColumn(parseNillableString(row, nativeProtocolVersionColumn.Name)),
+		partitionerColumn.Name:                NewOptionalColumn(parseNillableString(row, partitionerColumn.Name)),
+		thriftVersionColumn.Name:              NewOptionalColumn(parseNillableString(row, thriftVersionColumn.Name)),
+		clusterNameColumn.Name:                NewOptionalColumn(parseNillableString(row, clusterNameColumn.Name)),
 	}
 
 	if clusterName, exists := sysLocalCols[clusterNameColumn.Name]; !exists || clusterName.column == nil {
@@ -144,7 +144,7 @@ func parseHost(addr net.IP, port int, row *ParsedRow) (*Host, error) {
 		}
 	}
 
-	columnData := map[string]*optionalColumn {
+	columnData := map[string]*optionalColumn{
 		releaseVersionPeersColumn.Name:         NewOptionalColumn(parseNillableString(row, releaseVersionPeersColumn.Name)),
 		dseVersionPeersColumn.Name:             NewOptionalColumn(parseNillableString(row, dseVersionPeersColumn.Name)),
 		graphPeersColumn.Name:                  NewOptionalColumn(parseNillableBool(row, graphPeersColumn.Name)),
@@ -194,10 +194,10 @@ func ParseRpcAddress(isPeersV2 bool, row *ParsedRow, defaultPort int) (net.IP, i
 		} else {
 			return nil, -1, fmt.Errorf(
 				"found host with 0.0.0.0 as rpc_address and nulls as listen_address and broadcast_address; " +
-				"because of this, the proxy can not connect to this node")
+					"because of this, the proxy can not connect to this node")
 		}
 
-		log.Infof("Found host with 0.0.0.0 as rpc_address, using listen_address (%v) to contact it instead. " +
+		log.Infof("Found host with 0.0.0.0 as rpc_address, using listen_address (%v) to contact it instead. "+
 			"If this is incorrect you should avoid the use of 0.0.0.0 server side.", addr)
 	}
 

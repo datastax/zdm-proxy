@@ -3,8 +3,8 @@ package simulacron
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/datastax/zdm-proxy/integration-tests/env"
 	"github.com/gocql/gocql"
-	"github.com/riptano/cloud-gate/integration-tests/env"
 	"net"
 	"strings"
 )

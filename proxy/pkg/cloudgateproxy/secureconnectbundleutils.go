@@ -9,7 +9,7 @@ import (
 	"io/ioutil"
 )
 
-func parseHostAndPortFromSCBConfig(scbConfigFile []byte) (string, string, error){
+func parseHostAndPortFromSCBConfig(scbConfigFile []byte) (string, string, error) {
 
 	if scbConfigFile == nil {
 		return "", "", fmt.Errorf("missing config.json from secure connect bundle")
@@ -30,7 +30,7 @@ func parseHostAndPortFromSCBConfig(scbConfigFile []byte) (string, string, error)
 	return hostName, port, nil
 }
 
-func extractFilesFromZipArchive(zipArchivePath string) (map[string][]byte, error){
+func extractFilesFromZipArchive(zipArchivePath string) (map[string][]byte, error) {
 
 	fileMap := make(map[string][]byte)
 	zipReader, err := zip.OpenReader(zipArchivePath)
@@ -61,7 +61,7 @@ func retrieveConfigParameterAsString(configMap map[string]interface{}, paramName
 	if !ok {
 		return "", fmt.Errorf("%s could not be found in the secure connect bundle json configuration", paramName)
 	}
-	paramString := fmt.Sprintf("%v",param)
+	paramString := fmt.Sprintf("%v", param)
 	log.Debugf("parameter %s: %s", paramName, paramString)
 
 	return paramString, nil

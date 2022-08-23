@@ -348,11 +348,11 @@ func columnFromSelector(
 	switch s := parsedSelector.(type) {
 	case *countSelector:
 		return &message.ColumnMetadata{
-				Keyspace: keyspace,
-				Table:    table,
-				Name:     s.name,
-				Type:     datatype.Int,
-			}, true, nil
+			Keyspace: keyspace,
+			Table:    table,
+			Name:     s.name,
+			Type:     datatype.Int,
+		}, true, nil
 	case *idSelector:
 		if column := findColumnMetadata(cols, s.name); column != nil {
 			return column, false, nil
@@ -626,7 +626,7 @@ func NewSystemPeersResult(
 	}
 	columns := make([]*message.ColumnMetadata, 0, len(resultCols))
 	addedColumns := make([]string, 0, len(resultCols))
-	rows := make([][]interface{}, 0, len(virtualHosts) - 1)
+	rows := make([][]interface{}, 0, len(virtualHosts)-1)
 	isFirstRow := true
 
 	// at least 1 iteration of this for cycle should be executed even if there is no peers rows to be returned
@@ -703,13 +703,13 @@ func addColumnHelper(
 		}
 	} else {
 		if len(*processedColumns) <= columnIndex {
-			return fmt.Errorf("column length mismatch between hosts: " +
+			return fmt.Errorf("column length mismatch between hosts: "+
 				"processedColumns.len=%v columnIndex=%v name=%v", len(*processedColumns), columnIndex, columnMetadata.Name)
 		}
 
 		processedColumn := (*processedColumns)[columnIndex]
 		if processedColumn != columnMetadata.Name {
-			return fmt.Errorf("columns mismatch between hosts: " +
+			return fmt.Errorf("columns mismatch between hosts: "+
 				"processedColumn=%v columnToBeAdded=%v", processedColumn, columnMetadata.Name)
 		}
 

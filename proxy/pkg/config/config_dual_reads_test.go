@@ -17,8 +17,8 @@ func TestConfig_ParseReadMode(t *testing.T) {
 
 	tests := []test{
 		{
-			name:           "Valid: Dual reads disabled, async reads on secondary disabled",
-			envVars:        []envVar{
+			name: "Valid: Dual reads disabled, async reads on secondary disabled",
+			envVars: []envVar{
 				{"DUAL_READS_ENABLED", "false"},
 				{"ASYNC_READS_ON_SECONDARY", "false"},
 			},
@@ -27,8 +27,8 @@ func TestConfig_ParseReadMode(t *testing.T) {
 			errMsg:           "",
 		},
 		{
-			name:           "Valid: Dual reads enabled, async reads on secondary enabled",
-			envVars:        []envVar{
+			name: "Valid: Dual reads enabled, async reads on secondary enabled",
+			envVars: []envVar{
 				{"DUAL_READS_ENABLED", "true"},
 				{"ASYNC_READS_ON_SECONDARY", "true"},
 			},
@@ -37,8 +37,8 @@ func TestConfig_ParseReadMode(t *testing.T) {
 			errMsg:           "",
 		},
 		{
-			name:           "Invalid: Dual reads enabled but async reads on secondary disabled",
-			envVars:        []envVar{
+			name: "Invalid: Dual reads enabled but async reads on secondary disabled",
+			envVars: []envVar{
 				{"DUAL_READS_ENABLED", "true"},
 				{"ASYNC_READS_ON_SECONDARY", "false"},
 			},
@@ -47,8 +47,8 @@ func TestConfig_ParseReadMode(t *testing.T) {
 			errMsg:           "combination of DUAL_READS_ENABLED (true) and ASYNC_READS_ON_SECONDARY (false) not yet implemented",
 		},
 		{
-			name:           "Invalid: Dual reads disabled but async reads on secondary enabled",
-			envVars:        []envVar{
+			name: "Invalid: Dual reads disabled but async reads on secondary enabled",
+			envVars: []envVar{
 				{"DUAL_READS_ENABLED", "false"},
 				{"ASYNC_READS_ON_SECONDARY", "true"},
 			},
@@ -57,15 +57,15 @@ func TestConfig_ParseReadMode(t *testing.T) {
 			errMsg:           "invalid combination of DUAL_READS_ENABLED (false) and ASYNC_READS_ON_SECONDARY (true)",
 		},
 		{
-			name:           "Valid: Dual reads unset, async reads on secondary unset",
-			envVars:        []envVar{},
+			name:             "Valid: Dual reads unset, async reads on secondary unset",
+			envVars:          []envVar{},
 			expectedReadMode: ReadModePrimaryOnly,
 			errExpected:      false,
 			errMsg:           "",
 		},
 		{
-			name:           "Invalid: Dual reads enabled but async reads on secondary unset",
-			envVars:        []envVar{
+			name: "Invalid: Dual reads enabled but async reads on secondary unset",
+			envVars: []envVar{
 				{"DUAL_READS_ENABLED", "true"},
 			},
 			expectedReadMode: ReadModeUndefined,
@@ -73,8 +73,8 @@ func TestConfig_ParseReadMode(t *testing.T) {
 			errMsg:           "combination of DUAL_READS_ENABLED (true) and ASYNC_READS_ON_SECONDARY (false) not yet implemented",
 		},
 		{
-			name:           "Invalid: Dual reads unset but async reads on secondary enabled",
-			envVars:        []envVar{
+			name: "Invalid: Dual reads unset but async reads on secondary enabled",
+			envVars: []envVar{
 				{"ASYNC_READS_ON_SECONDARY", "true"},
 			},
 			expectedReadMode: ReadModeUndefined,

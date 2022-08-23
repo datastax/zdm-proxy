@@ -2,8 +2,8 @@ package ccm
 
 import (
 	"fmt"
+	"github.com/datastax/zdm-proxy/integration-tests/env"
 	"github.com/gocql/gocql"
-	"github.com/riptano/cloud-gate/integration-tests/env"
 )
 
 type Cluster struct {

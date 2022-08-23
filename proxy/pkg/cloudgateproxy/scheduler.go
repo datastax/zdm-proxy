@@ -18,7 +18,7 @@ func NewScheduler(workers int) *Scheduler {
 		go func() {
 			defer scheduler.wg.Done()
 			for {
-				task, ok := <- scheduler.queue
+				task, ok := <-scheduler.queue
 				if !ok {
 					return
 				}

@@ -4,7 +4,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
-	"github.com/riptano/cloud-gate/proxy/pkg/config"
+	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 	log "github.com/sirupsen/logrus"
 	"io/ioutil"
 	"runtime"
@@ -110,8 +110,8 @@ func getClientSideVerifyConnectionCallback(certificateDnsName string, rootCAs *x
 			dnsName = certificateDnsName
 		}
 		opts := x509.VerifyOptions{
-			DNSName:       dnsName,
-			Roots:         rootCAs,
+			DNSName: dnsName,
+			Roots:   rootCAs,
 		}
 		if len(cs.PeerCertificates) > 0 {
 			opts.Intermediates = x509.NewCertPool()

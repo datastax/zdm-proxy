@@ -68,11 +68,11 @@ func TestReplaceQueryString(t *testing.T) {
 			map[int][][]int{0: {{2, 5}}}, false, map[int]statementType{0: statementTypeUpdate}},
 		{"OpCodeQuery UPDATE Complex 2",
 			mockQueryFrame(t,
-				"UPDATE blah SET a = ?, b = 123 " +
-					"WHERE f[now()] = ? IF " +
-					"g[123] IN (2, 3, ?, now(), ?, now()) AND " +
-					"d IN ? AND " +
-					"c IN (?, now(), 2) AND " +
+				"UPDATE blah SET a = ?, b = 123 "+
+					"WHERE f[now()] = ? IF "+
+					"g[123] IN (2, 3, ?, now(), ?, now()) AND "+
+					"d IN ? AND "+
+					"c IN (?, now(), 2) AND "+
 					"a = now()"),
 			[]*statementReplacedTerms{{statementIndex: 0, replacedTerms: []*term{
 				NewFunctionCallTerm(NewFunctionCall("", "now", 0, 39, 43), 0),
@@ -82,15 +82,15 @@ func TestReplaceQueryString(t *testing.T) {
 				NewFunctionCallTerm(NewFunctionCall("", "now", 0, 132, 136), 5),
 			}}}, map[int][][]int{0: {{2, 8, 10, 13, 15}}}, false, map[int]statementType{0: statementTypeUpdate}},
 		{"OpCodeQuery UPDATE Complex 3",
-			mockQueryFrame(t, "" +
-				"UPDATE blah USING TIMESTAMP ? AND TTL ? " +
-				"SET a = ?, b = now() " +
-				"WHERE " +
-				"(a IN ?) AND " +
-				"(b IN (now(), ?)) AND " +
-				"(a, b, c) IN ? AND " +
-				"(a, b, c) IN ((1, 2, ?), (now(), 5, 6)) AND " +
-				"(a, b, c) IN (?, ?, ?) AND " +
+			mockQueryFrame(t, ""+
+				"UPDATE blah USING TIMESTAMP ? AND TTL ? "+
+				"SET a = ?, b = now() "+
+				"WHERE "+
+				"(a IN ?) AND "+
+				"(b IN (now(), ?)) AND "+
+				"(a, b, c) IN ? AND "+
+				"(a, b, c) IN ((1, 2, ?), (now(), 5, 6)) AND "+
+				"(a, b, c) IN (?, ?, ?) AND "+
 				"(a, b, c) > (1, now(), ?)"),
 			[]*statementReplacedTerms{{statementIndex: 0, replacedTerms: []*term{
 				NewFunctionCallTerm(NewFunctionCall("", "now", 0, 55, 59), 2),
@@ -149,7 +149,7 @@ func TestReplaceQueryString(t *testing.T) {
 				}},
 				{statementIndex: 2, replacedTerms: []*term{
 					NewFunctionCallTerm(NewFunctionCall("", "now", 0, 39, 43), -1),
-				}}}, map[int][][]int{0: {{2, 8, 10, 13, 15}}, 2: {{1}}}, false,  map[int]statementType{0: statementTypeUpdate, 2: statementTypeDelete}},
+				}}}, map[int][][]int{0: {{2, 8, 10, 13, 15}}, 2: {{1}}}, false, map[int]statementType{0: statementTypeUpdate, 2: statementTypeDelete}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

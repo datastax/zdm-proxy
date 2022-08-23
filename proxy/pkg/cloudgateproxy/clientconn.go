@@ -7,7 +7,7 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/riptano/cloud-gate/proxy/pkg/config"
+	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 	log "github.com/sirupsen/logrus"
 	"net"
 	"sync"
@@ -102,11 +102,11 @@ func (cc *ClientConnector) run(activeClients *int32) {
 	cc.clientHandlerWg.Add(1)
 	go func() {
 		defer cc.clientHandlerWg.Done()
-		<- cc.responsesDoneChan
-		<- cc.requestsDoneCtx.Done()
-		<- cc.eventsDoneChan
+		<-cc.responsesDoneChan
+		<-cc.requestsDoneCtx.Done()
+		<-cc.eventsDoneChan
 
-		log.Debugf("[%s] All in flight requests are done, requesting cluster connections of client handler %v " +
+		log.Debugf("[%s] All in flight requests are done, requesting cluster connections of client handler %v "+
 			"to be terminated.", ClientConnectorLogPrefix, cc.connection.RemoteAddr())
 		cc.clientHandlerCancelFunc()
 
@@ -117,14 +117,13 @@ func (cc *ClientConnector) run(activeClients *int32) {
 		}
 
 		log.Debugf("[%s] Waiting until request listener is done.", ClientConnectorLogPrefix)
-		<- cc.clientConnectorRequestsDoneChan
+		<-cc.clientConnectorRequestsDoneChan
 		log.Debugf("[%s] Shutting down write coalescer.", ClientConnectorLogPrefix)
 		cc.writeCoalescer.Close()
 
 		atomic.AddInt32(activeClients, -1)
 	}()
 }
-
 
 func (cc *ClientConnector) listenForRequests() {
 

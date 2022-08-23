@@ -4,24 +4,24 @@ import (
 	"bytes"
 	"context"
 	"github.com/datastax/go-cassandra-native-protocol/frame"
-	"github.com/riptano/cloud-gate/proxy/pkg/config"
+	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 	log "github.com/sirupsen/logrus"
 	"net"
 	"sync"
 )
 
-const(
+const (
 	initialBufferSize = 1024
 )
 
 // Coalesces writes using a write buffer
 type writeCoalescer struct {
-	connection       net.Conn
-	conf             *config.Config
+	connection net.Conn
+	conf       *config.Config
 
-	clientHandlerWaitGroup  *sync.WaitGroup
-	shutdownContext context.Context
-	cancelFunc      context.CancelFunc
+	clientHandlerWaitGroup *sync.WaitGroup
+	shutdownContext        context.Context
+	cancelFunc             context.CancelFunc
 
 	writeQueue chan *frame.RawFrame
 
@@ -194,6 +194,6 @@ func (recv *writeCoalescer) Close() {
 }
 
 type coalescerIterationResult struct {
-	buffer *bytes.Buffer
+	buffer   *bytes.Buffer
 	draining bool
 }

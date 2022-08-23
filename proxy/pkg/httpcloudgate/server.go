@@ -14,7 +14,7 @@ func StartHttpServer(addr string, wg *sync.WaitGroup) *http.Server {
 		defer wg.Done()
 
 		if err := srv.ListenAndServe(); err != http.ErrServerClosed {
-			log.Errorf("Failed to listen on the metrics endpoint: %v. " +
+			log.Errorf("Failed to listen on the metrics endpoint: %v. "+
 				"The proxy will stay up and listen for CQL requests.", err)
 		}
 	}()

@@ -10,11 +10,11 @@ import (
 
 type PreparedStatementCache struct {
 	cache map[string]PreparedData // Map containing the prepared queries (raw bytes) keyed on prepareId
-	index map[string]string // Map that can be used as an index to look up origin prepareIds by target prepareId
+	index map[string]string       // Map that can be used as an index to look up origin prepareIds by target prepareId
 
 	interceptedCache map[string]PreparedData // Map containing the prepared queries for intercepted requests
 
-	lock  *sync.RWMutex
+	lock *sync.RWMutex
 }
 
 func NewPreparedStatementCache() *PreparedStatementCache {
@@ -26,7 +26,7 @@ func NewPreparedStatementCache() *PreparedStatementCache {
 	}
 }
 
-func (psc PreparedStatementCache) GetPreparedStatementCacheSize() float64{
+func (psc PreparedStatementCache) GetPreparedStatementCacheSize() float64 {
 	psc.lock.RLock()
 	defer psc.lock.RUnlock()
 
@@ -83,7 +83,7 @@ func (psc *PreparedStatementCache) GetByTargetPreparedId(targetPreparedId []byte
 
 	data, ok := psc.cache[originPreparedId]
 	if !ok {
-		log.Errorf("Could not get prepared data by target id even though there is an entry on the index map. " +
+		log.Errorf("Could not get prepared data by target id even though there is an entry on the index map. "+
 			"This is most likely a bug. OriginPreparedId = %v, TargetPreparedId = %v", originPreparedId, targetPreparedId)
 		return nil, false
 	}

@@ -1,4 +1,4 @@
-module github.com/riptano/cloud-gate
+module github.com/datastax/zdm-proxy
 
 go 1.16
 

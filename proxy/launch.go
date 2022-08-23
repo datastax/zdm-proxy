@@ -1,13 +1,13 @@
 package main
 
 import (
-"context"
-"github.com/riptano/cloud-gate/proxy/pkg/config"
-"github.com/riptano/cloud-gate/proxy/pkg/runner"
-log "github.com/sirupsen/logrus"
-"os"
-"os/signal"
-"syscall"
+	"context"
+	"github.com/datastax/zdm-proxy/proxy/pkg/config"
+	"github.com/datastax/zdm-proxy/proxy/pkg/runner"
+	log "github.com/sirupsen/logrus"
+	"os"
+	"os/signal"
+	"syscall"
 )
 
 func runSignalListener(cancelFunc context.CancelFunc) {

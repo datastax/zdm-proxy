@@ -6,8 +6,8 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
-	"github.com/riptano/cloud-gate/proxy/pkg/metrics/noopmetrics"
+	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
+	"github.com/datastax/zdm-proxy/proxy/pkg/metrics/noopmetrics"
 	"github.com/stretchr/testify/require"
 	"reflect"
 	"testing"
@@ -110,11 +110,11 @@ func TestInspectFrame(t *testing.T) {
 		// EXECUTE
 		{"OpCodeExecute origin", args{mockExecuteFrame(t, "ORIGIN"), []*term{}, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewExecuteRequestInfo(originCacheEntry)},
 		{"OpCodeExecute target", args{mockExecuteFrame(t, "TARGET"), []*term{}, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewExecuteRequestInfo(targetCacheEntry)},
-		{"OpCodeExecute both", args{mockExecuteFrame(t, "BOTH"), []*term{}, forwardReadsToOrigin,forwardReadsToOrigin, forwardAuthToOrigin}, NewExecuteRequestInfo(bothCacheEntry)},
-		{"OpCodeExecute local ks", args{mockExecuteFrame(t, "LOCAL_KS"), []*term{}, forwardReadsToOrigin,forwardReadsToOrigin, forwardAuthToOrigin}, NewExecuteRequestInfo(localKsCacheEntry)},
-		{"OpCodeExecute local", args{mockExecuteFrame(t, "LOCAL"), []*term{}, forwardReadsToOrigin,forwardReadsToOrigin, forwardAuthToOrigin}, NewExecuteRequestInfo(localCacheEntry)},
-		{"OpCodeExecute peers ks", args{mockExecuteFrame(t, "PEERS_KS"), []*term{}, forwardReadsToOrigin,forwardReadsToOrigin, forwardAuthToOrigin}, NewExecuteRequestInfo(peersKsCacheEntry)},
-		{"OpCodeExecute peers", args{mockExecuteFrame(t, "PEERS"), []*term{}, forwardReadsToOrigin,forwardReadsToOrigin, forwardAuthToOrigin}, NewExecuteRequestInfo(peersCacheEntry)},
+		{"OpCodeExecute both", args{mockExecuteFrame(t, "BOTH"), []*term{}, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewExecuteRequestInfo(bothCacheEntry)},
+		{"OpCodeExecute local ks", args{mockExecuteFrame(t, "LOCAL_KS"), []*term{}, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewExecuteRequestInfo(localKsCacheEntry)},
+		{"OpCodeExecute local", args{mockExecuteFrame(t, "LOCAL"), []*term{}, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewExecuteRequestInfo(localCacheEntry)},
+		{"OpCodeExecute peers ks", args{mockExecuteFrame(t, "PEERS_KS"), []*term{}, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewExecuteRequestInfo(peersKsCacheEntry)},
+		{"OpCodeExecute peers", args{mockExecuteFrame(t, "PEERS"), []*term{}, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewExecuteRequestInfo(peersCacheEntry)},
 		{"OpCodeExecute unknown", args{mockExecuteFrame(t, "UNKNOWN"), []*term{}, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, fmt.Sprintf("The preparedID of the statement to be executed (%v) does not exist in the proxy cache", hex.EncodeToString([]byte("UNKNOWN")))},
 		// REGISTER
 		{"OpCodeRegister", args{mockFrame(t, &message.Register{EventTypes: []primitive.EventType{primitive.EventTypeSchemaChange}}, primitive.ProtocolVersion4), []*term{}, forwardReadsToOrigin, forwardReadsToOrigin, forwardAuthToOrigin}, NewGenericRequestInfo(forwardToBoth, false)},
@@ -250,7 +250,7 @@ func newFakeHistogram() metrics.Histogram {
 	return h
 }
 
-type fakeMetric struct { }
+type fakeMetric struct{}
 
 func (recv *fakeMetric) GetName() string {
 	return ""
@@ -268,7 +268,7 @@ func (recv *fakeMetric) String() string {
 	return ""
 }
 
-func (recv *fakeMetric) WithLabels(map[string] string) metrics.Metric {
+func (recv *fakeMetric) WithLabels(map[string]string) metrics.Metric {
 	return newFakeMetric()
 }
 

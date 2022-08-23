@@ -3,8 +3,8 @@ package health
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/datastax/zdm-proxy/proxy/pkg/cloudgateproxy"
 	"github.com/google/uuid"
-	"github.com/riptano/cloud-gate/proxy/pkg/cloudgateproxy"
 	log "github.com/sirupsen/logrus"
 	"net/http"
 )
@@ -29,9 +29,9 @@ type ControlConnStatus struct {
 type Status string
 
 const (
-	UP               = Status("UP")
-	DOWN             = Status("DOWN")
-	STARTUP          = Status("STARTUP")
+	UP      = Status("UP")
+	DOWN    = Status("DOWN")
+	STARTUP = Status("STARTUP")
 )
 
 func ReadinessHandler(proxy *cloudgateproxy.CloudgateProxy) http.Handler {

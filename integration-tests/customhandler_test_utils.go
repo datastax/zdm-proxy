@@ -215,14 +215,14 @@ func fullSystemPeers(
 			newRow := systemPeersRow(
 				dc,
 				&net.TCPAddr{
-					IP:   net.ParseIP(fmt.Sprintf("%s%d", ipPrefix, totalCount + i + 1)),
+					IP:   net.ParseIP(fmt.Sprintf("%s%d", ipPrefix, totalCount+i+1)),
 					Port: localAddr.Port,
 					Zone: localAddr.Zone,
 				},
 				request.Header.Version)
 			systemLocalRows = append(systemLocalRows, newRow)
 		}
-		totalCount+=count
+		totalCount += count
 	}
 	msg := &message.RowsResult{
 		Metadata: &message.RowsMetadata{

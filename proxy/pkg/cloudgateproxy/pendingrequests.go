@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/datastax/go-cassandra-native-protocol/frame"
-	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
+	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
 	"sync"
 )
@@ -36,7 +36,7 @@ func (p *pendingRequests) getOrCreateRequestContextHolder(streamId int16) *reque
 	if ok {
 		return holder.(*requestContextHolder)
 	} else {
-		holder, _ =  p.pending.LoadOrStore(streamId, NewRequestContextHolder())
+		holder, _ = p.pending.LoadOrStore(streamId, NewRequestContextHolder())
 		return holder.(*requestContextHolder)
 	}
 }
@@ -78,7 +78,7 @@ func (p *pendingRequests) markAsDone(
 	holder := p.getOrCreateRequestContextHolder(streamId)
 	reqCtx := holder.Get()
 	if reqCtx == nil {
-		log.Warnf("Could not find async request context for stream id %d received from async connector. " +
+		log.Warnf("Could not find async request context for stream id %d received from async connector. "+
 			"It either timed out or a protocol error occurred.", streamId)
 		return nil, false
 	}
@@ -124,7 +124,7 @@ func (p *pendingRequests) releaseStreamId(streamId int16) error {
 
 func (p *pendingRequests) reserveStreamId() (int16, error) {
 	select {
-	case streamId := <- p.streams:
+	case streamId := <-p.streams:
 		return streamId, nil
 	default:
 		return -1, errors.New("channel was empty")

@@ -43,7 +43,7 @@ func (recv *QueryModifier) replaceQueryString(currentKeyspace string, context *f
 	case primitive.OpCodePrepare:
 		newFrame, replacedTerms, newStatementsQueryData, err = recv.replaceQueryInPrepareMessage(decodedFrame, statementsQueryData)
 	default:
-		err = fmt.Errorf("request requires query replacement but op code (%v) unrecognized, " +
+		err = fmt.Errorf("request requires query replacement but op code (%v) unrecognized, "+
 			"this is most likely a bug", requestType)
 	}
 
@@ -97,7 +97,7 @@ func (recv *QueryModifier) replaceQueryInBatchMessage(
 	for _, idx := range replacedStatementIndexes {
 		newStmtQueryData := newStatementsQueryData[idx]
 		if newStmtQueryData.statementIndex >= len(newBatchMsg.Children) {
-			return nil, nil, nil, fmt.Errorf("new query data statement index (%v) is greater or equal than " +
+			return nil, nil, nil, fmt.Errorf("new query data statement index (%v) is greater or equal than "+
 				"number of batch child statements (%v)", newStmtQueryData.statementIndex, len(newBatchMsg.Children))
 		}
 		newBatchMsg.Children[newStmtQueryData.statementIndex].QueryOrId = newStmtQueryData.queryData.getQuery()

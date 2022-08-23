@@ -7,7 +7,7 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
+	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
 	"strings"
 )
@@ -31,11 +31,11 @@ const (
 )
 
 const (
-	systemPeersTableName = "peers"
+	systemPeersTableName   = "peers"
 	systemPeersV2TableName = "peers_v2"
-	systemLocalTableName = "local"
-	systemKeyspaceName = "system"
-	nowFunctionName = "now"
+	systemLocalTableName   = "local"
+	systemKeyspaceName     = "system"
+	nowFunctionName        = "now"
 )
 
 type UnpreparedExecuteError struct {

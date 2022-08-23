@@ -7,11 +7,11 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/datastax/zdm-proxy/integration-tests/setup"
+	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
+	"github.com/datastax/zdm-proxy/integration-tests/utils"
+	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 	"github.com/gocql/gocql"
-	"github.com/riptano/cloud-gate/integration-tests/setup"
-	"github.com/riptano/cloud-gate/integration-tests/simulacron"
-	"github.com/riptano/cloud-gate/integration-tests/utils"
-	"github.com/riptano/cloud-gate/proxy/pkg/config"
 	"github.com/rs/zerolog"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -290,7 +290,7 @@ func TestAsyncReadsRequestTypes(t *testing.T) {
 	}
 
 	testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodesAndConfig(
-		false, false,1, nil)
+		false, false, 1, nil)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
@@ -306,7 +306,7 @@ func TestAsyncReadsRequestTypes(t *testing.T) {
 		cqlClientConn, err := client.ConnectAndInit(context.Background(), primitive.ProtocolVersion4, 0)
 		require.Nil(t, err)
 		defer cqlClientConn.Close()
-		
+
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				err = testSetup.Origin.DeleteLogs()
@@ -346,7 +346,6 @@ func TestAsyncReadsRequestTypes(t *testing.T) {
 				default:
 					require.Fail(t, "unexpected request type")
 				}
-
 
 				sentOrigin := 0
 				sentTarget := 0
@@ -428,7 +427,7 @@ func TestAsyncReadsRequestTypes(t *testing.T) {
 						}
 					}
 					return nil, false
-				}, 15, 100 * time.Millisecond)
+				}, 15, 100*time.Millisecond)
 
 			})
 		}

@@ -38,7 +38,7 @@ The result of that workflow is the creation and publishing of a Docker image wit
 
 Once the tag has been pushed to the repository and the build has been verified, a `Release` should be created within GitHub matching the tag.  This is a manual step that must be completed after the automation.
 
-1. Navigate in a browser to [https://github.com/riptano/cloud-gate/releases](https://github.com/riptano/cloud-gate/releases) and select the `Draft a new release` button.
+1. Navigate in a browser to [https://github.com/datastax/zdm-proxy/releases](https://github.com/datastax/zdm-proxy/releases) and select the `Draft a new release` button.
 2. Select the `Choose a tag` button and select the previously pushed tag, in our example, `v1.1.0` from the dropdown.
 3. Set the `Release title` to the same name as the tag, in our example, `v1.1.0`.
 4. Paste the contents of the `RELEASE_NOTES` relevant to this release into text-area for `Describe the release`.
