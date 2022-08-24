@@ -4,7 +4,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
-	"github.com/riptano/cloud-gate/proxy/pkg/config"
+	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 	log "github.com/sirupsen/logrus"
 	"io/ioutil"
 	"runtime"

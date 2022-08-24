@@ -122,7 +122,7 @@ And verify that the data is in both clusters by querying them directly through t
 
 To test prepared statements, there is a simple noSQLBench activity under nb-tests that can be launched like this:
 
-`java -jar nb.jar run driver=cql workload=~/go/src/github.com/riptano/cloud-gate/nb-tests/cql-nb-activity.yaml tags=phase:'rampup' cycles=20..30 host=localhost port=14002 cbopts=".withProtocolVersion(ProtocolVersion.V3)"`
+`java -jar nb.jar run driver=cql workload=~/go/src/github.com/datastax/zdm-proxy/nb-tests/cql-nb-activity.yaml tags=phase:'rampup' cycles=20..30 host=localhost port=14002 cbopts=".withProtocolVersion(ProtocolVersion.V3)"`
 
 ## Running the proxy with docker
 

@@ -1,7 +1,7 @@
 package integration_tests
 
 import (
-	"github.com/riptano/cloud-gate/integration-tests/utils"
+	"github.com/datastax/zdm-proxy/integration-tests/utils"
 	log "github.com/sirupsen/logrus"
 	"github.com/sirupsen/logrus/hooks/writer"
 )

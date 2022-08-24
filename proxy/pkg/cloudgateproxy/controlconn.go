@@ -8,7 +8,7 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
 	"github.com/google/uuid"
 	"github.com/jpillora/backoff"
-	"github.com/riptano/cloud-gate/proxy/pkg/config"
+	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 	log "github.com/sirupsen/logrus"
 	"math"
 	"math/big"

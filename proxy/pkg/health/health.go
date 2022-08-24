@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/google/uuid"
-	"github.com/riptano/cloud-gate/proxy/pkg/cloudgateproxy"
+	"github.com/datastax/zdm-proxy/proxy/pkg/cloudgateproxy"
 	log "github.com/sirupsen/logrus"
 	"net/http"
 )

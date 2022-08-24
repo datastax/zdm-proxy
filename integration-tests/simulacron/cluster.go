@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/gocql/gocql"
-	"github.com/riptano/cloud-gate/integration-tests/env"
+	"github.com/datastax/zdm-proxy/integration-tests/env"
 	"net"
 	"strings"
 )

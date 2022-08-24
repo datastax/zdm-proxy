@@ -5,10 +5,10 @@ version: 2
 cli:
   server: https://app.fossa.com
   fetcher: custom
-  project: cloud-gate
+  project: zdm-proxy
 analyze:
   modules:
-  - name: github.com/riptano/cloud-gate/proxy
+  - name: github.com/datastax/zdm-proxy/proxy
     type: go
-    target: github.com/riptano/cloud-gate/proxy
+    target: github.com/datastax/zdm-proxy/proxy
     path: proxy

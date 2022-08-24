@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/google/uuid"
-	"github.com/riptano/cloud-gate/integration-tests/env"
+	"github.com/datastax/zdm-proxy/integration-tests/env"
 	"io"
 	"io/ioutil"
 	"net/http"

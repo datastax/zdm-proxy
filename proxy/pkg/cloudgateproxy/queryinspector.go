@@ -3,7 +3,7 @@ package cloudgateproxy
 import (
 	"fmt"
 	"github.com/antlr/antlr4/runtime/Go/antlr"
-	parser "github.com/riptano/cloud-gate/antlr"
+	parser "github.com/datastax/zdm-proxy/antlr"
 	log "github.com/sirupsen/logrus"
 	"strings"
 	"sync"
