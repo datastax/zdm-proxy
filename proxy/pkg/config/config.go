@@ -520,7 +520,7 @@ func isNotDefined(propertyValue string) bool {
 	return !isDefined(propertyValue)
 }
 
-// TopologyConfig contains configuration parameters for 2 features related to multi cloudgate-proxy instance deployment:
+// TopologyConfig contains configuration parameters for 2 features related to multi zdm-proxy instance deployment:
 //   - Virtualization of system.peers
 //   - Assignment of C* hosts per proxy instance for request connections
 type TopologyConfig struct {
