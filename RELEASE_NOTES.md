@@ -1,8 +1,8 @@
 # Release Notes
 
-General release notes for the Cloudgate Proxy.
+General release notes for the ZDM Proxy.
 
-Build artifacts are available at [Docker Hub](https://hub.docker.com/repository/docker/datastax/cloudgate-proxy).
+Build artifacts are available at [Docker Hub](https://hub.docker.com/repository/docker/datastax/zdm-proxy).
 
 For additional details on the changes included in a specific release, see the associated CHANGELOG-x.x.md file.
 

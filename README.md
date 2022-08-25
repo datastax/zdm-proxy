@@ -182,13 +182,13 @@ For example, if you want to tag and push the image tagged by the current git com
 
 ```shell
 > make get_current_tag
-datastax/cloudgate-proxy:d046148f606b65b536bb0cc2bd63daf1d556e778
-> docker tag datastax/cloudgate-proxy:d046148f606b65b536bb0cc2bd63daf1d556e778 datastax/cloudgate-proxy:1.x
-> docker tag datastax/cloudgate-proxy:d046148f606b65b536bb0cc2bd63daf1d556e778 datastax/cloudgate-proxy:1.0.1
-> docker tag datastax/cloudgate-proxy:d046148f606b65b536bb0cc2bd63daf1d556e778 datastax/cloudgate-proxy:latest
-> docker push datastax/cloudgate-proxy:1.x
-> docker push datastax/cloudgate-proxy:1.0.1
-> docker push datastax/cloudgate-proxy:latest
+datastax/zdm-proxy:d046148f606b65b536bb0cc2bd63daf1d556e778
+> docker tag datastax/zdm-proxy:d046148f606b65b536bb0cc2bd63daf1d556e778 datastax/zdm-proxy:1.x
+> docker tag datastax/zdm-proxy:d046148f606b65b536bb0cc2bd63daf1d556e778 datastax/zdm-proxy:1.0.1
+> docker tag datastax/zdm-proxy:d046148f606b65b536bb0cc2bd63daf1d556e778 datastax/zdm-proxy:latest
+> docker push datastax/zdm-proxy:1.x
+> docker push datastax/zdm-proxy:1.0.1
+> docker push datastax/zdm-proxy:latest
 ```
 
 
