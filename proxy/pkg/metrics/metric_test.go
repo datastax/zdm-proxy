@@ -1,7 +1,7 @@
 package metrics_test
 
 import (
-	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
+	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
 	"github.com/stretchr/testify/require"
 	"testing"
 )

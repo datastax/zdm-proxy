@@ -1,7 +1,7 @@
 package noopmetrics
 
 import (
-	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
+	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
 	"net/http"
 	"time"
 )

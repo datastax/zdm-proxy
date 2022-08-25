@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"github.com/riptano/cloud-gate/proxy/pkg/config"
+	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 	log "github.com/sirupsen/logrus"
 	"net"
 	"sync"

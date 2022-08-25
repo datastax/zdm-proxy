@@ -3,7 +3,7 @@ package prommetrics
 import (
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
-	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
+	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"testing"

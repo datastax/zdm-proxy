@@ -2,10 +2,10 @@ package integration_tests
 
 import (
 	"github.com/gocql/gocql"
-	"github.com/riptano/cloud-gate/integration-tests/ccm"
-	"github.com/riptano/cloud-gate/integration-tests/env"
-	"github.com/riptano/cloud-gate/integration-tests/setup"
-	"github.com/riptano/cloud-gate/proxy/pkg/cloudgateproxy"
+	"github.com/datastax/zdm-proxy/integration-tests/ccm"
+	"github.com/datastax/zdm-proxy/integration-tests/env"
+	"github.com/datastax/zdm-proxy/integration-tests/setup"
+	"github.com/datastax/zdm-proxy/proxy/pkg/cloudgateproxy"
 	log "github.com/sirupsen/logrus"
 	"os"
 	"testing"

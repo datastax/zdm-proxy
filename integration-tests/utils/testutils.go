@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/gocql/gocql"
-	"github.com/riptano/cloud-gate/proxy/pkg/health"
+	"github.com/datastax/zdm-proxy/proxy/pkg/health"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
 	"net/http"

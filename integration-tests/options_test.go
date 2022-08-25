@@ -5,7 +5,7 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/riptano/cloud-gate/integration-tests/setup"
+	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/stretchr/testify/require"
 	"testing"
 )

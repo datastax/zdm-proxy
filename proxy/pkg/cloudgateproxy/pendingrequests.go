@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/datastax/go-cassandra-native-protocol/frame"
-	"github.com/riptano/cloud-gate/proxy/pkg/metrics"
+	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
 	"sync"
 )
