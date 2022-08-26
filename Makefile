@@ -1,4 +1,4 @@
-NAME   := datastax/cloudgate-proxy
+NAME   := datastax/zdm-proxy
 TAG    := $$(git log -1 --pretty=%H)
 IMG    := ${NAME}:${TAG}
  

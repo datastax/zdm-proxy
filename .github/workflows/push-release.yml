@@ -16,7 +16,7 @@ jobs:
         uses: docker/metadata-action@v3
         with:
           images: |
-            datastax/cloudgate-proxy
+            datastax/zdm-proxy
           flavor: |
             latest=false
           tags: |

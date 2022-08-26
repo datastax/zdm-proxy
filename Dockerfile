@@ -1,6 +1,6 @@
 ##########
 # NOTE: When building this image, there is an assumption that you are in the top level directory of the repository.
-# $ docker build . -f ./Dockerfile -t cloudgate-proxy
+# $ docker build . -f ./Dockerfile -t zdm-proxy
 ##########
 
 FROM golang:alpine AS builder

@@ -1,6 +1,6 @@
 # Release Process
 
-All published container images can be found at [https://hub.docker.com/r/datastax/cloudgate-proxy/tags?page=1&ordering=last_updated](https://hub.docker.com/r/datastax/cloudgate-proxy/tags?page=1&ordering=last_updated).
+All published container images can be found at [https://hub.docker.com/r/datastax/zdm-proxy/tags?page=1&ordering=last_updated](https://hub.docker.com/r/datastax/zdm-proxy/tags?page=1&ordering=last_updated).
 
 ## Official/Stable Releases
 
