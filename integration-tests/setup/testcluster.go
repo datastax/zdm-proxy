@@ -7,7 +7,7 @@ import (
 	"github.com/datastax/zdm-proxy/integration-tests/cqlserver"
 	"github.com/datastax/zdm-proxy/integration-tests/env"
 	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
-	"github.com/datastax/zdm-proxy/proxy/pkg/cloudgateproxy"
+	"github.com/datastax/zdm-proxy/proxy/pkg/zdmproxy"
 	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 	log "github.com/sirupsen/logrus"
 	"math"
@@ -118,7 +118,7 @@ func CleanUpClusters() {
 type SimulacronTestSetup struct {
 	Origin *simulacron.Cluster
 	Target *simulacron.Cluster
-	Proxy  *cloudgateproxy.CloudgateProxy
+	Proxy  *zdmproxy.CloudgateProxy
 }
 
 func NewSimulacronTestSetupWithSession(createProxy bool, createSession bool) (*SimulacronTestSetup, error) {
@@ -142,7 +142,7 @@ func NewSimulacronTestSetupWithSessionAndNodesAndConfig(createProxy bool, create
 	if err != nil {
 		log.Panic("simulacron target startup failed: ", err)
 	}
-	var proxyInstance *cloudgateproxy.CloudgateProxy
+	var proxyInstance *zdmproxy.CloudgateProxy
 	if createProxy {
 		if config == nil {
 			config = NewTestConfig(origin.GetInitialContactPoint(), target.GetInitialContactPoint())
@@ -191,7 +191,7 @@ func (setup *SimulacronTestSetup) Cleanup() {
 type CcmTestSetup struct {
 	Origin *ccm.Cluster
 	Target *ccm.Cluster
-	Proxy  *cloudgateproxy.CloudgateProxy
+	Proxy  *zdmproxy.CloudgateProxy
 }
 
 func NewTemporaryCcmTestSetup(start bool, createProxy bool) (*CcmTestSetup, error) {
@@ -208,7 +208,7 @@ func NewTemporaryCcmTestSetup(start bool, createProxy bool) (*CcmTestSetup, erro
 		return nil, err
 	}
 
-	var proxyInstance *cloudgateproxy.CloudgateProxy
+	var proxyInstance *zdmproxy.CloudgateProxy
 	if createProxy {
 		proxyInstance, err = NewProxyInstance(origin, target)
 		if err != nil {
@@ -264,7 +264,7 @@ func (setup *CcmTestSetup) Cleanup() {
 type CqlServerTestSetup struct {
 	Origin *cqlserver.Cluster
 	Target *cqlserver.Cluster
-	Proxy  *cloudgateproxy.CloudgateProxy
+	Proxy  *zdmproxy.CloudgateProxy
 	Client *cqlserver.Client
 }
 
@@ -284,7 +284,7 @@ func NewCqlServerTestSetup(conf *config.Config, start bool, createProxy bool, co
 		return nil, err
 	}
 
-	var proxyInstance *cloudgateproxy.CloudgateProxy
+	var proxyInstance *zdmproxy.CloudgateProxy
 	if createProxy {
 		proxyInstance, err = NewProxyInstanceWithConfig(conf)
 		if err != nil {
@@ -369,12 +369,12 @@ func (setup *CqlServerTestSetup) Cleanup() {
 	}
 }
 
-func NewProxyInstance(origin TestCluster, target TestCluster) (*cloudgateproxy.CloudgateProxy, error) {
+func NewProxyInstance(origin TestCluster, target TestCluster) (*zdmproxy.CloudgateProxy, error) {
 	return NewProxyInstanceWithConfig(NewTestConfig(origin.GetInitialContactPoint(), target.GetInitialContactPoint()))
 }
 
-func NewProxyInstanceWithConfig(config *config.Config) (*cloudgateproxy.CloudgateProxy, error) {
-	return cloudgateproxy.Run(config, context.Background())
+func NewProxyInstanceWithConfig(config *config.Config) (*zdmproxy.CloudgateProxy, error) {
+	return zdmproxy.Run(config, context.Background())
 }
 
 func NewTestConfig(originHost string, targetHost string) *config.Config {
