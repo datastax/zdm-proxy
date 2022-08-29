@@ -8,7 +8,7 @@ import (
 	"github.com/datastax/zdm-proxy/proxy/pkg/cloudgateproxy"
 	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 	"github.com/datastax/zdm-proxy/proxy/pkg/health"
-	"github.com/datastax/zdm-proxy/proxy/pkg/httpcloudgate"
+	"github.com/datastax/zdm-proxy/proxy/pkg/httpzdmproxy"
 	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
 	"net/http"
@@ -16,9 +16,9 @@ import (
 	"time"
 )
 
-func SetupHandlers() (metricsHandler *httpcloudgate.HandlerWithFallback, readinessHandler *httpcloudgate.HandlerWithFallback){
-	metricsHandler = httpcloudgate.NewHandlerWithFallback(metrics.DefaultHttpHandler())
-	readinessHandler = httpcloudgate.NewHandlerWithFallback(health.DefaultReadinessHandler())
+func SetupHandlers() (metricsHandler *httpzdmproxy.HandlerWithFallback, readinessHandler *httpzdmproxy.HandlerWithFallback){
+	metricsHandler = httpzdmproxy.NewHandlerWithFallback(metrics.DefaultHttpHandler())
+	readinessHandler = httpzdmproxy.NewHandlerWithFallback(health.DefaultReadinessHandler())
 
 	http.Handle("/metrics", metricsHandler.Handler())
 	http.Handle("/health/readiness", readinessHandler.Handler())
@@ -29,12 +29,12 @@ func SetupHandlers() (metricsHandler *httpcloudgate.HandlerWithFallback, readine
 func RunMain(
 	conf *config.Config,
 	ctx context.Context,
-	metricsHandler *httpcloudgate.HandlerWithFallback,
-	readinessHandler *httpcloudgate.HandlerWithFallback) {
+	metricsHandler *httpzdmproxy.HandlerWithFallback,
+	readinessHandler *httpzdmproxy.HandlerWithFallback) {
 
 	log.Infof("Starting http server (metrics and health checks) on %v:%d", conf.ProxyMetricsAddress, conf.ProxyMetricsPort)
 	wg := &sync.WaitGroup{}
-	srv := httpcloudgate.StartHttpServer(fmt.Sprintf("%s:%d", conf.ProxyMetricsAddress, conf.ProxyMetricsPort), wg)
+	srv := httpzdmproxy.StartHttpServer(fmt.Sprintf("%s:%d", conf.ProxyMetricsAddress, conf.ProxyMetricsPort), wg)
 
 	b := &backoff.Backoff{
 		Min:    100 * time.Millisecond,
@@ -59,10 +59,10 @@ func RunMain(
 		log.Errorf("Error launching proxy: %v", err)
 	}
 
-	log.Info("Shutting down httpcloudgate server, waiting up to 5 seconds.")
+	log.Info("Shutting down httpzdmproxy server, waiting up to 5 seconds.")
 	srvShutdownCtx, _ := context.WithTimeout(context.Background(), 5 * time.Second)
 	if err := srv.Shutdown(srvShutdownCtx); err != nil {
-		log.Errorf("Failed to gracefully shutdown httpcloudgate server: %v", err)
+		log.Errorf("Failed to gracefully shutdown httpzdmproxy server: %v", err)
 	}
 
 	wg.Wait()

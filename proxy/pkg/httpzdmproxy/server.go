@@ -1,4 +1,4 @@
-package httpcloudgate
+package httpzdmproxy
 
 import (
 	log "github.com/sirupsen/logrus"
