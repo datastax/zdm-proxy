@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/jpillora/backoff"
-	"github.com/datastax/zdm-proxy/proxy/pkg/cloudgateproxy"
+	"github.com/datastax/zdm-proxy/proxy/pkg/zdmproxy"
 	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 	"github.com/datastax/zdm-proxy/proxy/pkg/health"
 	"github.com/datastax/zdm-proxy/proxy/pkg/httpzdmproxy"
@@ -43,7 +43,7 @@ func RunMain(
 		Jitter: true,
 	}
 
-	cp, err := cloudgateproxy.RunWithRetries(conf, ctx, b)
+	cp, err := zdmproxy.RunWithRetries(conf, ctx, b)
 
 	if err == nil {
 		metricsHandler.SetHandler(cp.GetMetricHandler().GetHttpHandler())
@@ -55,7 +55,7 @@ func RunMain(
 		cp.Shutdown()
 		metricsHandler.ClearHandler()
 		readinessHandler.ClearHandler()
-	} else if !errors.Is(err, cloudgateproxy.ShutdownErr) {
+	} else if !errors.Is(err, zdmproxy.ShutdownErr) {
 		log.Errorf("Error launching proxy: %v", err)
 	}
 
