@@ -54,6 +54,8 @@ jobs:
           sudo ln -s /home/runner/.local/bin/ccm /usr/local/bin/ccm
           /usr/local/bin/ccm list
           go test -timeout 180m -v 2>&1 ./integration-tests -USE_CCM=true | go-junit-report -set-exit-code -iocopy -out report-integration.xml
+      - name: Results
+        run: cat report-integration.xml
       - name: Test Summary
         uses: test-summary/action@v1
         if: always()
