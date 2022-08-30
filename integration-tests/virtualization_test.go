@@ -13,7 +13,7 @@ import (
 	"github.com/datastax/zdm-proxy/integration-tests/env"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/integration-tests/utils"
-	"github.com/datastax/zdm-proxy/proxy/pkg/cloudgateproxy"
+	"github.com/datastax/zdm-proxy/proxy/pkg/zdmproxy"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
 	"math/big"
@@ -103,7 +103,7 @@ func TestVirtualizationNumberOfConnections(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			proxies := make([]*cloudgateproxy.CloudgateProxy, tt.proxyInstanceCreationCount)
+			proxies := make([]*zdmproxy.CloudgateProxy, tt.proxyInstanceCreationCount)
 			for i := 0; i < tt.proxyInstanceCreationCount; i++ {
 				proxies[i], err = LaunchProxyWithTopologyConfig(
 					strings.Join(tt.proxyAddresses[i], ","), tt.proxyIndexes[i], tt.proxyInstanceCount,
@@ -271,7 +271,7 @@ func TestVirtualizationTokenAwareness(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			proxies := make([]*cloudgateproxy.CloudgateProxy, tt.proxyInstanceCreationCount)
+			proxies := make([]*zdmproxy.CloudgateProxy, tt.proxyInstanceCreationCount)
 			for i := 0; i < tt.proxyInstanceCreationCount; i++ {
 				proxies[i], err = LaunchProxyWithTopologyConfig(
 					strings.Join(tt.proxyAddresses[i], ","), tt.proxyIndexes[i], tt.proxyInstanceCount,
@@ -907,7 +907,7 @@ func TestVirtualizationPartitioner(t *testing.T) {
 
 func LaunchProxyWithTopologyConfig(
 	proxyAddresses string, proxyIndex int, instanceCount int, listenAddress string, numTokens int,
-	origin setup.TestCluster, target setup.TestCluster) (*cloudgateproxy.CloudgateProxy, error) {
+	origin setup.TestCluster, target setup.TestCluster) (*zdmproxy.CloudgateProxy, error) {
 	conf := setup.NewTestConfig(origin.GetInitialContactPoint(), target.GetInitialContactPoint())
 	conf.ProxyIndex = proxyIndex
 	conf.ProxyInstanceCount = instanceCount

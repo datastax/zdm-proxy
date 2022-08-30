@@ -8,7 +8,7 @@ import (
 	"github.com/datastax/zdm-proxy/integration-tests/client"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/integration-tests/utils"
-	"github.com/datastax/zdm-proxy/proxy/pkg/cloudgateproxy"
+	"github.com/datastax/zdm-proxy/proxy/pkg/zdmproxy"
 	"github.com/stretchr/testify/require"
 	"sync"
 	"sync/atomic"
@@ -45,7 +45,7 @@ func TestRunWithRetries(t *testing.T) {
 	waitGroup.Add(1)
 	go func() {
 		defer waitGroup.Done()
-		p, err := cloudgateproxy.RunWithRetries(
+		p, err := zdmproxy.RunWithRetries(
 			setup.NewTestConfig(testSetup.Origin.GetInitialContactPoint(), testSetup.Target.GetInitialContactPoint()), ctx, b)
 		if err == nil {
 			proxy.Store(&p)
