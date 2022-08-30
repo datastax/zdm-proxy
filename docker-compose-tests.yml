@@ -1,0 +1,55 @@
+version: '3.8'
+
+networks:
+  proxy:
+    name: proxy
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 192.168.100.0/24
+
+services:
+  origin:
+    image: cassandra:3.11.13
+    container_name: zdm_tests_origin
+    restart: unless-stopped
+    networks:
+      proxy:
+        ipv4_address: 192.168.100.101
+
+  target:
+    image: cassandra:3.11.13
+    container_name: zdm_tests_target
+    restart: unless-stopped
+    networks:
+      proxy:
+        ipv4_address: 192.168.100.102
+
+  proxy:
+    image: golang
+    container_name: zdm_tests_proxy
+    restart: unless-stopped
+    tty: true
+    ports:
+      - 2345:2345
+      - 9042:9042
+    volumes:
+      - .:/source
+    entrypoint:
+      - /source/compose/proxy-entrypoint.sh
+    networks:
+      proxy:
+        ipv4_address: 192.168.100.103
+
+  nosqlbench:
+    image: nosqlbench/nosqlbench:4.15.101
+    container_name: zdm_tests_nb
+    tty: true
+    volumes:
+      - .:/source
+    entrypoint:
+      - /source/compose/nosqlbench-entrypoint.sh
+    networks:
+      proxy:
+        ipv4_address: 192.168.100.104

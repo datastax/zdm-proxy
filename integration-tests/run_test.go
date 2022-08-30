@@ -69,7 +69,7 @@ func TestRunWithRetries(t *testing.T) {
 	utils.RequireWithRetries(t,
 		func() (error, bool) {
 			return expectedFailureFunc("expected client tcp connection failure but proxy accepted connection")
-		}, 10, 100)
+		}, 10, 100 * time.Millisecond)
 
 	err = testSetup.Origin.EnableConnectionListener()
 	require.Nil(t, err)
@@ -77,7 +77,7 @@ func TestRunWithRetries(t *testing.T) {
 	utils.RequireWithRetries(t,
 		func() (error, bool) {
 			return expectedFailureFunc("expected client tcp connection failure after origin enable listener but proxy accepted connection")
-		}, 10, 100)
+		}, 10, 100 * time.Millisecond)
 
 	err = testSetup.Target.EnableConnectionListener()
 	require.Nil(t, err)
@@ -92,5 +92,5 @@ func TestRunWithRetries(t *testing.T) {
 			return errors.New("expected RunWithRetries to return but it did not"), false
 		}
 		return nil, false
-	}, 10, 100)
+	}, 10, 100 * time.Millisecond)
 }

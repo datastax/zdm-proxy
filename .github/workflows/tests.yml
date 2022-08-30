@@ -1,0 +1,62 @@
+name: ZDM Tests
+on: push
+jobs:
+  nosqlbench-tests:
+    name: NoSQLBench Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Start docker-compose
+        run: |
+          docker-compose -f docker-compose-tests.yml up -d
+          sleep 720
+          docker-compose -f docker-compose-tests.yml logs
+          docker ps -a
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Run
+        run: |
+          sudo apt update
+          sudo apt -y install default-jre gcc git wget
+          wget https://go.dev/dl/go1.19.linux-amd64.tar.gz
+          sudo tar -xzf go*.tar.gz -C /usr/local/
+          export PATH=$PATH:/usr/local/go/bin
+          export PATH=$PATH:`go env GOPATH`/bin
+          go install github.com/jstemmer/go-junit-report/v2@latest
+          go test -v 2>&1 ./proxy/... | go-junit-report -set-exit-code -iocopy -out report-unit.xml
+      - name: Test Summary
+        uses: test-summary/action@v1
+        if: always()
+        with:
+          paths: |
+            report-unit.xml
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Run
+        run: |
+          sudo apt update
+          sudo apt -y install openjdk-8-jdk gcc git pip wget
+          wget https://go.dev/dl/go1.19.linux-amd64.tar.gz
+          sudo tar -xzf go*.tar.gz -C /usr/local/
+          export PATH=$PATH:/usr/local/go/bin
+          export PATH=$PATH:`go env GOPATH`/bin
+          go install github.com/jstemmer/go-junit-report/v2@latest
+          wget https://github.com/datastax/simulacron/releases/download/0.10.0/simulacron-standalone-0.10.0.jar
+          export SIMULACRON_PATH=`pwd`/simulacron-standalone-0.10.0.jar
+          pip install ccm
+          which ccm
+          sudo ln -s /home/runner/.local/bin/ccm /usr/local/bin/ccm
+          /usr/local/bin/ccm list
+          go test -timeout 180m -v 2>&1 ./integration-tests -USE_CCM=true | go-junit-report -set-exit-code -iocopy -out report-integration.xml
+      - name: Test Summary
+        uses: test-summary/action@v1
+        if: always()
+        with:
+          paths: |
+            report-integration.xml

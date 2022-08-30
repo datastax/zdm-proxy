@@ -12,6 +12,7 @@ import (
 	"github.com/datastax/zdm-proxy/integration-tests/client"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
+    "github.com/rs/zerolog"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
 	"sync"
@@ -284,6 +285,13 @@ func TestPreparedIdReplacement(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			oldLevel := log.GetLevel()
+			oldZeroLogLevel := zerolog.GlobalLevel()
+			log.SetLevel(log.TraceLevel)
+			defer log.SetLevel(oldLevel)
+			zerolog.SetGlobalLevel(zerolog.TraceLevel)
+			defer zerolog.SetGlobalLevel(oldZeroLogLevel)
+
 			conf := setup.NewTestConfig("127.0.1.1", "127.0.1.2")
 			conf.DualReadsEnabled = test.dualReadsEnabled
 			conf.AsyncReadsOnSecondary = test.asyncReadsOnSecondary
