@@ -250,6 +250,7 @@ func TestStressShutdown(t *testing.T) {
 							tempCqlConn.Shutdown()
 						}
 
+						cancelFn()
 						if err != nil && ctx.Err() == nil {
 							if !shutdownProxyTriggered.Load().(bool) &&
 								!errors.Is(err, context.DeadlineExceeded) {
