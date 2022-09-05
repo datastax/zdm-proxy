@@ -224,7 +224,7 @@ func TestStressShutdown(t *testing.T) {
 					go func() {
 						defer wg.Done()
 						defer requestsWg.Done()
-						newCtx, cancelFn := context.WithTimeout(ctx, 5000*time.Millisecond)
+						newCtx, cancelFn := context.WithTimeout(goCtx, 5000*time.Millisecond)
 						tempCqlConn, err := client.NewTestClient(newCtx, "127.0.0.1:14002")
 						optionsWg := &sync.WaitGroup{}
 						if err == nil {
