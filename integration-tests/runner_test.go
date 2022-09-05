@@ -7,7 +7,7 @@ import (
 	"github.com/datastax/zdm-proxy/integration-tests/utils"
 	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 	"github.com/datastax/zdm-proxy/proxy/pkg/health"
-	"github.com/datastax/zdm-proxy/proxy/pkg/httpcloudgate"
+	"github.com/datastax/zdm-proxy/proxy/pkg/httpzdmproxy"
 	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
 	"github.com/datastax/zdm-proxy/proxy/pkg/runner"
 	"github.com/stretchr/testify/require"
@@ -45,7 +45,7 @@ func TestWithHttpHandlers(t *testing.T) {
 }
 
 func testHttpEndpointsWithProxyNotInitialized(
-	t *testing.T, metricsHandler *httpcloudgate.HandlerWithFallback, healthHandler *httpcloudgate.HandlerWithFallback) {
+	t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback, healthHandler *httpzdmproxy.HandlerWithFallback) {
 
 	simulacronSetup, err := setup.NewSimulacronTestSetupWithSession(false, false)
 	require.Nil(t, err)
@@ -87,7 +87,7 @@ func testHttpEndpointsWithProxyNotInitialized(
 }
 
 func testHttpEndpointsWithProxyInitialized(
-	t *testing.T, metricsHandler *httpcloudgate.HandlerWithFallback, healthHandler *httpcloudgate.HandlerWithFallback) {
+	t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback, healthHandler *httpzdmproxy.HandlerWithFallback) {
 
 	simulacronSetup, err := setup.NewSimulacronTestSetupWithSession(false, false)
 	require.Nil(t, err)
@@ -138,7 +138,7 @@ func testHttpEndpointsWithProxyInitialized(
 }
 
 func testHttpEndpointsWithUnavailableNode(
-	t *testing.T, metricsHandler *httpcloudgate.HandlerWithFallback, healthHandler *httpcloudgate.HandlerWithFallback) {
+	t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback, healthHandler *httpzdmproxy.HandlerWithFallback) {
 
 	simulacronSetup, err := setup.NewSimulacronTestSetupWithSession(false, false)
 	require.Nil(t, err)

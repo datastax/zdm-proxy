@@ -10,7 +10,7 @@ import (
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/integration-tests/utils"
 	"github.com/datastax/zdm-proxy/proxy/pkg/config"
-	"github.com/datastax/zdm-proxy/proxy/pkg/httpcloudgate"
+	"github.com/datastax/zdm-proxy/proxy/pkg/httpzdmproxy"
 	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
@@ -78,7 +78,7 @@ var selectQuery = frame.NewFrame(
 	&message.Query{Query: "SELECT * FROM ks1.t1"},
 )
 
-func testMetrics(t *testing.T, metricsHandler *httpcloudgate.HandlerWithFallback) {
+func testMetrics(t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback) {
 
 	tests := []struct{
 		name                  string
@@ -177,9 +177,9 @@ func testMetrics(t *testing.T, metricsHandler *httpcloudgate.HandlerWithFallback
 }
 
 func startMetricsHandler(
-	t *testing.T, conf *config.Config, wg *sync.WaitGroup, metricsHandler *httpcloudgate.HandlerWithFallback) *http.Server {
+	t *testing.T, conf *config.Config, wg *sync.WaitGroup, metricsHandler *httpzdmproxy.HandlerWithFallback) *http.Server {
 	httpAddr := fmt.Sprintf("%s:%d", conf.ProxyMetricsAddress, conf.ProxyMetricsPort)
-	srv := httpcloudgate.StartHttpServer(httpAddr, wg)
+	srv := httpzdmproxy.StartHttpServer(httpAddr, wg)
 	require.NotNil(t, srv)
 	metricsHandler.SetHandler(promhttp.Handler())
 	return srv

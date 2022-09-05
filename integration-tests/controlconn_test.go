@@ -12,7 +12,7 @@ import (
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
 	"github.com/datastax/zdm-proxy/integration-tests/utils"
-	"github.com/datastax/zdm-proxy/proxy/pkg/cloudgateproxy"
+	"github.com/datastax/zdm-proxy/proxy/pkg/zdmproxy"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
 	"net"
@@ -28,7 +28,7 @@ func TestGetHosts(t *testing.T) {
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
-	checkHostsFunc := func(t *testing.T, cc *cloudgateproxy.ControlConn, cluster *simulacron.Cluster) {
+	checkHostsFunc := func(t *testing.T, cc *zdmproxy.ControlConn, cluster *simulacron.Cluster) {
 		clusterName := cc.GetClusterName()
 		require.Equal(t, cluster.Name, clusterName)
 
@@ -125,7 +125,7 @@ func TestGetAssignedHosts(t *testing.T) {
 		},
 	}
 
-	checkAssignedHostsFunc := func(t *testing.T, cc *cloudgateproxy.ControlConn, cluster *simulacron.Cluster, tt test) {
+	checkAssignedHostsFunc := func(t *testing.T, cc *zdmproxy.ControlConn, cluster *simulacron.Cluster, tt test) {
 
 		hosts, err := cc.GetOrderedHostsInLocalDatacenter()
 		require.Nil(t, err)
@@ -221,7 +221,7 @@ func TestNextAssignedHost(t *testing.T) {
 		},
 	}
 
-	checkAssignedHostsCounterFunc := func(t *testing.T, cc *cloudgateproxy.ControlConn, cluster *simulacron.Cluster, tt test) {
+	checkAssignedHostsCounterFunc := func(t *testing.T, cc *zdmproxy.ControlConn, cluster *simulacron.Cluster, tt test) {
 
 		hosts, err := cc.GetOrderedHostsInLocalDatacenter()
 		require.Nil(t, err)
@@ -233,9 +233,9 @@ func TestNextAssignedHost(t *testing.T) {
 
 		wg := &sync.WaitGroup{}
 		taskChannels := make([]chan error, 10)
-		assignedHostsAllTasks := make([][]*cloudgateproxy.Host, 10)
+		assignedHostsAllTasks := make([][]*zdmproxy.Host, 10)
 		for i := 0; i < 10; i++ {
-			taskAssignedHosts := make([]*cloudgateproxy.Host, 100000)
+			taskAssignedHosts := make([]*zdmproxy.Host, 100000)
 			assignedHostsAllTasks[i] = taskAssignedHosts
 			ch := make(chan error, 1)
 			taskChannels[i] = ch
@@ -256,7 +256,7 @@ func TestNextAssignedHost(t *testing.T) {
 
 		wg.Wait()
 
-		assignCountersPerHost := make(map[*cloudgateproxy.Host]int)
+		assignCountersPerHost := make(map[*zdmproxy.Host]int)
 		for taskIndex, taskChannel := range taskChannels {
 			err := <-taskChannel
 			require.Nil(t, err)
@@ -386,7 +386,7 @@ func TestConnectionAssignment(t *testing.T) {
 		},
 	}
 
-	checkRequestsPerNode := func(t *testing.T, cc *cloudgateproxy.ControlConn, cluster *simulacron.Cluster, tt test, queryString string) {
+	checkRequestsPerNode := func(t *testing.T, cc *zdmproxy.ControlConn, cluster *simulacron.Cluster, tt test, queryString string) {
 
 		hosts, err := cc.GetOrderedHostsInLocalDatacenter()
 		require.Nil(t, err)
@@ -478,7 +478,7 @@ func TestConnectionAssignment(t *testing.T) {
 }
 
 func TestRefreshTopologyEventHandler(t *testing.T) {
-	checkHosts := func(t *testing.T, controlConn *cloudgateproxy.ControlConn, localHostDc string, peersIpPrefix string,
+	checkHosts := func(t *testing.T, controlConn *zdmproxy.ControlConn, localHostDc string, peersIpPrefix string,
 		peersCount map[string]int, expectedHostsCountPerDc map[string]int) (err error, fatal bool) {
 		hosts, err := controlConn.GetOrderedHostsInLocalDatacenter()
 		if err != nil {
@@ -517,7 +517,7 @@ func TestRefreshTopologyEventHandler(t *testing.T) {
 			totalExpectedPeersCount += count
 		}
 
-		hostsByIp := make(map[string]*cloudgateproxy.Host)
+		hostsByIp := make(map[string]*zdmproxy.Host)
 		for _, hostsForDc := range hostsPerDc {
 			for _, h := range hostsForDc {
 				t.Logf("check host %v prefix %v count %v hosts count %v", h.Address.String(), peersIpPrefix, expectedHostsCountPerDc, len(hosts))
@@ -556,7 +556,7 @@ func TestRefreshTopologyEventHandler(t *testing.T) {
 		return nil, false
 	}
 
-	beforeSleepTestFunc := func(t *testing.T, controlConn *cloudgateproxy.ControlConn, handler *atomic.Value,
+	beforeSleepTestFunc := func(t *testing.T, controlConn *zdmproxy.ControlConn, handler *atomic.Value,
 		cluster string, oldLocalHostDc string, newLocalHostDc string, peersIpPrefix string, peersCount map[string]int,
 		newPeersCount map[string]int, expectedOldHosts map[string]int) {
 		err, _ := checkHosts(t, controlConn, oldLocalHostDc, peersIpPrefix, peersCount, expectedOldHosts)
@@ -566,7 +566,7 @@ func TestRefreshTopologyEventHandler(t *testing.T) {
 	}
 
 	afterSleepTestFunc := func(
-		t *testing.T, controlConn *cloudgateproxy.ControlConn, handler *atomic.Value, server *client.CqlServer,
+		t *testing.T, controlConn *zdmproxy.ControlConn, handler *atomic.Value, server *client.CqlServer,
 		cluster string, oldLocalHostDc string, newLocalHostDc string, peersIpPrefix string,
 		oldPeersCount map[string]int, newPeersCount map[string]int,
 		expectedOldHosts map[string]int, expectedNewHosts map[string]int) {
@@ -770,8 +770,8 @@ func checkRegisterMessages(t *testing.T, registerMessages []*message.Register, l
 	require.Equal(t, []primitive.EventType{primitive.EventTypeTopologyChange}, registerMsg.EventTypes)
 }
 
-func groupHostsPerDc(hosts []*cloudgateproxy.Host) map[string][]*cloudgateproxy.Host {
-	hostsPerDc := make(map[string][]*cloudgateproxy.Host)
+func groupHostsPerDc(hosts []*zdmproxy.Host) map[string][]*zdmproxy.Host {
+	hostsPerDc := make(map[string][]*zdmproxy.Host)
 	for _, h := range hosts {
 		hostsPerDc[h.Datacenter] = append(hostsPerDc[h.Datacenter], h)
 	}

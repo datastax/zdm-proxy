@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/google/uuid"
-	"github.com/datastax/zdm-proxy/proxy/pkg/cloudgateproxy"
+	"github.com/datastax/zdm-proxy/proxy/pkg/zdmproxy"
 	log "github.com/sirupsen/logrus"
 	"net/http"
 )
@@ -34,7 +34,7 @@ const (
 	STARTUP          = Status("STARTUP")
 )
 
-func ReadinessHandler(proxy *cloudgateproxy.CloudgateProxy) http.Handler {
+func ReadinessHandler(proxy *zdmproxy.CloudgateProxy) http.Handler {
 	return http.HandlerFunc(func(rsp http.ResponseWriter, req *http.Request) {
 		if req.Method != http.MethodGet {
 			http.NotFound(rsp, req)
@@ -70,7 +70,7 @@ func LivenessHandler() http.Handler {
 	})
 }
 
-func PerformHealthCheck(proxy *cloudgateproxy.CloudgateProxy) *StatusReport {
+func PerformHealthCheck(proxy *zdmproxy.CloudgateProxy) *StatusReport {
 	if proxy == nil {
 		return &StatusReport{
 			OriginStatus: nil,
@@ -95,7 +95,7 @@ func PerformHealthCheck(proxy *cloudgateproxy.CloudgateProxy) *StatusReport {
 	}
 }
 
-func newControlConnStatus(controlConn *cloudgateproxy.ControlConn, failureThreshold int) *ControlConnStatus {
+func newControlConnStatus(controlConn *zdmproxy.ControlConn, failureThreshold int) *ControlConnStatus {
 	currentEndpoint := controlConn.GetCurrentContactPoint()
 	var addr string
 	if currentEndpoint == nil {
