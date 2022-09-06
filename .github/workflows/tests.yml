@@ -90,16 +90,16 @@ jobs:
       - uses: actions/checkout@v2
       - name: Run
         run: |
-        sudo apt update
-        sudo apt -y install openjdk-8-jdk gcc git pip wget
-        wget https://go.dev/dl/go1.19.linux-amd64.tar.gz
-        sudo tar -xzf go*.tar.gz -C /usr/local/
-        export PATH=$PATH:/usr/local/go/bin
-        export PATH=$PATH:`go env GOPATH`/bin
-        go install github.com/jstemmer/go-junit-report/v2@latest
-        wget https://github.com/datastax/simulacron/releases/download/0.10.0/simulacron-standalone-0.10.0.jar
-        export SIMULACRON_PATH=`pwd`/simulacron-standalone-0.10.0.jar
-        go test -race -timeout 180m -v 2>&1 ./integration-tests | go-junit-report -set-exit-code -iocopy -out report-integration-race.xml
+          sudo apt update
+          sudo apt -y install openjdk-8-jdk gcc git pip wget
+          wget https://go.dev/dl/go1.19.linux-amd64.tar.gz
+          sudo tar -xzf go*.tar.gz -C /usr/local/
+          export PATH=$PATH:/usr/local/go/bin
+          export PATH=$PATH:`go env GOPATH`/bin
+          go install github.com/jstemmer/go-junit-report/v2@latest
+          wget https://github.com/datastax/simulacron/releases/download/0.10.0/simulacron-standalone-0.10.0.jar
+          export SIMULACRON_PATH=`pwd`/simulacron-standalone-0.10.0.jar
+          go test -race -timeout 180m -v 2>&1 ./integration-tests | go-junit-report -set-exit-code -iocopy -out report-integration-race.xml
       - name: Test Summary
         uses: test-summary/action@v1
         if: always()
@@ -110,16 +110,16 @@ jobs:
     name: Go Vet
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
-    - name: Run
-      run: |
-        sudo apt update
-        sudo apt -y install openjdk-8-jdk gcc git pip wget
-        wget https://go.dev/dl/go1.19.linux-amd64.tar.gz
-        sudo tar -xzf go*.tar.gz -C /usr/local/
-        export PATH=$PATH:/usr/local/go/bin
-        export PATH=$PATH:`go env GOPATH`/bin
-        go vet ./...
+      - uses: actions/checkout@v2
+      - name: Run
+        run: |
+          sudo apt update
+          sudo apt -y install openjdk-8-jdk gcc git pip wget
+          wget https://go.dev/dl/go1.19.linux-amd64.tar.gz
+          sudo tar -xzf go*.tar.gz -C /usr/local/
+          export PATH=$PATH:/usr/local/go/bin
+          export PATH=$PATH:`go env GOPATH`/bin
+          go vet ./...
   static-check:
     name: Static Check
     runs-on: ubuntu-latest
