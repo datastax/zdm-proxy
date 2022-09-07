@@ -73,7 +73,7 @@ jobs:
           wget https://github.com/datastax/simulacron/releases/download/0.10.0/simulacron-standalone-0.10.0.jar
           export SIMULACRON_PATH=`pwd`/simulacron-standalone-0.10.0.jar
           pip install six psutil pyYaml
-          git clone https://github.com/riptano/ccm.git /ccm
+          sudo git clone https://github.com/riptano/ccm.git /ccm
           cd /ccm
           sudo /ccm/setup.py install
           cd -
