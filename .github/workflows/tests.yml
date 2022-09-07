@@ -64,7 +64,7 @@ jobs:
       - name: Run
         run: |
           sudo apt update
-          sudo apt -y install openjdk-8-jdk gcc git pip wget
+          sudo apt -y install openjdk-8-jdk gcc git wget python3-pip python3-pkg-resources
           wget https://go.dev/dl/go1.19.linux-amd64.tar.gz
           sudo tar -xzf go*.tar.gz -C /usr/local/
           export PATH=$PATH:/usr/local/go/bin
@@ -72,9 +72,13 @@ jobs:
           go install github.com/jstemmer/go-junit-report/v2@latest
           wget https://github.com/datastax/simulacron/releases/download/0.10.0/simulacron-standalone-0.10.0.jar
           export SIMULACRON_PATH=`pwd`/simulacron-standalone-0.10.0.jar
-          pip install ccm
+          sudo ln -s /usr/bin/python3 /usr/bin/python
+          pip install six psutil pyYaml
+          git clone https://github.com/riptano/ccm.git /ccm
+          cd /ccm
+          sudo /ccm/setup.py install
+          cd -
           which ccm
-          sudo ln -s /home/runner/.local/bin/ccm /usr/local/bin/ccm
           /usr/local/bin/ccm list
           go test -timeout 180m -v 2>&1 ./integration-tests -USE_CCM=true | go-junit-report -set-exit-code -iocopy -out report-integration.xml
       - name: Test Summary
