@@ -72,12 +72,9 @@ jobs:
           go install github.com/jstemmer/go-junit-report/v2@latest
           wget https://github.com/datastax/simulacron/releases/download/0.10.0/simulacron-standalone-0.10.0.jar
           export SIMULACRON_PATH=`pwd`/simulacron-standalone-0.10.0.jar
-          pip install six psutil pyYaml
-          sudo git clone https://github.com/riptano/ccm.git /ccm
-          cd /ccm
-          sudo /ccm/setup.py install
-          cd -
+          pip install ccm
           which ccm
+          sudo ln -s /home/runner/.local/bin/ccm /usr/local/bin/ccm
           /usr/local/bin/ccm list
           go test -timeout 180m -v 2>&1 ./integration-tests -SKIP_SIMULACRON=true -USE_CCM=true | go-junit-report -set-exit-code -iocopy -out report-integration.xml
       - name: Test Summary
