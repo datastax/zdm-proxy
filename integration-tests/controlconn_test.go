@@ -24,7 +24,7 @@ import (
 )
 
 func TestGetHosts(t *testing.T) {
-	testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodes(true, false, 3)
+	testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodes(t, true, false, 3)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
@@ -63,7 +63,7 @@ func TestGetHosts(t *testing.T) {
 }
 
 func TestGetAssignedHosts(t *testing.T) {
-	testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodes(false, false, 3)
+	testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodes(t, false, false, 3)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
@@ -159,7 +159,7 @@ func TestGetAssignedHosts(t *testing.T) {
 }
 
 func TestNextAssignedHost(t *testing.T) {
-	testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodes(false, false, 3)
+	testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodes(t, false, false, 3)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
@@ -308,7 +308,7 @@ func TestConnectionAssignment(t *testing.T) {
 	const nodes = 3
 	const nrRequests = 90
 
-	testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodes(false, false, 3)
+	testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodes(t, false, false, 3)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 

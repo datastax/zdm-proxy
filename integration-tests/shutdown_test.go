@@ -40,7 +40,7 @@ func TestShutdownInFlightRequests(t *testing.T) {
 	}
 	for _, test := range testDef {
 		t.Run(test.name, func(t *testing.T) {
-			testSetup, err := setup.NewSimulacronTestSetupWithSession(false, false)
+			testSetup, err := setup.NewSimulacronTestSetupWithSession(t, false, false)
 			defer testSetup.Cleanup()
 
 			config := setup.NewTestConfig(testSetup.Origin.GetInitialContactPoint(), testSetup.Target.GetInitialContactPoint())
@@ -177,7 +177,7 @@ func TestStressShutdown(t *testing.T) {
 	for _, test := range testDef {
 		t.Run(test.name, func(t *testing.T) {
 			f := func() {
-				testSetup, err := setup.NewSimulacronTestSetupWithSession(false, false)
+				testSetup, err := setup.NewSimulacronTestSetupWithSession(t, false, false)
 				require.Nil(t, err)
 				defer testSetup.Cleanup()
 				cfg := setup.NewTestConfig(testSetup.Origin.GetInitialContactPoint(), testSetup.Target.GetInitialContactPoint())

@@ -7,11 +7,12 @@ import (
 	"github.com/datastax/zdm-proxy/integration-tests/cqlserver"
 	"github.com/datastax/zdm-proxy/integration-tests/env"
 	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
-	"github.com/datastax/zdm-proxy/proxy/pkg/zdmproxy"
 	"github.com/datastax/zdm-proxy/proxy/pkg/config"
+	"github.com/datastax/zdm-proxy/proxy/pkg/zdmproxy"
 	log "github.com/sirupsen/logrus"
 	"math"
 	"sync"
+	"testing"
 )
 
 type TestCluster interface {
@@ -121,19 +122,22 @@ type SimulacronTestSetup struct {
 	Proxy  *zdmproxy.CloudgateProxy
 }
 
-func NewSimulacronTestSetupWithSession(createProxy bool, createSession bool) (*SimulacronTestSetup, error) {
-	return NewSimulacronTestSetupWithSessionAndConfig(createProxy, createSession, nil)
+func NewSimulacronTestSetupWithSession(t *testing.T, createProxy bool, createSession bool) (*SimulacronTestSetup, error) {
+	return NewSimulacronTestSetupWithSessionAndConfig(t, createProxy, createSession, nil)
 }
 
-func NewSimulacronTestSetupWithSessionAndConfig(createProxy bool, createSession bool, config *config.Config) (*SimulacronTestSetup, error) {
-	return NewSimulacronTestSetupWithSessionAndNodesAndConfig(createProxy, createSession, 1, config)
+func NewSimulacronTestSetupWithSessionAndConfig(t *testing.T, createProxy bool, createSession bool, config *config.Config) (*SimulacronTestSetup, error) {
+	return NewSimulacronTestSetupWithSessionAndNodesAndConfig(t, createProxy, createSession, 1, config)
 }
 
-func NewSimulacronTestSetupWithSessionAndNodes(createProxy bool, createSession bool, nodes int) (*SimulacronTestSetup, error) {
-	return NewSimulacronTestSetupWithSessionAndNodesAndConfig(createProxy, createSession, nodes, nil)
+func NewSimulacronTestSetupWithSessionAndNodes(t *testing.T, createProxy bool, createSession bool, nodes int) (*SimulacronTestSetup, error) {
+	return NewSimulacronTestSetupWithSessionAndNodesAndConfig(t, createProxy, createSession, nodes, nil)
 }
 
-func NewSimulacronTestSetupWithSessionAndNodesAndConfig(createProxy bool, createSession bool, nodes int, config *config.Config) (*SimulacronTestSetup, error) {
+func NewSimulacronTestSetupWithSessionAndNodesAndConfig(t *testing.T, createProxy bool, createSession bool, nodes int, config *config.Config) (*SimulacronTestSetup, error) {
+	if env.SkipSimulacron {
+		t.Skip("Skipping Simulacron tests, SKIP_SIMULACRON is set")
+	}
 	origin, err := simulacron.GetNewCluster(createSession, nodes)
 	if err != nil {
 		log.Panic("simulacron origin startup failed: ", err)
@@ -164,12 +168,12 @@ func NewSimulacronTestSetupWithSessionAndNodesAndConfig(createProxy bool, create
 	}, nil
 }
 
-func NewSimulacronTestSetup() (*SimulacronTestSetup, error) {
-	return NewSimulacronTestSetupWithSession(true, false)
+func NewSimulacronTestSetup(t *testing.T) (*SimulacronTestSetup, error) {
+	return NewSimulacronTestSetupWithSession(t, true, false)
 }
 
-func NewSimulacronTestSetupWithConfig(c *config.Config) (*SimulacronTestSetup, error) {
-	return NewSimulacronTestSetupWithSessionAndConfig(true, false, c)
+func NewSimulacronTestSetupWithConfig(t *testing.T, c *config.Config) (*SimulacronTestSetup, error) {
+	return NewSimulacronTestSetupWithSessionAndConfig(t, true, false, c)
 }
 
 func (setup *SimulacronTestSetup) Cleanup() {

@@ -17,7 +17,7 @@ import (
 )
 
 func TestGoCqlConnect(t *testing.T) {
-	testSetup, err := setup.NewSimulacronTestSetup()
+	testSetup, err := setup.NewSimulacronTestSetup(t)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
@@ -48,7 +48,7 @@ func TestMaxClientsThreshold(t *testing.T) {
 	goCqlConnectionsPerHost := 1
 	maxSessions := 5 // each session spawns 2 connections (1 control connection)
 
-	testSetup, err := setup.NewSimulacronTestSetupWithSession(false, false)
+	testSetup, err := setup.NewSimulacronTestSetupWithSession(t, false, false)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 

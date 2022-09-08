@@ -47,7 +47,7 @@ func TestWithHttpHandlers(t *testing.T) {
 func testHttpEndpointsWithProxyNotInitialized(
 	t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback, healthHandler *httpzdmproxy.HandlerWithFallback) {
 
-	simulacronSetup, err := setup.NewSimulacronTestSetupWithSession(false, false)
+	simulacronSetup, err := setup.NewSimulacronTestSetupWithSession(t, false, false)
 	require.Nil(t, err)
 	defer simulacronSetup.Cleanup()
 
@@ -89,7 +89,7 @@ func testHttpEndpointsWithProxyNotInitialized(
 func testHttpEndpointsWithProxyInitialized(
 	t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback, healthHandler *httpzdmproxy.HandlerWithFallback) {
 
-	simulacronSetup, err := setup.NewSimulacronTestSetupWithSession(false, false)
+	simulacronSetup, err := setup.NewSimulacronTestSetupWithSession(t, false, false)
 	require.Nil(t, err)
 	defer simulacronSetup.Cleanup()
 
@@ -140,7 +140,7 @@ func testHttpEndpointsWithProxyInitialized(
 func testHttpEndpointsWithUnavailableNode(
 	t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback, healthHandler *httpzdmproxy.HandlerWithFallback) {
 
-	simulacronSetup, err := setup.NewSimulacronTestSetupWithSession(false, false)
+	simulacronSetup, err := setup.NewSimulacronTestSetupWithSession(t, false, false)
 	require.Nil(t, err)
 	defer simulacronSetup.Cleanup()
 
