@@ -178,7 +178,7 @@ func testMetrics(t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback)
 
 func startMetricsHandler(
 	t *testing.T, conf *config.Config, wg *sync.WaitGroup, metricsHandler *httpzdmproxy.HandlerWithFallback) *http.Server {
-	httpAddr := fmt.Sprintf("%s:%d", conf.ProxyMetricsAddress, conf.ProxyMetricsPort)
+	httpAddr := fmt.Sprintf("%s:%d", conf.NetMetricsAddress, conf.NetMetricsPort)
 	srv := httpzdmproxy.StartHttpServer(httpAddr, wg)
 	require.NotNil(t, srv)
 	metricsHandler.SetHandler(promhttp.Handler())
@@ -186,7 +186,7 @@ func startMetricsHandler(
 }
 
 func gatherMetrics(t *testing.T, conf *config.Config, checkNodeMetrics bool) []string {
-	httpAddr := fmt.Sprintf("%s:%d", conf.ProxyMetricsAddress, conf.ProxyMetricsPort)
+	httpAddr := fmt.Sprintf("%s:%d", conf.NetMetricsAddress, conf.NetMetricsPort)
 	statusCode, rspStr, err := utils.GetMetrics(httpAddr)
 	require.Nil(t, err)
 	require.Equal(t, http.StatusOK, statusCode)

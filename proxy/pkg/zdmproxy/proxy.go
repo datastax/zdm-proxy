@@ -5,12 +5,12 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"github.com/jpillora/backoff"
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
 	"github.com/datastax/zdm-proxy/proxy/pkg/metrics/noopmetrics"
 	"github.com/datastax/zdm-proxy/proxy/pkg/metrics/prommetrics"
+	"github.com/jpillora/backoff"
+	"github.com/prometheus/client_golang/prometheus"
 	log "github.com/sirupsen/logrus"
 	"math/rand"
 	"net"
@@ -159,12 +159,12 @@ func (p *CloudgateProxy) Start(ctx context.Context) error {
 		return err
 	}
 
-	err = p.acceptConnectionsFromClients(p.Conf.ProxyQueryAddress, p.Conf.ProxyQueryPort, serverSideTlsConfig)
+	err = p.acceptConnectionsFromClients(p.Conf.NetQueryAddress, p.Conf.NetQueryPort, serverSideTlsConfig)
 	if err != nil {
 		return err
 	}
 
-	log.Infof("Proxy connected and ready to accept queries on %v:%d", p.Conf.ProxyQueryAddress, p.Conf.ProxyQueryPort)
+	log.Infof("Proxy connected and ready to accept queries on %v:%d", p.Conf.NetQueryAddress, p.Conf.NetQueryPort)
 	return nil
 }
 
@@ -207,7 +207,7 @@ func (p *CloudgateProxy) initializeControlConnections(ctx context.Context) error
 	// Initialize origin connection configuration and control connection endpoint configuration
 	originConnectionConfig, err := InitializeConnectionConfig(originTlsConfig,
 		parsedOriginContactPoints,
-		p.Conf.OriginCassandraPort,
+		p.Conf.OriginPort,
 		p.Conf.ClusterConnectionTimeoutMs,
 		ClusterTypeOrigin,
 		p.Conf.OriginDatacenter,
@@ -228,7 +228,7 @@ func (p *CloudgateProxy) initializeControlConnections(ctx context.Context) error
 	// Initialize target connection configuration and control connection endpoint configuration
 	targetConnectionConfig, err := InitializeConnectionConfig(targetTlsConfig,
 		parsedTargetContactPoints,
-		p.Conf.TargetCassandraPort,
+		p.Conf.TargetPort,
 		p.Conf.ClusterConnectionTimeoutMs,
 		ClusterTypeTarget,
 		p.Conf.TargetDatacenter,
@@ -241,8 +241,8 @@ func (p *CloudgateProxy) initializeControlConnections(ctx context.Context) error
 	p.lock.Unlock()
 
 	originControlConn := NewControlConn(
-		p.controlConnShutdownCtx, p.Conf.OriginCassandraPort, p.originConnectionConfig,
-		p.Conf.OriginCassandraUsername, p.Conf.OriginCassandraPassword, p.Conf, topologyConfig, p.proxyRand)
+		p.controlConnShutdownCtx, p.Conf.OriginPort, p.originConnectionConfig,
+		p.Conf.OriginUsername, p.Conf.OriginPassword, p.Conf, topologyConfig, p.proxyRand)
 
 	if err := originControlConn.Start(p.controlConnShutdownWg, ctx); err != nil {
 		return fmt.Errorf("failed to initialize origin control connection: %w", err)
@@ -253,8 +253,8 @@ func (p *CloudgateProxy) initializeControlConnections(ctx context.Context) error
 	p.lock.Unlock()
 
 	targetControlConn := NewControlConn(
-		p.controlConnShutdownCtx, p.Conf.TargetCassandraPort, p.targetConnectionConfig,
-		p.Conf.TargetCassandraUsername, p.Conf.TargetCassandraPassword, p.Conf, topologyConfig, p.proxyRand)
+		p.controlConnShutdownCtx, p.Conf.TargetPort, p.targetConnectionConfig,
+		p.Conf.TargetUsername, p.Conf.TargetPassword, p.Conf, topologyConfig, p.proxyRand)
 
 	if err := targetControlConn.Start(p.controlConnShutdownWg, ctx); err != nil {
 		return fmt.Errorf("failed to initialize target control connection: %w", err)
@@ -277,7 +277,7 @@ func (p *CloudgateProxy) initializeMetricHandler() error {
 	// You will also need to change the HTTP handler, see runner.go.
 
 	var metricFactory metrics.MetricFactory
-	if p.Conf.EnableMetrics {
+	if p.Conf.MonitoringEnableMetrics {
 		metricFactory = prommetrics.NewPrometheusMetricFactory(prometheus.DefaultRegisterer)
 	} else {
 		metricFactory = noopmetrics.NewNoopMetricFactory()
@@ -447,10 +447,10 @@ func (p *CloudgateProxy) acceptConnectionsFromClients(address string, port int, 
 			}
 
 			currentClients := atomic.LoadInt32(&p.activeClients)
-			if int(currentClients) >= p.Conf.MaxClientsThreshold {
+			if int(currentClients) >= p.Conf.MaxClients {
 				log.Warnf(
 					"Refusing client connection from %v because max clients threshold has been hit (%v).",
-					conn.RemoteAddr(), p.Conf.MaxClientsThreshold)
+					conn.RemoteAddr(), p.Conf.MaxClients)
 				err = conn.Close()
 				if err != nil {
 					log.Warnf("Error closing client connection from %v: %v", conn.RemoteAddr(), err)
@@ -528,10 +528,10 @@ func (p *CloudgateProxy) handleNewConnection(clientConn net.Conn) {
 		p.targetControlConn,
 		p.Conf,
 		p.TopologyConfig,
-		p.Conf.TargetCassandraUsername,
-		p.Conf.TargetCassandraPassword,
-		p.Conf.OriginCassandraUsername,
-		p.Conf.OriginCassandraPassword,
+		p.Conf.TargetUsername,
+		p.Conf.TargetPassword,
+		p.Conf.OriginUsername,
+		p.Conf.OriginPassword,
 		p.PreparedStatementCache,
 		p.metricHandler,
 		p.globalClientHandlersWg,

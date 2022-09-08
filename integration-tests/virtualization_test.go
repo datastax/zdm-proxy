@@ -861,7 +861,7 @@ func TestVirtualizationPartitioner(t *testing.T) {
 		require.NotNil(t, buffer)
 
 		proxyConfig := setup.NewTestConfig(originAddress, targetAddress)
-		proxyConfig.ProxyAddresses = "127.0.0.1" // needed to enable virtualization. TODO Remove once ZDM-321 is fixed
+		proxyConfig.TopologyAddresses = "127.0.0.1" // needed to enable virtualization. TODO Remove once ZDM-321 is fixed
 		proxyConfig.ForwardSystemQueriesToTarget = systemQueriesToTarget
 		proxy, err := setup.NewProxyInstanceWithConfig(proxyConfig)
 		defer func() {
@@ -909,12 +909,12 @@ func LaunchProxyWithTopologyConfig(
 	proxyAddresses string, proxyIndex int, instanceCount int, listenAddress string, numTokens int,
 	origin setup.TestCluster, target setup.TestCluster) (*zdmproxy.CloudgateProxy, error) {
 	conf := setup.NewTestConfig(origin.GetInitialContactPoint(), target.GetInitialContactPoint())
-	conf.ProxyIndex = proxyIndex
-	conf.ProxyInstanceCount = instanceCount
-	conf.ProxyAddresses = proxyAddresses
-	conf.ProxyQueryAddress = listenAddress
-	conf.ProxyMetricsAddress = listenAddress
-	conf.ProxyNumTokens = numTokens
+	conf.TopologyIndex = proxyIndex
+	conf.TopologyInstanceCount = instanceCount
+	conf.TopologyAddresses = proxyAddresses
+	conf.NetQueryAddress = listenAddress
+	conf.NetMetricsAddress = listenAddress
+	conf.TopologyNumTokens = numTokens
 	return setup.NewProxyInstanceWithConfig(conf)
 }
 

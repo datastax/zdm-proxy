@@ -19,8 +19,8 @@ func TestConfig_ParseReadMode(t *testing.T) {
 		{
 			name:           "Valid: Dual reads disabled, async reads on secondary disabled",
 			envVars:        []envVar{
-				{"DUAL_READS_ENABLED", "false"},
-				{"ASYNC_READS_ON_SECONDARY", "false"},
+				{"ZDM_DUAL_READS_ENABLED", "false"},
+				{"ZDM_ASYNC_READS_ON_SECONDARY", "false"},
 			},
 			expectedReadMode: ReadModePrimaryOnly,
 			errExpected:      false,
@@ -29,8 +29,8 @@ func TestConfig_ParseReadMode(t *testing.T) {
 		{
 			name:           "Valid: Dual reads enabled, async reads on secondary enabled",
 			envVars:        []envVar{
-				{"DUAL_READS_ENABLED", "true"},
-				{"ASYNC_READS_ON_SECONDARY", "true"},
+				{"ZDM_DUAL_READS_ENABLED", "true"},
+				{"ZDM_ASYNC_READS_ON_SECONDARY", "true"},
 			},
 			expectedReadMode: ReadModeSecondaryAsync,
 			errExpected:      false,
@@ -39,8 +39,8 @@ func TestConfig_ParseReadMode(t *testing.T) {
 		{
 			name:           "Invalid: Dual reads enabled but async reads on secondary disabled",
 			envVars:        []envVar{
-				{"DUAL_READS_ENABLED", "true"},
-				{"ASYNC_READS_ON_SECONDARY", "false"},
+				{"ZDM_DUAL_READS_ENABLED", "true"},
+				{"ZDM_ASYNC_READS_ON_SECONDARY", "false"},
 			},
 			expectedReadMode: ReadModeUndefined,
 			errExpected:      true,
@@ -49,8 +49,8 @@ func TestConfig_ParseReadMode(t *testing.T) {
 		{
 			name:           "Invalid: Dual reads disabled but async reads on secondary enabled",
 			envVars:        []envVar{
-				{"DUAL_READS_ENABLED", "false"},
-				{"ASYNC_READS_ON_SECONDARY", "true"},
+				{"ZDM_DUAL_READS_ENABLED", "false"},
+				{"ZDM_ASYNC_READS_ON_SECONDARY", "true"},
 			},
 			expectedReadMode: ReadModeUndefined,
 			errExpected:      true,
@@ -66,7 +66,7 @@ func TestConfig_ParseReadMode(t *testing.T) {
 		{
 			name:           "Invalid: Dual reads enabled but async reads on secondary unset",
 			envVars:        []envVar{
-				{"DUAL_READS_ENABLED", "true"},
+				{"ZDM_DUAL_READS_ENABLED", "true"},
 			},
 			expectedReadMode: ReadModeUndefined,
 			errExpected:      true,
@@ -75,7 +75,7 @@ func TestConfig_ParseReadMode(t *testing.T) {
 		{
 			name:           "Invalid: Dual reads unset but async reads on secondary enabled",
 			envVars:        []envVar{
-				{"ASYNC_READS_ON_SECONDARY", "true"},
+				{"ZDM_ASYNC_READS_ON_SECONDARY", "true"},
 			},
 			expectedReadMode: ReadModeUndefined,
 			errExpected:      true,

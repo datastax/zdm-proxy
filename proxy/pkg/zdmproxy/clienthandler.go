@@ -1477,7 +1477,7 @@ func (ch *ClientHandler) handleInterceptedRequest(
 		}
 		interceptedQueryResponse, err = NewSystemPeersResult(prepareRequestInfo, currentKeyspace,
 			typeCodec, f.Header.Version, controlConn.GetSystemLocalColumnData(), parsedSelectClause,
-			virtualHosts, controlConn.GetLocalVirtualHostIndex(), ch.conf.ProxyQueryPort)
+			virtualHosts, controlConn.GetLocalVirtualHostIndex(), ch.conf.NetQueryPort)
 	case local:
 		parsedSelectClause := interceptedRequestInfo.GetParsedSelectClause()
 		if parsedSelectClause == nil {
@@ -1486,7 +1486,7 @@ func (ch *ClientHandler) handleInterceptedRequest(
 		localVirtualHost := virtualHosts[controlConn.GetLocalVirtualHostIndex()]
 		interceptedQueryResponse, err = NewSystemLocalResult(prepareRequestInfo, currentKeyspace,
 			typeCodec, f.Header.Version, controlConn.GetSystemLocalColumnData(), parsedSelectClause,
-			localVirtualHost, ch.conf.ProxyQueryPort)
+			localVirtualHost, ch.conf.NetQueryPort)
 	default:
 		return nil, fmt.Errorf("expected intercepted query type: %v", interceptedQueryType)
 	}

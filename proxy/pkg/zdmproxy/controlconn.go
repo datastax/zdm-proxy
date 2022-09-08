@@ -6,9 +6,9 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 	"github.com/google/uuid"
 	"github.com/jpillora/backoff"
-	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 	log "github.com/sirupsen/logrus"
 	"math"
 	"math/big"
@@ -450,7 +450,7 @@ func (cc *ControlConn) RefreshHosts(conn CqlConnection, ctx context.Context) ([]
 		virtualHosts = make([]*VirtualHost, 0)
 	}
 
-	log.Infof("Refreshed %v orderedHostsInLocalDc. Assigned Hosts: %v, VirtualHosts: %v, ProxyIndex: %v",
+	log.Infof("Refreshed %v orderedHostsInLocalDc. Assigned Hosts: %v, VirtualHosts: %v, TopologyIndex: %v",
 		cc.connConfig.GetClusterType(), assignedHosts, virtualHosts, cc.topologyConfig.Index)
 
 	cc.topologyLock.Lock()

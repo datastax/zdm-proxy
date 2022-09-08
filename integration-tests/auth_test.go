@@ -511,16 +511,16 @@ func TestAuth(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 
 			serverConf := setup.NewTestConfig(originAddress, targetAddress)
-			serverConf.TargetCassandraUsername = tt.targetUsername
-			serverConf.TargetCassandraPassword = tt.targetPassword
-			serverConf.OriginCassandraUsername = tt.originUsername
-			serverConf.OriginCassandraPassword = tt.originPassword
+			serverConf.TargetUsername = tt.targetUsername
+			serverConf.TargetPassword = tt.targetPassword
+			serverConf.OriginUsername = tt.originUsername
+			serverConf.OriginPassword = tt.originPassword
 
 			proxyConf := setup.NewTestConfig(originAddress, targetAddress)
-			proxyConf.TargetCassandraUsername = tt.proxyTargetUsername
-			proxyConf.TargetCassandraPassword = tt.proxyTargetPassword
-			proxyConf.OriginCassandraUsername = tt.proxyOriginUsername
-			proxyConf.OriginCassandraPassword = tt.proxyOriginPassword
+			proxyConf.TargetUsername = tt.proxyTargetUsername
+			proxyConf.TargetPassword = tt.proxyTargetPassword
+			proxyConf.OriginUsername = tt.proxyOriginUsername
+			proxyConf.OriginPassword = tt.proxyOriginPassword
 			if tt.forwardClientCredsToOrigin != nil {
 				proxyConf.ForwardClientCredentialsToOrigin = *tt.forwardClientCredsToOrigin
 			}
@@ -566,7 +566,7 @@ func TestAuth(t *testing.T) {
 					}
 				}
 				testClient := client.NewCqlClient(
-					fmt.Sprintf("%s:%d", proxyConf.ProxyQueryAddress, proxyConf.ProxyQueryPort),
+					fmt.Sprintf("%s:%d", proxyConf.NetQueryAddress, proxyConf.NetQueryPort),
 					authCreds)
 				cqlConn, err := testClient.Connect(context.Background())
 				require.Nil(t, err, "client connection failed: %v", err)
@@ -1007,10 +1007,10 @@ func TestProxyStartupAndHealthCheckWithAuth(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 
 			serverConf := setup.NewTestConfig(originAddress, targetAddress)
-			serverConf.TargetCassandraUsername = tt.targetUsername
-			serverConf.TargetCassandraPassword = tt.targetPassword
-			serverConf.OriginCassandraUsername = tt.originUsername
-			serverConf.OriginCassandraPassword = tt.originPassword
+			serverConf.TargetUsername = tt.targetUsername
+			serverConf.TargetPassword = tt.targetPassword
+			serverConf.OriginUsername = tt.originUsername
+			serverConf.OriginPassword = tt.originPassword
 
 			testSetup, err := setup.NewCqlServerTestSetup(serverConf, true, false, false)
 			require.Nil(t, err)
@@ -1020,10 +1020,10 @@ func TestProxyStartupAndHealthCheckWithAuth(t *testing.T) {
 			proxyConf.HeartbeatIntervalMs = 200
 			proxyConf.HeartbeatRetryIntervalMaxMs = 500
 			proxyConf.HeartbeatRetryIntervalMinMs = 200
-			proxyConf.TargetCassandraUsername = tt.proxyTargetUsername
-			proxyConf.TargetCassandraPassword = tt.proxyTargetPassword
-			proxyConf.OriginCassandraUsername = tt.proxyOriginUsername
-			proxyConf.OriginCassandraPassword = tt.proxyOriginPassword
+			proxyConf.TargetUsername = tt.proxyTargetUsername
+			proxyConf.TargetPassword = tt.proxyTargetPassword
+			proxyConf.OriginUsername = tt.proxyOriginUsername
+			proxyConf.OriginPassword = tt.proxyOriginPassword
 			proxy, err := setup.NewProxyInstanceWithConfig(proxyConf)
 			if proxy != nil {
 				defer proxy.Shutdown()

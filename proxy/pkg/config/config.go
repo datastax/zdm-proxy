@@ -12,10 +12,10 @@ import (
 
 // Config holds the values of environment variables necessary for proper Proxy function.
 type Config struct {
-	ProxyIndex         int    `default:"0" split_words:"true"`
-	ProxyInstanceCount int    `default:"-1" split_words:"true"` // Overridden by length of ProxyAddresses (after split) if set
-	ProxyAddresses     string `split_words:"true"`
-	ProxyNumTokens     int    `default:"8" split_words:"true"`
+	TopologyIndex         int    `default:"0" split_words:"true"`
+	TopologyInstanceCount int    `default:"-1" split_words:"true"` // Overridden by length of TopologyAddresses (after split) if set
+	TopologyAddresses string `split_words:"true"`
+	TopologyNumTokens int    `default:"8" split_words:"true"`
 
 	OriginEnableHostAssignment bool `default:"true" split_words:"true"`
 	TargetEnableHostAssignment bool `default:"true" split_words:"true"`
@@ -23,19 +23,19 @@ type Config struct {
 	OriginDatacenter string `split_words:"true"`
 	TargetDatacenter string `split_words:"true"`
 
-	OriginCassandraUsername string `required:"true" split_words:"true"`
-	OriginCassandraPassword string `required:"true" split_words:"true" json:"-"`
+	OriginUsername string `required:"true" split_words:"true"`
+	OriginPassword string `required:"true" split_words:"true" json:"-"`
 
-	OriginCassandraContactPoints           string `split_words:"true"`
-	OriginCassandraPort                    int    `default:"9042" split_words:"true"`
-	OriginCassandraSecureConnectBundlePath string `split_words:"true"`
+	OriginContactPoints                    string `split_words:"true"`
+	OriginPort                    int    `default:"9042" split_words:"true"`
+	OriginSecureConnectBundlePath string `split_words:"true"`
 
-	TargetCassandraUsername string `required:"true" split_words:"true"`
-	TargetCassandraPassword string `required:"true" split_words:"true" json:"-"`
+	TargetUsername string `required:"true" split_words:"true"`
+	TargetPassword string `required:"true" split_words:"true" json:"-"`
 
-	TargetCassandraContactPoints           string `split_words:"true"`
-	TargetCassandraPort                    int    `default:"9042" split_words:"true"`
-	TargetCassandraSecureConnectBundlePath string `split_words:"true"`
+	TargetContactPoints                    string `split_words:"true"`
+	TargetPort                    int    `default:"9042" split_words:"true"`
+	TargetSecureConnectBundlePath string `split_words:"true"`
 
 	ForwardClientCredentialsToOrigin bool `default:"false" split_words:"true"` // only takes effect if both clusters have auth enabled
 
@@ -52,10 +52,10 @@ type Config struct {
 	ProxyTlsKeyPath           string `split_words:"true"`
 	ProxyTlsRequireClientAuth bool   `split_words:"true"`
 
-	ProxyMetricsAddress string `default:"localhost" split_words:"true"`
-	ProxyMetricsPort    int    `default:"14001" split_words:"true"`
-	ProxyQueryPort      int    `default:"14002" split_words:"true"`
-	ProxyQueryAddress   string `default:"localhost" split_words:"true"`
+	NetMetricsAddress string `default:"localhost" split_words:"true"`
+	NetMetricsPort    int    `default:"14001" split_words:"true"`
+	NetQueryPort    int    `default:"14002" split_words:"true"`
+	NetQueryAddress string `default:"localhost" split_words:"true"`
 
 	ClusterConnectionTimeoutMs int `default:"30000" split_words:"true"`
 	HeartbeatIntervalMs        int `default:"30000" split_words:"true"`
@@ -65,7 +65,7 @@ type Config struct {
 	HeartbeatRetryBackoffFactor float64 `default:"2" split_words:"true"`
 	HeartbeatFailureThreshold   int     `default:"1" split_words:"true"`
 
-	EnableMetrics bool `default:"true" split_words:"true"`
+	MonitoringEnableMetrics bool `default:"true" split_words:"true"`
 
 	ForwardReadsToTarget         bool `default:"false" split_words:"true"`
 	ForwardSystemQueriesToTarget bool `default:"false" split_words:"true"`
@@ -78,13 +78,13 @@ type Config struct {
 
 	RequestTimeoutMs int `default:"10000" split_words:"true"`
 
-	LogLevel string `default:"INFO" split_words:"true"`
+	MonitoringLogLevel string `default:"INFO" split_words:"true"`
 
-	MaxClientsThreshold int `default:"500" split_words:"true"`
+	MaxClients int `default:"500" split_words:"true"`
 
-	OriginBucketsMs string `default:"1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000" split_words:"true"`
-	TargetBucketsMs string `default:"1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000" split_words:"true"`
-	AsyncBucketsMs  string `default:"1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000" split_words:"true"`
+	MonitoringOriginBucketsMs string `default:"1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000" split_words:"true"`
+	MonitoringTargetBucketsMs string `default:"1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000" split_words:"true"`
+	MonitoringAsyncBucketsMs  string `default:"1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000" split_words:"true"`
 
 	// PERFORMANCE TUNING CONFIG SETTINGS (shouldn't be changed by users)
 
@@ -120,7 +120,7 @@ func New() *Config {
 // ParseEnvVars fills out the fields of the Config struct according to envconfig rules
 // See: Usage @ https://github.com/kelseyhightower/envconfig
 func (c *Config) ParseEnvVars() (*Config, error) {
-	err := envconfig.Process("", c)
+	err := envconfig.Process("ZDM", c)
 	if err != nil {
 		return nil, fmt.Errorf("could not load environment variables: %w", err)
 	}
@@ -137,17 +137,17 @@ func (c *Config) ParseEnvVars() (*Config, error) {
 
 func (c *Config) ParseTopologyConfig() (*TopologyConfig, error) {
 	virtualizationEnabled := true
-	proxyInstanceCount := c.ProxyInstanceCount
+	proxyInstanceCount := c.TopologyInstanceCount
 	proxyAddressesTyped := []net.IP{net.ParseIP("127.0.0.1")}
-	if isNotDefined(c.ProxyAddresses) {
+	if isNotDefined(c.TopologyAddresses) {
 		virtualizationEnabled = false
 		if proxyInstanceCount == -1 {
 			proxyInstanceCount = 1
 		}
 	} else {
-		proxyAddresses := strings.Split(strings.ReplaceAll(c.ProxyAddresses, " ", ""), ",")
+		proxyAddresses := strings.Split(strings.ReplaceAll(c.TopologyAddresses, " ", ""), ",")
 		if len(proxyAddresses) <= 0 {
-			return nil, fmt.Errorf("invalid ProxyAddresses: %v", c.ProxyAddresses)
+			return nil, fmt.Errorf("invalid TopologyAddresses: %v", c.TopologyAddresses)
 		}
 
 		proxyAddressesTyped = make([]net.IP, 0, len(proxyAddresses))
@@ -155,7 +155,7 @@ func (c *Config) ParseTopologyConfig() (*TopologyConfig, error) {
 			proxyAddr := proxyAddresses[i]
 			parsedIp := net.ParseIP(proxyAddr)
 			if parsedIp == nil {
-				return nil, fmt.Errorf("invalid proxy address in ProxyAddresses env var: %v", proxyAddr)
+				return nil, fmt.Errorf("invalid proxy address in TopologyAddresses env var: %v", proxyAddr)
 			}
 			proxyAddressesTyped = append(proxyAddressesTyped, parsedIp)
 		}
@@ -163,17 +163,17 @@ func (c *Config) ParseTopologyConfig() (*TopologyConfig, error) {
 	}
 
 	if proxyInstanceCount <= 0 {
-		return nil, fmt.Errorf("invalid ProxyInstanceCount: %v", proxyInstanceCount)
+		return nil, fmt.Errorf("invalid TopologyInstanceCount: %v", proxyInstanceCount)
 	}
 
-	proxyIndex := c.ProxyIndex
+	proxyIndex := c.TopologyIndex
 	if proxyIndex < 0 || proxyIndex >= proxyInstanceCount {
-		return nil, fmt.Errorf("invalid ProxyIndex and ProxyInstanceCount values; "+
+		return nil, fmt.Errorf("invalid TopologyIndex and TopologyInstanceCount values; "+
 			"proxy index (%d) must be less than instance count (%d) and non negative", proxyIndex, proxyInstanceCount)
 	}
 
-	if c.ProxyNumTokens <= 0 || c.ProxyNumTokens > 256 {
-		return nil, fmt.Errorf("invalid ProxyNumTokens (%v), it must be positive and equal or less than 256", c.ProxyNumTokens)
+	if c.TopologyNumTokens <= 0 || c.TopologyNumTokens > 256 {
+		return nil, fmt.Errorf("invalid TopologyNumTokens (%v), it must be positive and equal or less than 256", c.TopologyNumTokens)
 	}
 
 	return &TopologyConfig{
@@ -181,7 +181,7 @@ func (c *Config) ParseTopologyConfig() (*TopologyConfig, error) {
 		Addresses:             proxyAddressesTyped,
 		Index:                 proxyIndex,
 		Count:                 proxyInstanceCount,
-		NumTokens:             c.ProxyNumTokens,
+		NumTokens:             c.TopologyNumTokens,
 	}, nil
 }
 
@@ -240,7 +240,7 @@ func (c *Config) Validate() error {
 }
 
 func (c *Config) ParseLogLevel() (log.Level, error) {
-	level, err := log.ParseLevel(strings.TrimSpace(c.LogLevel))
+	level, err := log.ParseLevel(strings.TrimSpace(c.MonitoringLogLevel))
 	if err != nil {
 		var lvl log.Level
 		return lvl, fmt.Errorf("invalid log level, valid log levels are "+
@@ -251,15 +251,15 @@ func (c *Config) ParseLogLevel() (log.Level, error) {
 }
 
 func (c *Config) ParseOriginBuckets() ([]float64, error) {
-	return c.parseBuckets(c.OriginBucketsMs)
+	return c.parseBuckets(c.MonitoringOriginBucketsMs)
 }
 
 func (c *Config) ParseTargetBuckets() ([]float64, error) {
-	return c.parseBuckets(c.TargetBucketsMs)
+	return c.parseBuckets(c.MonitoringTargetBucketsMs)
 }
 
 func (c *Config) ParseAsyncBuckets() ([]float64, error) {
-	return c.parseBuckets(c.AsyncBucketsMs)
+	return c.parseBuckets(c.MonitoringAsyncBucketsMs)
 }
 
 func (c *Config) parseBuckets(bucketsConfigStr string) ([]float64, error) {
@@ -280,30 +280,30 @@ func (c *Config) parseBuckets(bucketsConfigStr string) ([]float64, error) {
 }
 
 func (c *Config) ParseOriginContactPoints() ([]string, error) {
-	if isDefined(c.OriginCassandraSecureConnectBundlePath) && isDefined(c.OriginCassandraContactPoints) {
-		return nil, fmt.Errorf("OriginCassandraSecureConnectBundlePath and OriginCassandraContactPoints are mutually exclusive. Please specify only one of them.")
+	if isDefined(c.OriginSecureConnectBundlePath) && isDefined(c.OriginContactPoints) {
+		return nil, fmt.Errorf("OriginSecureConnectBundlePath and OriginContactPoints are mutually exclusive. Please specify only one of them.")
 	}
 
-	if isDefined(c.OriginCassandraSecureConnectBundlePath) && isDefined(c.OriginDatacenter) {
-		return nil, fmt.Errorf("OriginCassandraSecureConnectBundlePath and OriginDatacenter are mutually exclusive. Please specify only one of them.")
+	if isDefined(c.OriginSecureConnectBundlePath) && isDefined(c.OriginDatacenter) {
+		return nil, fmt.Errorf("OriginSecureConnectBundlePath and OriginDatacenter are mutually exclusive. Please specify only one of them.")
 	}
 
-	if isNotDefined(c.OriginCassandraSecureConnectBundlePath) && isNotDefined(c.OriginCassandraContactPoints) {
-		return nil, fmt.Errorf("Both OriginCassandraSecureConnectBundlePath and OriginCassandraContactPoints are empty. Please specify either one of them.")
+	if isNotDefined(c.OriginSecureConnectBundlePath) && isNotDefined(c.OriginContactPoints) {
+		return nil, fmt.Errorf("Both OriginSecureConnectBundlePath and OriginContactPoints are empty. Please specify either one of them.")
 	}
 
-	if isDefined(c.OriginCassandraContactPoints) && (c.OriginCassandraPort == 0) {
-		return nil, fmt.Errorf("OriginCassandraContactPoints was specified but the port is missing. Please provide OriginCassandraPort")
+	if isDefined(c.OriginContactPoints) && (c.OriginPort == 0) {
+		return nil, fmt.Errorf("OriginContactPoints was specified but the port is missing. Please provide OriginPort")
 	}
 
 	if (c.OriginEnableHostAssignment == false) && (isDefined(c.OriginDatacenter)) {
 		return nil, fmt.Errorf("OriginDatacenter was specified but OriginEnableHostAssignment is false. Please enable host assignment or don't set the datacenter.")
 	}
 
-	if isNotDefined(c.OriginCassandraSecureConnectBundlePath) {
-		contactPoints := parseContactPoints(c.OriginCassandraContactPoints)
+	if isNotDefined(c.OriginSecureConnectBundlePath) {
+		contactPoints := parseContactPoints(c.OriginContactPoints)
 		if len(contactPoints) <= 0 {
-			return nil, fmt.Errorf("could not parse origin contact points: %v", c.OriginCassandraContactPoints)
+			return nil, fmt.Errorf("could not parse origin contact points: %v", c.OriginContactPoints)
 		}
 
 		return contactPoints, nil
@@ -313,30 +313,30 @@ func (c *Config) ParseOriginContactPoints() ([]string, error) {
 }
 
 func (c *Config) ParseTargetContactPoints() ([]string, error) {
-	if isDefined(c.TargetCassandraSecureConnectBundlePath) && isDefined(c.TargetCassandraContactPoints) {
-		return nil, fmt.Errorf("TargetCassandraSecureConnectBundlePath and TargetCassandraContactPoints are mutually exclusive. Please specify only one of them.")
+	if isDefined(c.TargetSecureConnectBundlePath) && isDefined(c.TargetContactPoints) {
+		return nil, fmt.Errorf("TargetSecureConnectBundlePath and TargetContactPoints are mutually exclusive. Please specify only one of them.")
 	}
 
-	if isDefined(c.TargetCassandraSecureConnectBundlePath) && isDefined(c.TargetDatacenter) {
-		return nil, fmt.Errorf("TargetCassandraSecureConnectBundlePath and TargetDatacenter are mutually exclusive. Please specify only one of them.")
+	if isDefined(c.TargetSecureConnectBundlePath) && isDefined(c.TargetDatacenter) {
+		return nil, fmt.Errorf("TargetSecureConnectBundlePath and TargetDatacenter are mutually exclusive. Please specify only one of them.")
 	}
 
-	if isNotDefined(c.TargetCassandraSecureConnectBundlePath) && isNotDefined(c.TargetCassandraContactPoints) {
-		return nil, fmt.Errorf("Both TargetCassandraSecureConnectBundlePath and TargetCassandraContactPoints are empty. Please specify either one of them.")
+	if isNotDefined(c.TargetSecureConnectBundlePath) && isNotDefined(c.TargetContactPoints) {
+		return nil, fmt.Errorf("Both TargetSecureConnectBundlePath and TargetContactPoints are empty. Please specify either one of them.")
 	}
 
-	if (isDefined(c.TargetCassandraContactPoints)) && (c.TargetCassandraPort == 0) {
-		return nil, fmt.Errorf("TargetCassandraContactPoints was specified but the port is missing. Please provide TargetCassandraPort")
+	if (isDefined(c.TargetContactPoints)) && (c.TargetPort == 0) {
+		return nil, fmt.Errorf("TargetContactPoints was specified but the port is missing. Please provide TargetPort")
 	}
 
 	if (c.TargetEnableHostAssignment == false) && (isDefined(c.TargetDatacenter)) {
 		return nil, fmt.Errorf("TargetDatacenter was specified but TargetEnableHostAssignment is false. Please enable host assignment or don't set the datacenter.")
 	}
 
-	if isNotDefined(c.TargetCassandraSecureConnectBundlePath) {
-		contactPoints := parseContactPoints(c.TargetCassandraContactPoints)
+	if isNotDefined(c.TargetSecureConnectBundlePath) {
+		contactPoints := parseContactPoints(c.TargetContactPoints)
 		if len(contactPoints) <= 0 {
-			return nil, fmt.Errorf("could not parse target contact points: %v", c.TargetCassandraContactPoints)
+			return nil, fmt.Errorf("could not parse target contact points: %v", c.TargetContactPoints)
 		}
 
 		return contactPoints, nil
@@ -353,7 +353,7 @@ func (c *Config) ParseOriginTlsConfig(displayLogMessages bool) (*ClusterTlsConfi
 
 	// No TLS defined
 
-	if isNotDefined(c.OriginCassandraSecureConnectBundlePath) &&
+	if isNotDefined(c.OriginSecureConnectBundlePath) &&
 		isNotDefined(c.OriginTlsServerCaPath) &&
 		isNotDefined(c.OriginTlsClientCertPath) &&
 		isNotDefined(c.OriginTlsClientKeyPath) {
@@ -367,7 +367,7 @@ func (c *Config) ParseOriginTlsConfig(displayLogMessages bool) (*ClusterTlsConfi
 
 	//SCB specified
 
-	if isDefined(c.OriginCassandraSecureConnectBundlePath) {
+	if isDefined(c.OriginSecureConnectBundlePath) {
 		if isDefined(c.OriginTlsServerCaPath) || isDefined(c.OriginTlsClientCertPath) || isDefined(c.OriginTlsClientKeyPath) {
 			return &ClusterTlsConfig{}, fmt.Errorf("Incorrect TLS configuration for Origin: Secure Connect Bundle and custom TLS parameters cannot be specified at the same time.")
 		}
@@ -377,7 +377,7 @@ func (c *Config) ParseOriginTlsConfig(displayLogMessages bool) (*ClusterTlsConfi
 		}
 		return &ClusterTlsConfig{
 			TlsEnabled:              true,
-			SecureConnectBundlePath: c.OriginCassandraSecureConnectBundlePath,
+			SecureConnectBundlePath: c.OriginSecureConnectBundlePath,
 		}, nil
 	}
 
@@ -413,7 +413,7 @@ func (c *Config) ParseTargetTlsConfig(displayLogMessages bool) (*ClusterTlsConfi
 
 	// No TLS defined
 
-	if isNotDefined(c.TargetCassandraSecureConnectBundlePath) &&
+	if isNotDefined(c.TargetSecureConnectBundlePath) &&
 		isNotDefined(c.TargetTlsServerCaPath) &&
 		isNotDefined(c.TargetTlsClientCertPath) &&
 		isNotDefined(c.TargetTlsClientKeyPath) {
@@ -427,14 +427,14 @@ func (c *Config) ParseTargetTlsConfig(displayLogMessages bool) (*ClusterTlsConfi
 
 	//SCB specified
 
-	if isDefined(c.TargetCassandraSecureConnectBundlePath) {
+	if isDefined(c.TargetSecureConnectBundlePath) {
 		if isDefined(c.TargetTlsServerCaPath) || isDefined(c.TargetTlsClientCertPath) || isDefined(c.TargetTlsClientKeyPath) {
 			return &ClusterTlsConfig{}, fmt.Errorf("Incorrect TLS configuration for Target: Secure Connect Bundle and custom TLS parameters cannot be specified at the same time.")
 		}
 
 		return &ClusterTlsConfig{
 			TlsEnabled:              true,
-			SecureConnectBundlePath: c.TargetCassandraSecureConnectBundlePath,
+			SecureConnectBundlePath: c.TargetSecureConnectBundlePath,
 		}, nil
 	}
 
