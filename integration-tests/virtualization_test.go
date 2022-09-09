@@ -8,12 +8,12 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/gocql/gocql"
-	"github.com/google/uuid"
 	"github.com/datastax/zdm-proxy/integration-tests/env"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/integration-tests/utils"
 	"github.com/datastax/zdm-proxy/proxy/pkg/zdmproxy"
+	"github.com/gocql/gocql"
+	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
 	"math/big"
@@ -46,7 +46,7 @@ func (recv *connectObserver) ObserveConnect(a gocql.ObservedConnect) {
 }
 
 func TestVirtualizationNumberOfConnections(t *testing.T) {
-	testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodes(false, false, 3)
+	testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodes(t, false, false, 3)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
@@ -373,7 +373,7 @@ CREATE TABLE system.local (
 
  */
 func TestInterceptedQueries(t *testing.T) {
-	testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodes(false, false, 3)
+	testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodes(t, false, false, 3)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 

@@ -21,7 +21,7 @@ import (
 
 func TestPreparedIdProxyCacheMiss(t *testing.T) {
 
-	simulacronSetup, err := setup.NewSimulacronTestSetup()
+	simulacronSetup, err := setup.NewSimulacronTestSetup(t)
 	require.Nil(t, err)
 	defer simulacronSetup.Cleanup()
 
@@ -62,7 +62,7 @@ func TestPreparedIdProxyCacheMiss(t *testing.T) {
 
 func TestPreparedIdPreparationMismatch(t *testing.T) {
 
-	simulacronSetup, err := setup.NewSimulacronTestSetup()
+	simulacronSetup, err := setup.NewSimulacronTestSetup(t)
 	require.Nil(t, err)
 	defer simulacronSetup.Cleanup()
 

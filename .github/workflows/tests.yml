@@ -64,11 +64,14 @@ jobs:
       - name: Run
         run: |
           sudo apt update
-          sudo apt -y install openjdk-8-jdk gcc git pip wget
+          sudo apt -y install openjdk-8-jdk gcc git wget pip
           wget https://go.dev/dl/go1.19.linux-amd64.tar.gz
           sudo tar -xzf go*.tar.gz -C /usr/local/
           export PATH=$PATH:/usr/local/go/bin
           export PATH=$PATH:`go env GOPATH`/bin
+          export JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64
+          export PATH=$JAVA_HOME/bin:$PATH
+          java -version
           go install github.com/jstemmer/go-junit-report/v2@latest
           wget https://github.com/datastax/simulacron/releases/download/0.10.0/simulacron-standalone-0.10.0.jar
           export SIMULACRON_PATH=`pwd`/simulacron-standalone-0.10.0.jar
@@ -76,7 +79,7 @@ jobs:
           which ccm
           sudo ln -s /home/runner/.local/bin/ccm /usr/local/bin/ccm
           /usr/local/bin/ccm list
-          go test -timeout 180m -v 2>&1 ./integration-tests -USE_CCM=true | go-junit-report -set-exit-code -iocopy -out report-integration.xml
+          go test -timeout 180m -v 2>&1 ./integration-tests -SKIP_SIMULACRON=true -USE_CCM=true | go-junit-report -set-exit-code -iocopy -out report-integration.xml
       - name: Test Summary
         uses: test-summary/action@v1
         if: always()

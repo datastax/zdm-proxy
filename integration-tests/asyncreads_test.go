@@ -7,11 +7,11 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/gocql/gocql"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
 	"github.com/datastax/zdm-proxy/integration-tests/utils"
 	"github.com/datastax/zdm-proxy/proxy/pkg/config"
+	"github.com/gocql/gocql"
 	"github.com/rs/zerolog"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -25,7 +25,7 @@ func TestAsyncReadError(t *testing.T) {
 	c := setup.NewTestConfig("", "")
 	c.DualReadsEnabled = true
 	c.AsyncReadsOnSecondary = true
-	testSetup, err := setup.NewSimulacronTestSetupWithConfig(c)
+	testSetup, err := setup.NewSimulacronTestSetupWithConfig(t, c)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
@@ -72,7 +72,7 @@ func TestAsyncReadHighLatency(t *testing.T) {
 	c := setup.NewTestConfig("", "")
 	c.DualReadsEnabled = true
 	c.AsyncReadsOnSecondary = true
-	testSetup, err := setup.NewSimulacronTestSetupWithConfig(c)
+	testSetup, err := setup.NewSimulacronTestSetupWithConfig(t, c)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
@@ -121,7 +121,7 @@ func TestAsyncExhaustedStreamIds(t *testing.T) {
 	c := setup.NewTestConfig("", "")
 	c.DualReadsEnabled = true
 	c.AsyncReadsOnSecondary = true
-	testSetup, err := setup.NewSimulacronTestSetupWithConfig(c)
+	testSetup, err := setup.NewSimulacronTestSetupWithConfig(t, c)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
@@ -290,7 +290,7 @@ func TestAsyncReadsRequestTypes(t *testing.T) {
 	}
 
 	testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodesAndConfig(
-		false, false,1, nil)
+		t, false, false,1, nil)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 

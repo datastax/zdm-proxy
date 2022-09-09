@@ -21,7 +21,7 @@ var rows = simulacron.NewRowsResult(
 func TestForwardDecisionsForReads(t *testing.T) {
 	c := setup.NewTestConfig("", "")
 	c.ForwardSystemQueriesToTarget = true
-	testSetup, err := setup.NewSimulacronTestSetupWithConfig(c)
+	testSetup, err := setup.NewSimulacronTestSetupWithConfig(t, c)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
@@ -82,7 +82,7 @@ func TestForwardDecisionsForReads(t *testing.T) {
 }
 
 func TestForwardDecisionsForReadsWithUseStatement(t *testing.T) {
-	testSetup, err := setup.NewSimulacronTestSetupWithSession(false, false)
+	testSetup, err := setup.NewSimulacronTestSetupWithSession(t, false, false)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
