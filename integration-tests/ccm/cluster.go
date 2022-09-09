@@ -2,8 +2,8 @@ package ccm
 
 import (
 	"fmt"
-	"github.com/gocql/gocql"
 	"github.com/datastax/zdm-proxy/integration-tests/env"
+	"github.com/gocql/gocql"
 )
 
 type Cluster struct {
@@ -17,7 +17,8 @@ type Cluster struct {
 	session        *gocql.Session
 }
 
-func newCluster(name string, version string, isDse bool, startNodeIndex int, numberOfSeedNodes int) *Cluster {
+//TODO
+func NewCluster(name string, version string, isDse bool, startNodeIndex int, numberOfSeedNodes int) *Cluster {
 	return &Cluster{
 		name:                name,
 		version:             version,
@@ -31,7 +32,7 @@ func newCluster(name string, version string, isDse bool, startNodeIndex int, num
 
 func GetNewCluster(id uint64, startNodeIndex int, numberOfNodes int, start bool) (*Cluster, error) {
 	name := fmt.Sprintf("test_cluster%d", id)
-	cluster := newCluster(name, env.ServerVersion, env.IsDse, startNodeIndex, numberOfNodes)
+	cluster := NewCluster(name, env.ServerVersion, env.IsDse, startNodeIndex, numberOfNodes)
 	err := cluster.Create(numberOfNodes, start)
 	if err != nil {
 		return nil, err

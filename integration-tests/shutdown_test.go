@@ -15,6 +15,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
 	"math/rand"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -176,24 +177,47 @@ func TestStressShutdown(t *testing.T) {
 	}
 	for _, test := range testDef {
 		t.Run(test.name, func(t *testing.T) {
-			f := func() {
+			f := func() bool {
 				testSetup, err := setup.NewSimulacronTestSetupWithSession(false, false)
 				require.Nil(t, err)
 				defer testSetup.Cleanup()
 				cfg := setup.NewTestConfig(testSetup.Origin.GetInitialContactPoint(), testSetup.Target.GetInitialContactPoint())
 				cfg.AsyncReadsOnSecondary = test.asyncReadsOnSecondary
 				cfg.DualReadsEnabled = test.dualReadsEnabled
+				cfg.RequestTimeoutMs = 5000
 				proxy, err := setup.NewProxyInstanceWithConfig(cfg)
 				require.Nil(t, err)
+
+				atomicValMutex := sync.Mutex{}
 				shutdownProxyTriggered := atomic.Value{}
 				shutdownProxyTriggered.Store(false)
-				defer func() {
-					if !shutdownProxyTriggered.Load().(bool) {
-						proxy.Shutdown()
+
+				globalCtx, globalCancelFn := context.WithCancel(context.Background())
+				defer globalCancelFn()
+
+				globalWg := &sync.WaitGroup{}
+				defer globalWg.Wait()
+
+				globalWg.Add(1)
+				go func() {
+					defer globalWg.Done()
+					select {
+					case <-globalCtx.Done():
+					case <-time.After(60*time.Second):
 					}
+
+					atomicValMutex.Lock()
+					if !shutdownProxyTriggered.Load().(bool) {
+						shutdownProxyTriggered.Store(true)
+						atomicValMutex.Unlock()
+						proxy.Shutdown()
+						globalCancelFn()
+						return
+					}
+					atomicValMutex.Unlock()
 				}()
 
-				cqlConn, err := client.NewTestClient(context.Background(), "127.0.0.1:14002")
+				cqlConn, err := client.NewTestClientWithRequestTimeout(context.Background(), "127.0.0.1:14002", 10 * time.Second)
 				require.Nil(t, err)
 				defer cqlConn.Shutdown()
 
@@ -204,150 +228,191 @@ func TestStressShutdown(t *testing.T) {
 				zerolog.SetGlobalLevel(zerolog.WarnLevel)
 				defer zerolog.SetGlobalLevel(oldZeroLogLevel)
 
-				wg := &sync.WaitGroup{}
-				defer wg.Wait()
-
-				ctx, cancelFn := context.WithCancel(context.Background())
-				defer cancelFn()
-
-				err = cqlConn.PerformDefaultHandshake(ctx, primitive.ProtocolVersion4, false)
+				err = cqlConn.PerformDefaultHandshake(context.Background(), primitive.ProtocolVersion4, false)
 				require.Nil(t, err)
 
-				goCtx, goCancel := context.WithCancel(context.Background())
-				goWg := &sync.WaitGroup{}
 				errChan := make(chan error, 1000)
 				requestsWg := &sync.WaitGroup{}
-				for j := 0; j < 20; j++ {
-					wg.Add(1)
-					goWg.Add(1)
-					requestsWg.Add(1)
-					go func() {
-						defer wg.Done()
-						defer requestsWg.Done()
-						newCtx, cancelFn := context.WithTimeout(goCtx, 5000*time.Millisecond)
-						tempCqlConn, err := client.NewTestClient(newCtx, "127.0.0.1:14002")
-						optionsWg := &sync.WaitGroup{}
-						if err == nil {
-							for x := 0; x < 50; x++ {
-								optionsWg.Add(1)
-								go func() {
-									defer optionsWg.Done()
-									for newCtx.Err() == nil {
-										_, _, _ = tempCqlConn.SendMessage(newCtx, primitive.ProtocolVersion4, &message.Options{})
-									}
-								}()
-							}
-							goWg.Done()
-							<-goCtx.Done()
-							r := rand.Intn(20) + 85
-							time.Sleep(time.Duration(r) * time.Millisecond)
-							err = tempCqlConn.PerformDefaultHandshake(newCtx, primitive.ProtocolVersion4, false)
-							cancelFn()
-						}
-						optionsWg.Wait()
-
-						if tempCqlConn != nil {
-							tempCqlConn.Shutdown()
-						}
-
-						cancelFn()
-						if err != nil && ctx.Err() == nil {
-							if !shutdownProxyTriggered.Load().(bool) &&
-								!errors.Is(err, context.DeadlineExceeded) {
-								errChan <- err
-								return
-							}
-						}
-					}()
-				}
-
-				for jj := 0; jj < 1; jj++ {
-					wg.Add(1)
-					requestsWg.Add(1)
-					j := jj
-					go func() {
-						defer requestsWg.Done()
-						defer wg.Done()
-						for i := 0; ctx.Err() == nil; i++ {
-							queryMsg := &message.Query{
-								Query:   "SELECT * FROM system.local",
-								Options: &message.QueryOptions{Consistency: primitive.ConsistencyLevelLocalOne},
-							}
-							newCtx, cancelFn := context.WithTimeout(ctx, 15*time.Second)
-							rsp, _, err := cqlConn.SendMessage(newCtx, primitive.ProtocolVersion4, queryMsg)
-							cancelFn()
-
-							if err != nil {
-								t.Logf("Break fatal on j=%v i=%v", j, i)
-								return
-							}
-
-							if rsp.Header.OpCode != primitive.OpCodeError && rsp.Header.OpCode != primitive.OpCodeResult {
-								errChan <- fmt.Errorf("expected error or result actual %v", rsp.Header.OpCode)
-								return
-							}
-
-							if rsp.Header.OpCode == primitive.OpCodeError {
-								_, ok := rsp.Body.Message.(*message.Overloaded)
-								if !ok {
-									errChan <- fmt.Errorf("expected %v actual %v", "*message.Overloaded", rsp.Body.Message)
-									return
-								}
-							}
-						}
-					}()
-				}
-
-				requestsDoneCh := make(chan bool)
-				wg.Add(1)
+				globalWg.Add(1)
 				go func() {
-					defer wg.Done()
+					defer globalWg.Done()
 					requestsWg.Wait()
-					close(requestsDoneCh)
 				}()
 
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
-					defer close(errChan)
-
-					wg.Add(1)
+				// start goroutines that continuously (until proxy shutdown) open connections, send heartbeats and perform handshake
+				// (test if proxy panics (race conditions) when shutting down and receiving requests simultaneously
+				for j := 0; j < runtime.GOMAXPROCS(0); j++ {
+					requestsWg.Add(1)
 					go func() {
-						defer wg.Done()
-						goWg.Wait()
-						shutdownProxyTriggered.Store(true)
-						goCancel()
-						time.Sleep(100 * time.Millisecond)
-						proxy.Shutdown()
-						requestsWg.Wait()
-						cancelFn()
+						defer requestsWg.Done()
+						for {
+							id := rand.Int()
+							connTimeoutCtx, connTimeoutCancelFn := context.WithTimeout(globalCtx, 5*time.Second)
+							tempCqlConn, err := client.NewTestClientWithRequestTimeout(connTimeoutCtx, "127.0.0.1:14002", 10 *time.Second)
+							optionsWg := &sync.WaitGroup{}
+							if err == nil {
+								defaultHandshakeDoneCh := make(chan bool, 1)
+								for x := 0; x < runtime.GOMAXPROCS(0)*8; x++ {
+									optionsWg.Add(1)
+									go func() {
+										defer optionsWg.Done()
+										for {
+											select {
+											case <-defaultHandshakeDoneCh:
+												return
+											default:
+												rspFrame, _, err := tempCqlConn.SendMessage(context.Background(), primitive.ProtocolVersion4, &message.Options{})
+												if err != nil {
+													if !shutdownProxyTriggered.Load().(bool) {
+														errChan <- fmt.Errorf("[%v] unexpected error in heartbeat: %w", id, err)
+													}
+													return
+												}
+												switch resultMsg := rspFrame.Body.Message.(type) {
+												case *message.Overloaded:
+													if !shutdownProxyTriggered.Load().(bool) {
+														errChan <- fmt.Errorf("[%v] unexpected overloaded in heartbeat: %v", id, resultMsg)
+														return
+													}
+												case *message.Supported:
+												default:
+													errChan <- fmt.Errorf("[%v] unexpected result in heartbeat: %v", id, resultMsg)
+													return
+												}
+											}
+										}
+									}()
+								}
+								r := rand.Intn(500) + 100
+								select {
+								case <-time.After(time.Duration(r) * time.Millisecond):
+								case <-globalCtx.Done():
+								}
+								err = tempCqlConn.PerformDefaultHandshake(context.Background(), primitive.ProtocolVersion4, false)
+								defaultHandshakeDoneCh <- true
+								optionsWg.Wait()
+								_ = tempCqlConn.Shutdown()
+							}
+
+							connTimeoutCancelFn()
+							if err != nil {
+								if !shutdownProxyTriggered.Load().(bool) {
+									errChan <- fmt.Errorf("error connecting in handshake: %w", err)
+								}
+								return
+							}
+						}
 					}()
+				}
+
+				// start 1 goroutine that continuously sends a query (test if an active connection gets an Overloaded result on proxy shutdown)
+				requestsWg.Add(1)
+				go func() {
+					defer requestsWg.Done()
+					for {
+						queryMsg := &message.Query{
+							Query:   "SELECT * FROM system.local",
+							Options: &message.QueryOptions{Consistency: primitive.ConsistencyLevelLocalOne},
+						}
+						rsp, _, err := cqlConn.SendMessage(context.Background(), primitive.ProtocolVersion4, queryMsg)
+
+						if err != nil {
+							if !shutdownProxyTriggered.Load().(bool) {
+								errChan <- fmt.Errorf("expected error on query send %w", err)
+							}
+							return
+						}
+
+						if rsp.Header.OpCode != primitive.OpCodeError && rsp.Header.OpCode != primitive.OpCodeResult {
+							errChan <- fmt.Errorf("expected error or result actual %v", rsp.Header.OpCode)
+							return
+						}
+
+						if rsp.Header.OpCode == primitive.OpCodeError {
+							if !shutdownProxyTriggered.Load().(bool) {
+								errChan <- fmt.Errorf("unexpected error result when proxy shutdown wasn't triggered: %v", rsp.Body.Message)
+								return
+							}
+							_, ok := rsp.Body.Message.(*message.Overloaded)
+							if !ok {
+								errChan <- fmt.Errorf("expected %v actual %v", "*message.Overloaded", rsp.Body.Message)
+								return
+							}
+						}
+					}
+				}()
+
+				testDoneCh := make(chan bool)
+				globalWg.Add(1)
+				go func() {
+					defer globalWg.Done()
+					defer close(testDoneCh)
+					defer globalCancelFn()
+
+					time.Sleep(12000 * time.Millisecond)
+
+					atomicValMutex.Lock()
+					if shutdownProxyTriggered.Load().(bool) {
+						atomicValMutex.Unlock()
+						t.Errorf("test timed out")
+						errChan <- errors.New("test timed out")
+						return
+					}
+					shutdownProxyTriggered.Store(true)
+					atomicValMutex.Unlock()
+					now := time.Now()
+					proxy.Shutdown()
+					afterShutdownNow := time.Now()
+					if afterShutdownNow.Sub(now) > (5 * time.Second) {
+						t.Errorf("proxy shutdown took too long (%v milliseconds, threshold is 5 seconds)", afterShutdownNow.Sub(now).Milliseconds())
+						errChan <- fmt.Errorf("proxy shutdown took too long (%v milliseconds, threshold is 5 seconds)", afterShutdownNow.Sub(now).Milliseconds())
+					}
+
+					requestsDoneCh := make(chan bool)
+					go func() {
+						requestsWg.Wait()
+						close(requestsDoneCh)
+					}()
+
 					select {
-					case <-ctx.Done():
+					case <-requestsDoneCh:
+						globalCancelFn()
 					case <-time.After(15 * time.Second):
-						errChan <- errors.New("timed out waiting for requests to end")
+						t.Errorf("timed out waiting for goroutines to finish normally")
+						errChan <- errors.New("timed out waiting for goroutines to finish normally")
+						globalCancelFn()
+						<-requestsDoneCh
 					}
 				}()
 
 				var lastErr error
-				testDone := false
-				for !testDone {
-					e, ok := <-errChan
-					if !ok {
-						testDone = true
-						break
+				done := false
+				for !done {
+					select {
+					case <-testDoneCh:
+						done = true
+					case e, ok := <-errChan:
+						if !ok {
+							done = true
+							break
+						}
+						lastErr = e
+						t.Logf("error found: %v", e)
 					}
-					lastErr = e
-					t.Logf("error found: %v", e)
 				}
 
 				if lastErr != nil {
 					t.Errorf("an error (or more) occured. last error: %v", lastErr)
+					return false
+				} else {
+					return true
 				}
 			}
 
 			for testCount := 1; testCount <= 20; testCount++ {
-				f()
+				if !f() {
+					return
+				}
 			}
 		})
 	}
