@@ -17,8 +17,7 @@ type Cluster struct {
 	session        *gocql.Session
 }
 
-//TODO
-func NewCluster(name string, version string, isDse bool, startNodeIndex int, numberOfSeedNodes int) *Cluster {
+func newCluster(name string, version string, isDse bool, startNodeIndex int, numberOfSeedNodes int) *Cluster {
 	return &Cluster{
 		name:                name,
 		version:             version,
@@ -32,7 +31,7 @@ func NewCluster(name string, version string, isDse bool, startNodeIndex int, num
 
 func GetNewCluster(id uint64, startNodeIndex int, numberOfNodes int, start bool) (*Cluster, error) {
 	name := fmt.Sprintf("test_cluster%d", id)
-	cluster := NewCluster(name, env.ServerVersion, env.IsDse, startNodeIndex, numberOfNodes)
+	cluster := newCluster(name, env.ServerVersion, env.IsDse, startNodeIndex, numberOfNodes)
 	err := cluster.Create(numberOfNodes, start)
 	if err != nil {
 		return nil, err

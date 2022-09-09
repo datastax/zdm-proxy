@@ -69,45 +69,41 @@ func GetGlobalTestClusterTarget() (*ccm.Cluster, error) {
 func createClusters() error {
 	// assuming we have the lock already
 
-	globalCcmClusterTarget = ccm.NewCluster("test_cluster3486292750825646796", "3.11.7", false, 10, 1)
-	globalCcmClusterOrigin = ccm.NewCluster("test_cluster3486292750825646795", "3.11.7", false, 1, 1)
+	var err error
+
+	firstClusterId := env.Rand.Uint64() % (math.MaxUint64 - 1)
+	globalCcmClusterOrigin, err = ccm.GetNewCluster(firstClusterId, 1, env.OriginNodes, true)
+	if err != nil {
+		return err
+	}
+
+	secondClusterId := firstClusterId + 1
+	globalCcmClusterTarget, err = ccm.GetNewCluster(secondClusterId, 10, env.TargetNodes, true)
+	if err != nil {
+		globalCcmClusterOrigin.Remove()
+		return err
+	}
+
+	sourceSession := globalCcmClusterOrigin.GetSession()
+	destSession := globalCcmClusterTarget.GetSession()
+
+	// Seed originCluster and targetCluster with keyspace
+	err = SeedKeyspace(sourceSession)
+	if err != nil {
+		globalCcmClusterOrigin.Remove()
+		globalCcmClusterTarget.Remove()
+		return err
+	}
+
+	err = SeedKeyspace(destSession)
+	if err != nil {
+		globalCcmClusterOrigin.Remove()
+		globalCcmClusterTarget.Remove()
+		return err
+	}
+
+	createdGlobalClusters = true
 	return nil
-	//TODO
-	//var err error
-	//
-	//firstClusterId := env.Rand.Uint64() % (math.MaxUint64 - 1)
-	//globalCcmClusterOrigin, err = ccm.GetNewCluster(firstClusterId, 1, env.OriginNodes, true)
-	//if err != nil {
-	//	return err
-	//}
-	//
-	//secondClusterId := firstClusterId + 1
-	//globalCcmClusterTarget, err = ccm.GetNewCluster(secondClusterId, 10, env.TargetNodes, true)
-	//if err != nil {
-	//	globalCcmClusterOrigin.Remove()
-	//	return err
-	//}
-	//
-	//sourceSession := globalCcmClusterOrigin.GetSession()
-	//destSession := globalCcmClusterTarget.GetSession()
-	//
-	//// Seed originCluster and targetCluster with keyspace
-	//err = SeedKeyspace(sourceSession)
-	//if err != nil {
-	//	globalCcmClusterOrigin.Remove()
-	//	globalCcmClusterTarget.Remove()
-	//	return err
-	//}
-	//
-	//err = SeedKeyspace(destSession)
-	//if err != nil {
-	//	globalCcmClusterOrigin.Remove()
-	//	globalCcmClusterTarget.Remove()
-	//	return err
-	//}
-	//
-	//createdGlobalClusters = true
-	//return nil
 }
 
 func CleanUpClusters() {
@@ -115,9 +111,8 @@ func CleanUpClusters() {
 		return
 	}
 
-	//TODO
-	//globalCcmClusterTarget.Remove()
-	//globalCcmClusterOrigin.Remove()
+	globalCcmClusterTarget.Remove()
+	globalCcmClusterOrigin.Remove()
 }
 
 type SimulacronTestSetup struct {
