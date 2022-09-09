@@ -76,6 +76,7 @@ jobs:
           which ccm
           sudo ln -s /home/runner/.local/bin/ccm /usr/local/bin/ccm
           /usr/local/bin/ccm list
+          java -version
           go test -timeout 180m -v 2>&1 ./integration-tests -SKIP_SIMULACRON=true -USE_CCM=true | go-junit-report -set-exit-code -iocopy -out report-integration.xml
       - name: Test Summary
         uses: test-summary/action@v1
