@@ -7,8 +7,8 @@ import (
 	"github.com/datastax/zdm-proxy/integration-tests/cqlserver"
 	"github.com/datastax/zdm-proxy/integration-tests/env"
 	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
-	"github.com/datastax/zdm-proxy/proxy/pkg/zdmproxy"
 	"github.com/datastax/zdm-proxy/proxy/pkg/config"
+	"github.com/datastax/zdm-proxy/proxy/pkg/zdmproxy"
 	log "github.com/sirupsen/logrus"
 	"math"
 	"sync"
@@ -440,14 +440,13 @@ func NewTestConfig(originHost string, targetHost string) *config.Config {
 	conf.AsyncConnectorWriteBufferSizeBytes = 4096
 
 	conf.ForwardReadsToTarget = false
-	conf.ForwardSystemQueriesToTarget = false
 	conf.DualReadsEnabled = false
 	conf.AsyncReadsOnSecondary = false
 	conf.AsyncHandshakeTimeoutMs = 4000
 
 	conf.RequestTimeoutMs = 10000
 
-	conf.MonitoringLogLevel = "INFO"
+	conf.ProxyLogLevel = "INFO"
 
 	return conf
 }

@@ -9,9 +9,9 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/google/uuid"
 	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
+	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
 	"net"
 	"sort"
@@ -1284,7 +1284,7 @@ func (ch *ClientHandler) forwardRequest(request *frame.RawFrame, customResponseC
 	}
 	requestInfo, err := buildRequestInfo(
 		context, replacedTerms, ch.preparedStatementCache, ch.metricHandler, currentKeyspace, ch.conf.ForwardReadsToTarget,
-		ch.conf.ForwardSystemQueriesToTarget, ch.topologyConfig.VirtualizationEnabled, ch.forwardAuthToTarget, ch.timeUuidGenerator)
+		ch.topologyConfig.VirtualizationEnabled, ch.forwardAuthToTarget, ch.timeUuidGenerator)
 	if err != nil {
 		if errVal, ok := err.(*UnpreparedExecuteError); ok {
 			unpreparedFrame, err := createUnpreparedFrame(errVal)
@@ -1453,7 +1453,7 @@ func (ch *ClientHandler) handleInterceptedRequest(
 	interceptedQueryType := interceptedRequestInfo.GetQueryType()
 	var interceptedQueryResponse message.Message
 	var controlConn *ControlConn
-	if ch.conf.ForwardSystemQueriesToTarget {
+	if ch.conf.ForwardReadsToTarget {
 		controlConn = ch.targetControlConn
 	} else {
 		controlConn = ch.originControlConn

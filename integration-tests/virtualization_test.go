@@ -8,12 +8,12 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/gocql/gocql"
-	"github.com/google/uuid"
 	"github.com/datastax/zdm-proxy/integration-tests/env"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/integration-tests/utils"
 	"github.com/datastax/zdm-proxy/proxy/pkg/zdmproxy"
+	"github.com/gocql/gocql"
+	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
 	"math/big"
@@ -823,7 +823,7 @@ func TestVirtualizationPartitioner(t *testing.T) {
 		Password: "cassandra",
 	}
 
-	runTestWithSystemQueryForwarding := func(originPartitioner string, targetPartitioner string, systemQueriesToTarget bool, proxyShouldStartUp bool) {
+	runTestWithQueryForwarding := func(originPartitioner string, targetPartitioner string, forwardReadsToTarget bool, proxyShouldStartUp bool) {
 
 		serverConf := setup.NewTestConfig(originAddress, targetAddress)
 
@@ -862,7 +862,7 @@ func TestVirtualizationPartitioner(t *testing.T) {
 
 		proxyConfig := setup.NewTestConfig(originAddress, targetAddress)
 		proxyConfig.TopologyAddresses = "127.0.0.1" // needed to enable virtualization. TODO Remove once ZDM-321 is fixed
-		proxyConfig.ForwardSystemQueriesToTarget = systemQueriesToTarget
+		proxyConfig.ForwardReadsToTarget = forwardReadsToTarget
 		proxy, err := setup.NewProxyInstanceWithConfig(proxyConfig)
 		defer func() {
 			if proxy != nil {
@@ -898,8 +898,8 @@ func TestVirtualizationPartitioner(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			runTestWithSystemQueryForwarding(tt.originPartitioner, tt.targetPartitioner, false, tt.proxyShouldStartUp)
-			runTestWithSystemQueryForwarding(tt.originPartitioner, tt.targetPartitioner, true, tt.proxyShouldStartUp)
+			runTestWithQueryForwarding(tt.originPartitioner, tt.targetPartitioner, false, tt.proxyShouldStartUp)
+			runTestWithQueryForwarding(tt.originPartitioner, tt.targetPartitioner, true, tt.proxyShouldStartUp)
 		})
 	}
 

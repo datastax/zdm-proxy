@@ -4,6 +4,7 @@ import (
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
 	"github.com/datastax/zdm-proxy/integration-tests/utils"
+	"github.com/gocql/gocql"
 	"github.com/stretchr/testify/require"
 	"net"
 	"testing"
@@ -20,7 +21,6 @@ var rows = simulacron.NewRowsResult(
 
 func TestForwardDecisionsForReads(t *testing.T) {
 	c := setup.NewTestConfig("", "")
-	c.ForwardSystemQueriesToTarget = true
 	testSetup, err := setup.NewSimulacronTestSetupWithConfig(c)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
@@ -32,25 +32,42 @@ func TestForwardDecisionsForReads(t *testing.T) {
 	}
 	defer proxy.Close()
 
+	t.Run("ForwardToOrigin", func(tt *testing.T) {
+		testForwardDecisionsForReads(t, proxy, testSetup, false)
+	})
+
+	t.Run("ForwardToTarget", func(tt *testing.T) {
+		testForwardDecisionsForReads(t, proxy, testSetup, true)
+	})
+}
+
+func testForwardDecisionsForReads(t *testing.T, proxy *gocql.Session, testSetup *setup.SimulacronTestSetup, forwardReadsToTarget bool) {
+	var expectedCluster *simulacron.Cluster
+	if forwardReadsToTarget {
+		expectedCluster = testSetup.Target
+	} else {
+		expectedCluster = testSetup.Origin
+	}
+	testSetup.Proxy.Conf.ForwardReadsToTarget = forwardReadsToTarget
 	tests := []struct {
 		name    string
 		query   string
 		cluster *simulacron.Cluster
 	}{
 		// SELECT queries routed to Target
-		{"system.local", " /* trick to skip prepare */ SELECT rpc_address FROM system.local", testSetup.Target},
-		{"system.local quoted", " /* trick to skip prepare */ SELECT \"rpc_address\" AS addr FROM \"system\" . \"local\"", testSetup.Target},
-		{"system.peers", " /* trick to skip prepare */ SELECT rpc_address FROM system.peers", testSetup.Target},
-		{"system.peers quoted", " /* trick to skip prepare */ SELECT \"rpc_address\" AS addr FROM \"system\" . \"peers\"", testSetup.Target},
-		{"system.peers_v2", " /* trick to skip prepare */ SELECT rpc_address FROM system.peers_v2", testSetup.Target},
-		{"system.peers_v2 quoted", " /* trick to skip prepare */ SELECT \"rpc_address\" AS addr FROM \"system\" . \"peers_v2\"", testSetup.Target},
-		{"system_auth.roles", " /* trick to skip prepare */ SELECT foo FROM system_auth.roles", testSetup.Target},
-		{"system_auth.roles quoted", " /* trick to skip prepare */ SELECT \"foo\" AS f FROM \"system_auth\" . \"roles\"", testSetup.Target},
-		{"dse_insights.tokens", " /* trick to skip prepare */ SELECT foo FROM dse_insights.tokens", testSetup.Target},
-		{"dse_insights.tokens quoted", " /* trick to skip prepare */ SELECT \"foo\" AS f FROM \"dse_insights\" . \"tokens\"", testSetup.Target},
+		{"system.local", " /* trick to skip prepare */ SELECT rpc_address FROM system.local", expectedCluster},
+		{"system.local quoted", " /* trick to skip prepare */ SELECT \"rpc_address\" AS addr FROM \"system\" . \"local\"", expectedCluster},
+		{"system.peers", " /* trick to skip prepare */ SELECT rpc_address FROM system.peers", expectedCluster},
+		{"system.peers quoted", " /* trick to skip prepare */ SELECT \"rpc_address\" AS addr FROM \"system\" . \"peers\"", expectedCluster},
+		{"system.peers_v2", " /* trick to skip prepare */ SELECT rpc_address FROM system.peers_v2", expectedCluster},
+		{"system.peers_v2 quoted", " /* trick to skip prepare */ SELECT \"rpc_address\" AS addr FROM \"system\" . \"peers_v2\"", expectedCluster},
+		{"system_auth.roles", " /* trick to skip prepare */ SELECT foo FROM system_auth.roles", expectedCluster},
+		{"system_auth.roles quoted", " /* trick to skip prepare */ SELECT \"foo\" AS f FROM \"system_auth\" . \"roles\"", expectedCluster},
+		{"dse_insights.tokens", " /* trick to skip prepare */ SELECT foo FROM dse_insights.tokens", expectedCluster},
+		{"dse_insights.tokens quoted", " /* trick to skip prepare */ SELECT \"foo\" AS f FROM \"dse_insights\" . \"tokens\"", expectedCluster},
 		// all other SELECT queries routed to Origin
-		{"generic read", " /* trick to skip prepare */ SELECT rpc_address FROM ks1.local", testSetup.Origin},
-		{"generic read quoted", " /* trick to skip prepare */ SELECT \"rpc_address\" AS addr FROM \"ks1\" . \"peers\"", testSetup.Origin},
+		{"generic read", " /* trick to skip prepare */ SELECT rpc_address FROM ks1.local", expectedCluster},
+		{"generic read quoted", " /* trick to skip prepare */ SELECT \"rpc_address\" AS addr FROM \"ks1\" . \"peers\"", expectedCluster},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -64,7 +81,7 @@ func TestForwardDecisionsForReads(t *testing.T) {
 					simulacron.NewWhenQueryOptions()).
 					ThenRowsSuccess(rows)
 
-			err = tt.cluster.Prime(queryPrime)
+			err := tt.cluster.Prime(queryPrime)
 			if err != nil {
 				t.Fatal("prime error: ", err.Error())
 			}
@@ -100,7 +117,6 @@ func testForwardDecisionsForReadsWithUseStatement(
 
 	config := setup.NewTestConfig(testSetup.Origin.GetInitialContactPoint(), testSetup.Target.GetInitialContactPoint())
 	config.ForwardReadsToTarget = forwardReadsToTarget
-	config.ForwardSystemQueriesToTarget = true
 	proxy, err := setup.NewProxyInstanceWithConfig(config)
 	require.Nil(t, err)
 	defer proxy.Shutdown()
@@ -121,16 +137,16 @@ func testForwardDecisionsForReadsWithUseStatement(
 		cluster  *simulacron.Cluster
 	}{
 		// SELECT queries routed to Target
-		{"system.local", "system", " /* trick to skip prepare */ SELECT rpc_address FROM local", testSetup.Target},
-		{"system.local quoted", "system", " /* trick to skip prepare */ SELECT \"rpc_address\" AS addr FROM \"local\"", testSetup.Target},
-		{"system.peers", "system", " /* trick to skip prepare */ SELECT rpc_address FROM peers", testSetup.Target},
-		{"system.peers quoted", "system", " /* trick to skip prepare */ SELECT \"rpc_address\" AS addr FROM \"peers\"", testSetup.Target},
-		{"system.peers_v2", "system", " /* trick to skip prepare */ SELECT rpc_address FROM peers_v2", testSetup.Target},
-		{"system.peers_v2 quoted", "system", " /* trick to skip prepare */ SELECT \"rpc_address\" AS addr FROM \"peers_v2\"", testSetup.Target},
-		{"system_auth.roles", "system_auth", " /* trick to skip prepare */ SELECT foo FROM system_auth.roles", testSetup.Target},
-		{"system_auth.roles quoted", "system_auth", " /* trick to skip prepare */ SELECT \"foo\" AS f FROM \"system_auth\" . \"roles\"", testSetup.Target},
-		{"dse_insights.tokens", "dse_insights", " /* trick to skip prepare */ SELECT foo FROM dse_insights.tokens", testSetup.Target},
-		{"dse_insights.tokens quoted", "dse_insights", " /* trick to skip prepare */ SELECT \"foo\" AS f FROM \"dse_insights\" . \"tokens\"", testSetup.Target},
+		{"system.local", "system", " /* trick to skip prepare */ SELECT rpc_address FROM local", expectedCluster},
+		{"system.local quoted", "system", " /* trick to skip prepare */ SELECT \"rpc_address\" AS addr FROM \"local\"", expectedCluster},
+		{"system.peers", "system", " /* trick to skip prepare */ SELECT rpc_address FROM peers", expectedCluster},
+		{"system.peers quoted", "system", " /* trick to skip prepare */ SELECT \"rpc_address\" AS addr FROM \"peers\"", expectedCluster},
+		{"system.peers_v2", "system", " /* trick to skip prepare */ SELECT rpc_address FROM peers_v2", expectedCluster},
+		{"system.peers_v2 quoted", "system", " /* trick to skip prepare */ SELECT \"rpc_address\" AS addr FROM \"peers_v2\"", expectedCluster},
+		{"system_auth.roles", "system_auth", " /* trick to skip prepare */ SELECT foo FROM system_auth.roles", expectedCluster},
+		{"system_auth.roles quoted", "system_auth", " /* trick to skip prepare */ SELECT \"foo\" AS f FROM \"system_auth\" . \"roles\"", expectedCluster},
+		{"dse_insights.tokens", "dse_insights", " /* trick to skip prepare */ SELECT foo FROM dse_insights.tokens", expectedCluster},
+		{"dse_insights.tokens quoted", "dse_insights", " /* trick to skip prepare */ SELECT \"foo\" AS f FROM \"dse_insights\" . \"tokens\"", expectedCluster},
 		// all other SELECT queries routed to Origin or Target according to configuration
 		{"generic read", "foo", " /* trick to skip prepare */ SELECT rpc_address FROM local2", expectedCluster},
 		{"generic read quoted", "foo", " /* trick to skip prepare */ SELECT \"rpc_address\" AS addr FROM \"peers_v3\"", expectedCluster},

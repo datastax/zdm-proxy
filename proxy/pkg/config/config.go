@@ -17,9 +17,6 @@ type Config struct {
 	TopologyAddresses string `split_words:"true"`
 	TopologyNumTokens int    `default:"8" split_words:"true"`
 
-	OriginEnableHostAssignment bool `default:"true" split_words:"true"`
-	TargetEnableHostAssignment bool `default:"true" split_words:"true"`
-
 	OriginDatacenter string `split_words:"true"`
 	TargetDatacenter string `split_words:"true"`
 
@@ -36,8 +33,6 @@ type Config struct {
 	TargetContactPoints                    string `split_words:"true"`
 	TargetPort                    int    `default:"9042" split_words:"true"`
 	TargetSecureConnectBundlePath string `split_words:"true"`
-
-	ForwardClientCredentialsToOrigin bool `default:"false" split_words:"true"` // only takes effect if both clusters have auth enabled
 
 	OriginTlsServerCaPath   string `split_words:"true"`
 	OriginTlsClientCertPath string `split_words:"true"`
@@ -68,7 +63,6 @@ type Config struct {
 	MonitoringEnableMetrics bool `default:"true" split_words:"true"`
 
 	ForwardReadsToTarget         bool `default:"false" split_words:"true"`
-	ForwardSystemQueriesToTarget bool `default:"false" split_words:"true"`
 
 	ReplaceServerSideFunctions	bool `default:"false" split_words:"true"`
 
@@ -78,13 +72,23 @@ type Config struct {
 
 	RequestTimeoutMs int `default:"10000" split_words:"true"`
 
-	MonitoringLogLevel string `default:"INFO" split_words:"true"`
+	ProxyLogLevel string `default:"INFO" split_words:"true"`
 
 	MaxClients int `default:"500" split_words:"true"`
 
 	MonitoringOriginBucketsMs string `default:"1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000" split_words:"true"`
 	MonitoringTargetBucketsMs string `default:"1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000" split_words:"true"`
 	MonitoringAsyncBucketsMs  string `default:"1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000" split_words:"true"`
+
+
+	//////////////////////////////////////////////////////////////////////
+	/// THE SETTINGS BELOW AREN'T SUPPORTED AND MAY CHANGE AT ANY TIME ///
+	//////////////////////////////////////////////////////////////////////
+
+	ForwardClientCredentialsToOrigin bool `default:"false" split_words:"true"` // only takes effect if both clusters have auth enabled
+
+	OriginEnableHostAssignment bool `default:"true" split_words:"true"`
+	TargetEnableHostAssignment bool `default:"true" split_words:"true"`
 
 	// PERFORMANCE TUNING CONFIG SETTINGS (shouldn't be changed by users)
 
@@ -105,6 +109,7 @@ type Config struct {
 
 	AsyncConnectorWriteQueueSizeFrames int `default:"2048" split_words:"true"`
 	AsyncConnectorWriteBufferSizeBytes int `default:"4096" split_words:"true"`
+
 }
 
 func (c *Config) String() string {
@@ -240,7 +245,7 @@ func (c *Config) Validate() error {
 }
 
 func (c *Config) ParseLogLevel() (log.Level, error) {
-	level, err := log.ParseLevel(strings.TrimSpace(c.MonitoringLogLevel))
+	level, err := log.ParseLevel(strings.TrimSpace(c.ProxyLogLevel))
 	if err != nil {
 		var lvl log.Level
 		return lvl, fmt.Errorf("invalid log level, valid log levels are "+
