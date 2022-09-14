@@ -89,6 +89,7 @@ jobs:
   race-checker:
     name: Race Checker
     runs-on: ubuntu-latest
+    if: ${{ false }} # temporarily disabled
     steps:
       - uses: actions/checkout@v2
       - name: Run
@@ -112,6 +113,7 @@ jobs:
   go-vet:
     name: Go Vet
     runs-on: ubuntu-latest
+    if: ${{ false }} # temporarily disabled
     steps:
       - uses: actions/checkout@v2
       - name: Run
@@ -126,6 +128,7 @@ jobs:
   static-check:
     name: Static Check
     runs-on: ubuntu-latest
+    if: ${{ false }} # temporarily disabled
     steps:
       - uses: actions/checkout@v2
       - name: Run
