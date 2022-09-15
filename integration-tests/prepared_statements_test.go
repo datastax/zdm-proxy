@@ -12,11 +12,13 @@ import (
 	"github.com/datastax/zdm-proxy/integration-tests/client"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
-    "github.com/rs/zerolog"
+	"github.com/datastax/zdm-proxy/integration-tests/utils"
+	"github.com/rs/zerolog"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestPreparedIdProxyCacheMiss(t *testing.T) {
@@ -742,6 +744,59 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 				require.True(t, ok, "batch result was type %T", batchResult)
 			}
 
+			expectedTargetPrepares := 2
+			expectedTargetExecutes := 0
+			expectedTargetBatches := 0
+			if !test.read || test.dualReadsEnabled {
+				expectedTargetExecutes = 2
+			}
+			if test.dualReadsEnabled {
+				expectedTargetPrepares += 3 // cluster connector sends a PREPARE on its own
+			}
+			if test.batchQuery != "" {
+				expectedTargetBatches += 2
+				expectedTargetPrepares += 2
+			}
+
+			utils.RequireWithRetries(t, func() (err error, fatal bool) {
+				targetLock.Lock()
+				defer targetLock.Unlock()
+				if expectedTargetPrepares != len(targetPrepareMessages) {
+					return fmt.Errorf("expectedTargetPrepares %v != %v", expectedTargetPrepares, len(targetPrepareMessages)), false
+				}
+				if expectedTargetExecutes != len(targetExecuteMessages) {
+					return fmt.Errorf("expectedTargetExecutes %v != %v", expectedTargetExecutes, len(targetExecuteMessages)), false
+				}
+				if expectedTargetBatches != len(targetBatchMessages) {
+					return fmt.Errorf("expectedTargetExecutes %v != %v", expectedTargetBatches, len(targetBatchMessages)), false
+				}
+				return nil, false
+			}, 10, 200 * time.Millisecond)
+
+			utils.RequireWithRetries(t, func() (err error, fatal bool) {
+				originLock.Lock()
+				defer originLock.Unlock()
+				if 2 != len(originExecuteMessages) {
+					return fmt.Errorf("expectedOriginExecuteMessage %v != %v", 2, len(originExecuteMessages)), false
+				}
+				if test.batchQuery != "" {
+					if 4 != len(originPrepareMessages) {
+						return fmt.Errorf("expectedOriginPrepareMessages %v != %v", 4, len(originPrepareMessages)), false
+					}
+					if 2 != len(originBatchMessages) {
+						return fmt.Errorf("expectedOriginBatchMessages %v != %v", 2, len(originBatchMessages)), false
+					}
+				} else {
+					if 2 != len(originPrepareMessages) {
+						return fmt.Errorf("expectedOriginPrepareMessages %v != %v", 2, len(originPrepareMessages)), false
+					}
+					if 0 != len(originBatchMessages) {
+						return fmt.Errorf("expectedOriginBatchMessages %v != %v", 0, len(originBatchMessages)), false
+					}
+				}
+				return nil, false
+			}, 10, 200 * time.Millisecond)
+
 			originLock.Lock()
 			defer originLock.Unlock()
 			targetLock.Lock()
@@ -752,36 +807,13 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 			require.Equal(t, message.Row{originKey, originValue}, rowsResult.Data[0])
 			require.NotEqual(t, message.Row{targetKey, targetValue}, rowsResult.Data[0])
 
-			require.Equal(t, 2, len(originExecuteMessages))
-			if test.batchQuery != "" {
-				require.Equal(t, 4, len(originPrepareMessages))
-			} else {
-				require.Equal(t, 2, len(originPrepareMessages))
-			}
 			require.Equal(t, originPreparedId, originExecuteMessages[0].QueryId)
 			require.Equal(t, originPreparedId, originExecuteMessages[1].QueryId)
 
-			expectedTargetPrepares := 2
-			expectedTargetExecutes := 0
-			expectedTargetBatches := 0
-			if !test.read || test.dualReadsEnabled {
-				expectedTargetExecutes = 2
-				if test.batchQuery != "" {
-					expectedTargetBatches += 2
-				}
-			}
-			if test.dualReadsEnabled {
-				expectedTargetPrepares += 3 // cluster connector sends a PREPARE on its own
-			}
-			if test.batchQuery != "" {
-				expectedTargetPrepares += 2
-			}
-			require.Equal(t, expectedTargetExecutes, len(targetExecuteMessages))
 			for _, execute := range targetExecuteMessages {
 				require.Equal(t, targetPreparedId, execute.QueryId)
 				require.NotEqual(t, executeMsg, execute)
 			}
-			require.Equal(t, expectedTargetBatches, len(targetBatchMessages))
 			if expectedTargetBatches > 0 {
 				for _, batch := range targetBatchMessages {
 					require.Equal(t, 2, len(batch.Children))
@@ -789,7 +821,6 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 					require.NotEqual(t, batchMsg, batch)
 				}
 			}
-			require.Equal(t, expectedTargetPrepares, len(targetPrepareMessages))
 			require.Equal(t, prepareMsg, targetPrepareMessages[0])
 			require.Equal(t, prepareMsg, targetPrepareMessages[1])
 			if test.dualReadsEnabled {
