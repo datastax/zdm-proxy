@@ -3,7 +3,7 @@
 # $ docker build . -f ./Dockerfile -t cloudgate-proxy
 ##########
 
-FROM golang:alpine AS builder
+FROM golang AS builder
 
 ENV GO111MODULE=on \
     CGO_ENABLED=0 \
@@ -29,7 +29,7 @@ WORKDIR /dist
 RUN cp /build/main .
 
 # Build a small image
-FROM scratch
+FROM alpine
 
 COPY --from=builder /dist/main /
 COPY LICENSE /
