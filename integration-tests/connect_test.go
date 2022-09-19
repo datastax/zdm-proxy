@@ -53,7 +53,7 @@ func TestMaxClientsThreshold(t *testing.T) {
 	defer testSetup.Cleanup()
 
 	config := setup.NewTestConfig(testSetup.Origin.GetInitialContactPoint(), testSetup.Target.GetInitialContactPoint())
-	config.MaxClients = maxClients
+	config.ProxyMaxClientConnections = maxClients
 	proxyInstance, err := setup.NewProxyInstanceWithConfig(config)
 	require.Nil(t, err)
 	defer proxyInstance.Shutdown()

@@ -32,9 +32,9 @@ func RunMain(
 	metricsHandler *httpzdmproxy.HandlerWithFallback,
 	readinessHandler *httpzdmproxy.HandlerWithFallback) {
 
-	log.Infof("Starting http server (metrics and health checks) on %v:%d", conf.NetMetricsAddress, conf.NetMetricsPort)
+	log.Infof("Starting http server (metrics and health checks) on %v:%d", conf.MetricsAddress, conf.MetricsPort)
 	wg := &sync.WaitGroup{}
-	srv := httpzdmproxy.StartHttpServer(fmt.Sprintf("%s:%d", conf.NetMetricsAddress, conf.NetMetricsPort), wg)
+	srv := httpzdmproxy.StartHttpServer(fmt.Sprintf("%s:%d", conf.MetricsAddress, conf.MetricsPort), wg)
 
 	b := &backoff.Backoff{
 		Min:    100 * time.Millisecond,

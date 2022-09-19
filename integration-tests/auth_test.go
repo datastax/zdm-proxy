@@ -566,7 +566,7 @@ func TestAuth(t *testing.T) {
 					}
 				}
 				testClient := client.NewCqlClient(
-					fmt.Sprintf("%s:%d", proxyConf.NetQueryAddress, proxyConf.NetQueryPort),
+					fmt.Sprintf("%s:%d", proxyConf.ProxyListenAddress, proxyConf.ProxyListenPort),
 					authCreds)
 				cqlConn, err := testClient.Connect(context.Background())
 				require.Nil(t, err, "client connection failed: %v", err)

@@ -12,9 +12,9 @@ import (
 
 // Config holds the values of environment variables necessary for proper Proxy function.
 type Config struct {
-	TopologyIndex         int    `default:"0" split_words:"true"`
-	TopologyAddresses string `split_words:"true"`
-	TopologyNumTokens int    `default:"8" split_words:"true"`
+	ProxyTopologyIndex     int    `default:"0" split_words:"true"`
+	ProxyTopologyAddresses string `split_words:"true"`
+	ProxyTopologyNumTokens int    `default:"8" split_words:"true"`
 
 	OriginDatacenter string `split_words:"true"`
 	TargetDatacenter string `split_words:"true"`
@@ -22,14 +22,14 @@ type Config struct {
 	OriginUsername string `required:"true" split_words:"true"`
 	OriginPassword string `required:"true" split_words:"true" json:"-"`
 
-	OriginContactPoints                    string `split_words:"true"`
+	OriginContactPoints           string `split_words:"true"`
 	OriginPort                    int    `default:"9042" split_words:"true"`
 	OriginSecureConnectBundlePath string `split_words:"true"`
 
 	TargetUsername string `required:"true" split_words:"true"`
 	TargetPassword string `required:"true" split_words:"true" json:"-"`
 
-	TargetContactPoints                    string `split_words:"true"`
+	TargetContactPoints           string `split_words:"true"`
 	TargetPort                    int    `default:"9042" split_words:"true"`
 	TargetSecureConnectBundlePath string `split_words:"true"`
 
@@ -46,10 +46,10 @@ type Config struct {
 	ProxyTlsKeyPath           string `split_words:"true"`
 	ProxyTlsRequireClientAuth bool   `split_words:"true"`
 
-	NetMetricsAddress string `default:"localhost" split_words:"true"`
-	NetMetricsPort    int    `default:"14001" split_words:"true"`
-	NetQueryPort    int    `default:"14002" split_words:"true"`
-	NetQueryAddress string `default:"localhost" split_words:"true"`
+	MetricsAddress     string `default:"localhost" split_words:"true"`
+	MetricsPort        int    `default:"14001" split_words:"true"`
+	ProxyListenPort    int    `default:"14002" split_words:"true"`
+	ProxyListenAddress string `default:"localhost" split_words:"true"`
 
 	ClusterConnectionTimeoutMs int `default:"30000" split_words:"true"`
 	HeartbeatIntervalMs        int `default:"30000" split_words:"true"`
@@ -59,26 +59,25 @@ type Config struct {
 	HeartbeatRetryBackoffFactor float64 `default:"2" split_words:"true"`
 	HeartbeatFailureThreshold   int     `default:"1" split_words:"true"`
 
-	MonitoringEnableMetrics bool `default:"true" split_words:"true"`
+	MetricsEnabled bool `default:"true" split_words:"true"`
 
-	ForwardReadsToTarget         bool `default:"false" split_words:"true"`
+	ForwardReadsToTarget bool `default:"false" split_words:"true"`
 
-	ReplaceServerSideFunctions	bool `default:"false" split_words:"true"`
+	ReplaceServerSideFunctions bool `default:"false" split_words:"true"`
 
 	DualReadsEnabled        bool `default:"false" split_words:"true"`
 	AsyncReadsOnSecondary   bool `default:"false" split_words:"true"`
 	AsyncHandshakeTimeoutMs int  `default:"4000" split_words:"true"`
 
-	RequestTimeoutMs int `default:"10000" split_words:"true"`
+	ProxyRequestTimeoutMs int `default:"10000" split_words:"true"`
 
-	ProxyLogLevel string `default:"INFO" split_words:"true"`
+	LogLevel string `default:"INFO" split_words:"true"`
 
-	MaxClients int `default:"500" split_words:"true"`
+	ProxyMaxClientConnections int `default:"500" split_words:"true"`
 
-	MonitoringOriginBucketsMs string `default:"1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000" split_words:"true"`
-	MonitoringTargetBucketsMs string `default:"1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000" split_words:"true"`
-	MonitoringAsyncBucketsMs  string `default:"1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000" split_words:"true"`
-
+	MetricsOriginLatencyBucketsMs    string `default:"1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000" split_words:"true"`
+	MetricsTargetLatencyBucketsMs    string `default:"1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000" split_words:"true"`
+	MetricsAsyncReadLatencyBucketsMs string `default:"1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000" split_words:"true"`
 
 	//////////////////////////////////////////////////////////////////////
 	/// THE SETTINGS BELOW AREN'T SUPPORTED AND MAY CHANGE AT ANY TIME ///
@@ -108,7 +107,6 @@ type Config struct {
 
 	AsyncConnectorWriteQueueSizeFrames int `default:"2048" split_words:"true"`
 	AsyncConnectorWriteBufferSizeBytes int `default:"4096" split_words:"true"`
-
 }
 
 func (c *Config) String() string {
@@ -143,15 +141,15 @@ func (c *Config) ParseTopologyConfig() (*TopologyConfig, error) {
 	virtualizationEnabled := true
 	var proxyInstanceCount = -1
 	proxyAddressesTyped := []net.IP{net.ParseIP("127.0.0.1")}
-	if isNotDefined(c.TopologyAddresses) {
+	if isNotDefined(c.ProxyTopologyAddresses) {
 		virtualizationEnabled = false
 		if proxyInstanceCount == -1 {
 			proxyInstanceCount = 1
 		}
 	} else {
-		proxyAddresses := strings.Split(strings.ReplaceAll(c.TopologyAddresses, " ", ""), ",")
+		proxyAddresses := strings.Split(strings.ReplaceAll(c.ProxyTopologyAddresses, " ", ""), ",")
 		if len(proxyAddresses) <= 0 {
-			return nil, fmt.Errorf("invalid TopologyAddresses: %v", c.TopologyAddresses)
+			return nil, fmt.Errorf("invalid ProxyTopologyAddresses: %v", c.ProxyTopologyAddresses)
 		}
 
 		proxyAddressesTyped = make([]net.IP, 0, len(proxyAddresses))
@@ -159,7 +157,7 @@ func (c *Config) ParseTopologyConfig() (*TopologyConfig, error) {
 			proxyAddr := proxyAddresses[i]
 			parsedIp := net.ParseIP(proxyAddr)
 			if parsedIp == nil {
-				return nil, fmt.Errorf("invalid proxy address in TopologyAddresses env var: %v", proxyAddr)
+				return nil, fmt.Errorf("invalid proxy address in ProxyTopologyAddresses env var: %v", proxyAddr)
 			}
 			proxyAddressesTyped = append(proxyAddressesTyped, parsedIp)
 		}
@@ -170,14 +168,14 @@ func (c *Config) ParseTopologyConfig() (*TopologyConfig, error) {
 		return nil, fmt.Errorf("invalid TopologyInstanceCount: %v", proxyInstanceCount)
 	}
 
-	proxyIndex := c.TopologyIndex
+	proxyIndex := c.ProxyTopologyIndex
 	if proxyIndex < 0 || proxyIndex >= proxyInstanceCount {
-		return nil, fmt.Errorf("invalid TopologyIndex and TopologyInstanceCount values; "+
+		return nil, fmt.Errorf("invalid ProxyTopologyIndex and TopologyInstanceCount values; "+
 			"proxy index (%d) must be less than instance count (%d) and non negative", proxyIndex, proxyInstanceCount)
 	}
 
-	if c.TopologyNumTokens <= 0 || c.TopologyNumTokens > 256 {
-		return nil, fmt.Errorf("invalid TopologyNumTokens (%v), it must be positive and equal or less than 256", c.TopologyNumTokens)
+	if c.ProxyTopologyNumTokens <= 0 || c.ProxyTopologyNumTokens > 256 {
+		return nil, fmt.Errorf("invalid ProxyTopologyNumTokens (%v), it must be positive and equal or less than 256", c.ProxyTopologyNumTokens)
 	}
 
 	return &TopologyConfig{
@@ -185,7 +183,7 @@ func (c *Config) ParseTopologyConfig() (*TopologyConfig, error) {
 		Addresses:             proxyAddressesTyped,
 		Index:                 proxyIndex,
 		Count:                 proxyInstanceCount,
-		NumTokens:             c.TopologyNumTokens,
+		NumTokens:             c.ProxyTopologyNumTokens,
 	}, nil
 }
 
@@ -244,7 +242,7 @@ func (c *Config) Validate() error {
 }
 
 func (c *Config) ParseLogLevel() (log.Level, error) {
-	level, err := log.ParseLevel(strings.TrimSpace(c.ProxyLogLevel))
+	level, err := log.ParseLevel(strings.TrimSpace(c.LogLevel))
 	if err != nil {
 		var lvl log.Level
 		return lvl, fmt.Errorf("invalid log level, valid log levels are "+
@@ -255,15 +253,15 @@ func (c *Config) ParseLogLevel() (log.Level, error) {
 }
 
 func (c *Config) ParseOriginBuckets() ([]float64, error) {
-	return c.parseBuckets(c.MonitoringOriginBucketsMs)
+	return c.parseBuckets(c.MetricsOriginLatencyBucketsMs)
 }
 
 func (c *Config) ParseTargetBuckets() ([]float64, error) {
-	return c.parseBuckets(c.MonitoringTargetBucketsMs)
+	return c.parseBuckets(c.MetricsTargetLatencyBucketsMs)
 }
 
 func (c *Config) ParseAsyncBuckets() ([]float64, error) {
-	return c.parseBuckets(c.MonitoringAsyncBucketsMs)
+	return c.parseBuckets(c.MetricsAsyncReadLatencyBucketsMs)
 }
 
 func (c *Config) parseBuckets(bucketsConfigStr string) ([]float64, error) {

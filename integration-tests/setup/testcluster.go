@@ -302,7 +302,7 @@ func NewCqlServerTestSetup(conf *config.Config, start bool, createProxy bool, co
 		proxyInstance = nil
 	}
 
-	cqlClient, err := cqlserver.NewCqlClient(conf.NetQueryAddress, conf.NetQueryPort,
+	cqlClient, err := cqlserver.NewCqlClient(conf.ProxyListenAddress, conf.ProxyListenPort,
 		conf.OriginUsername, conf.OriginPassword, connectClient)
 
 	if err != nil {
@@ -380,9 +380,9 @@ func NewProxyInstanceWithConfig(config *config.Config) (*zdmproxy.CloudgateProxy
 func NewTestConfig(originHost string, targetHost string) *config.Config {
 	conf := config.New()
 
-	conf.TopologyIndex = 0
-	conf.TopologyAddresses = ""
-	conf.TopologyNumTokens = 8
+	conf.ProxyTopologyIndex = 0
+	conf.ProxyTopologyAddresses = ""
+	conf.ProxyTopologyNumTokens = 8
 
 	conf.OriginEnableHostAssignment = true
 	conf.TargetEnableHostAssignment = true
@@ -399,10 +399,10 @@ func NewTestConfig(originHost string, targetHost string) *config.Config {
 
 	conf.ForwardClientCredentialsToOrigin = false
 
-	conf.NetMetricsAddress = "localhost"
-	conf.NetMetricsPort = 14001
-	conf.NetQueryPort = 14002
-	conf.NetQueryAddress = "localhost"
+	conf.MetricsAddress = "localhost"
+	conf.MetricsPort = 14001
+	conf.ProxyListenPort = 14002
+	conf.ProxyListenAddress = "localhost"
 
 	conf.ClusterConnectionTimeoutMs = 30000
 	conf.HeartbeatIntervalMs = 30000
@@ -412,11 +412,11 @@ func NewTestConfig(originHost string, targetHost string) *config.Config {
 	conf.HeartbeatRetryBackoffFactor = 2
 	conf.HeartbeatFailureThreshold = 1
 
-	conf.MonitoringOriginBucketsMs = "1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000"
-	conf.MonitoringTargetBucketsMs = "1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000"
-	conf.MonitoringAsyncBucketsMs = "1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000"
+	conf.MetricsOriginLatencyBucketsMs = "1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000"
+	conf.MetricsTargetLatencyBucketsMs = "1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000"
+	conf.MetricsAsyncReadLatencyBucketsMs = "1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000"
 
-	conf.MonitoringEnableMetrics = true
+	conf.MetricsEnabled = true
 
 	conf.RequestWriteQueueSizeFrames = 128
 	conf.RequestWriteBufferSizeBytes = 4096
@@ -426,7 +426,7 @@ func NewTestConfig(originHost string, targetHost string) *config.Config {
 	conf.ResponseWriteBufferSizeBytes = 8192
 	conf.ResponseReadBufferSizeBytes = 32768
 
-	conf.MaxClients = 500
+	conf.ProxyMaxClientConnections = 500
 
 	conf.RequestResponseMaxWorkers = -1
 	conf.WriteMaxWorkers = -1
@@ -443,9 +443,9 @@ func NewTestConfig(originHost string, targetHost string) *config.Config {
 	conf.AsyncReadsOnSecondary = false
 	conf.AsyncHandshakeTimeoutMs = 4000
 
-	conf.RequestTimeoutMs = 10000
+	conf.ProxyRequestTimeoutMs = 10000
 
-	conf.ProxyLogLevel = "INFO"
+	conf.LogLevel = "INFO"
 
 	return conf
 }

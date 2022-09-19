@@ -450,7 +450,7 @@ func (cc *ControlConn) RefreshHosts(conn CqlConnection, ctx context.Context) ([]
 		virtualHosts = make([]*VirtualHost, 0)
 	}
 
-	log.Infof("Refreshed %v orderedHostsInLocalDc. Assigned Hosts: %v, VirtualHosts: %v, TopologyIndex: %v",
+	log.Infof("Refreshed %v orderedHostsInLocalDc. Assigned Hosts: %v, VirtualHosts: %v, ProxyTopologyIndex: %v",
 		cc.connConfig.GetClusterType(), assignedHosts, virtualHosts, cc.topologyConfig.Index)
 
 	cc.topologyLock.Lock()

@@ -30,7 +30,7 @@ func (ch *ClientHandler) handleSecondaryHandshakeStartup(
 	var clusterAddress net.Addr
 	var logIdentifier string
 	var forwardToSecondary forwardDecision
-	requestTimeout := time.Duration(ch.conf.RequestTimeoutMs) * time.Millisecond
+	requestTimeout := time.Duration(ch.conf.ProxyRequestTimeoutMs) * time.Millisecond
 	if asyncConnector {
 		clusterAddress = ch.asyncConnector.connection.RemoteAddr()
 		logIdentifier = fmt.Sprintf("ASYNC-%v", ch.asyncConnector.clusterType)

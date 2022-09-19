@@ -44,7 +44,7 @@ func TestShutdownInFlightRequests(t *testing.T) {
 			defer testSetup.Cleanup()
 
 			config := setup.NewTestConfig(testSetup.Origin.GetInitialContactPoint(), testSetup.Target.GetInitialContactPoint())
-			config.RequestTimeoutMs = 30000
+			config.ProxyRequestTimeoutMs = 30000
 			config.DualReadsEnabled = test.dualReadsEnabled
 			config.AsyncReadsOnSecondary = test.asyncReadsOnSecondary
 			proxy, err := setup.NewProxyInstanceWithConfig(config)

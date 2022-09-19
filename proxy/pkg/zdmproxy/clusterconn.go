@@ -343,7 +343,7 @@ func (cc *ClusterConnector) handleAsyncResponse(response *frame.RawFrame) *frame
 						} else {
 							sent := cc.sendAsyncRequest(
 								prepareRawFrame, false, time.Now(),
-								time.Duration(cc.conf.RequestTimeoutMs) * time.Millisecond,
+								time.Duration(cc.conf.ProxyRequestTimeoutMs) * time.Millisecond,
 								func() {
 									cc.clientHandlerRequestWg.Done()
 								})

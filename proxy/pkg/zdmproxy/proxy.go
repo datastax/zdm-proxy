@@ -159,12 +159,12 @@ func (p *CloudgateProxy) Start(ctx context.Context) error {
 		return err
 	}
 
-	err = p.acceptConnectionsFromClients(p.Conf.NetQueryAddress, p.Conf.NetQueryPort, serverSideTlsConfig)
+	err = p.acceptConnectionsFromClients(p.Conf.ProxyListenAddress, p.Conf.ProxyListenPort, serverSideTlsConfig)
 	if err != nil {
 		return err
 	}
 
-	log.Infof("Proxy connected and ready to accept queries on %v:%d", p.Conf.NetQueryAddress, p.Conf.NetQueryPort)
+	log.Infof("Proxy connected and ready to accept queries on %v:%d", p.Conf.ProxyListenAddress, p.Conf.ProxyListenPort)
 	return nil
 }
 
@@ -277,7 +277,7 @@ func (p *CloudgateProxy) initializeMetricHandler() error {
 	// You will also need to change the HTTP handler, see runner.go.
 
 	var metricFactory metrics.MetricFactory
-	if p.Conf.MonitoringEnableMetrics {
+	if p.Conf.MetricsEnabled {
 		metricFactory = prommetrics.NewPrometheusMetricFactory(prometheus.DefaultRegisterer)
 	} else {
 		metricFactory = noopmetrics.NewNoopMetricFactory()
@@ -447,10 +447,10 @@ func (p *CloudgateProxy) acceptConnectionsFromClients(address string, port int, 
 			}
 
 			currentClients := atomic.LoadInt32(&p.activeClients)
-			if int(currentClients) >= p.Conf.MaxClients {
+			if int(currentClients) >= p.Conf.ProxyMaxClientConnections {
 				log.Warnf(
 					"Refusing client connection from %v because max clients threshold has been hit (%v).",
-					conn.RemoteAddr(), p.Conf.MaxClients)
+					conn.RemoteAddr(), p.Conf.ProxyMaxClientConnections)
 				err = conn.Close()
 				if err != nil {
 					log.Warnf("Error closing client connection from %v: %v", conn.RemoteAddr(), err)

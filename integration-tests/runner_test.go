@@ -74,7 +74,7 @@ func testHttpEndpointsWithProxyNotInitialized(
 
 	time.Sleep(500 * time.Millisecond)
 
-	httpAddr := fmt.Sprintf("%s:%d", conf.NetMetricsAddress, conf.NetMetricsPort)
+	httpAddr := fmt.Sprintf("%s:%d", conf.MetricsAddress, conf.MetricsPort)
 
 	require.Nil(t, utils.CheckMetricsEndpointResult(httpAddr, false))
 
@@ -109,7 +109,7 @@ func testHttpEndpointsWithProxyInitialized(
 		runner.RunMain(conf, ctx, metricsHandler, healthHandler)
 	}()
 
-	httpAddr := fmt.Sprintf("%s:%d", conf.NetMetricsAddress, conf.NetMetricsPort)
+	httpAddr := fmt.Sprintf("%s:%d", conf.MetricsAddress, conf.MetricsPort)
 
 	utils.RequireWithRetries(t, func() (err error, fatal bool) {
 		fatal = false
@@ -160,7 +160,7 @@ func testHttpEndpointsWithUnavailableNode(
 		runner.RunMain(conf, ctx, metricsHandler, healthHandler)
 	}()
 
-	httpAddr := fmt.Sprintf("%s:%d", conf.NetMetricsAddress, conf.NetMetricsPort)
+	httpAddr := fmt.Sprintf("%s:%d", conf.MetricsAddress, conf.MetricsPort)
 
 	utils.RequireWithRetries(t, func() (err error, fatal bool) {
 		fatal = false

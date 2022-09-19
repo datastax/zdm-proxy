@@ -158,8 +158,8 @@ func TestGetAssignedHosts(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 
 			config := setup.NewTestConfig(testSetup.Origin.GetInitialContactPoint(), testSetup.Target.GetInitialContactPoint())
-			config.TopologyIndex = tt.index
-			config.TopologyAddresses = tt.topologyAddresses
+			config.ProxyTopologyIndex = tt.index
+			config.ProxyTopologyAddresses = tt.topologyAddresses
 			proxy, err := setup.NewProxyInstanceWithConfig(config)
 			require.Nil(t, err)
 			defer proxy.Shutdown()
@@ -304,8 +304,8 @@ func TestNextAssignedHost(t *testing.T) {
 			config := setup.NewTestConfig(testSetup.Origin.GetInitialContactPoint(), testSetup.Target.GetInitialContactPoint())
 			config.TargetEnableHostAssignment = true
 			config.OriginEnableHostAssignment = true
-			config.TopologyIndex = tt.index
-			config.TopologyAddresses = tt.topologyAddresses
+			config.ProxyTopologyIndex = tt.index
+			config.ProxyTopologyAddresses = tt.topologyAddresses
 			proxy, err := setup.NewProxyInstanceWithConfig(config)
 			require.Nil(t, err)
 			defer proxy.Shutdown()
@@ -454,8 +454,8 @@ func TestConnectionAssignment(t *testing.T) {
 			config := setup.NewTestConfig(testSetup.Origin.GetInitialContactPoint(), testSetup.Target.GetInitialContactPoint())
 			config.TargetEnableHostAssignment = tt.hostAssignmentEnabled
 			config.OriginEnableHostAssignment = tt.hostAssignmentEnabled
-			config.TopologyIndex = tt.index
-			config.TopologyAddresses = tt.topologyAddresses
+			config.ProxyTopologyIndex = tt.index
+			config.ProxyTopologyAddresses = tt.topologyAddresses
 			proxy, err := setup.NewProxyInstanceWithConfig(config)
 			require.Nil(t, err)
 			defer proxy.Shutdown()
