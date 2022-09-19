@@ -381,7 +381,6 @@ func NewTestConfig(originHost string, targetHost string) *config.Config {
 	conf := config.New()
 
 	conf.TopologyIndex = 0
-	conf.TopologyInstanceCount = -1
 	conf.TopologyAddresses = ""
 	conf.TopologyNumTokens = 8
 

@@ -106,7 +106,7 @@ func TestVirtualizationNumberOfConnections(t *testing.T) {
 			proxies := make([]*zdmproxy.CloudgateProxy, tt.proxyInstanceCreationCount)
 			for i := 0; i < tt.proxyInstanceCreationCount; i++ {
 				proxies[i], err = LaunchProxyWithTopologyConfig(
-					strings.Join(tt.proxyAddresses[i], ","), tt.proxyIndexes[i], tt.proxyInstanceCount,
+					strings.Join(tt.proxyAddresses[i], ","), tt.proxyIndexes[i],
 					fmt.Sprintf("%s%d", "127.0.0.", i+1), 8, testSetup.Origin, testSetup.Target)
 				j := i
 				require.Nil(t, err)
@@ -274,7 +274,7 @@ func TestVirtualizationTokenAwareness(t *testing.T) {
 			proxies := make([]*zdmproxy.CloudgateProxy, tt.proxyInstanceCreationCount)
 			for i := 0; i < tt.proxyInstanceCreationCount; i++ {
 				proxies[i], err = LaunchProxyWithTopologyConfig(
-					strings.Join(tt.proxyAddresses[i], ","), tt.proxyIndexes[i], tt.proxyInstanceCount,
+					strings.Join(tt.proxyAddresses[i], ","), tt.proxyIndexes[i],
 					fmt.Sprintf("%s%d", "127.0.0.", i+1), tt.numTokens, origin, target)
 				j := i
 				require.Nil(t, err)
@@ -689,17 +689,15 @@ func TestInterceptedQueries(t *testing.T) {
 	}
 	for _, testVars := range tests {
 		t.Run(fmt.Sprintf("%s_proxy%d_%dtotalproxies", testVars.query, testVars.connectProxyIndex, testVars.proxyInstanceCount), func(t *testing.T) {
-			proxyInstanceCount := 3
 			proxyAddresses := []string{"127.0.0.1", "127.0.0.2", "127.0.0.3"}
 			if testVars.proxyInstanceCount == 1 {
 				proxyAddresses = []string{"127.0.0.1"}
-				proxyInstanceCount = 1
 			} else if testVars.proxyInstanceCount != 3 {
 				require.Fail(t, "unsupported proxy instance count %v", testVars.proxyInstanceCount)
 			}
 			proxyAddressToConnect := fmt.Sprintf("127.0.0.%v", testVars.connectProxyIndex+1)
 			proxy, err := LaunchProxyWithTopologyConfig(
-				strings.Join(proxyAddresses, ","), testVars.connectProxyIndex, proxyInstanceCount,
+				strings.Join(proxyAddresses, ","), testVars.connectProxyIndex,
 				proxyAddressToConnect, numTokens, testSetup.Origin, testSetup.Target)
 			require.Nil(t, err)
 			defer proxy.Shutdown()
@@ -906,11 +904,10 @@ func TestVirtualizationPartitioner(t *testing.T) {
 }
 
 func LaunchProxyWithTopologyConfig(
-	proxyAddresses string, proxyIndex int, instanceCount int, listenAddress string, numTokens int,
+	proxyAddresses string, proxyIndex int, listenAddress string, numTokens int,
 	origin setup.TestCluster, target setup.TestCluster) (*zdmproxy.CloudgateProxy, error) {
 	conf := setup.NewTestConfig(origin.GetInitialContactPoint(), target.GetInitialContactPoint())
 	conf.TopologyIndex = proxyIndex
-	conf.TopologyInstanceCount = instanceCount
 	conf.TopologyAddresses = proxyAddresses
 	conf.NetQueryAddress = listenAddress
 	conf.NetMetricsAddress = listenAddress

@@ -13,7 +13,6 @@ import (
 // Config holds the values of environment variables necessary for proper Proxy function.
 type Config struct {
 	TopologyIndex         int    `default:"0" split_words:"true"`
-	TopologyInstanceCount int    `default:"-1" split_words:"true"` // Overridden by length of TopologyAddresses (after split) if set
 	TopologyAddresses string `split_words:"true"`
 	TopologyNumTokens int    `default:"8" split_words:"true"`
 
@@ -142,7 +141,7 @@ func (c *Config) ParseEnvVars() (*Config, error) {
 
 func (c *Config) ParseTopologyConfig() (*TopologyConfig, error) {
 	virtualizationEnabled := true
-	proxyInstanceCount := c.TopologyInstanceCount
+	var proxyInstanceCount = -1
 	proxyAddressesTyped := []net.IP{net.ParseIP("127.0.0.1")}
 	if isNotDefined(c.TopologyAddresses) {
 		virtualizationEnabled = false
