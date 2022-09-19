@@ -2,10 +2,13 @@ package integration_tests
 
 import (
 	"context"
+	"fmt"
+	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
 	"github.com/datastax/zdm-proxy/integration-tests/client"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
+	"github.com/datastax/zdm-proxy/integration-tests/utils"
 	"github.com/stretchr/testify/require"
 	"strings"
 	"testing"
@@ -47,15 +50,29 @@ func TestUnavailableNode(t *testing.T) {
 			query := &message.Query{
 				Query: "SELECT * FROM system.peers",
 			}
-			response, _, err := testClient.SendMessage(context.Background(), primitive.ProtocolVersion4, query)
 
+			responsePtr := new(*frame.Frame)
+			errPtr := new(error)
+			utils.RequireWithRetries(t, func() (err error, fatal bool) {
+				*responsePtr, _, *errPtr = testClient.SendMessage(context.Background(), primitive.ProtocolVersion4, query)
+				if *responsePtr != nil {
+					_, ok := (*responsePtr).Body.Message.(*message.Overloaded)
+					if !ok {
+						return fmt.Errorf("response should be nil or OVERLOADED (shutdown): %v", (*responsePtr).Body.Message), false
+					}
+				}
+				return nil, false
+			}, 25, 200)
+
+			response := *responsePtr
+			err = *errPtr
 			if response != nil {
 				responseError, ok := response.Body.Message.(*message.Overloaded)
-				require.True(t, ok, "response should be nil or OVERLOADED (shutdown)")
-				require.NotNil(t, responseError, "response should be nil or OVERLOADED (shutdown)")
+				require.True(t, ok, "response should be nil or OVERLOADED (shutdown): %v", response.Body.Message)
+				require.NotNil(t, responseError, "response should be nil or OVERLOADED (shutdown): %v", response.Body.Message)
 				require.Equal(t, "Shutting down, please retry on next host.", responseError.ErrorMessage)
 			} else {
-				require.NotNil(t, err, "no error has been received, but the request should have failed")
+				require.NotNil(t, err, "no error has been received, but the request should have failed: %v")
 				require.True(t, strings.Contains(err.Error(), "response channel closed"),
 					"the connection should have been closed at client level, but it didn't, got: %v", err)
 			}
