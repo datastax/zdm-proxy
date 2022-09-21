@@ -747,6 +747,9 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 			expectedTargetPrepares := 2
 			expectedTargetExecutes := 0
 			expectedTargetBatches := 0
+			expectedOriginPrepares := 2
+			expectedOriginExecutes := 2
+			expectedOriginBatches := 0
 			if !test.read || test.dualReadsEnabled {
 				expectedTargetExecutes = 2
 			}
@@ -756,6 +759,8 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 			if test.batchQuery != "" {
 				expectedTargetBatches += 2
 				expectedTargetPrepares += 2
+				expectedOriginBatches += 2
+				expectedOriginPrepares += 2
 			}
 
 			utils.RequireWithRetries(t, func() (err error, fatal bool) {
@@ -768,7 +773,7 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 					return fmt.Errorf("expectedTargetExecutes %v != %v", expectedTargetExecutes, len(targetExecuteMessages)), false
 				}
 				if expectedTargetBatches != len(targetBatchMessages) {
-					return fmt.Errorf("expectedTargetExecutes %v != %v", expectedTargetBatches, len(targetBatchMessages)), false
+					return fmt.Errorf("expectedTargetBatches %v != %v", expectedTargetBatches, len(targetBatchMessages)), false
 				}
 				return nil, false
 			}, 10, 200 * time.Millisecond)
@@ -776,23 +781,14 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 			utils.RequireWithRetries(t, func() (err error, fatal bool) {
 				originLock.Lock()
 				defer originLock.Unlock()
-				if 2 != len(originExecuteMessages) {
-					return fmt.Errorf("expectedOriginExecuteMessage %v != %v", 2, len(originExecuteMessages)), false
+				if expectedOriginPrepares != len(originPrepareMessages) {
+					return fmt.Errorf("expectedOriginPrepares %v != %v", expectedOriginPrepares, len(originPrepareMessages)), false
 				}
-				if test.batchQuery != "" {
-					if 4 != len(originPrepareMessages) {
-						return fmt.Errorf("expectedOriginPrepareMessages %v != %v", 4, len(originPrepareMessages)), false
-					}
-					if 2 != len(originBatchMessages) {
-						return fmt.Errorf("expectedOriginBatchMessages %v != %v", 2, len(originBatchMessages)), false
-					}
-				} else {
-					if 2 != len(originPrepareMessages) {
-						return fmt.Errorf("expectedOriginPrepareMessages %v != %v", 2, len(originPrepareMessages)), false
-					}
-					if 0 != len(originBatchMessages) {
-						return fmt.Errorf("expectedOriginBatchMessages %v != %v", 0, len(originBatchMessages)), false
-					}
+				if expectedOriginExecutes != len(originExecuteMessages) {
+					return fmt.Errorf("expectedOriginExecutes %v != %v", expectedOriginExecutes, len(originExecuteMessages)), false
+				}
+				if expectedOriginBatches != len(originBatchMessages) {
+					return fmt.Errorf("expectedOriginBatches %v != %v", expectedOriginBatches, len(originBatchMessages)), false
 				}
 				return nil, false
 			}, 10, 200 * time.Millisecond)

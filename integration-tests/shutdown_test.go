@@ -159,7 +159,7 @@ func TestShutdownInFlightRequests(t *testing.T) {
 
 // Test for a race condition that causes a panic on proxy shutdown
 func TestStressShutdown(t *testing.T) {
-	t.Skip("test is currently failing due to ZDM-378") //TODO ZDM-378
+	//t.Skip("test is currently failing due to ZDM-378") //TODO ZDM-378
 	testDef := []struct {
 		name                  string
 		dualReadsEnabled      bool
@@ -189,7 +189,7 @@ func TestStressShutdown(t *testing.T) {
 				proxy, err := setup.NewProxyInstanceWithConfig(cfg)
 				require.Nil(t, err)
 
-				atomicValMutex := sync.Mutex{}
+				shutdownProxyTriggeredMutex := sync.Mutex{}
 				shutdownProxyTriggered := atomic.Value{}
 				shutdownProxyTriggered.Store(false)
 
@@ -199,6 +199,7 @@ func TestStressShutdown(t *testing.T) {
 				globalWg := &sync.WaitGroup{}
 				defer globalWg.Wait()
 
+				// set up a test timeout goroutine so if something goes wrong and the test takes too long then it gets canceled
 				globalWg.Add(1)
 				go func() {
 					defer globalWg.Done()
@@ -207,21 +208,18 @@ func TestStressShutdown(t *testing.T) {
 					case <-time.After(60*time.Second):
 					}
 
-					atomicValMutex.Lock()
+					shutdownProxyTriggeredMutex.Lock()
 					if !shutdownProxyTriggered.Load().(bool) {
 						shutdownProxyTriggered.Store(true)
-						atomicValMutex.Unlock()
+						shutdownProxyTriggeredMutex.Unlock()
 						proxy.Shutdown()
 						globalCancelFn()
 						return
 					}
-					atomicValMutex.Unlock()
+					shutdownProxyTriggeredMutex.Unlock()
 				}()
 
-				cqlConn, err := client.NewTestClientWithRequestTimeout(context.Background(), "127.0.0.1:14002", 10 * time.Second)
-				require.Nil(t, err)
-				defer cqlConn.Shutdown()
-
+				// reduce log verbosity because this test generates a lot of log messages
 				oldLevel := log.GetLevel()
 				oldZeroLogLevel := zerolog.GlobalLevel()
 				log.SetLevel(log.WarnLevel)
@@ -229,11 +227,22 @@ func TestStressShutdown(t *testing.T) {
 				zerolog.SetGlobalLevel(zerolog.WarnLevel)
 				defer zerolog.SetGlobalLevel(oldZeroLogLevel)
 
+				cqlConn, err := client.NewTestClientWithRequestTimeout(context.Background(), "127.0.0.1:14002", 10 * time.Second)
+				require.Nil(t, err)
+				defer cqlConn.Shutdown()
+
 				err = cqlConn.PerformDefaultHandshake(context.Background(), primitive.ProtocolVersion4, false)
 				require.Nil(t, err)
 
+				// create a channel that will receive errors from goroutines that are sending requests,
+				// the main test goroutine will read from this channel and cause the test to fail if any error is read
 				errChan := make(chan error, 1000)
+
+				// create a separate wait group so the test can wait only for the "worker" goroutines
+				// (those who will send requests as part of the test) to terminate
 				requestsWg := &sync.WaitGroup{}
+
+				// make sure the global test wg is only done when the "worker" goroutines are done
 				globalWg.Add(1)
 				go func() {
 					defer globalWg.Done()
@@ -241,7 +250,7 @@ func TestStressShutdown(t *testing.T) {
 				}()
 
 				// start goroutines that continuously (until proxy shutdown) open connections, send heartbeats and perform handshake
-				// (test if proxy panics (race conditions) when shutting down and receiving requests simultaneously
+				// (goal is to test if proxy panics (race conditions) when shutting down and receiving requests simultaneously
 				for j := 0; j < runtime.GOMAXPROCS(0); j++ {
 					requestsWg.Add(1)
 					go func() {
@@ -250,15 +259,23 @@ func TestStressShutdown(t *testing.T) {
 							id := rand.Int()
 							connTimeoutCtx, connTimeoutCancelFn := context.WithTimeout(globalCtx, 5*time.Second)
 							tempCqlConn, err := client.NewTestClientWithRequestTimeout(connTimeoutCtx, "127.0.0.1:14002", 10 *time.Second)
+							connTimeoutCancelFn() // avoid context leak
+
+							// create new waitgroup dedicated for this "iteration" so the next iteration starts only
+							// when all the goroutines of the previous iteration have terminated
 							optionsWg := &sync.WaitGroup{}
 							if err == nil {
 								defaultHandshakeDoneCh := make(chan bool, 1)
+
+								// start a bunch of sub goroutines that use the newly created connection to send OPTIONS
+								// requests (heartbeats) while the current goroutine attempts to perform a handshake after a random delay
 								for x := 0; x < runtime.GOMAXPROCS(0)*8; x++ {
 									optionsWg.Add(1)
 									go func() {
 										defer optionsWg.Done()
 										for {
 											select {
+											// make sure these sub goroutines terminate when the handshake has been successful (initiated by the parent goroutine)
 											case <-defaultHandshakeDoneCh:
 												return
 											default:
@@ -295,7 +312,6 @@ func TestStressShutdown(t *testing.T) {
 								_ = tempCqlConn.Shutdown()
 							}
 
-							connTimeoutCancelFn()
 							if err != nil {
 								if !shutdownProxyTriggered.Load().(bool) {
 									errChan <- fmt.Errorf("error connecting in handshake: %w", err)
@@ -306,7 +322,7 @@ func TestStressShutdown(t *testing.T) {
 					}()
 				}
 
-				// start 1 goroutine that continuously sends a query (test if an active connection gets an Overloaded result on proxy shutdown)
+				// start a single goroutine that continuously sends a query (test if an active connection gets an Overloaded result on proxy shutdown)
 				requestsWg.Add(1)
 				go func() {
 					defer requestsWg.Done()
@@ -352,15 +368,15 @@ func TestStressShutdown(t *testing.T) {
 
 					time.Sleep(12000 * time.Millisecond)
 
-					atomicValMutex.Lock()
+					shutdownProxyTriggeredMutex.Lock()
 					if shutdownProxyTriggered.Load().(bool) {
-						atomicValMutex.Unlock()
+						shutdownProxyTriggeredMutex.Unlock()
 						t.Errorf("test timed out")
 						errChan <- errors.New("test timed out")
 						return
 					}
 					shutdownProxyTriggered.Store(true)
-					atomicValMutex.Unlock()
+					shutdownProxyTriggeredMutex.Unlock()
 					now := time.Now()
 					proxy.Shutdown()
 					afterShutdownNow := time.Now()
@@ -369,12 +385,14 @@ func TestStressShutdown(t *testing.T) {
 						errChan <- fmt.Errorf("proxy shutdown took too long (%v milliseconds, threshold is 5 seconds)", afterShutdownNow.Sub(now).Milliseconds())
 					}
 
+					// create a channel where a read returns when all the "worker" goroutines of this test have terminated
 					requestsDoneCh := make(chan bool)
 					go func() {
 						requestsWg.Wait()
 						close(requestsDoneCh)
 					}()
 
+					// wait until all "worker" goroutines have terminated (with a timeout in case something went wrong)
 					select {
 					case <-requestsDoneCh:
 						globalCancelFn()
@@ -382,7 +400,7 @@ func TestStressShutdown(t *testing.T) {
 						t.Errorf("timed out waiting for goroutines to finish normally")
 						errChan <- errors.New("timed out waiting for goroutines to finish normally")
 						globalCancelFn()
-						<-requestsDoneCh
+						<-requestsDoneCh // after triggering a cancellation of the global context, the worker goroutines should terminate
 					}
 				}()
 
