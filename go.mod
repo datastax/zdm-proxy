@@ -15,5 +15,5 @@ require (
 	github.com/prometheus/client_model v0.1.0
 	github.com/rs/zerolog v1.20.0
 	github.com/sirupsen/logrus v1.6.0
-	github.com/stretchr/testify v1.6.1
+	github.com/stretchr/testify v1.8.0
 )

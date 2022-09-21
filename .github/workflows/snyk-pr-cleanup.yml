@@ -10,7 +10,7 @@ on:
   
 jobs:
   snyk_project_cleanup_when_pr_closed:
-    uses: riptano/shared-github-actions/.github/workflows/snyk-pr-cleanup.yml@main
+    uses: datastax/shared-github-actions/.github/workflows/snyk-pr-cleanup.yml@main
     secrets:
       snyk_token: ${{ secrets.SNYK_TOKEN }}
       snyk_org_id: ${{ secrets.SNYK_ORG_ID }}
