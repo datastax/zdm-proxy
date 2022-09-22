@@ -49,6 +49,10 @@ const (
 )
 
 func NewTestClient(ctx context.Context, address string) (*TestClient, error) {
+	return NewTestClientWithRequestTimeout(ctx, address, 2 * time.Second)
+}
+
+func NewTestClientWithRequestTimeout(ctx context.Context, address string, requestTimeout time.Duration) (*TestClient, error) {
 	streamIdsQueue := make(chan int16, numberOfStreamIds)
 	for i := int16(0); i < numberOfStreamIds; i++ {
 		streamIdsQueue <- i
@@ -66,7 +70,7 @@ func NewTestClient(ctx context.Context, address string) (*TestClient, error) {
 		streamIds:             streamIdsQueue,
 		pendingOperations:     &sync.Map{},
 		pendingOperationsLock: &sync.RWMutex{},
-		requestTimeout:        2 * time.Second,
+		requestTimeout:        requestTimeout,
 		waitGroup:             &sync.WaitGroup{},
 		cancelFunc:            cancel,
 		context:               ctx,

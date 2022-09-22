@@ -6,12 +6,12 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/integration-tests/utils"
 	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 	"github.com/datastax/zdm-proxy/proxy/pkg/httpzdmproxy"
 	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
 	"net/http"
@@ -169,11 +169,31 @@ func testMetrics(t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback)
 			// 2 on both: STARTUP and QUERY INSERT INTO
 			// 3 on async: AUTH_RESPONSE, STARTUP AND QUERY SELECT
 			if conf.AsyncReadsOnSecondary {
-				time.Sleep(200 * time.Millisecond)
+				utils.RequireWithRetries(t, func() (err error, fatal bool) {
+					valueToCheck := fmt.Sprintf("%v %v", getPrometheusNameWithNodeLabel("cloudgate", metrics.InFlightRequestsAsync, asyncEndpoint), 0)
+					if !containsLine(lines, valueToCheck) {
+						return fmt.Errorf("%v does not contain %v", lines, valueToCheck), false
+					}
+					valueToCheck = fmt.Sprintf("%v{node=\"%v\"} %v", getPrometheusNameWithSuffix("cloudgate", metrics.AsyncRequestDuration, "count"), asyncEndpoint, 3)
+					if !containsLine(lines, valueToCheck) {
+						return fmt.Errorf("%v does not contain %v", lines, valueToCheck), false
+					}
+					return nil, false
+				}, 10, 200 * time.Millisecond)
 			}
+
 			checkMetrics(t, true, lines, conf.AsyncReadsOnSecondary, 1, 1, 1, expectedAsyncConnections, 2, 2, 1, 3, false, true, originEndpoint, targetEndpoint, asyncEndpoint)
 		})
 	}
+}
+
+func containsLine(lines []string, line string) bool {
+	for i := 0; i < len(lines); i++ {
+		if lines[i] == line {
+			return true
+		}
+	}
+	return false
 }
 
 func startMetricsHandler(

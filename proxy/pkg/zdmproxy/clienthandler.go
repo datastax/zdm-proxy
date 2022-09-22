@@ -9,9 +9,9 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/google/uuid"
 	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
+	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
 	"net"
 	"sort"
@@ -112,6 +112,7 @@ type ClientHandler struct {
 	timeUuidGenerator TimeUuidGenerator
 
 	clientHandlerShutdownRequestCancelFn context.CancelFunc
+	clientHandlerShutdownRequestContext  context.Context
 }
 
 func NewClientHandler(
@@ -285,6 +286,7 @@ func NewClientHandler(
 		parameterModifier:                    NewParameterModifier(timeUuidGenerator),
 		timeUuidGenerator:                    timeUuidGenerator,
 		clientHandlerShutdownRequestCancelFn: clientHandlerShutdownRequestCancelFn,
+		clientHandlerShutdownRequestContext:  clientHandlerShutdownRequestContext,
 	}, nil
 }
 
@@ -366,6 +368,11 @@ func (ch *ClientHandler) requestLoop() {
 			f, ok := <-ch.reqChannel
 			if !ok {
 				break
+			}
+
+			if ch.clientHandlerShutdownRequestContext.Err() != nil {
+				ch.clientConnector.sendOverloadedToClient(f)
+				continue
 			}
 
 			log.Tracef("Request received on client handler: %v", f.Header)
