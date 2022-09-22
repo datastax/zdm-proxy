@@ -422,52 +422,75 @@ func TestPreparedIdReplacement(t *testing.T) {
 				require.True(t, ok, "batch result was type %T", batchResult)
 			}
 
-			originLock.Lock()
-			defer originLock.Unlock()
-			require.Equal(t, 1, len(originExecuteMessages))
-			if test.batchQuery != "" {
-				require.Equal(t, 2, len(originPrepareMessages))
-			} else {
-				require.Equal(t, 1, len(originPrepareMessages))
-			}
-			require.Equal(t, originPreparedId, originExecuteMessages[0].QueryId)
-			if test.batchQuery != "" {
-				require.Equal(t, 1, len(originBatchMessages))
-				require.Equal(t, 2, len(originBatchMessages[0].Children))
-				require.Equal(t, originBatchPreparedId, originBatchMessages[0].Children[1].QueryOrId)
-			}
-
-			targetLock.Lock()
-			defer targetLock.Unlock()
-
 			expectedTargetPrepares := 1
 			expectedTargetExecutes := 0
 			expectedTargetBatches := 0
+			expectedOriginPrepares := 1
+			expectedOriginExecutes := 1
+			expectedOriginBatches := 0
 			if !test.read || test.dualReadsEnabled {
 				expectedTargetExecutes += 1
-				if test.batchQuery != "" {
-					expectedTargetBatches += 1
-				}
 			}
 			if test.dualReadsEnabled {
 				expectedTargetPrepares += 1
 			}
 			if test.batchQuery != "" {
+				expectedTargetBatches += 1
 				expectedTargetPrepares += 1
+				expectedOriginBatches += 1
+				expectedOriginPrepares += 1
 			}
 
-			require.Equal(t, expectedTargetExecutes, len(targetExecuteMessages))
+			utils.RequireWithRetries(t, func() (err error, fatal bool) {
+				targetLock.Lock()
+				defer targetLock.Unlock()
+				if expectedTargetPrepares != len(targetPrepareMessages) {
+					return fmt.Errorf("expectedTargetPrepares %v != %v", expectedTargetPrepares, len(targetPrepareMessages)), false
+				}
+				if expectedTargetExecutes != len(targetExecuteMessages) {
+					return fmt.Errorf("expectedTargetExecutes %v != %v", expectedTargetExecutes, len(targetExecuteMessages)), false
+				}
+				if expectedTargetBatches != len(targetBatchMessages) {
+					return fmt.Errorf("expectedTargetBatches %v != %v", expectedTargetBatches, len(targetBatchMessages)), false
+				}
+				return nil, false
+			}, 10, 200 * time.Millisecond)
+
+			utils.RequireWithRetries(t, func() (err error, fatal bool) {
+				originLock.Lock()
+				defer originLock.Unlock()
+				if expectedOriginPrepares != len(originPrepareMessages) {
+					return fmt.Errorf("expectedOriginPrepares %v != %v", expectedOriginPrepares, len(originPrepareMessages)), false
+				}
+				if expectedOriginExecutes != len(originExecuteMessages) {
+					return fmt.Errorf("expectedOriginExecutes %v != %v", expectedOriginExecutes, len(originExecuteMessages)), false
+				}
+				if expectedOriginBatches != len(originBatchMessages) {
+					return fmt.Errorf("expectedOriginBatches %v != %v", expectedOriginBatches, len(originBatchMessages)), false
+				}
+				return nil, false
+			}, 10, 200 * time.Millisecond)
+
+			originLock.Lock()
+			defer originLock.Unlock()
+			targetLock.Lock()
+			defer targetLock.Unlock()
+
+			require.Equal(t, originPreparedId, originExecuteMessages[0].QueryId)
+			if expectedOriginBatches > 0 {
+				require.Equal(t, 2, len(originBatchMessages[0].Children))
+				require.Equal(t, originBatchPreparedId, originBatchMessages[0].Children[1].QueryOrId)
+			}
+
 			for _, targetExecute := range targetExecuteMessages {
 				require.Equal(t, targetPreparedId, targetExecute.QueryId)
 				require.NotEqual(t, executeMsg, targetExecute)
 			}
-			require.Equal(t, expectedTargetBatches, len(targetBatchMessages))
 			if expectedTargetBatches > 0 {
 				require.Equal(t, 2, len(targetBatchMessages[0].Children))
 				require.Equal(t, targetBatchPreparedId, targetBatchMessages[0].Children[1].QueryOrId)
 				require.NotEqual(t, batchMsg, targetBatchMessages[0])
 			}
-			require.Equal(t, expectedTargetPrepares, len(targetPrepareMessages))
 
 			require.Equal(t, expectedPrepareMsg, targetPrepareMessages[0])
 			if test.dualReadsEnabled {
