@@ -768,6 +768,7 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 			}
 
 			expectedTargetPrepares := 2
+			expectedMaxTargetPrepares := 2
 			expectedTargetExecutes := 0
 			expectedTargetBatches := 0
 			expectedOriginPrepares := 2
@@ -777,20 +778,29 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 				expectedTargetExecutes = 2
 			}
 			if test.dualReadsEnabled {
-				expectedTargetPrepares += 3 // cluster connector sends a PREPARE on its own
+				// depending on goroutine scheduling, async cluster connector might receive an UNPREPARED and send a PREPARE on its own or not
+				// so with async reads we will assert greater or equal instead of equal
+				expectedTargetPrepares += 2
+				expectedMaxTargetPrepares += 3
 			}
 			if test.batchQuery != "" {
 				expectedTargetBatches += 2
 				expectedTargetPrepares += 2
+				expectedMaxTargetPrepares += 2
 				expectedOriginBatches += 2
 				expectedOriginPrepares += 2
 			}
 
+			time.Sleep(200 * time.Millisecond)
+
 			utils.RequireWithRetries(t, func() (err error, fatal bool) {
 				targetLock.Lock()
 				defer targetLock.Unlock()
-				if expectedTargetPrepares != len(targetPrepareMessages) {
-					return fmt.Errorf("expectedTargetPrepares %v != %v", expectedTargetPrepares, len(targetPrepareMessages)), false
+				if len(targetPrepareMessages) < expectedTargetPrepares {
+					return fmt.Errorf("expectedTargetPrepares %v < %v", len(targetPrepareMessages), expectedTargetPrepares), false
+				}
+				if len(targetPrepareMessages) > expectedMaxTargetPrepares {
+					return fmt.Errorf("expectedMaxTargetPrepares %v > %v", len(targetPrepareMessages), expectedMaxTargetPrepares), false
 				}
 				if expectedTargetExecutes != len(targetExecuteMessages) {
 					return fmt.Errorf("expectedTargetExecutes %v != %v", expectedTargetExecutes, len(targetExecuteMessages)), false
