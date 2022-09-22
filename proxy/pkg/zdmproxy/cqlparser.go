@@ -65,6 +65,7 @@ func buildRequestInfo(
 	mh *metrics.MetricHandler,
 	currentKeyspaceName string,
 	forwardReadsToTarget bool,
+	forwardSystemQueriesToTarget bool,
 	virtualizationEnabled bool,
 	forwardAuthToTarget bool,
 	timeUuidGenerator TimeUuidGenerator) (RequestInfo, error) {
@@ -78,7 +79,7 @@ func buildRequestInfo(
 		}
 		return getRequestInfoFromQueryInfo(
 			frameContext.GetRawFrame(), forwardReadsToTarget,
-			virtualizationEnabled, stmtQueryData.queryData), nil
+			forwardSystemQueriesToTarget, virtualizationEnabled, stmtQueryData.queryData), nil
 	case primitive.OpCodePrepare:
 		stmtQueryData, err := frameContext.GetOrInspectStatement(currentKeyspaceName, timeUuidGenerator)
 		if err != nil {
@@ -94,7 +95,7 @@ func buildRequestInfo(
 		}
 		baseRequestInfo := getRequestInfoFromQueryInfo(
 			frameContext.GetRawFrame(), forwardReadsToTarget,
-			virtualizationEnabled, stmtQueryData.queryData)
+			forwardSystemQueriesToTarget, virtualizationEnabled, stmtQueryData.queryData)
 		replacedTerms := make([]*term, 0)
 		if len(stmtsReplacedTerms) > 1 {
 			return nil, fmt.Errorf("expected single list of replaced terms for prepare message but got %v", len(stmtsReplacedTerms))
@@ -174,6 +175,7 @@ func getPreparedData(
 func getRequestInfoFromQueryInfo(
 	f *frame.RawFrame,
 	forwardReadsToTarget bool,
+	forwardSystemQueriesToTarget,
 	virtualizationEnabled bool,
 	queryInfo QueryInfo) RequestInfo {
 
@@ -197,11 +199,17 @@ func getRequestInfoFromQueryInfo(
 		sendAlsoToAsync = true
 		if isSystemQuery(queryInfo) {
 			log.Debugf("Detected system query: %v with stream id: %v", queryInfo.getQuery(), f.Header.StreamId)
-		}
-		if forwardReadsToTarget {
-			forwardDecision = forwardToTarget
+			if forwardSystemQueriesToTarget {
+				forwardDecision = forwardToTarget
+			} else {
+				forwardDecision = forwardToOrigin
+			}
 		} else {
-			forwardDecision = forwardToOrigin
+			if forwardReadsToTarget {
+				forwardDecision = forwardToTarget
+			} else {
+				forwardDecision = forwardToOrigin
+			}
 		}
 	} else if queryInfo.getStatementType() == statementTypeUse {
 		sendAlsoToAsync = true

@@ -1284,7 +1284,7 @@ func (ch *ClientHandler) forwardRequest(request *frame.RawFrame, customResponseC
 	}
 	requestInfo, err := buildRequestInfo(
 		context, replacedTerms, ch.preparedStatementCache, ch.metricHandler, currentKeyspace, ch.conf.ForwardReadsToTarget,
-		ch.topologyConfig.VirtualizationEnabled, ch.forwardAuthToTarget, ch.timeUuidGenerator)
+		ch.conf.ForwardSystemQueriesToTarget, ch.topologyConfig.VirtualizationEnabled, ch.forwardAuthToTarget, ch.timeUuidGenerator)
 	if err != nil {
 		if errVal, ok := err.(*UnpreparedExecuteError); ok {
 			unpreparedFrame, err := createUnpreparedFrame(errVal)
@@ -1453,7 +1453,7 @@ func (ch *ClientHandler) handleInterceptedRequest(
 	interceptedQueryType := interceptedRequestInfo.GetQueryType()
 	var interceptedQueryResponse message.Message
 	var controlConn *ControlConn
-	if ch.conf.ForwardReadsToTarget {
+	if ch.conf.ForwardSystemQueriesToTarget {
 		controlConn = ch.targetControlConn
 	} else {
 		controlConn = ch.originControlConn

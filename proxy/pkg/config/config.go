@@ -61,7 +61,8 @@ type Config struct {
 
 	MetricsEnabled bool `default:"true" split_words:"true"`
 
-	ForwardReadsToTarget bool `default:"false" split_words:"true"`
+	ForwardReadsToTarget         bool `default:"false" split_words:"true"`
+	ForwardSystemQueriesToTarget bool `default:"false" split_words:"true"`
 
 	ReplaceServerSideFunctions bool `default:"false" split_words:"true"`
 
