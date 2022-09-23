@@ -172,7 +172,6 @@ func TestAuth(t *testing.T) {
 			forwardClientCredsToOrigin: &true,
 		},
 
-
 		{
 			name:                       "ClientTargetCreds_NoAuthOnOrigin_ProxyHasTargetCreds_ForwardClientCredsToTarget",
 			originUsername:             "",
@@ -269,8 +268,6 @@ func TestAuth(t *testing.T) {
 			initError:                  false,
 			forwardClientCredsToOrigin: &true,
 		},
-
-
 
 		{
 			name:                       "ClientTargetCreds_NoAuthOnTarget_ProxyHasOriginCreds_ForwardClientCredsToTarget",
@@ -369,8 +366,6 @@ func TestAuth(t *testing.T) {
 			forwardClientCredsToOrigin: &true,
 		},
 
-
-
 		{
 			name:                       "ClientTargetCreds_NoAuthOnEither_ProxyHasNoCreds_ForwardClientCredsToTarget",
 			originUsername:             "",
@@ -467,7 +462,6 @@ func TestAuth(t *testing.T) {
 			initError:                  false,
 			forwardClientCredsToOrigin: &true,
 		},
-
 
 		{
 			name:                       "InvalidClientCredentials_ForwardClientCredsToTarget",
@@ -613,22 +607,22 @@ func TestAuth(t *testing.T) {
 				controlConnection := 1
 				if proxyConf.DualReadsEnabled {
 					if asyncIsTarget {
-						if len(targetRequestsByConn) == controlConnection + 2 {
+						if len(targetRequestsByConn) == controlConnection+2 {
 							asyncRequests = targetRequestsByConn[1]
 						}
 					} else {
-						if len(originRequestsByConn) == controlConnection + 2 {
+						if len(originRequestsByConn) == controlConnection+2 {
 							asyncRequests = originRequestsByConn[1]
 						}
 					}
 
 					if asyncRequests == nil {
-						require.Equal(t, controlConnection + 1, len(targetRequestsByConn))
-						require.Equal(t, controlConnection + 1, len(originRequestsByConn))
+						require.Equal(t, controlConnection+1, len(targetRequestsByConn))
+						require.Equal(t, controlConnection+1, len(originRequestsByConn))
 					}
 				} else {
-					require.Equal(t, controlConnection + 1, len(targetRequestsByConn))
-					require.Equal(t, controlConnection + 1, len(originRequestsByConn))
+					require.Equal(t, controlConnection+1, len(targetRequestsByConn))
+					require.Equal(t, controlConnection+1, len(originRequestsByConn))
 				}
 
 				originRequests = originRequestsByConn[1]
@@ -636,16 +630,14 @@ func TestAuth(t *testing.T) {
 				asyncHandshakeAttempted := true
 
 				forwardClientCredsToOrigin := false
-				if (
-					tt.forwardClientCredsToOrigin != nil &&
-						*tt.forwardClientCredsToOrigin &&
-						tt.proxyOriginUsername != "" &&
-						tt.proxyOriginPassword != "") ||
-					(
-						tt.proxyOriginUsername != "" &&
-							tt.proxyOriginPassword != "" &&
-							tt.proxyTargetUsername == "" &&
-							tt.proxyTargetPassword == "") {
+				if (tt.forwardClientCredsToOrigin != nil &&
+					*tt.forwardClientCredsToOrigin &&
+					tt.proxyOriginUsername != "" &&
+					tt.proxyOriginPassword != "") ||
+					(tt.proxyOriginUsername != "" &&
+						tt.proxyOriginPassword != "" &&
+						tt.proxyTargetUsername == "" &&
+						tt.proxyTargetPassword == "") {
 					forwardClientCredsToOrigin = true
 				}
 
@@ -861,7 +853,6 @@ func TestProxyStartupAndHealthCheckWithAuth(t *testing.T) {
 			success:             false,
 		},
 
-
 		{
 			name:                "NoAuthOnEither_ProxyHasOriginCreds",
 			originUsername:      "",
@@ -911,7 +902,6 @@ func TestProxyStartupAndHealthCheckWithAuth(t *testing.T) {
 			success:             false,
 		},
 
-
 		{
 			name:                "NoAuthOnEither_ProxyHasNoCreds",
 			originUsername:      "",
@@ -960,7 +950,6 @@ func TestProxyStartupAndHealthCheckWithAuth(t *testing.T) {
 			proxyOriginPassword: "",
 			success:             false,
 		},
-
 
 		{
 			name:                "AuthOnBoth_InvalidOriginCredentials",

@@ -3,25 +3,25 @@ package metrics
 const (
 	destinationOrigin = "origin"
 	destinationTarget = "target"
-	destinationBoth = "both"
+	destinationBoth   = "both"
 
-	failedRequestsName = "proxy_requests_failed_total"
+	failedRequestsName            = "proxy_requests_failed_total"
 	failedRequestsSentFailedLabel = "sent_failed"
-	sentOriginFailedOrigin = "sent_origin_failed_origin"
-	sentTargetFailedTarget = "sent_target_failed_target"
-	sentBothFailedOrigin = "sent_both_failed_origin"
-	sentBothFailedTarget = "sent_both_failed_target"
-	sentBothFailedBoth = "sent_both_failed_both"
+	sentOriginFailedOrigin        = "sent_origin_failed_origin"
+	sentTargetFailedTarget        = "sent_target_failed_target"
+	sentBothFailedOrigin          = "sent_both_failed_origin"
+	sentBothFailedTarget          = "sent_both_failed_target"
+	sentBothFailedBoth            = "sent_both_failed_both"
 
 	failedRequestsDescription = "Running total of failed requests"
 
-	requestDurationName = "proxy_request_duration_seconds"
+	requestDurationName             = "proxy_request_duration_seconds"
 	requestDurationDestinationLabel = "destination"
-	requestDurationDescription = "Histogram that tracks the latency of requests at proxy entry point"
+	requestDurationDescription      = "Histogram that tracks the latency of requests at proxy entry point"
 
-	inFlightRequestsName = "proxy_inflight_requests_total"
+	inFlightRequestsName             = "proxy_inflight_requests_total"
 	inFlightRequestsDestinationLabel = "destination"
-	inFlightRequestsDescription = "Number of requests currently in flight in the proxy"
+	inFlightRequestsDescription      = "Number of requests currently in flight in the proxy"
 )
 
 var (

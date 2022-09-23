@@ -1,9 +1,9 @@
 package prommetrics
 
 import (
+	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
-	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"testing"
@@ -232,7 +232,7 @@ func TestPrometheusCloudgateProxyMetrics_IncrementCountByOne_Counter_Labels(t *t
 
 func TestPrometheusCloudgateProxyMetrics_IncrementCountByOne_Gauge_Labels(t *testing.T) {
 	handler := NewPrometheusMetricFactory(prometheus.NewRegistry())
-	gaugeMetric := newTestMetricWithLabels("test_add_count_by_one_counter_labels", map[string]string{"label":"value"})
+	gaugeMetric := newTestMetricWithLabels("test_add_count_by_one_counter_labels", map[string]string{"label": "value"})
 	g, err := handler.GetOrCreateGauge(gaugeMetric)
 	assert.Nil(t, err)
 	g.Add(1)

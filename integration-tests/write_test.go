@@ -1,10 +1,10 @@
 package integration_tests
 
 import (
-	"github.com/gocql/gocql"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
 	"github.com/datastax/zdm-proxy/integration-tests/utils"
+	"github.com/gocql/gocql"
 	"github.com/stretchr/testify/require"
 	"testing"
 )

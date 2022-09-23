@@ -78,12 +78,12 @@ type QueryOptions struct {
 type QueryType string
 
 const (
-	QueryTypeQuery QueryType = "QUERY"
-	QueryTypeExecute QueryType = "EXECUTE"
-	QueryTypeBatch QueryType = "BATCH"
-	QueryTypePrepare QueryType = "PREPARE"
-	QueryTypeOptions QueryType = "OPTIONS"
-	QueryTypeStartup QueryType = "STARTUP"
+	QueryTypeQuery    QueryType = "QUERY"
+	QueryTypeExecute  QueryType = "EXECUTE"
+	QueryTypeBatch    QueryType = "BATCH"
+	QueryTypePrepare  QueryType = "PREPARE"
+	QueryTypeOptions  QueryType = "OPTIONS"
+	QueryTypeStartup  QueryType = "STARTUP"
 	QueryTypeRegister QueryType = "REGISTER"
 )
 
@@ -91,7 +91,6 @@ func (baseSimulacron *baseSimulacron) DeleteLogs() error {
 	_, err := baseSimulacron.process.execHttp("DELETE", baseSimulacron.getPath("log"), nil)
 	return err
 }
-
 
 func (baseSimulacron *baseSimulacron) GetLogs() (*ClusterLogs, error) {
 	bytes, err := baseSimulacron.process.execHttp("GET", baseSimulacron.getPath("log"), nil)

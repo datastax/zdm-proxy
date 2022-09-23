@@ -115,7 +115,7 @@ func testHttpEndpointsWithProxyInitialized(
 		fatal = false
 		err = utils.CheckMetricsEndpointResult(httpAddr, true)
 		return
-	}, 10, 100 * time.Millisecond)
+	}, 10, 100*time.Millisecond)
 
 	statusCode, report, err := utils.GetReadinessStatusReport(httpAddr)
 	require.Nil(t, err, "failed to get readiness response: %v", err)
@@ -166,7 +166,7 @@ func testHttpEndpointsWithUnavailableNode(
 		fatal = false
 		err = utils.CheckMetricsEndpointResult(httpAddr, true)
 		return
-	}, 10, 100 * time.Millisecond)
+	}, 10, 100*time.Millisecond)
 
 	statusCode, msg, err := utils.GetLivenessResponse(httpAddr)
 	require.Nil(t, err)

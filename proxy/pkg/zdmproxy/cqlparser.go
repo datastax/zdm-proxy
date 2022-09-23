@@ -31,11 +31,11 @@ const (
 )
 
 const (
-	systemPeersTableName = "peers"
+	systemPeersTableName   = "peers"
 	systemPeersV2TableName = "peers_v2"
-	systemLocalTableName = "local"
-	systemKeyspaceName = "system"
-	nowFunctionName = "now"
+	systemLocalTableName   = "local"
+	systemKeyspaceName     = "system"
+	nowFunctionName        = "now"
 )
 
 type UnpreparedExecuteError struct {
@@ -336,14 +336,14 @@ func (recv *frameDecodeContext) inspectStatements(currentKeyspace string, timeUu
 			currentKeyspace = typedMsg.Options.Keyspace
 		}
 		statementsQueryData = []*statementQueryData{
-			&statementQueryData{statementIndex: 0, queryData: inspectCqlQuery(typedMsg.Query, currentKeyspace, timeUuidGenerator)}}
+			{statementIndex: 0, queryData: inspectCqlQuery(typedMsg.Query, currentKeyspace, timeUuidGenerator)}}
 	case *message.Prepare:
 		if protocolSupportsKeyspaceInRequest(decodedFrame.Header.Version) &&
 			typedMsg.Flags().Contains(primitive.PrepareFlagWithKeyspace) {
 			currentKeyspace = typedMsg.Keyspace
 		}
 		statementsQueryData = []*statementQueryData{
-			&statementQueryData{statementIndex: 0, queryData: inspectCqlQuery(typedMsg.Query, currentKeyspace, timeUuidGenerator)}}
+			{statementIndex: 0, queryData: inspectCqlQuery(typedMsg.Query, currentKeyspace, timeUuidGenerator)}}
 	case *message.Batch:
 		if protocolSupportsKeyspaceInRequest(decodedFrame.Header.Version) &&
 			typedMsg.Flags().Contains(primitive.QueryFlagWithKeyspace) {

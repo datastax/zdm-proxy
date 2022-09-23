@@ -6,9 +6,9 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 	"github.com/google/uuid"
 	"github.com/jpillora/backoff"
-	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 	log "github.com/sirupsen/logrus"
 	"math"
 	"math/big"
@@ -473,7 +473,7 @@ func (cc *ControlConn) RefreshHosts(conn CqlConnection, ctx context.Context) ([]
 		}
 
 		for _, removedHost := range removedHosts {
-			for observer, _ := range cc.protocolEventSubscribers {
+			for observer := range cc.protocolEventSubscribers {
 				observer.OnHostRemoved(removedHost)
 			}
 		}
@@ -586,7 +586,7 @@ func (cc *ControlConn) setConn(oldConn CqlConnection, newConn CqlConnection, new
 		cc.currentContactPoint = newContactPoint
 		authEnabled, err := newConn.IsAuthEnabled()
 		if err != nil {
-			log.Errorf("Error detected when trying to set whether auth is enabled or not in control connection, " +
+			log.Errorf("Error detected when trying to set whether auth is enabled or not in control connection, "+
 				"this is a bug, please report: %v", err)
 		} else {
 			cc.authEnabled.Store(authEnabled)
@@ -734,7 +734,7 @@ func filterHosts(hosts []*Host, currentDc string, connConfig ConnectionConfig, l
 	if datacenter != "" {
 		filteredOrderedHosts := filterHostsByDatacenter(datacenter, hosts)
 		if len(filteredOrderedHosts) == 0 {
-			log.Warnf("datacenter was set to '%v' but no hosts were found with that DC " +
+			log.Warnf("datacenter was set to '%v' but no hosts were found with that DC "+
 				"so falling back to local host's DC '%v' (hosts=%v)",
 				datacenter, localHost.Datacenter, hosts)
 		} else {

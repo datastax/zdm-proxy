@@ -1,28 +1,28 @@
 package metrics
 
 const (
-	originFailedRequestsName = "origin_requests_failed_total"
-	originFailedRequestsErrorLabel = "error"
+	originFailedRequestsName        = "origin_requests_failed_total"
+	originFailedRequestsErrorLabel  = "error"
 	originFailedRequestsDescription = "Running total of requests that failed on Origin Cluster"
 
-	targetFailedRequestsName = "target_requests_failed_total"
-	targetFailedRequestsErrorLabel = "error"
+	targetFailedRequestsName        = "target_requests_failed_total"
+	targetFailedRequestsErrorLabel  = "error"
 	targetFailedRequestsDescription = "Running total of requests that failed on Target Cluster"
 
-	asyncFailedRequestsName = "async_requests_failed_total"
-	asyncFailedRequestsErrorLabel = "error"
+	asyncFailedRequestsName        = "async_requests_failed_total"
+	asyncFailedRequestsErrorLabel  = "error"
 	asyncFailedRequestsDescription = "Running total of requests that failed on Async Connector"
 
 	errorClientTimeout = "client_timeout"
-	errorReadTimeout = "read_timeout"
-	errorReadFailure = "read_failure"
-	errorWriteTimeout = "write_timeout"
-	errorWriteFailure = "write_failure"
-	errorOverloaded = "overloaded"
-	errorUnavailable = "unavailable"
-	errorUnprepared = "unprepared"
-	errorOther = "other"
-	
+	errorReadTimeout   = "read_timeout"
+	errorReadFailure   = "read_failure"
+	errorWriteTimeout  = "write_timeout"
+	errorWriteFailure  = "write_failure"
+	errorOverloaded    = "overloaded"
+	errorUnavailable   = "unavailable"
+	errorUnprepared    = "unprepared"
+	errorOther         = "other"
+
 	nodeLabel = "node"
 )
 

@@ -19,7 +19,7 @@ type Metric interface {
 	GetLabels() map[string]string
 	GetDescription() string
 	String() string
-	WithLabels(map[string] string) Metric
+	WithLabels(map[string]string) Metric
 }
 
 func newMetricBase(name string, description string, labels map[string]string) *metric {

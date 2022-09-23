@@ -4,19 +4,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/jpillora/backoff"
-	"github.com/datastax/zdm-proxy/proxy/pkg/zdmproxy"
 	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 	"github.com/datastax/zdm-proxy/proxy/pkg/health"
 	"github.com/datastax/zdm-proxy/proxy/pkg/httpzdmproxy"
 	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
+	"github.com/datastax/zdm-proxy/proxy/pkg/zdmproxy"
+	"github.com/jpillora/backoff"
 	log "github.com/sirupsen/logrus"
 	"net/http"
 	"sync"
 	"time"
 )
 
-func SetupHandlers() (metricsHandler *httpzdmproxy.HandlerWithFallback, readinessHandler *httpzdmproxy.HandlerWithFallback){
+func SetupHandlers() (metricsHandler *httpzdmproxy.HandlerWithFallback, readinessHandler *httpzdmproxy.HandlerWithFallback) {
 	metricsHandler = httpzdmproxy.NewHandlerWithFallback(metrics.DefaultHttpHandler())
 	readinessHandler = httpzdmproxy.NewHandlerWithFallback(health.DefaultReadinessHandler())
 
@@ -60,7 +60,7 @@ func RunMain(
 	}
 
 	log.Info("Shutting down httpzdmproxy server, waiting up to 5 seconds.")
-	srvShutdownCtx, _ := context.WithTimeout(context.Background(), 5 * time.Second)
+	srvShutdownCtx, _ := context.WithTimeout(context.Background(), 5*time.Second)
 	if err := srv.Shutdown(srvShutdownCtx); err != nil {
 		log.Errorf("Failed to gracefully shutdown httpzdmproxy server: %v", err)
 	}

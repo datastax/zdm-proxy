@@ -34,7 +34,7 @@ const (
 
 var (
 	sortedCloudgateNamedMarkers = []string{cloudgateNowNamedMarker}
-	parserPool = sync.Pool{New: func() interface{} {
+	parserPool                  = sync.Pool{New: func() interface{} {
 		p := parser.NewSimplifiedCqlParser(nil)
 		p.RemoveErrorListeners()
 		p.SetErrorHandler(antlr.NewBailErrorStrategy())
@@ -100,7 +100,7 @@ func inspectCqlQuery(query string, currentKeyspace string, timeUuidGenerator Tim
 	cqlParser := parserPool.Get().(*parser.SimplifiedCqlParser)
 	defer parserPool.Put(cqlParser)
 	cqlParser.SetInputStream(stream)
-	listener := &cqlListener {
+	listener := &cqlListener{
 		query:             query,
 		statementType:     statementTypeOther,
 		timeUuidGenerator: timeUuidGenerator,
@@ -168,7 +168,6 @@ func (recv *selectClause) IsStarSelectClause() bool {
 func (recv *selectClause) GetSelectors() []selector {
 	return recv.selectors
 }
-
 
 // selector represents a selector in the cql grammar. 'term' and 'K_CAST' selectors are not supported.
 //   selector
@@ -614,13 +613,13 @@ func (l *cqlListener) extractTerm(termCtx antlr.Tree) *term {
 		case parser.ITypeCastContext:
 			return l.extractTerm(childCtx.GetChild(3))
 		case parser.ILiteralContext:
-			return NewLiteralTerm(typedCtx.GetText(), l.currentPositionalIndex - 1)
+			return NewLiteralTerm(typedCtx.GetText(), l.currentPositionalIndex-1)
 		case parser.IFunctionCallContext:
 			fCall := extractFunctionCall(childCtx.(*parser.FunctionCallContext))
 			if fCall.isNow() {
 				l.nowFunctionCalls = true
 			}
-			return NewFunctionCallTerm(fCall, l.currentPositionalIndex - 1)
+			return NewFunctionCallTerm(fCall, l.currentPositionalIndex-1)
 		case parser.IBindMarkerContext:
 			return l.extractBindMarker(childCtx)
 		}
@@ -654,7 +653,7 @@ func (l *cqlListener) extractBindMarker(bindMarkerCtx antlr.Tree) *term {
 		case parser.INamedBindMarkerContext:
 			l.namedBindMarkers = true
 			bindMarkerName := extractIdentifier(childCtx.GetChild(1).(*parser.IdentifierContext))
-			return NewNamedBindMarkerTerm(bindMarkerName, l.currentPositionalIndex - 1)
+			return NewNamedBindMarkerTerm(bindMarkerName, l.currentPositionalIndex-1)
 		}
 	}
 

@@ -53,8 +53,8 @@ const (
 type ClusterConnector struct {
 	conf *config.Config
 
-	connection  net.Conn
-	clusterType ClusterType
+	connection    net.Conn
+	clusterType   ClusterType
 	connectorType ClusterConnectorType
 
 	psCache *PreparedStatementCache
@@ -73,7 +73,7 @@ type ClusterConnector struct {
 
 	handshakeDone *atomic.Value
 
-	asyncConnector      bool
+	asyncConnector       bool
 	asyncConnectorState  ConnectorState
 	asyncPendingRequests *pendingRequests
 
@@ -310,7 +310,7 @@ func (cc *ClusterConnector) handleAsyncResponse(response *frame.RawFrame) *frame
 	if done {
 		typedReqCtx, ok := reqCtx.(*asyncRequestContextImpl)
 		if !ok {
-			log.Errorf("Failed to finish async request because request context conversion failed. " +
+			log.Errorf("Failed to finish async request because request context conversion failed. "+
 				"This is most likely a bug, please report. AsyncRequestContext: %v", reqCtx)
 		} else if typedReqCtx.expectedResponse {
 			response.Header.StreamId = typedReqCtx.requestStreamId
@@ -329,11 +329,11 @@ func (cc *ClusterConnector) handleAsyncResponse(response *frame.RawFrame) *frame
 						preparedData, ok = cc.psCache.Get(msg.Id)
 					}
 					if !ok {
-						log.Warnf("Received UNPREPARED for async request with prepare ID %v " +
+						log.Warnf("Received UNPREPARED for async request with prepare ID %v "+
 							"but could not find prepared data.", hex.EncodeToString(msg.Id))
 					} else {
 						prepare := &message.Prepare{
-							Query: preparedData.GetPrepareRequestInfo().GetQuery(),
+							Query:    preparedData.GetPrepareRequestInfo().GetQuery(),
 							Keyspace: preparedData.GetPrepareRequestInfo().GetKeyspace(),
 						}
 						prepareFrame := frame.NewFrame(response.Header.Version, response.Header.StreamId, prepare)
@@ -343,7 +343,7 @@ func (cc *ClusterConnector) handleAsyncResponse(response *frame.RawFrame) *frame
 						} else {
 							sent := cc.sendAsyncRequest(
 								prepareRawFrame, false, time.Now(),
-								time.Duration(cc.conf.RequestTimeoutMs) * time.Millisecond,
+								time.Duration(cc.conf.RequestTimeoutMs)*time.Millisecond,
 								func() {
 									cc.clientHandlerRequestWg.Done()
 								})
