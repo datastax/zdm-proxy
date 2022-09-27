@@ -18,69 +18,32 @@ func TestConfig_ParseReadMode(t *testing.T) {
 
 	tests := []test{
 		{
-			name:           "Valid: Dual reads disabled, async reads on secondary disabled",
-			envVars:        []envVar{
-				{"ZDM_DUAL_READS_ENABLED", "false"},
-				{"ZDM_ASYNC_READS_ON_SECONDARY", "false"},
-			},
+			name:             "Valid: Async reads on secondary disabled",
+			envVars:          []envVar{{"ZDM_READ_MODE", "PRIMARY_ONLY"}},
 			expectedReadMode: common.ReadModePrimaryOnly,
 			errExpected:      false,
 			errMsg:           "",
 		},
 		{
-			name:           "Valid: Dual reads enabled, async reads on secondary enabled",
-			envVars:        []envVar{
-				{"ZDM_DUAL_READS_ENABLED", "true"},
-				{"ZDM_ASYNC_READS_ON_SECONDARY", "true"},
-			},
+			name:             "Valid: Async reads on secondary enabled",
+			envVars:          []envVar{{"ZDM_READ_MODE", "DUAL_ASYNC_ON_SECONDARY"}},
 			expectedReadMode: common.ReadModeDualAsyncOnSecondary,
 			errExpected:      false,
 			errMsg:           "",
 		},
 		{
-			name:           "Invalid: Dual reads enabled but async reads on secondary disabled",
-			envVars:        []envVar{
-				{"ZDM_DUAL_READS_ENABLED", "true"},
-				{"ZDM_ASYNC_READS_ON_SECONDARY", "false"},
-			},
+			name:             "Invalid: Dual reads enabled but async reads on secondary disabled",
+			envVars:          []envVar{{"ZDM_READ_MODE", "DUAL_SYNC"}},
 			expectedReadMode: common.ReadModeUndefined,
 			errExpected:      true,
-			errMsg:           "combination of DUAL_READS_ENABLED (true) and ASYNC_READS_ON_SECONDARY (false) not yet implemented",
+			errMsg:           "invalid value for ZDM_READ_MODE; possible values are: PRIMARY_ONLY and DUAL_ASYNC_ON_SECONDARY",
 		},
 		{
-			name:           "Invalid: Dual reads disabled but async reads on secondary enabled",
-			envVars:        []envVar{
-				{"ZDM_DUAL_READS_ENABLED", "false"},
-				{"ZDM_ASYNC_READS_ON_SECONDARY", "true"},
-			},
-			expectedReadMode: common.ReadModeUndefined,
-			errExpected:      true,
-			errMsg:           "invalid combination of DUAL_READS_ENABLED (false) and ASYNC_READS_ON_SECONDARY (true)",
-		},
-		{
-			name:           "Valid: Dual reads unset, async reads on secondary unset",
-			envVars:        []envVar{},
+			name:             "Valid: Read mode unset",
+			envVars:          []envVar{},
 			expectedReadMode: common.ReadModePrimaryOnly,
 			errExpected:      false,
 			errMsg:           "",
-		},
-		{
-			name:           "Invalid: Dual reads enabled but async reads on secondary unset",
-			envVars:        []envVar{
-				{"ZDM_DUAL_READS_ENABLED", "true"},
-			},
-			expectedReadMode: common.ReadModeUndefined,
-			errExpected:      true,
-			errMsg:           "combination of DUAL_READS_ENABLED (true) and ASYNC_READS_ON_SECONDARY (false) not yet implemented",
-		},
-		{
-			name:           "Invalid: Dual reads unset but async reads on secondary enabled",
-			envVars:        []envVar{
-				{"ZDM_ASYNC_READS_ON_SECONDARY", "true"},
-			},
-			expectedReadMode: common.ReadModeUndefined,
-			errExpected:      true,
-			errMsg:           "invalid combination of DUAL_READS_ENABLED (false) and ASYNC_READS_ON_SECONDARY (true)",
 		},
 	}
 
