@@ -9,6 +9,7 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/datastax/zdm-proxy/proxy/pkg/common"
 	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
@@ -24,14 +25,6 @@ type ClusterConnectionInfo struct {
 	endpoint          Endpoint
 	isOriginCassandra bool
 }
-
-type ClusterType string
-
-const (
-	ClusterTypeNone   = ClusterType("")
-	ClusterTypeOrigin = ClusterType("ORIGIN")
-	ClusterTypeTarget = ClusterType("TARGET")
-)
 
 type ClusterConnectorType string
 
@@ -53,8 +46,8 @@ const (
 type ClusterConnector struct {
 	conf *config.Config
 
-	connection  net.Conn
-	clusterType ClusterType
+	connection    net.Conn
+	clusterType   common.ClusterType
 	connectorType ClusterConnectorType
 
 	psCache *PreparedStatementCache
@@ -106,12 +99,12 @@ func NewClusterConnector(
 	handshakeDone *atomic.Value) (*ClusterConnector, error) {
 
 	var connectorType ClusterConnectorType
-	var clusterType ClusterType
+	var clusterType common.ClusterType
 	if connInfo.isOriginCassandra {
-		clusterType = ClusterTypeOrigin
+		clusterType = common.ClusterTypeOrigin
 		connectorType = ClusterConnectorTypeOrigin
 	} else {
-		clusterType = ClusterTypeTarget
+		clusterType = common.ClusterTypeTarget
 		connectorType = ClusterConnectorTypeTarget
 	}
 
@@ -204,7 +197,7 @@ func openConnectionToCluster(connInfo *ClusterConnectionInfo, context context.Co
 	return conn, timeoutCtx, nil
 }
 
-func closeConnectionToCluster(conn net.Conn, clusterType ClusterType, connectorClusterType ClusterConnectorType, nodeMetrics *metrics.NodeMetrics) {
+func closeConnectionToCluster(conn net.Conn, clusterType common.ClusterType, connectorClusterType ClusterConnectorType, nodeMetrics *metrics.NodeMetrics) {
 	log.Infof("[%s] Closing request connection to %v (%v)", connectorClusterType, clusterType, conn.RemoteAddr())
 	err := conn.Close()
 	if err != nil {
@@ -323,7 +316,7 @@ func (cc *ClusterConnector) handleAsyncResponse(response *frame.RawFrame) *frame
 				case *message.Unprepared:
 					var preparedData PreparedData
 					var ok bool
-					if cc.clusterType == ClusterTypeTarget {
+					if cc.clusterType == common.ClusterTypeTarget {
 						preparedData, ok = cc.psCache.GetByTargetPreparedId(msg.Id)
 					} else {
 						preparedData, ok = cc.psCache.Get(msg.Id)

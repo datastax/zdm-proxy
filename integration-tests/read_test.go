@@ -4,7 +4,7 @@ import (
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
 	"github.com/datastax/zdm-proxy/integration-tests/utils"
-	"github.com/gocql/gocql"
+	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 	"github.com/stretchr/testify/require"
 	"net"
 	"testing"
@@ -20,116 +20,58 @@ var rows = simulacron.NewRowsResult(
 })
 
 func TestForwardDecisionsForReads(t *testing.T) {
+	t.Run("PrimaryOrigin_SystemQueriesOrigin", func(t *testing.T) {
+		testForwardDecisionsForReads(t, config.PrimaryClusterOrigin, config.SystemQueriesModeOrigin)
+	})
+	t.Run("PrimaryOrigin_SystemQueriesTarget", func(t *testing.T) {
+		testForwardDecisionsForReads(t, config.PrimaryClusterOrigin, config.SystemQueriesModeTarget)
+	})
+	t.Run("PrimaryOrigin_SystemQueriesPrimary", func(t *testing.T) {
+		testForwardDecisionsForReads(t, config.PrimaryClusterOrigin, config.SystemQueriesModePrimary)
+	})
+
+	t.Run("PrimaryTarget_SystemQueriesOrigin", func(t *testing.T) {
+		testForwardDecisionsForReads(t, config.PrimaryClusterTarget, config.SystemQueriesModeOrigin)
+	})
+	t.Run("PrimaryTarget_SystemQueriesTarget", func(t *testing.T) {
+		testForwardDecisionsForReads(t, config.PrimaryClusterTarget, config.SystemQueriesModeTarget)
+	})
+	t.Run("PrimaryTarget_SystemQueriesPrimary", func(t *testing.T) {
+		testForwardDecisionsForReads(t, config.PrimaryClusterTarget, config.SystemQueriesModePrimary)
+	})
+}
+
+func testForwardDecisionsForReads(t *testing.T, primaryCluster string, systemQueriesMode string) {
 	c := setup.NewTestConfig("", "")
+	c.PrimaryCluster = primaryCluster
+	c.SystemQueriesMode = systemQueriesMode
 	testSetup, err := setup.NewSimulacronTestSetupWithConfig(c)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
-	proxy, err := utils.ConnectToCluster("127.0.0.1", "", "", 14002)
-	if err != nil {
-		t.Log("Unable to connect to proxy session.")
-		t.Fatal(err)
-	}
-	defer proxy.Close()
+	var expectedSystemQueryCluster *simulacron.Cluster
+	var expectedNonSystemQueryCluster *simulacron.Cluster
 
-	t.Run("ForwardToOrigin", func(tt *testing.T) {
-		testForwardDecisionsForReads(t, proxy, testSetup, false)
-	})
-
-	t.Run("ForwardToTarget", func(tt *testing.T) {
-		testForwardDecisionsForReads(t, proxy, testSetup, true)
-	})
-}
-
-func testForwardDecisionsForReads(t *testing.T, proxy *gocql.Session, testSetup *setup.SimulacronTestSetup, forwardReadsToTarget bool) {
-	var expectedCluster *simulacron.Cluster
-	if forwardReadsToTarget {
-		expectedCluster = testSetup.Target
-	} else {
-		expectedCluster = testSetup.Origin
-	}
-	testSetup.Proxy.Conf.ForwardReadsToTarget = forwardReadsToTarget
-	tests := []struct {
-		name    string
-		query   string
-		cluster *simulacron.Cluster
-	}{
-		// SELECT queries routed to Target
-		{"system.local", " /* trick to skip prepare */ SELECT rpc_address FROM system.local", expectedCluster},
-		{"system.local quoted", " /* trick to skip prepare */ SELECT \"rpc_address\" AS addr FROM \"system\" . \"local\"", expectedCluster},
-		{"system.peers", " /* trick to skip prepare */ SELECT rpc_address FROM system.peers", expectedCluster},
-		{"system.peers quoted", " /* trick to skip prepare */ SELECT \"rpc_address\" AS addr FROM \"system\" . \"peers\"", expectedCluster},
-		{"system.peers_v2", " /* trick to skip prepare */ SELECT rpc_address FROM system.peers_v2", expectedCluster},
-		{"system.peers_v2 quoted", " /* trick to skip prepare */ SELECT \"rpc_address\" AS addr FROM \"system\" . \"peers_v2\"", expectedCluster},
-		{"system_auth.roles", " /* trick to skip prepare */ SELECT foo FROM system_auth.roles", expectedCluster},
-		{"system_auth.roles quoted", " /* trick to skip prepare */ SELECT \"foo\" AS f FROM \"system_auth\" . \"roles\"", expectedCluster},
-		{"dse_insights.tokens", " /* trick to skip prepare */ SELECT foo FROM dse_insights.tokens", expectedCluster},
-		{"dse_insights.tokens quoted", " /* trick to skip prepare */ SELECT \"foo\" AS f FROM \"dse_insights\" . \"tokens\"", expectedCluster},
-		// all other SELECT queries routed to Origin
-		{"generic read", " /* trick to skip prepare */ SELECT rpc_address FROM ks1.local", expectedCluster},
-		{"generic read quoted", " /* trick to skip prepare */ SELECT \"rpc_address\" AS addr FROM \"ks1\" . \"peers\"", expectedCluster},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-
-			_ = testSetup.Origin.ClearPrimes()
-			_ = testSetup.Target.ClearPrimes()
-
-			queryPrime :=
-				simulacron.WhenQuery(
-					tt.query,
-					simulacron.NewWhenQueryOptions()).
-					ThenRowsSuccess(rows)
-
-			err := tt.cluster.Prime(queryPrime)
-			if err != nil {
-				t.Fatal("prime error: ", err.Error())
-			}
-
-			iter := proxy.Query(tt.query).Iter()
-			require.True(t, iter.NumRows() == 1, "query should have returned 1 row but returned instead: ", iter.NumRows())
-			var rpcAddressActual net.IP
-			ok := iter.Scan(&rpcAddressActual)
-			require.True(t, ok, "row scan failed")
-			require.True(t, rpcAddressActual.Equal(rpcAddressExpected), "expecting rpc_address to be ", rpcAddressExpected, ", got: ", rpcAddressActual)
-
-		})
+	switch primaryCluster {
+	case config.PrimaryClusterOrigin:
+		expectedNonSystemQueryCluster = testSetup.Origin
+	case config.PrimaryClusterTarget:
+		expectedNonSystemQueryCluster = testSetup.Target
+	default:
+		require.FailNow(t, "unexpected primary cluster: %v", primaryCluster)
 	}
 
-}
-
-func TestForwardDecisionsForReadsWithUseStatement(t *testing.T) {
-	testSetup, err := setup.NewSimulacronTestSetupWithSession(false, false)
-	require.Nil(t, err)
-	defer testSetup.Cleanup()
-
-	t.Run("ForwardToOrigin", func(tt *testing.T) {
-		testForwardDecisionsForReadsWithUseStatement(tt, testSetup, false)
-	})
-
-	t.Run("ForwardToTarget", func(tt *testing.T) {
-		testForwardDecisionsForReadsWithUseStatement(tt, testSetup, true)
-	})
-}
-
-func testForwardDecisionsForReadsWithUseStatement(
-	t *testing.T, testSetup *setup.SimulacronTestSetup, forwardReadsToTarget bool) {
-
-	config := setup.NewTestConfig(testSetup.Origin.GetInitialContactPoint(), testSetup.Target.GetInitialContactPoint())
-	config.ForwardReadsToTarget = forwardReadsToTarget
-	proxy, err := setup.NewProxyInstanceWithConfig(config)
-	require.Nil(t, err)
-	defer proxy.Shutdown()
-
-	cluster := utils.NewCluster("127.0.0.1", "", "", 14002)
-	cluster.NumConns = 1 // required to test USE behavior reliably
-
-	var expectedCluster *simulacron.Cluster
-	if forwardReadsToTarget {
-		expectedCluster = testSetup.Target
-	} else {
-		expectedCluster = testSetup.Origin
+	switch systemQueriesMode {
+	case config.SystemQueriesModeOrigin:
+		expectedSystemQueryCluster = testSetup.Origin
+	case config.SystemQueriesModeTarget:
+		expectedSystemQueryCluster = testSetup.Target
+	case config.SystemQueriesModePrimary:
+		expectedSystemQueryCluster = expectedNonSystemQueryCluster
+	default:
+		require.FailNow(t, "unexpected system queries mode: %v", systemQueriesMode)
 	}
+
 	tests := []struct {
 		name     string
 		keyspace string
@@ -137,34 +79,61 @@ func testForwardDecisionsForReadsWithUseStatement(
 		cluster  *simulacron.Cluster
 	}{
 		// SELECT queries routed to Target
-		{"system.local", "system", " /* trick to skip prepare */ SELECT rpc_address FROM local", expectedCluster},
-		{"system.local quoted", "system", " /* trick to skip prepare */ SELECT \"rpc_address\" AS addr FROM \"local\"", expectedCluster},
-		{"system.peers", "system", " /* trick to skip prepare */ SELECT rpc_address FROM peers", expectedCluster},
-		{"system.peers quoted", "system", " /* trick to skip prepare */ SELECT \"rpc_address\" AS addr FROM \"peers\"", expectedCluster},
-		{"system.peers_v2", "system", " /* trick to skip prepare */ SELECT rpc_address FROM peers_v2", expectedCluster},
-		{"system.peers_v2 quoted", "system", " /* trick to skip prepare */ SELECT \"rpc_address\" AS addr FROM \"peers_v2\"", expectedCluster},
-		{"system_auth.roles", "system_auth", " /* trick to skip prepare */ SELECT foo FROM system_auth.roles", expectedCluster},
-		{"system_auth.roles quoted", "system_auth", " /* trick to skip prepare */ SELECT \"foo\" AS f FROM \"system_auth\" . \"roles\"", expectedCluster},
-		{"dse_insights.tokens", "dse_insights", " /* trick to skip prepare */ SELECT foo FROM dse_insights.tokens", expectedCluster},
-		{"dse_insights.tokens quoted", "dse_insights", " /* trick to skip prepare */ SELECT \"foo\" AS f FROM \"dse_insights\" . \"tokens\"", expectedCluster},
-		// all other SELECT queries routed to Origin or Target according to configuration
-		{"generic read", "foo", " /* trick to skip prepare */ SELECT rpc_address FROM local2", expectedCluster},
-		{"generic read quoted", "foo", " /* trick to skip prepare */ SELECT \"rpc_address\" AS addr FROM \"peers_v3\"", expectedCluster},
+		{"system.local", "", " /* trick to skip prepare */ SELECT rpc_address FROM system.local", expectedSystemQueryCluster},
+		{"system.local quoted", "", " /* trick to skip prepare */ SELECT \"rpc_address\" AS addr FROM \"system\" . \"local\"", expectedSystemQueryCluster},
+		{"system.peers", "", " /* trick to skip prepare */ SELECT rpc_address FROM system.peers", expectedSystemQueryCluster},
+		{"system.peers quoted", "", " /* trick to skip prepare */ SELECT \"rpc_address\" AS addr FROM \"system\" . \"peers\"", expectedSystemQueryCluster},
+		{"system.peers_v2", "", " /* trick to skip prepare */ SELECT rpc_address FROM system.peers_v2", expectedSystemQueryCluster},
+		{"system.peers_v2 quoted", "", " /* trick to skip prepare */ SELECT \"rpc_address\" AS addr FROM \"system\" . \"peers_v2\"", expectedSystemQueryCluster},
+		{"system_auth.roles", "", " /* trick to skip prepare */ SELECT foo FROM system_auth.roles", expectedSystemQueryCluster},
+		{"system_auth.roles quoted", "", " /* trick to skip prepare */ SELECT \"foo\" AS f FROM \"system_auth\" . \"roles\"", expectedSystemQueryCluster},
+		{"dse_insights.tokens", "", " /* trick to skip prepare */ SELECT foo FROM dse_insights.tokens", expectedSystemQueryCluster},
+		{"dse_insights.tokens quoted", "", " /* trick to skip prepare */ SELECT \"foo\" AS f FROM \"dse_insights\" . \"tokens\"", expectedSystemQueryCluster},
+		// all other SELECT queries routed to Origin
+		{"generic read", "", " /* trick to skip prepare */ SELECT rpc_address FROM ks1.local", expectedNonSystemQueryCluster},
+		{"generic read quoted", "", " /* trick to skip prepare */ SELECT \"rpc_address\" AS addr FROM \"ks1\" . \"peers\"", expectedNonSystemQueryCluster},
+		{"peers", "", " /* trick to skip prepare */ SELECT rpc_address FROM peers", expectedNonSystemQueryCluster},
+
+		// SELECT queries with USE keyspace routed to Target
+		{"system.local", "system", " /* trick to skip prepare */ SELECT rpc_address FROM local", expectedSystemQueryCluster},
+		{"system.local quoted", "system", " /* trick to skip prepare */ SELECT \"rpc_address\" AS addr FROM \"local\"", expectedSystemQueryCluster},
+		{"system.peers", "system", " /* trick to skip prepare */ SELECT rpc_address FROM peers", expectedSystemQueryCluster},
+		{"system.peers quoted", "system", " /* trick to skip prepare */ SELECT \"rpc_address\" AS addr FROM \"peers\"", expectedSystemQueryCluster},
+		{"system.peers_v2", "system", " /* trick to skip prepare */ SELECT rpc_address FROM peers_v2", expectedSystemQueryCluster},
+		{"system.peers_v2 quoted", "system", " /* trick to skip prepare */ SELECT \"rpc_address\" AS addr FROM \"peers_v2\"", expectedSystemQueryCluster},
+		{"system_auth.roles", "system_auth", " /* trick to skip prepare */ SELECT foo FROM system_auth.roles", expectedSystemQueryCluster},
+		{"system_auth.roles quoted", "system_auth", " /* trick to skip prepare */ SELECT \"foo\" AS f FROM \"system_auth\" . \"roles\"", expectedSystemQueryCluster},
+		{"dse_insights.tokens", "dse_insights", " /* trick to skip prepare */ SELECT foo FROM dse_insights.tokens", expectedSystemQueryCluster},
+		{"dse_insights.tokens quoted", "dse_insights", " /* trick to skip prepare */ SELECT \"foo\" AS f FROM \"dse_insights\" . \"tokens\"", expectedSystemQueryCluster},
+		// all other SELECT queries with USE keyspace routed to Origin or Target according to configuration
+		{"generic read", "foo", " /* trick to skip prepare */ SELECT rpc_address FROM local2", expectedNonSystemQueryCluster},
+		{"generic read quoted", "foo", " /* trick to skip prepare */ SELECT \"rpc_address\" AS addr FROM \"peers_v3\"", expectedNonSystemQueryCluster},
+		{"peers", "foo", " /* trick to skip prepare */ SELECT rpc_address FROM peers", expectedNonSystemQueryCluster},
 	}
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-
-			// only way to issue a USE statement with the gocql driver
-			cluster.Keyspace = tt.keyspace
-			proxy, err := cluster.CreateSession()
-			if err != nil {
-				t.Log("Unable to connect to proxy session.")
-				t.Fatal(err)
+		testName := tt.name
+		if tt.keyspace != "" {
+			testName = testName + " with USE " + tt.keyspace
+		}
+		t.Run(testName, func(t *testing.T) {
+			cluster := utils.NewCluster("127.0.0.1", "", "", 14002)
+			cluster.NumConns = 1 // required to test USE behavior reliably
+			if tt.keyspace != "" {
+				// only way to issue a USE statement with the gocql driver
+				cluster.Keyspace = tt.keyspace
 			}
+			proxy, err := cluster.CreateSession()
+			require.Nil(t, err)
 			defer proxy.Close()
 
-			_ = testSetup.Origin.ClearPrimes()
-			_ = testSetup.Target.ClearPrimes()
+			err = testSetup.Origin.ClearPrimes()
+			require.Nil(t, err)
+			err = testSetup.Target.ClearPrimes()
+			require.Nil(t, err)
+			err = testSetup.Origin.DeleteLogs()
+			require.Nil(t, err)
+			err = testSetup.Target.DeleteLogs()
+			require.Nil(t, err)
 
 			queryPrime :=
 				simulacron.WhenQuery(
@@ -184,6 +153,136 @@ func testForwardDecisionsForReadsWithUseStatement(
 			require.True(t, ok, "row scan failed")
 			require.True(t, rpcAddressActual.Equal(rpcAddressExpected), "expecting rpc_address to be ", rpcAddressExpected, ", got: ", rpcAddressActual)
 
+			logsOrigin, err := testSetup.Origin.GetLogsWithFilter(func(entry *simulacron.RequestLogEntry) bool {
+				if entry.QueryType == simulacron.QueryTypeQuery && entry.Query == tt.query {
+					return true
+				}
+				return false
+			})
+			require.Nil(t, err)
+			logsTarget, err := testSetup.Target.GetLogsWithFilter(func(entry *simulacron.RequestLogEntry) bool {
+				if entry.QueryType == simulacron.QueryTypeQuery && entry.Query == tt.query {
+					return true
+				}
+				return false
+			})
+			require.Nil(t, err)
+			if testSetup.Origin == tt.cluster {
+				require.Equal(t, 1, len(logsOrigin.Datacenters))
+				require.Equal(t, 1, len(logsOrigin.Datacenters[0].Nodes))
+				require.Equal(t, 1, len(logsOrigin.Datacenters[0].Nodes[0].Queries))
+				require.Equal(t, tt.query, logsOrigin.Datacenters[0].Nodes[0].Queries[0].Query)
+
+				require.Equal(t, 1, len(logsTarget.Datacenters))
+				require.Equal(t, 1, len(logsTarget.Datacenters[0].Nodes))
+				require.Equal(t, 0, len(logsTarget.Datacenters[0].Nodes[0].Queries))
+			} else {
+				require.Equal(t, 1, len(logsTarget.Datacenters))
+				require.Equal(t, 1, len(logsTarget.Datacenters[0].Nodes))
+				require.Equal(t, 1, len(logsTarget.Datacenters[0].Nodes[0].Queries))
+				require.Equal(t, tt.query, logsTarget.Datacenters[0].Nodes[0].Queries[0].Query)
+
+				require.Equal(t, 1, len(logsOrigin.Datacenters))
+				require.Equal(t, 1, len(logsOrigin.Datacenters[0].Nodes))
+				require.Equal(t, 0, len(logsOrigin.Datacenters[0].Nodes[0].Queries))
+			}
 		})
 	}
+
 }
+
+//func TestForwardDecisionsForReadsWithUseStatement(t *testing.T) {
+//	testSetup, err := setup.NewSimulacronTestSetupWithSession(false, false)
+//	require.Nil(t, err)
+//	defer testSetup.Cleanup()
+//
+//	t.Run("ForwardToOrigin", func(tt *testing.T) {
+//		testForwardDecisionsForReadsWithUseStatement(tt, testSetup, false)
+//	})
+//
+//	t.Run("ForwardToTarget", func(tt *testing.T) {
+//		testForwardDecisionsForReadsWithUseStatement(tt, testSetup, true)
+//	})
+//}
+//
+//func testForwardDecisionsForReadsWithUseStatement(
+//	t *testing.T, testSetup *setup.SimulacronTestSetup, forwardReadsToTarget bool) {
+//
+//	cfg := setup.NewTestConfig(testSetup.Origin.GetInitialContactPoint(), testSetup.Target.GetInitialContactPoint())
+//	var primaryCluster string
+//	if forwardReadsToTarget {
+//		primaryCluster = config.PrimaryClusterTarget
+//	} else {
+//		primaryCluster = config.PrimaryClusterOrigin
+//	}
+//	cfg.PrimaryCluster = primaryCluster
+//	proxy, err := setup.NewProxyInstanceWithConfig(cfg)
+//	require.Nil(t, err)
+//	defer proxy.Shutdown()
+//
+//	cluster := utils.NewCluster("127.0.0.1", "", "", 14002)
+//	cluster.NumConns = 1 // required to test USE behavior reliably
+//
+//	var expectedCluster *simulacron.Cluster
+//	if forwardReadsToTarget {
+//		expectedCluster = testSetup.Target
+//	} else {
+//		expectedCluster = testSetup.Origin
+//	}
+//	tests := []struct {
+//		name     string
+//		keyspace string
+//		query    string
+//		cluster  *simulacron.Cluster
+//	}{
+//		// SELECT queries routed to Target
+//		{"system.local", "system", " /* trick to skip prepare */ SELECT rpc_address FROM local", expectedCluster},
+//		{"system.local quoted", "system", " /* trick to skip prepare */ SELECT \"rpc_address\" AS addr FROM \"local\"", expectedCluster},
+//		{"system.peers", "system", " /* trick to skip prepare */ SELECT rpc_address FROM peers", expectedCluster},
+//		{"system.peers quoted", "system", " /* trick to skip prepare */ SELECT \"rpc_address\" AS addr FROM \"peers\"", expectedCluster},
+//		{"system.peers_v2", "system", " /* trick to skip prepare */ SELECT rpc_address FROM peers_v2", expectedCluster},
+//		{"system.peers_v2 quoted", "system", " /* trick to skip prepare */ SELECT \"rpc_address\" AS addr FROM \"peers_v2\"", expectedCluster},
+//		{"system_auth.roles", "system_auth", " /* trick to skip prepare */ SELECT foo FROM system_auth.roles", expectedCluster},
+//		{"system_auth.roles quoted", "system_auth", " /* trick to skip prepare */ SELECT \"foo\" AS f FROM \"system_auth\" . \"roles\"", expectedCluster},
+//		{"dse_insights.tokens", "dse_insights", " /* trick to skip prepare */ SELECT foo FROM dse_insights.tokens", expectedCluster},
+//		{"dse_insights.tokens quoted", "dse_insights", " /* trick to skip prepare */ SELECT \"foo\" AS f FROM \"dse_insights\" . \"tokens\"", expectedCluster},
+//		// all other SELECT queries routed to Origin or Target according to configuration
+//		{"generic read", "foo", " /* trick to skip prepare */ SELECT rpc_address FROM local2", expectedCluster},
+//		{"generic read quoted", "foo", " /* trick to skip prepare */ SELECT \"rpc_address\" AS addr FROM \"peers_v3\"", expectedCluster},
+//	}
+//	for _, tt := range tests {
+//		t.Run(tt.name, func(t *testing.T) {
+//
+//			// only way to issue a USE statement with the gocql driver
+//			cluster.Keyspace = tt.keyspace
+//			proxy, err := cluster.CreateSession()
+//			if err != nil {
+//				t.Log("Unable to connect to proxy session.")
+//				t.Fatal(err)
+//			}
+//			defer proxy.Close()
+//
+//			_ = testSetup.Origin.ClearPrimes()
+//			_ = testSetup.Target.ClearPrimes()
+//
+//			queryPrime :=
+//				simulacron.WhenQuery(
+//					tt.query,
+//					simulacron.NewWhenQueryOptions()).
+//					ThenRowsSuccess(rows)
+//
+//			err = tt.cluster.Prime(queryPrime)
+//			if err != nil {
+//				t.Fatal("prime error: ", err.Error())
+//			}
+//
+//			iter := proxy.Query(tt.query).Iter()
+//			require.True(t, iter.NumRows() == 1, "query should have returned 1 row but returned instead: ", iter.NumRows())
+//			var rpcAddressActual net.IP
+//			ok := iter.Scan(&rpcAddressActual)
+//			require.True(t, ok, "row scan failed")
+//			require.True(t, rpcAddressActual.Equal(rpcAddressExpected), "expecting rpc_address to be ", rpcAddressExpected, ", got: ", rpcAddressActual)
+//
+//		})
+//	}
+//}

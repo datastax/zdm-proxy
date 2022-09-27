@@ -3,6 +3,7 @@ package zdmproxy
 import (
 	"fmt"
 	"github.com/datastax/go-cassandra-native-protocol/frame"
+	"github.com/datastax/zdm-proxy/proxy/pkg/common"
 	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
 	"sync"
@@ -84,7 +85,7 @@ type RequestContext interface {
 	Cancel(nodeMetrics *metrics.NodeMetrics) bool
 	SetResponse(
 		nodeMetrics *metrics.NodeMetrics, f *frame.RawFrame,
-		cluster ClusterType, connectorType ClusterConnectorType) bool
+		cluster common.ClusterType, connectorType ClusterConnectorType) bool
 }
 
 type requestContextImpl struct {
@@ -169,7 +170,7 @@ func (recv *requestContextImpl) Cancel(_ *metrics.NodeMetrics) bool {
 }
 
 func (recv *requestContextImpl) SetResponse(nodeMetrics *metrics.NodeMetrics, f *frame.RawFrame,
-	cluster ClusterType, connectorType ClusterConnectorType) bool {
+	cluster common.ClusterType, connectorType ClusterConnectorType) bool {
 	state, updated := recv.updateInternalState(f, cluster)
 	if !updated {
 		return false
@@ -196,7 +197,7 @@ func (recv *requestContextImpl) SetResponse(nodeMetrics *metrics.NodeMetrics, f 
 	return finished
 }
 
-func (recv *requestContextImpl) updateInternalState(f *frame.RawFrame, cluster ClusterType) (state int, updated bool) {
+func (recv *requestContextImpl) updateInternalState(f *frame.RawFrame, cluster common.ClusterType) (state int, updated bool) {
 	recv.lock.Lock()
 	defer recv.lock.Unlock()
 
@@ -206,9 +207,9 @@ func (recv *requestContextImpl) updateInternalState(f *frame.RawFrame, cluster C
 	}
 
 	switch cluster {
-	case ClusterTypeOrigin:
+	case common.ClusterTypeOrigin:
 		recv.originResponse = f
-	case ClusterTypeTarget:
+	case common.ClusterTypeTarget:
 		recv.targetResponse = f
 	default:
 		log.Errorf("could not recognize cluster type %v", cluster)
@@ -297,7 +298,7 @@ func (recv *asyncRequestContextImpl) Cancel(nodeMetrics *metrics.NodeMetrics) bo
 
 func (recv *asyncRequestContextImpl) SetResponse(
 	nodeMetrics *metrics.NodeMetrics, _ *frame.RawFrame,
-	_ ClusterType, _ ClusterConnectorType) bool {
+	_ common.ClusterType, _ ClusterConnectorType) bool {
 	recv.lock.Lock()
 	defer recv.lock.Unlock()
 

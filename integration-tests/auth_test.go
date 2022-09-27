@@ -602,7 +602,7 @@ func TestAuth(t *testing.T) {
 				checkedTarget := false
 				secondaryHandshakeIsTarget := true
 				asyncIsTarget := true
-				if proxyConf.ForwardReadsToTarget {
+				if proxyConf.PrimaryCluster == config.PrimaryClusterTarget {
 					asyncIsTarget = false
 				}
 
@@ -611,7 +611,7 @@ func TestAuth(t *testing.T) {
 				var asyncRequests []*frame.Frame
 
 				controlConnection := 1
-				if proxyConf.DualReadsEnabled {
+				if proxyConf.ReadMode == config.ReadModeDualAsyncOnSecondary {
 					if asyncIsTarget {
 						if len(targetRequestsByConn) == controlConnection + 2 {
 							asyncRequests = targetRequestsByConn[1]
@@ -711,7 +711,7 @@ func TestAuth(t *testing.T) {
 					require.Equal(t, primitive.OpCodeAuthResponse, targetRequests[1].Header.OpCode)
 				}
 
-				if proxyConf.DualReadsEnabled {
+				if proxyConf.ReadMode == config.ReadModeDualAsyncOnSecondary {
 					if asyncHandshakeAttempted {
 						if (asyncIsTarget && len(targetRequests) == 2) || (!asyncIsTarget && len(originRequests) == 2) {
 							require.Equal(t, 2, len(asyncRequests))
@@ -730,14 +730,13 @@ func TestAuth(t *testing.T) {
 				testFunc(t, proxyConf)
 			})
 
-			proxyConf.DualReadsEnabled = true
-			proxyConf.AsyncReadsOnSecondary = true
-			proxyConf.ForwardReadsToTarget = false
+			proxyConf.ReadMode = config.ReadModeDualAsyncOnSecondary
+			proxyConf.PrimaryCluster = config.PrimaryClusterOrigin
 			t.Run("AsyncReadsOnTarget", func(t *testing.T) {
 				testFunc(t, proxyConf)
 			})
 
-			proxyConf.ForwardReadsToTarget = true
+			proxyConf.PrimaryCluster = config.PrimaryClusterTarget
 			t.Run("AsyncReadsOnOrigin", func(t *testing.T) {
 				testFunc(t, proxyConf)
 			})

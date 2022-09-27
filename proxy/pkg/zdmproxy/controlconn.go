@@ -6,6 +6,7 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/datastax/zdm-proxy/proxy/pkg/common"
 	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 	"github.com/google/uuid"
 	"github.com/jpillora/backoff"
@@ -23,7 +24,7 @@ import (
 
 type ControlConn struct {
 	conf                     *config.Config
-	topologyConfig           *config.TopologyConfig
+	topologyConfig           *common.TopologyConfig
 	cqlConn                  CqlConnection
 	retryBackoffPolicy       *backoff.Backoff
 	heartbeatPeriod          time.Duration
@@ -59,7 +60,7 @@ const ccWriteTimeout = 5 * time.Second
 const ccReadTimeout = 10 * time.Second
 
 func NewControlConn(ctx context.Context, defaultPort int, connConfig ConnectionConfig,
-	username string, password string, conf *config.Config, topologyConfig *config.TopologyConfig, proxyRand *rand.Rand) *ControlConn {
+	username string, password string, conf *config.Config, topologyConfig *common.TopologyConfig, proxyRand *rand.Rand) *ControlConn {
 	authEnabled := &atomic.Value{}
 	authEnabled.Store(true)
 	return &ControlConn{
@@ -81,7 +82,7 @@ func NewControlConn(ctx context.Context, defaultPort int, connConfig ConnectionC
 		password:                 password,
 		counterLock:              &sync.RWMutex{},
 		consecutiveFailures:      0,
-		OpenConnectionTimeout:    time.Duration(conf.ClusterConnectionTimeoutMs) * time.Millisecond,
+		OpenConnectionTimeout:    time.Duration(connConfig.GetConnectionTimeoutMs()) * time.Millisecond,
 		cqlConnLock:              &sync.Mutex{},
 		topologyLock:             &sync.RWMutex{},
 		orderedHostsInLocalDc:    nil,
@@ -667,7 +668,7 @@ func shuffleHosts(rnd *rand.Rand, hosts []*Host) {
 	})
 }
 
-func computeVirtualHosts(topologyConfig *config.TopologyConfig, orderedHosts []*Host) ([]*VirtualHost, error) {
+func computeVirtualHosts(topologyConfig *common.TopologyConfig, orderedHosts []*Host) ([]*VirtualHost, error) {
 	proxyAddresses := topologyConfig.Addresses
 	numTokens := topologyConfig.NumTokens
 	twoPow64 := new(big.Int).Exp(big.NewInt(2), big.NewInt(64), nil)

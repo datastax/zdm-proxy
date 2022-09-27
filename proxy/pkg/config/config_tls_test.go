@@ -1,6 +1,7 @@
 package config
 
 import (
+	"github.com/datastax/zdm-proxy/proxy/pkg/common"
 	"github.com/stretchr/testify/require"
 	"testing"
 )
@@ -189,7 +190,7 @@ func TestOriginConfig_ClusterTlsConfig(t *testing.T) {
 			}
 			setTargetContactPointsAndPortEnvVars()
 
-			var tlsConf *ClusterTlsConfig
+			var tlsConf *common.ClusterTlsConfig
 			conf, err := New().ParseEnvVars()
 			if err != nil {
 				if tt.errExpected {
@@ -387,7 +388,7 @@ func TestTargetConfig_ClusterTlsConfig(t *testing.T) {
 			}
 			setOriginContactPointsAndPortEnvVars()
 
-			var tlsConf *ClusterTlsConfig
+			var tlsConf *common.ClusterTlsConfig
 			conf, err := New().ParseEnvVars()
 			if err != nil {
 				if tt.errExpected {

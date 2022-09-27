@@ -118,7 +118,7 @@ func CleanUpClusters() {
 type SimulacronTestSetup struct {
 	Origin *simulacron.Cluster
 	Target *simulacron.Cluster
-	Proxy  *zdmproxy.CloudgateProxy
+	Proxy  *zdmproxy.ZdmProxy
 }
 
 func NewSimulacronTestSetupWithSession(createProxy bool, createSession bool) (*SimulacronTestSetup, error) {
@@ -142,7 +142,7 @@ func NewSimulacronTestSetupWithSessionAndNodesAndConfig(createProxy bool, create
 	if err != nil {
 		log.Panic("simulacron target startup failed: ", err)
 	}
-	var proxyInstance *zdmproxy.CloudgateProxy
+	var proxyInstance *zdmproxy.ZdmProxy
 	if createProxy {
 		if config == nil {
 			config = NewTestConfig(origin.GetInitialContactPoint(), target.GetInitialContactPoint())
@@ -191,7 +191,7 @@ func (setup *SimulacronTestSetup) Cleanup() {
 type CcmTestSetup struct {
 	Origin *ccm.Cluster
 	Target *ccm.Cluster
-	Proxy  *zdmproxy.CloudgateProxy
+	Proxy  *zdmproxy.ZdmProxy
 }
 
 func NewTemporaryCcmTestSetup(start bool, createProxy bool) (*CcmTestSetup, error) {
@@ -208,7 +208,7 @@ func NewTemporaryCcmTestSetup(start bool, createProxy bool) (*CcmTestSetup, erro
 		return nil, err
 	}
 
-	var proxyInstance *zdmproxy.CloudgateProxy
+	var proxyInstance *zdmproxy.ZdmProxy
 	if createProxy {
 		proxyInstance, err = NewProxyInstance(origin, target)
 		if err != nil {
@@ -264,7 +264,7 @@ func (setup *CcmTestSetup) Cleanup() {
 type CqlServerTestSetup struct {
 	Origin *cqlserver.Cluster
 	Target *cqlserver.Cluster
-	Proxy  *zdmproxy.CloudgateProxy
+	Proxy  *zdmproxy.ZdmProxy
 	Client *cqlserver.Client
 }
 
@@ -284,7 +284,7 @@ func NewCqlServerTestSetup(conf *config.Config, start bool, createProxy bool, co
 		return nil, err
 	}
 
-	var proxyInstance *zdmproxy.CloudgateProxy
+	var proxyInstance *zdmproxy.ZdmProxy
 	if createProxy {
 		proxyInstance, err = NewProxyInstanceWithConfig(conf)
 		if err != nil {
@@ -369,11 +369,11 @@ func (setup *CqlServerTestSetup) Cleanup() {
 	}
 }
 
-func NewProxyInstance(origin TestCluster, target TestCluster) (*zdmproxy.CloudgateProxy, error) {
+func NewProxyInstance(origin TestCluster, target TestCluster) (*zdmproxy.ZdmProxy, error) {
 	return NewProxyInstanceWithConfig(NewTestConfig(origin.GetInitialContactPoint(), target.GetInitialContactPoint()))
 }
 
-func NewProxyInstanceWithConfig(config *config.Config) (*zdmproxy.CloudgateProxy, error) {
+func NewProxyInstanceWithConfig(config *config.Config) (*zdmproxy.ZdmProxy, error) {
 	return zdmproxy.Run(config, context.Background())
 }
 
@@ -404,7 +404,8 @@ func NewTestConfig(originHost string, targetHost string) *config.Config {
 	conf.ProxyListenPort = 14002
 	conf.ProxyListenAddress = "localhost"
 
-	conf.ClusterConnectionTimeoutMs = 30000
+	conf.OriginConnectionTimeoutMs = 30000
+	conf.TargetConnectionTimeoutMs = 30000
 	conf.HeartbeatIntervalMs = 30000
 
 	conf.HeartbeatRetryIntervalMaxMs = 30000
@@ -438,9 +439,9 @@ func NewTestConfig(originHost string, targetHost string) *config.Config {
 	conf.AsyncConnectorWriteQueueSizeFrames = 2048
 	conf.AsyncConnectorWriteBufferSizeBytes = 4096
 
-	conf.ForwardReadsToTarget = false
-	conf.DualReadsEnabled = false
-	conf.AsyncReadsOnSecondary = false
+	conf.PrimaryCluster = config.PrimaryClusterOrigin
+	conf.ReadMode = config.ReadModePrimaryOnly
+	conf.SystemQueriesMode = config.SystemQueriesModePrimary
 	conf.AsyncHandshakeTimeoutMs = 4000
 
 	conf.ProxyRequestTimeoutMs = 10000

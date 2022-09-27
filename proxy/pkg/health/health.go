@@ -34,7 +34,7 @@ const (
 	STARTUP          = Status("STARTUP")
 )
 
-func ReadinessHandler(proxy *zdmproxy.CloudgateProxy) http.Handler {
+func ReadinessHandler(proxy *zdmproxy.ZdmProxy) http.Handler {
 	return http.HandlerFunc(func(rsp http.ResponseWriter, req *http.Request) {
 		if req.Method != http.MethodGet {
 			http.NotFound(rsp, req)
@@ -70,7 +70,7 @@ func LivenessHandler() http.Handler {
 	})
 }
 
-func PerformHealthCheck(proxy *zdmproxy.CloudgateProxy) *StatusReport {
+func PerformHealthCheck(proxy *zdmproxy.ZdmProxy) *StatusReport {
 	if proxy == nil {
 		return &StatusReport{
 			OriginStatus: nil,

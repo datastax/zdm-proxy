@@ -333,6 +333,7 @@ func modifyConfForHealthTests(config *config.Config) {
 	config.HeartbeatRetryIntervalMinMs = 250
 	config.HeartbeatRetryIntervalMaxMs = 500
 	config.HeartbeatIntervalMs = 500
-	config.ClusterConnectionTimeoutMs = 2000
+	config.OriginConnectionTimeoutMs = 2000
+	config.TargetConnectionTimeoutMs = 2000
 	config.HeartbeatFailureThreshold = 2
 }

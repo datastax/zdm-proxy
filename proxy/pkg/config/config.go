@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/datastax/zdm-proxy/proxy/pkg/common"
 	"github.com/kelseyhightower/envconfig"
 	log "github.com/sirupsen/logrus"
 	"net"
@@ -12,84 +13,94 @@ import (
 
 // Config holds the values of environment variables necessary for proper Proxy function.
 type Config struct {
+
+	// Global bucket
+
+	PrimaryCluster          string `default:"ORIGIN" split_words:"true"`
+	ReadMode                string `default:"PRIMARY_ONLY" split_words:"true"`
+	ReplaceCqlFunctions     bool   `default:"false" split_words:"true"`
+	AsyncHandshakeTimeoutMs int    `default:"4000" split_words:"true"`
+	LogLevel                string `default:"INFO" split_words:"true"`
+
+	// Proxy Topology (also known as system.peers "virtualization") bucket
+
 	ProxyTopologyIndex     int    `default:"0" split_words:"true"`
 	ProxyTopologyAddresses string `split_words:"true"`
 	ProxyTopologyNumTokens int    `default:"8" split_words:"true"`
 
-	OriginDatacenter string `split_words:"true"`
-	TargetDatacenter string `split_words:"true"`
-
-	OriginUsername string `required:"true" split_words:"true"`
-	OriginPassword string `required:"true" split_words:"true" json:"-"`
+	// Origin bucket
 
 	OriginContactPoints           string `split_words:"true"`
 	OriginPort                    int    `default:"9042" split_words:"true"`
 	OriginSecureConnectBundlePath string `split_words:"true"`
-
-	TargetUsername string `required:"true" split_words:"true"`
-	TargetPassword string `required:"true" split_words:"true" json:"-"`
-
-	TargetContactPoints           string `split_words:"true"`
-	TargetPort                    int    `default:"9042" split_words:"true"`
-	TargetSecureConnectBundlePath string `split_words:"true"`
+	OriginLocalDatacenter         string `split_words:"true"`
+	OriginUsername                string `required:"true" split_words:"true"`
+	OriginPassword                string `required:"true" split_words:"true" json:"-"`
+	OriginConnectionTimeoutMs     int    `default:"30000" split_words:"true"`
 
 	OriginTlsServerCaPath   string `split_words:"true"`
 	OriginTlsClientCertPath string `split_words:"true"`
 	OriginTlsClientKeyPath  string `split_words:"true"`
 
+	// Target bucket
+
+	TargetContactPoints           string `split_words:"true"`
+	TargetPort                    int    `default:"9042" split_words:"true"`
+	TargetSecureConnectBundlePath string `split_words:"true"`
+	TargetLocalDatacenter         string `split_words:"true"`
+	TargetUsername                string `required:"true" split_words:"true"`
+	TargetPassword                string `required:"true" split_words:"true" json:"-"`
+	TargetConnectionTimeoutMs     int    `default:"30000" split_words:"true"`
+
 	TargetTlsServerCaPath   string `split_words:"true"`
 	TargetTlsClientCertPath string `split_words:"true"`
 	TargetTlsClientKeyPath  string `split_words:"true"`
+
+	// Proxy bucket
+
+	ProxyListenAddress        string `default:"localhost" split_words:"true"`
+	ProxyListenPort           int    `default:"14002" split_words:"true"`
+	ProxyRequestTimeoutMs     int    `default:"10000" split_words:"true"`
+	ProxyMaxClientConnections int    `default:"500" split_words:"true"`
 
 	ProxyTlsCaPath            string `split_words:"true"`
 	ProxyTlsCertPath          string `split_words:"true"`
 	ProxyTlsKeyPath           string `split_words:"true"`
 	ProxyTlsRequireClientAuth bool   `split_words:"true"`
 
-	MetricsAddress     string `default:"localhost" split_words:"true"`
-	MetricsPort        int    `default:"14001" split_words:"true"`
-	ProxyListenPort    int    `default:"14002" split_words:"true"`
-	ProxyListenAddress string `default:"localhost" split_words:"true"`
+	// Metrics bucket
 
-	ClusterConnectionTimeoutMs int `default:"30000" split_words:"true"`
-	HeartbeatIntervalMs        int `default:"30000" split_words:"true"`
+	MetricsEnabled bool   `default:"true" split_words:"true"`
+	MetricsAddress string `default:"localhost" split_words:"true"`
+	MetricsPort    int    `default:"14001" split_words:"true"`
+
+	MetricsOriginLatencyBucketsMs    string `default:"1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000" split_words:"true"`
+	MetricsTargetLatencyBucketsMs    string `default:"1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000" split_words:"true"`
+	MetricsAsyncReadLatencyBucketsMs string `default:"1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000" split_words:"true"`
+
+	// Heartbeat bucket
+
+	HeartbeatIntervalMs int `default:"30000" split_words:"true"`
 
 	HeartbeatRetryIntervalMinMs int     `default:"250" split_words:"true"`
 	HeartbeatRetryIntervalMaxMs int     `default:"30000" split_words:"true"`
 	HeartbeatRetryBackoffFactor float64 `default:"2" split_words:"true"`
 	HeartbeatFailureThreshold   int     `default:"1" split_words:"true"`
 
-	MetricsEnabled bool `default:"true" split_words:"true"`
-
-	ForwardReadsToTarget         bool `default:"false" split_words:"true"`
-	ForwardSystemQueriesToTarget bool `default:"false" split_words:"true"`
-
-	ReplaceServerSideFunctions bool `default:"false" split_words:"true"`
-
-	DualReadsEnabled        bool `default:"false" split_words:"true"`
-	AsyncReadsOnSecondary   bool `default:"false" split_words:"true"`
-	AsyncHandshakeTimeoutMs int  `default:"4000" split_words:"true"`
-
-	ProxyRequestTimeoutMs int `default:"10000" split_words:"true"`
-
-	LogLevel string `default:"INFO" split_words:"true"`
-
-	ProxyMaxClientConnections int `default:"500" split_words:"true"`
-
-	MetricsOriginLatencyBucketsMs    string `default:"1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000" split_words:"true"`
-	MetricsTargetLatencyBucketsMs    string `default:"1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000" split_words:"true"`
-	MetricsAsyncReadLatencyBucketsMs string `default:"1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000" split_words:"true"`
-
 	//////////////////////////////////////////////////////////////////////
 	/// THE SETTINGS BELOW AREN'T SUPPORTED AND MAY CHANGE AT ANY TIME ///
 	//////////////////////////////////////////////////////////////////////
+
+	SystemQueriesMode string `default:"PRIMARY" split_words:"true"`
 
 	ForwardClientCredentialsToOrigin bool `default:"false" split_words:"true"` // only takes effect if both clusters have auth enabled
 
 	OriginEnableHostAssignment bool `default:"true" split_words:"true"`
 	TargetEnableHostAssignment bool `default:"true" split_words:"true"`
 
-	// PERFORMANCE TUNING CONFIG SETTINGS (shouldn't be changed by users)
+	//////////////////////////////////////////////////////////////////////////////////////////////////////////
+	/// THE SETTINGS BELOW ARE FOR PERFORMANCE TUNING; THEY AREN'T SUPPORTED AND MAY CHANGE AT ANY TIME //////
+	//////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 	RequestWriteQueueSizeFrames int `default:"128" split_words:"true"`
 	RequestWriteBufferSizeBytes int `default:"4096" split_words:"true"`
@@ -138,7 +149,7 @@ func (c *Config) ParseEnvVars() (*Config, error) {
 	return c, nil
 }
 
-func (c *Config) ParseTopologyConfig() (*TopologyConfig, error) {
+func (c *Config) ParseTopologyConfig() (*common.TopologyConfig, error) {
 	virtualizationEnabled := true
 	var proxyInstanceCount = -1
 	proxyAddressesTyped := []net.IP{net.ParseIP("127.0.0.1")}
@@ -179,7 +190,7 @@ func (c *Config) ParseTopologyConfig() (*TopologyConfig, error) {
 		return nil, fmt.Errorf("invalid ProxyTopologyNumTokens (%v), it must be positive and equal or less than 256", c.ProxyTopologyNumTokens)
 	}
 
-	return &TopologyConfig{
+	return &common.TopologyConfig{
 		VirtualizationEnabled: virtualizationEnabled,
 		Addresses:             proxyAddressesTyped,
 		Index:                 proxyIndex,
@@ -234,12 +245,77 @@ func (c *Config) Validate() error {
 		return err
 	}
 
-	_, err = c.GetReadMode()
+	_, err = c.ParsePrimaryCluster()
 	if err != nil {
 		return err
 	}
 
+	_, err = c.ParseSystemQueriesMode()
+	if err != nil {
+		return err
+	}
+
+	_, err = c.ParseReadMode()
+	if err != nil {
+		return err
+	}
+
+
 	return nil
+}
+
+const (
+	SystemQueriesModeOrigin  = "ORIGIN"
+	SystemQueriesModeTarget  = "TARGET"
+	SystemQueriesModePrimary = "PRIMARY"
+)
+
+func (c *Config) ParseSystemQueriesMode() (common.SystemQueriesMode, error) {
+	switch strings.ToUpper(c.SystemQueriesMode) {
+	case SystemQueriesModePrimary:
+		return common.SystemQueriesModePrimary, nil
+	case SystemQueriesModeTarget:
+		return common.SystemQueriesModeTarget, nil
+	case SystemQueriesModeOrigin:
+		return common.SystemQueriesModeOrigin, nil
+	default:
+		return common.SystemQueriesModeUndefined, fmt.Errorf("invalid value for ZDM_SYSTEM_QUERIES_MODE; possible values are: %v, %v and %v",
+			SystemQueriesModePrimary, SystemQueriesModeTarget, SystemQueriesModeOrigin)
+	}
+}
+
+const (
+	PrimaryClusterOrigin = "ORIGIN"
+	PrimaryClusterTarget = "TARGET"
+)
+
+func (c *Config) ParsePrimaryCluster() (common.ClusterType, error) {
+	switch strings.ToUpper(c.PrimaryCluster) {
+	case PrimaryClusterOrigin:
+		return common.ClusterTypeOrigin, nil
+	case PrimaryClusterTarget:
+		return common.ClusterTypeTarget, nil
+	default:
+		return common.ClusterTypeNone, fmt.Errorf("invalid value for ZDM_PRIMARY_CLUSTER; possible values are: %v and %v",
+			PrimaryClusterOrigin, PrimaryClusterTarget)
+	}
+}
+
+const (
+	ReadModePrimaryOnly          = "PRIMARY_ONLY"
+	ReadModeDualAsyncOnSecondary = "DUAL_ASYNC_ON_SECONDARY"
+)
+
+func (c *Config) ParseReadMode() (common.ReadMode, error) {
+	switch strings.ToUpper(c.ReadMode) {
+	case ReadModePrimaryOnly:
+		return common.ReadModePrimaryOnly, nil
+	case ReadModeDualAsyncOnSecondary:
+		return common.ReadModeDualAsyncOnSecondary, nil
+	default:
+		return common.ReadModeUndefined, fmt.Errorf("invalid value for ZDM_READ_MODE; possible values are: %v and %v",
+			ReadModePrimaryOnly, ReadModeDualAsyncOnSecondary)
+	}
 }
 
 func (c *Config) ParseLogLevel() (log.Level, error) {
@@ -287,8 +363,8 @@ func (c *Config) ParseOriginContactPoints() ([]string, error) {
 		return nil, fmt.Errorf("OriginSecureConnectBundlePath and OriginContactPoints are mutually exclusive. Please specify only one of them.")
 	}
 
-	if isDefined(c.OriginSecureConnectBundlePath) && isDefined(c.OriginDatacenter) {
-		return nil, fmt.Errorf("OriginSecureConnectBundlePath and OriginDatacenter are mutually exclusive. Please specify only one of them.")
+	if isDefined(c.OriginSecureConnectBundlePath) && isDefined(c.OriginLocalDatacenter) {
+		return nil, fmt.Errorf("OriginSecureConnectBundlePath and OriginLocalDatacenter are mutually exclusive. Please specify only one of them.")
 	}
 
 	if isNotDefined(c.OriginSecureConnectBundlePath) && isNotDefined(c.OriginContactPoints) {
@@ -299,8 +375,8 @@ func (c *Config) ParseOriginContactPoints() ([]string, error) {
 		return nil, fmt.Errorf("OriginContactPoints was specified but the port is missing. Please provide OriginPort")
 	}
 
-	if (c.OriginEnableHostAssignment == false) && (isDefined(c.OriginDatacenter)) {
-		return nil, fmt.Errorf("OriginDatacenter was specified but OriginEnableHostAssignment is false. Please enable host assignment or don't set the datacenter.")
+	if (c.OriginEnableHostAssignment == false) && (isDefined(c.OriginLocalDatacenter)) {
+		return nil, fmt.Errorf("OriginLocalDatacenter was specified but OriginEnableHostAssignment is false. Please enable host assignment or don't set the datacenter.")
 	}
 
 	if isNotDefined(c.OriginSecureConnectBundlePath) {
@@ -320,8 +396,8 @@ func (c *Config) ParseTargetContactPoints() ([]string, error) {
 		return nil, fmt.Errorf("TargetSecureConnectBundlePath and TargetContactPoints are mutually exclusive. Please specify only one of them.")
 	}
 
-	if isDefined(c.TargetSecureConnectBundlePath) && isDefined(c.TargetDatacenter) {
-		return nil, fmt.Errorf("TargetSecureConnectBundlePath and TargetDatacenter are mutually exclusive. Please specify only one of them.")
+	if isDefined(c.TargetSecureConnectBundlePath) && isDefined(c.TargetLocalDatacenter) {
+		return nil, fmt.Errorf("TargetSecureConnectBundlePath and TargetLocalDatacenter are mutually exclusive. Please specify only one of them.")
 	}
 
 	if isNotDefined(c.TargetSecureConnectBundlePath) && isNotDefined(c.TargetContactPoints) {
@@ -332,8 +408,8 @@ func (c *Config) ParseTargetContactPoints() ([]string, error) {
 		return nil, fmt.Errorf("TargetContactPoints was specified but the port is missing. Please provide TargetPort")
 	}
 
-	if (c.TargetEnableHostAssignment == false) && (isDefined(c.TargetDatacenter)) {
-		return nil, fmt.Errorf("TargetDatacenter was specified but TargetEnableHostAssignment is false. Please enable host assignment or don't set the datacenter.")
+	if (c.TargetEnableHostAssignment == false) && (isDefined(c.TargetLocalDatacenter)) {
+		return nil, fmt.Errorf("TargetLocalDatacenter was specified but TargetEnableHostAssignment is false. Please enable host assignment or don't set the datacenter.")
 	}
 
 	if isNotDefined(c.TargetSecureConnectBundlePath) {
@@ -352,7 +428,7 @@ func parseContactPoints(setting string) []string {
 	return strings.Split(strings.ReplaceAll(setting, " ", ""), ",")
 }
 
-func (c *Config) ParseOriginTlsConfig(displayLogMessages bool) (*ClusterTlsConfig, error) {
+func (c *Config) ParseOriginTlsConfig(displayLogMessages bool) (*common.ClusterTlsConfig, error) {
 
 	// No TLS defined
 
@@ -363,7 +439,7 @@ func (c *Config) ParseOriginTlsConfig(displayLogMessages bool) (*ClusterTlsConfi
 		if displayLogMessages {
 			log.Infof("TLS was not configured for Origin")
 		}
-		return &ClusterTlsConfig{
+		return &common.ClusterTlsConfig{
 			TlsEnabled: false,
 		}, nil
 	}
@@ -372,13 +448,13 @@ func (c *Config) ParseOriginTlsConfig(displayLogMessages bool) (*ClusterTlsConfi
 
 	if isDefined(c.OriginSecureConnectBundlePath) {
 		if isDefined(c.OriginTlsServerCaPath) || isDefined(c.OriginTlsClientCertPath) || isDefined(c.OriginTlsClientKeyPath) {
-			return &ClusterTlsConfig{}, fmt.Errorf("Incorrect TLS configuration for Origin: Secure Connect Bundle and custom TLS parameters cannot be specified at the same time.")
+			return &common.ClusterTlsConfig{}, fmt.Errorf("Incorrect TLS configuration for Origin: Secure Connect Bundle and custom TLS parameters cannot be specified at the same time.")
 		}
 
 		if displayLogMessages {
 			log.Infof("Mutual TLS configured for Origin using an Astra secure connect bundle")
 		}
-		return &ClusterTlsConfig{
+		return &common.ClusterTlsConfig{
 			TlsEnabled:              true,
 			SecureConnectBundlePath: c.OriginSecureConnectBundlePath,
 		}, nil
@@ -390,7 +466,7 @@ func (c *Config) ParseOriginTlsConfig(displayLogMessages bool) (*ClusterTlsConfi
 		if displayLogMessages {
 			log.Infof("One-way TLS configured for Origin. Please note that hostname verification is not currently supported.")
 		}
-		return &ClusterTlsConfig{
+		return &common.ClusterTlsConfig{
 			TlsEnabled:   true,
 			ServerCaPath: c.OriginTlsServerCaPath,
 		}, nil
@@ -400,7 +476,7 @@ func (c *Config) ParseOriginTlsConfig(displayLogMessages bool) (*ClusterTlsConfi
 		if displayLogMessages {
 			log.Infof("Mutual TLS configured for Origin. Please note that hostname verification is not currently supported.")
 		}
-		return &ClusterTlsConfig{
+		return &common.ClusterTlsConfig{
 			TlsEnabled:     true,
 			ServerCaPath:   c.OriginTlsServerCaPath,
 			ClientCertPath: c.OriginTlsClientCertPath,
@@ -408,11 +484,12 @@ func (c *Config) ParseOriginTlsConfig(displayLogMessages bool) (*ClusterTlsConfi
 		}, nil
 	}
 
-	return &ClusterTlsConfig{}, fmt.Errorf("incomplete TLS configuration for Origin: when using mutual TLS, please specify Server CA path, Client Cert path and Client Key path")
+	return &common.ClusterTlsConfig{}, fmt.Errorf("incomplete TLS configuration for Origin: when using mutual TLS, " +
+		"please specify Server CA path, Client Cert path and Client Key path")
 
 }
 
-func (c *Config) ParseTargetTlsConfig(displayLogMessages bool) (*ClusterTlsConfig, error) {
+func (c *Config) ParseTargetTlsConfig(displayLogMessages bool) (*common.ClusterTlsConfig, error) {
 
 	// No TLS defined
 
@@ -423,7 +500,7 @@ func (c *Config) ParseTargetTlsConfig(displayLogMessages bool) (*ClusterTlsConfi
 		if displayLogMessages {
 			log.Infof("TLS was not configured for Target")
 		}
-		return &ClusterTlsConfig{
+		return &common.ClusterTlsConfig{
 			TlsEnabled: false,
 		}, nil
 	}
@@ -432,10 +509,10 @@ func (c *Config) ParseTargetTlsConfig(displayLogMessages bool) (*ClusterTlsConfi
 
 	if isDefined(c.TargetSecureConnectBundlePath) {
 		if isDefined(c.TargetTlsServerCaPath) || isDefined(c.TargetTlsClientCertPath) || isDefined(c.TargetTlsClientKeyPath) {
-			return &ClusterTlsConfig{}, fmt.Errorf("Incorrect TLS configuration for Target: Secure Connect Bundle and custom TLS parameters cannot be specified at the same time.")
+			return &common.ClusterTlsConfig{}, fmt.Errorf("Incorrect TLS configuration for Target: Secure Connect Bundle and custom TLS parameters cannot be specified at the same time.")
 		}
 
-		return &ClusterTlsConfig{
+		return &common.ClusterTlsConfig{
 			TlsEnabled:              true,
 			SecureConnectBundlePath: c.TargetSecureConnectBundlePath,
 		}, nil
@@ -447,7 +524,7 @@ func (c *Config) ParseTargetTlsConfig(displayLogMessages bool) (*ClusterTlsConfi
 		if displayLogMessages {
 			log.Infof("One-way TLS configured for Target. Please note that hostname verification is not currently supported.")
 		}
-		return &ClusterTlsConfig{
+		return &common.ClusterTlsConfig{
 			TlsEnabled:   true,
 			ServerCaPath: c.TargetTlsServerCaPath,
 		}, nil
@@ -457,7 +534,7 @@ func (c *Config) ParseTargetTlsConfig(displayLogMessages bool) (*ClusterTlsConfi
 		if displayLogMessages {
 			log.Infof("Mutual TLS configured for Target. Please note that hostname verification is not currently supported.")
 		}
-		return &ClusterTlsConfig{
+		return &common.ClusterTlsConfig{
 			TlsEnabled:     true,
 			ServerCaPath:   c.TargetTlsServerCaPath,
 			ClientCertPath: c.TargetTlsClientCertPath,
@@ -465,10 +542,10 @@ func (c *Config) ParseTargetTlsConfig(displayLogMessages bool) (*ClusterTlsConfi
 		}, nil
 	}
 
-	return &ClusterTlsConfig{}, fmt.Errorf("incomplete TLS configuration for Target: when using mutual TLS, please specify Server CA path, Client Cert path and Client Key path")
+	return &common.ClusterTlsConfig{}, fmt.Errorf("incomplete TLS configuration for Target: when using mutual TLS, please specify Server CA path, Client Cert path and Client Key path")
 }
 
-func (c *Config) ParseProxyTlsConfig(displayLogMessages bool) (*ProxyTlsConfig, error) {
+func (c *Config) ParseProxyTlsConfig(displayLogMessages bool) (*common.ProxyTlsConfig, error) {
 
 	if isNotDefined(c.ProxyTlsCaPath) &&
 		isNotDefined(c.ProxyTlsCertPath) &&
@@ -476,7 +553,7 @@ func (c *Config) ParseProxyTlsConfig(displayLogMessages bool) (*ProxyTlsConfig, 
 		if displayLogMessages {
 			log.Info("Proxy TLS was not configured.")
 		}
-		return &ProxyTlsConfig{
+		return &common.ProxyTlsConfig{
 			TlsEnabled: false,
 		}, nil
 	}
@@ -485,7 +562,7 @@ func (c *Config) ParseProxyTlsConfig(displayLogMessages bool) (*ProxyTlsConfig, 
 		if displayLogMessages {
 			log.Info("Proxy TLS configured. Please note that hostname verification is not currently supported.")
 		}
-		return &ProxyTlsConfig{
+		return &common.ProxyTlsConfig{
 			TlsEnabled:    true,
 			ProxyCaPath:   c.ProxyTlsCaPath,
 			ProxyCertPath: c.ProxyTlsCertPath,
@@ -494,25 +571,7 @@ func (c *Config) ParseProxyTlsConfig(displayLogMessages bool) (*ProxyTlsConfig, 
 		}, nil
 	}
 
-	return &ProxyTlsConfig{}, fmt.Errorf("incomplete Proxy TLS configuration: when enabling proxy TLS, please specify CA path, Cert path and Key path")
-}
-
-func (c *Config) GetReadMode() (ReadMode, error) {
-	if c.DualReadsEnabled {
-		if c.AsyncReadsOnSecondary {
-			return ReadModeSecondaryAsync, nil
-		} else {
-			return ReadModeUndefined, fmt.Errorf("combination of DUAL_READS_ENABLED (%v) and ASYNC_READS_ON_SECONDARY (%v) not yet implemented",
-				c.DualReadsEnabled, c.AsyncReadsOnSecondary)
-		}
-	} else {
-		if c.AsyncReadsOnSecondary {
-			return ReadModeUndefined, fmt.Errorf("invalid combination of DUAL_READS_ENABLED (%v) and ASYNC_READS_ON_SECONDARY (%v)",
-				c.DualReadsEnabled, c.AsyncReadsOnSecondary)
-		} else {
-			return ReadModePrimaryOnly, nil
-		}
-	}
+	return &common.ProxyTlsConfig{}, fmt.Errorf("incomplete Proxy TLS configuration: when enabling proxy TLS, please specify CA path, Cert path and Key path")
 }
 
 func isDefined(propertyValue string) bool {
@@ -522,67 +581,3 @@ func isDefined(propertyValue string) bool {
 func isNotDefined(propertyValue string) bool {
 	return !isDefined(propertyValue)
 }
-
-// TopologyConfig contains configuration parameters for 2 features related to multi zdm-proxy instance deployment:
-//   - Virtualization of system.peers
-//   - Assignment of C* hosts per proxy instance for request connections
-type TopologyConfig struct {
-	VirtualizationEnabled bool     // enabled if PROXY_ADDRESSES is not empty
-	Addresses             []net.IP // comes from PROXY_ADDRESSES
-	Count                 int      // comes from PROXY_INSTANCE_COUNT unless PROXY_ADDRESSES is set
-	Index                 int      // comes from PROXY_INDEX
-	NumTokens             int      // comes from PROXY_NUM_TOKENS
-}
-
-func (recv *TopologyConfig) String() string {
-	return fmt.Sprintf("TopologyConfig{VirtualizationEnabled=%v, Addresses=%v, Count=%v, Index=%v, NumTokens=%v}",
-		recv.VirtualizationEnabled, recv.Addresses, recv.Count, recv.Index, recv.NumTokens)
-}
-
-// ClusterTlsConfig contains all TLS configuration parameters to connect to a cluster
-//   - TLS enabled is an internal flag that is automatically set based on the configuration provided
-//   - SCB and all other parameters are mutually exclusive: if SCB is provided, no other parameters must be specified. Doing so will result in a validation errExpected
-//   - When using a non-SCB configuration, all other three parameters must be specified (ServerCaPath, ClientCertPath, ClientKeyPath).
-type ClusterTlsConfig struct {
-	TlsEnabled              bool
-	ServerCaPath            string
-	ClientCertPath          string
-	ClientKeyPath           string
-	SecureConnectBundlePath string
-}
-
-func (recv *ClusterTlsConfig) String() string {
-	return fmt.Sprintf("ClusterTlsConfig{TlsEnabled=%v, ProxyCaPath=%v, ClientCertPath=%v, ClientKeyPath=%v}",
-		recv.TlsEnabled, recv.ServerCaPath, recv.ClientCertPath, recv.ClientKeyPath)
-}
-
-// ProxyTlsConfig contains all TLS configuration parameters to enable TLS at proxy level
-//   - TLS enabled is an internal flag that is automatically set based on the configuration provided
-//   - All three properties (ProxyCaPath, ProxyCertPath and ProxyKeyPath) are required for proxy TLS to be enabled
-type ProxyTlsConfig struct {
-	TlsEnabled    bool
-	ProxyCaPath   string
-	ProxyCertPath string
-	ProxyKeyPath  string
-	ClientAuth    bool
-}
-
-func (recv *ProxyTlsConfig) String() string {
-	return fmt.Sprintf("ProxyTlsConfig{TlsEnabled=%v, ProxyCaPath=%v, ProxyCertPath=%v, ProxyKeyPath=%v, ClientAuth=%v}",
-		recv.TlsEnabled, recv.ProxyCaPath, recv.ProxyCertPath, recv.ProxyKeyPath, recv.ClientAuth)
-
-}
-
-type ReadMode struct {
-	slug string
-}
-
-func (r ReadMode) String() string {
-	return r.slug
-}
-
-var (
-	ReadModeUndefined      = ReadMode{""}
-	ReadModePrimaryOnly    = ReadMode{"primary_only"}
-	ReadModeSecondaryAsync = ReadMode{"secondary_async"}
-)

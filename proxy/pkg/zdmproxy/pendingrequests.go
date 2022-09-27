@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/datastax/go-cassandra-native-protocol/frame"
+	"github.com/datastax/zdm-proxy/proxy/pkg/common"
 	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
 	"sync"
@@ -74,7 +75,7 @@ func (p *pendingRequests) cancel(streamId int16, reqCtx RequestContext) bool {
 }
 
 func (p *pendingRequests) markAsDone(
-	streamId int16, f *frame.RawFrame, cluster ClusterType, connectorType ClusterConnectorType) (RequestContext, bool) {
+	streamId int16, f *frame.RawFrame, cluster common.ClusterType, connectorType ClusterConnectorType) (RequestContext, bool) {
 	holder := p.getOrCreateRequestContextHolder(streamId)
 	reqCtx := holder.Get()
 	if reqCtx == nil {

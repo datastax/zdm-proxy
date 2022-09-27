@@ -11,6 +11,7 @@ import (
 	"github.com/datastax/zdm-proxy/integration-tests/env"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/integration-tests/utils"
+	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 	"github.com/datastax/zdm-proxy/proxy/pkg/zdmproxy"
 	"github.com/gocql/gocql"
 	"github.com/google/uuid"
@@ -103,7 +104,7 @@ func TestVirtualizationNumberOfConnections(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			proxies := make([]*zdmproxy.CloudgateProxy, tt.proxyInstanceCreationCount)
+			proxies := make([]*zdmproxy.ZdmProxy, tt.proxyInstanceCreationCount)
 			for i := 0; i < tt.proxyInstanceCreationCount; i++ {
 				proxies[i], err = LaunchProxyWithTopologyConfig(
 					strings.Join(tt.proxyAddresses[i], ","), tt.proxyIndexes[i],
@@ -271,7 +272,7 @@ func TestVirtualizationTokenAwareness(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			proxies := make([]*zdmproxy.CloudgateProxy, tt.proxyInstanceCreationCount)
+			proxies := make([]*zdmproxy.ZdmProxy, tt.proxyInstanceCreationCount)
 			for i := 0; i < tt.proxyInstanceCreationCount; i++ {
 				proxies[i], err = LaunchProxyWithTopologyConfig(
 					strings.Join(tt.proxyAddresses[i], ","), tt.proxyIndexes[i],
@@ -821,7 +822,7 @@ func TestVirtualizationPartitioner(t *testing.T) {
 		Password: "cassandra",
 	}
 
-	runTestWithQueryForwarding := func(originPartitioner string, targetPartitioner string, forwardReadsToTarget bool, proxyShouldStartUp bool) {
+	runTestWithQueryForwarding := func(originPartitioner string, targetPartitioner string, primaryCluster string, proxyShouldStartUp bool) {
 
 		serverConf := setup.NewTestConfig(originAddress, targetAddress)
 
@@ -860,7 +861,7 @@ func TestVirtualizationPartitioner(t *testing.T) {
 
 		proxyConfig := setup.NewTestConfig(originAddress, targetAddress)
 		proxyConfig.ProxyTopologyAddresses = "127.0.0.1" // needed to enable virtualization. TODO Remove once ZDM-321 is fixed
-		proxyConfig.ForwardReadsToTarget = forwardReadsToTarget
+		proxyConfig.PrimaryCluster = primaryCluster
 		proxy, err := setup.NewProxyInstanceWithConfig(proxyConfig)
 		defer func() {
 			if proxy != nil {
@@ -896,8 +897,8 @@ func TestVirtualizationPartitioner(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			runTestWithQueryForwarding(tt.originPartitioner, tt.targetPartitioner, false, tt.proxyShouldStartUp)
-			runTestWithQueryForwarding(tt.originPartitioner, tt.targetPartitioner, true, tt.proxyShouldStartUp)
+			runTestWithQueryForwarding(tt.originPartitioner, tt.targetPartitioner, config.PrimaryClusterOrigin, tt.proxyShouldStartUp)
+			runTestWithQueryForwarding(tt.originPartitioner, tt.targetPartitioner, config.PrimaryClusterTarget, tt.proxyShouldStartUp)
 		})
 	}
 
@@ -905,7 +906,7 @@ func TestVirtualizationPartitioner(t *testing.T) {
 
 func LaunchProxyWithTopologyConfig(
 	proxyAddresses string, proxyIndex int, listenAddress string, numTokens int,
-	origin setup.TestCluster, target setup.TestCluster) (*zdmproxy.CloudgateProxy, error) {
+	origin setup.TestCluster, target setup.TestCluster) (*zdmproxy.ZdmProxy, error) {
 	conf := setup.NewTestConfig(origin.GetInitialContactPoint(), target.GetInitialContactPoint())
 	conf.ProxyTopologyIndex = proxyIndex
 	conf.ProxyTopologyAddresses = proxyAddresses

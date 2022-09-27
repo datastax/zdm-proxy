@@ -1,6 +1,7 @@
 package config
 
 import (
+	"github.com/datastax/zdm-proxy/proxy/pkg/common"
 	"github.com/stretchr/testify/require"
 	"testing"
 )
@@ -10,7 +11,7 @@ func TestConfig_ParseReadMode(t *testing.T) {
 	type test struct {
 		name             string
 		envVars          []envVar
-		expectedReadMode ReadMode
+		expectedReadMode common.ReadMode
 		errExpected      bool
 		errMsg           string
 	}
@@ -22,7 +23,7 @@ func TestConfig_ParseReadMode(t *testing.T) {
 				{"ZDM_DUAL_READS_ENABLED", "false"},
 				{"ZDM_ASYNC_READS_ON_SECONDARY", "false"},
 			},
-			expectedReadMode: ReadModePrimaryOnly,
+			expectedReadMode: common.ReadModePrimaryOnly,
 			errExpected:      false,
 			errMsg:           "",
 		},
@@ -32,7 +33,7 @@ func TestConfig_ParseReadMode(t *testing.T) {
 				{"ZDM_DUAL_READS_ENABLED", "true"},
 				{"ZDM_ASYNC_READS_ON_SECONDARY", "true"},
 			},
-			expectedReadMode: ReadModeSecondaryAsync,
+			expectedReadMode: common.ReadModeDualAsyncOnSecondary,
 			errExpected:      false,
 			errMsg:           "",
 		},
@@ -42,7 +43,7 @@ func TestConfig_ParseReadMode(t *testing.T) {
 				{"ZDM_DUAL_READS_ENABLED", "true"},
 				{"ZDM_ASYNC_READS_ON_SECONDARY", "false"},
 			},
-			expectedReadMode: ReadModeUndefined,
+			expectedReadMode: common.ReadModeUndefined,
 			errExpected:      true,
 			errMsg:           "combination of DUAL_READS_ENABLED (true) and ASYNC_READS_ON_SECONDARY (false) not yet implemented",
 		},
@@ -52,14 +53,14 @@ func TestConfig_ParseReadMode(t *testing.T) {
 				{"ZDM_DUAL_READS_ENABLED", "false"},
 				{"ZDM_ASYNC_READS_ON_SECONDARY", "true"},
 			},
-			expectedReadMode: ReadModeUndefined,
+			expectedReadMode: common.ReadModeUndefined,
 			errExpected:      true,
 			errMsg:           "invalid combination of DUAL_READS_ENABLED (false) and ASYNC_READS_ON_SECONDARY (true)",
 		},
 		{
 			name:           "Valid: Dual reads unset, async reads on secondary unset",
 			envVars:        []envVar{},
-			expectedReadMode: ReadModePrimaryOnly,
+			expectedReadMode: common.ReadModePrimaryOnly,
 			errExpected:      false,
 			errMsg:           "",
 		},
@@ -68,7 +69,7 @@ func TestConfig_ParseReadMode(t *testing.T) {
 			envVars:        []envVar{
 				{"ZDM_DUAL_READS_ENABLED", "true"},
 			},
-			expectedReadMode: ReadModeUndefined,
+			expectedReadMode: common.ReadModeUndefined,
 			errExpected:      true,
 			errMsg:           "combination of DUAL_READS_ENABLED (true) and ASYNC_READS_ON_SECONDARY (false) not yet implemented",
 		},
@@ -77,7 +78,7 @@ func TestConfig_ParseReadMode(t *testing.T) {
 			envVars:        []envVar{
 				{"ZDM_ASYNC_READS_ON_SECONDARY", "true"},
 			},
-			expectedReadMode: ReadModeUndefined,
+			expectedReadMode: common.ReadModeUndefined,
 			errExpected:      true,
 			errMsg:           "invalid combination of DUAL_READS_ENABLED (false) and ASYNC_READS_ON_SECONDARY (true)",
 		},
@@ -111,7 +112,7 @@ func TestConfig_ParseReadMode(t *testing.T) {
 			if conf == nil {
 				t.Fatal("No configuration validation error was thrown but the parsed configuration is null, stopping test here")
 			} else {
-				actualReadMode, _ := conf.GetReadMode()
+				actualReadMode, _ := conf.ParseReadMode()
 				require.Equal(t, tt.expectedReadMode, actualReadMode)
 			}
 		})

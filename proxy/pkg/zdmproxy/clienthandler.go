@@ -9,6 +9,7 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/datastax/zdm-proxy/proxy/pkg/common"
 	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
 	"github.com/google/uuid"
@@ -94,7 +95,7 @@ type ClientHandler struct {
 	clusterConnectorScheduler *Scheduler
 
 	conf           *config.Config
-	topologyConfig *config.TopologyConfig
+	topologyConfig *common.TopologyConfig
 
 	localClientHandlerWg *sync.WaitGroup
 
@@ -104,8 +105,10 @@ type ClientHandler struct {
 	originObserver *protocolEventObserverImpl
 	targetObserver *protocolEventObserverImpl
 
-	forwardAuthToTarget        bool
-	targetCredsOnClientRequest bool
+	primaryCluster               common.ClusterType
+	forwardSystemQueriesToTarget bool
+	forwardAuthToTarget          bool
+	targetCredsOnClientRequest   bool
 
 	queryModifier     *QueryModifier
 	parameterModifier *ParameterModifier
@@ -121,7 +124,7 @@ func NewClientHandler(
 	originControlConn *ControlConn,
 	targetControlConn *ControlConn,
 	conf *config.Config,
-	topologyConfig *config.TopologyConfig,
+	topologyConfig *common.TopologyConfig,
 	targetUsername string,
 	targetPassword string,
 	originUsername string,
@@ -137,13 +140,15 @@ func NewClientHandler(
 	originHost *Host,
 	targetHost *Host,
 	timeUuidGenerator TimeUuidGenerator,
-	readMode config.ReadMode) (*ClientHandler, error) {
+	readMode common.ReadMode,
+	primaryCluster common.ClusterType,
+	systemQueriesMode common.SystemQueriesMode) (*ClientHandler, error) {
 
 	originEndpointId := originCassandraConnInfo.endpoint.GetEndpointIdentifier()
 	targetEndpointId := targetCassandraConnInfo.endpoint.GetEndpointIdentifier()
 	asyncEndpointId := ""
-	if readMode == config.ReadModeSecondaryAsync {
-		if conf.ForwardReadsToTarget {
+	if readMode == common.ReadModeDualAsyncOnSecondary {
+		if primaryCluster == common.ClusterTypeTarget {
 			asyncEndpointId = originEndpointId
 		} else {
 			asyncEndpointId = targetEndpointId
@@ -194,9 +199,9 @@ func NewClientHandler(
 
 	asyncPendingRequests := newPendingRequests(MaxStreams, nodeMetrics)
 	var asyncConnector *ClusterConnector
-	if readMode == config.ReadModeSecondaryAsync {
+	if readMode == common.ReadModeDualAsyncOnSecondary {
 		var asyncConnInfo *ClusterConnectionInfo
-		if conf.ForwardReadsToTarget {
+		if primaryCluster == common.ClusterTypeTarget {
 			asyncConnInfo = originCassandraConnInfo
 		} else {
 			asyncConnInfo = targetCassandraConnInfo
@@ -279,6 +284,8 @@ func NewClientHandler(
 		targetHost:                           targetHost,
 		originObserver:                       originObserver,
 		targetObserver:                       targetObserver,
+		primaryCluster:                       primaryCluster,
+		forwardSystemQueriesToTarget:         systemQueriesMode.IsForwardToTarget(primaryCluster),
 		forwardAuthToTarget:                  forwardAuthToTarget,
 		targetCredsOnClientRequest:           targetCredsOnClientRequest,
 		queryModifier:                        NewQueryModifier(timeUuidGenerator),
@@ -552,7 +559,7 @@ func (ch *ClientHandler) responseLoop() {
 			ch.requestResponseScheduler.Schedule(func() {
 				defer wg.Done()
 
-				var responseClusterType ClusterType
+				var responseClusterType common.ClusterType
 				switch response.connectorType {
 				case ClusterConnectorTypeAsync:
 					responseClusterType = ch.asyncConnector.clusterType
@@ -740,41 +747,41 @@ func (ch *ClientHandler) cancelRequest(holder *requestContextHolder, reqCtx *req
 }
 
 // Computes the response to be sent to the client based on the forward decision of the request.
-func (ch *ClientHandler) computeClientResponse(requestContext *requestContextImpl) (*frame.RawFrame, ClusterType, error) {
+func (ch *ClientHandler) computeClientResponse(requestContext *requestContextImpl) (*frame.RawFrame, common.ClusterType, error) {
 	fwdDecision := requestContext.requestInfo.GetForwardDecision()
 	switch fwdDecision {
 	case forwardToOrigin:
 		if requestContext.originResponse == nil {
-			return nil, ClusterTypeNone, fmt.Errorf(
+			return nil, common.ClusterTypeNone, fmt.Errorf(
 				"did not receive response from origin cassandra channel, stream: %d",
 				requestContext.request.Header.StreamId)
 		}
 		log.Tracef("Forward to origin: just returning the response received from %v: %d",
-			ClusterTypeOrigin, requestContext.originResponse.Header.OpCode)
+			common.ClusterTypeOrigin, requestContext.originResponse.Header.OpCode)
 		if !isResponseSuccessful(requestContext.originResponse) {
 			ch.metricHandler.GetProxyMetrics().FailedRequestsOrigin.Add(1)
 		}
-		return requestContext.originResponse, ClusterTypeOrigin, nil
+		return requestContext.originResponse, common.ClusterTypeOrigin, nil
 	case forwardToTarget:
 		if requestContext.targetResponse == nil {
-			return nil, ClusterTypeNone, fmt.Errorf(
+			return nil, common.ClusterTypeNone, fmt.Errorf(
 				"did not receive response from target cassandra channel, stream: %d",
 				requestContext.request.Header.StreamId)
 		}
 		log.Tracef("Forward to target: just returning the response received from %v: %d",
-			ClusterTypeTarget, requestContext.targetResponse.Header.OpCode)
+			common.ClusterTypeTarget, requestContext.targetResponse.Header.OpCode)
 		if !isResponseSuccessful(requestContext.targetResponse) {
 			ch.metricHandler.GetProxyMetrics().FailedRequestsTarget.Add(1)
 		}
-		return requestContext.targetResponse, ClusterTypeTarget, nil
+		return requestContext.targetResponse, common.ClusterTypeTarget, nil
 	case forwardToBoth:
 		if requestContext.originResponse == nil {
-			return nil, ClusterTypeNone, fmt.Errorf(
+			return nil, common.ClusterTypeNone, fmt.Errorf(
 				"did not receive response from original cassandra channel, stream: %d",
 				requestContext.request.Header.StreamId)
 		}
 		if requestContext.targetResponse == nil {
-			return nil, ClusterTypeNone, fmt.Errorf(
+			return nil, common.ClusterTypeNone, fmt.Errorf(
 				"did not receive response from target cassandra channel, stream: %d",
 				requestContext.request.Header.StreamId)
 		}
@@ -783,41 +790,41 @@ func (ch *ClientHandler) computeClientResponse(requestContext *requestContextImp
 		return aggregatedResponse, responseClusterType, nil
 	case forwardToAsyncOnly:
 		switch ch.asyncConnector.clusterType {
-		case ClusterTypeTarget:
+		case common.ClusterTypeTarget:
 			if requestContext.targetResponse == nil {
-				return nil, ClusterTypeNone, fmt.Errorf(
+				return nil, common.ClusterTypeNone, fmt.Errorf(
 					"did not receive response from async target cassandra channel, stream: %d",
 					requestContext.request.Header.StreamId)
 			}
 			log.Tracef("Forward to async: just returning the response received from %v: %d",
-				ClusterTypeTarget, requestContext.targetResponse.Header.OpCode)
-			return requestContext.targetResponse, ClusterTypeTarget, nil
-		case ClusterTypeOrigin:
+				common.ClusterTypeTarget, requestContext.targetResponse.Header.OpCode)
+			return requestContext.targetResponse, common.ClusterTypeTarget, nil
+		case common.ClusterTypeOrigin:
 			if requestContext.originResponse == nil {
-				return nil, ClusterTypeNone, fmt.Errorf(
+				return nil, common.ClusterTypeNone, fmt.Errorf(
 					"did not receive response from async origin cassandra channel, stream: %d",
 					requestContext.request.Header.StreamId)
 			}
 			log.Tracef("Forward to async: just returning the response received from %v: %d",
-				ClusterTypeOrigin, requestContext.originResponse.Header.OpCode)
-			return requestContext.originResponse, ClusterTypeOrigin, nil
+				common.ClusterTypeOrigin, requestContext.originResponse.Header.OpCode)
+			return requestContext.originResponse, common.ClusterTypeOrigin, nil
 		default:
 			log.Errorf("Unknown cluster type: %v. This is a bug, please report.", ch.asyncConnector.clusterType)
-			return nil, ClusterTypeNone, fmt.Errorf("unknown cluster type: %v; this is a bug, please report", ch.asyncConnector.clusterType)
+			return nil, common.ClusterTypeNone, fmt.Errorf("unknown cluster type: %v; this is a bug, please report", ch.asyncConnector.clusterType)
 		}
 	case forwardToNone:
-		return nil, ClusterTypeNone, fmt.Errorf(
+		return nil, common.ClusterTypeNone, fmt.Errorf(
 			"%v is not expected to reach this code, this is a BUG, please report (request context: %v)",
 			fwdDecision, requestContext)
 	default:
-		return nil, ClusterTypeNone, fmt.Errorf(
+		return nil, common.ClusterTypeNone, fmt.Errorf(
 			"unknown forward decision %v, request context: %v", fwdDecision, requestContext)
 	}
 }
 
 // Modifies internal state based on the provided aggregated response (e.g. storing prepared IDs)
 func (ch *ClientHandler) processClientResponse(
-	response *frame.RawFrame, responseClusterType ClusterType, reqCtx *requestContextImpl) (*frame.RawFrame, error) {
+	response *frame.RawFrame, responseClusterType common.ClusterType, reqCtx *requestContextImpl) (*frame.RawFrame, error) {
 
 	var newFrame *frame.Frame
 	switch response.Header.OpCode {
@@ -842,9 +849,9 @@ func (ch *ClientHandler) processClientResponse(
 		case *message.Unprepared:
 			var unpreparedId []byte
 			switch responseClusterType {
-			case ClusterTypeOrigin:
+			case common.ClusterTypeOrigin:
 				unpreparedId = bodyMsg.Id
-			case ClusterTypeTarget:
+			case common.ClusterTypeTarget:
 				preparedData, ok := ch.preparedStatementCache.GetByTargetPreparedId(bodyMsg.Id)
 				if !ok {
 					return nil, fmt.Errorf("could not get PreparedData by TargetPreparedId: %v", hex.EncodeToString(bodyMsg.Id))
@@ -1015,9 +1022,9 @@ func (ch *ClientHandler) handleHandshakeRequest(request *frame.RawFrame, wg *syn
 		defer wg.Done()
 		defer close(scheduledTaskChannel)
 		if ch.authErrorMessage != nil {
-			secondaryClusterType := ClusterTypeTarget
+			secondaryClusterType := common.ClusterTypeTarget
 			if ch.forwardAuthToTarget {
-				secondaryClusterType = ClusterTypeOrigin
+				secondaryClusterType = common.ClusterTypeOrigin
 			}
 			scheduledTaskChannel <- &handshakeRequestResult{
 				authSuccess: false,
@@ -1082,25 +1089,25 @@ func (ch *ClientHandler) handleHandshakeRequest(request *frame.RawFrame, wg *syn
 
 	if request.Header.OpCode == primitive.OpCodeStartup {
 		var secondaryResponse *frame.RawFrame
-		var secondaryCluster ClusterType
+		var secondaryCluster common.ClusterType
 		if ch.forwardAuthToTarget {
 			// secondary is ORIGIN
 
 			if response.originResponse == nil {
-				return false, fmt.Errorf("no response received from %v for startup %v", ClusterTypeOrigin, request)
+				return false, fmt.Errorf("no response received from %v for startup %v", common.ClusterTypeOrigin, request)
 			}
 			secondaryResponse = response.originResponse
 			aggregatedResponse = response.targetResponse
-			secondaryCluster = ClusterTypeOrigin
+			secondaryCluster = common.ClusterTypeOrigin
 		} else {
 			// secondary is TARGET
 
 			if response.targetResponse == nil {
-				return false, fmt.Errorf("no response received from %v for startup %v", ClusterTypeTarget, request)
+				return false, fmt.Errorf("no response received from %v for startup %v", common.ClusterTypeTarget, request)
 			}
 			secondaryResponse = response.targetResponse
 			aggregatedResponse = response.originResponse
-			secondaryCluster = ClusterTypeTarget
+			secondaryCluster = common.ClusterTypeTarget
 		}
 
 		ch.secondaryStartupResponse = secondaryResponse
@@ -1130,9 +1137,9 @@ func (ch *ClientHandler) handleHandshakeRequest(request *frame.RawFrame, wg *syn
 			// if we add stream id mapping logic in the future, then
 			// we can start the secondary handshake earlier and wait for it to end here
 
-			secondaryClusterType := ClusterTypeTarget
+			secondaryClusterType := common.ClusterTypeTarget
 			if ch.forwardAuthToTarget {
-				secondaryClusterType = ClusterTypeOrigin
+				secondaryClusterType = common.ClusterTypeOrigin
 			}
 			secondaryHandshakeChannel, err := ch.startSecondaryHandshake(false)
 			if err != nil {
@@ -1201,7 +1208,7 @@ func (ch *ClientHandler) handleHandshakeRequest(request *frame.RawFrame, wg *syn
 }
 
 // Builds auth error response and sends it to the client.
-func (ch *ClientHandler) sendAuthErrorToClient(requestFrame *frame.RawFrame, secondaryClusterType ClusterType) error {
+func (ch *ClientHandler) sendAuthErrorToClient(requestFrame *frame.RawFrame, secondaryClusterType common.ClusterType) error {
 	authErrorResponse, err := ch.buildAuthErrorResponse(requestFrame, ch.authErrorMessage)
 	if err == nil {
 		log.Warnf("Secondary (%v) handshake failed with an auth error, returning %v to client.", secondaryClusterType, ch.authErrorMessage)
@@ -1275,7 +1282,7 @@ func (ch *ClientHandler) forwardRequest(request *frame.RawFrame, customResponseC
 	context := NewFrameDecodeContext(request)
 	var replacedTerms []*statementReplacedTerms
 	var err error
-	if ch.conf.ReplaceServerSideFunctions {
+	if ch.conf.ReplaceCqlFunctions {
 		context, replacedTerms, err = ch.queryModifier.replaceQueryString(currentKeyspace, context)
 	}
 
@@ -1283,8 +1290,8 @@ func (ch *ClientHandler) forwardRequest(request *frame.RawFrame, customResponseC
 		return err
 	}
 	requestInfo, err := buildRequestInfo(
-		context, replacedTerms, ch.preparedStatementCache, ch.metricHandler, currentKeyspace, ch.conf.ForwardReadsToTarget,
-		ch.conf.ForwardSystemQueriesToTarget, ch.topologyConfig.VirtualizationEnabled, ch.forwardAuthToTarget, ch.timeUuidGenerator)
+		context, replacedTerms, ch.preparedStatementCache, ch.metricHandler, currentKeyspace, ch.primaryCluster,
+		ch.forwardSystemQueriesToTarget, ch.topologyConfig.VirtualizationEnabled, ch.forwardAuthToTarget, ch.timeUuidGenerator)
 	if err != nil {
 		if errVal, ok := err.(*UnpreparedExecuteError); ok {
 			unpreparedFrame, err := createUnpreparedFrame(errVal)
@@ -1400,16 +1407,16 @@ func (ch *ClientHandler) executeRequest(
 	switch fwdDecision {
 	case forwardToBoth:
 		log.Tracef("Forwarding request with opcode %v for stream %v to %v and %v",
-			f.Header.OpCode, f.Header.StreamId, ClusterTypeOrigin, ClusterTypeTarget)
+			f.Header.OpCode, f.Header.StreamId, common.ClusterTypeOrigin, common.ClusterTypeTarget)
 		ch.originCassandraConnector.sendRequestToCluster(originRequest)
 		ch.targetCassandraConnector.sendRequestToCluster(targetRequest)
 	case forwardToOrigin:
 		log.Tracef("Forwarding request with opcode %v for stream %v to %v",
-			f.Header.OpCode, f.Header.StreamId, ClusterTypeOrigin)
+			f.Header.OpCode, f.Header.StreamId, common.ClusterTypeOrigin)
 		ch.originCassandraConnector.sendRequestToCluster(originRequest)
 	case forwardToTarget:
 		log.Tracef("Forwarding request with opcode %v for stream %v to %v",
-			f.Header.OpCode, f.Header.StreamId, ClusterTypeTarget)
+			f.Header.OpCode, f.Header.StreamId, common.ClusterTypeTarget)
 		ch.targetCassandraConnector.sendRequestToCluster(targetRequest)
 	case forwardToAsyncOnly:
 	default:
@@ -1453,7 +1460,7 @@ func (ch *ClientHandler) handleInterceptedRequest(
 	interceptedQueryType := interceptedRequestInfo.GetQueryType()
 	var interceptedQueryResponse message.Message
 	var controlConn *ControlConn
-	if ch.conf.ForwardSystemQueriesToTarget {
+	if ch.forwardSystemQueriesToTarget {
 		controlConn = ch.targetControlConn
 	} else {
 		controlConn = ch.originControlConn
@@ -1563,7 +1570,7 @@ func (ch *ClientHandler) handleExecuteRequest(
 
 	sendToAsyncConnector := (castedRequestInfo.ShouldAlsoBeSentAsync() || fwdDecision == forwardToAsyncOnly) && ch.asyncConnector != nil
 	replacedTerms := prepareRequestInfo.GetReplacedTerms()
-	asyncConnectorIsOrigin := ch.asyncConnector != nil && ch.asyncConnector.clusterType == ClusterTypeOrigin
+	asyncConnectorIsOrigin := ch.asyncConnector != nil && ch.asyncConnector.clusterType == common.ClusterTypeOrigin
 	var replacementTimeUuids []*uuid.UUID
 	if len(replacedTerms) > 0 && (fwdDecision == forwardToBoth || fwdDecision == forwardToOrigin || (sendToAsyncConnector && asyncConnectorIsOrigin)) {
 		clientRequest, err := frameContext.GetOrDecodeFrame()
@@ -1587,7 +1594,7 @@ func (ch *ClientHandler) handleExecuteRequest(
 		originRequest = originExecuteRequestRaw
 	}
 
-	asyncConnectorIsTarget := ch.asyncConnector != nil && ch.asyncConnector.clusterType == ClusterTypeTarget
+	asyncConnectorIsTarget := ch.asyncConnector != nil && ch.asyncConnector.clusterType == common.ClusterTypeTarget
 	if fwdDecision == forwardToBoth || fwdDecision == forwardToTarget || (sendToAsyncConnector && asyncConnectorIsTarget) {
 		clientRequest, err := frameContext.GetOrDecodeFrame()
 		if err != nil {
@@ -1701,7 +1708,7 @@ func (ch *ClientHandler) sendToAsyncConnector(
 	fwdDecision forwardDecision, reqCtx *requestContextImpl, holder *requestContextHolder, sendAlsoToAsync bool,
 	overallRequestStartTime time.Time, requestTimeout time.Duration) error {
 	var asyncRequest *frame.RawFrame
-	if ch.conf.ForwardReadsToTarget {
+	if ch.primaryCluster == common.ClusterTypeTarget {
 		asyncRequest = originRequest
 	} else {
 		asyncRequest = targetRequest
@@ -1768,30 +1775,30 @@ func (ch *ClientHandler) sendToAsyncConnector(
 func (ch *ClientHandler) aggregateAndTrackResponses(
 	request *frame.RawFrame,
 	responseFromOriginCassandra *frame.RawFrame,
-	responseFromTargetCassandra *frame.RawFrame) (*frame.RawFrame, ClusterType) {
+	responseFromTargetCassandra *frame.RawFrame) (*frame.RawFrame, common.ClusterType) {
 
 	originOpCode := responseFromOriginCassandra.Header.OpCode
 	log.Tracef("Aggregating responses. %v opcode %d, %v opcode %d",
-		ClusterTypeOrigin, originOpCode, ClusterTypeTarget, responseFromTargetCassandra.Header.OpCode)
+		common.ClusterTypeOrigin, originOpCode, common.ClusterTypeTarget, responseFromTargetCassandra.Header.OpCode)
 
 	// aggregate responses and update relevant aggregate metrics for general failed or successful responses
 	if isResponseSuccessful(responseFromOriginCassandra) && isResponseSuccessful(responseFromTargetCassandra) {
 		if originOpCode == primitive.OpCodeSupported {
 			log.Tracef("Aggregated response: both successes, sending back %v response with opcode %d",
-				ClusterTypeTarget, originOpCode)
-			return responseFromTargetCassandra, ClusterTypeTarget
+				common.ClusterTypeTarget, originOpCode)
+			return responseFromTargetCassandra, common.ClusterTypeTarget
 		} else if request.Header.OpCode == primitive.OpCodePrepare {
 			// special case for PREPARE requests to always return ORIGIN, even though the default handling for "BOTH" requests would be enough
-			return responseFromOriginCassandra, ClusterTypeOrigin
+			return responseFromOriginCassandra, common.ClusterTypeOrigin
 		} else {
-			if ch.conf.ForwardReadsToTarget {
+			if ch.primaryCluster == common.ClusterTypeTarget {
 				log.Tracef("Aggregated response: both successes, sending back %v response with opcode %d",
-					ClusterTypeTarget, responseFromTargetCassandra.Header.OpCode)
-				return responseFromTargetCassandra, ClusterTypeTarget
+					common.ClusterTypeTarget, responseFromTargetCassandra.Header.OpCode)
+				return responseFromTargetCassandra, common.ClusterTypeTarget
 			} else {
 				log.Tracef("Aggregated response: both successes, sending back %v response with opcode %d",
-					ClusterTypeOrigin, originOpCode)
-				return responseFromOriginCassandra, ClusterTypeOrigin
+					common.ClusterTypeOrigin, originOpCode)
+				return responseFromOriginCassandra, common.ClusterTypeOrigin
 			}
 		}
 	}
@@ -1799,22 +1806,22 @@ func (ch *ClientHandler) aggregateAndTrackResponses(
 	proxyMetrics := ch.metricHandler.GetProxyMetrics()
 	if !isResponseSuccessful(responseFromOriginCassandra) && !isResponseSuccessful(responseFromTargetCassandra) {
 		log.Debugf("Aggregated response: both failures, sending back %v response with opcode %d",
-			ClusterTypeOrigin, originOpCode)
+			common.ClusterTypeOrigin, originOpCode)
 		proxyMetrics.FailedRequestsBoth.Add(1)
-		return responseFromOriginCassandra, ClusterTypeOrigin
+		return responseFromOriginCassandra, common.ClusterTypeOrigin
 	}
 
 	// if either response is a failure, the failure "wins" --> return the failed response
 	if !isResponseSuccessful(responseFromOriginCassandra) {
 		log.Debugf("Aggregated response: failure only on %v, sending back %v response with opcode %d",
-			ClusterTypeOrigin, ClusterTypeOrigin, originOpCode)
+			common.ClusterTypeOrigin, common.ClusterTypeOrigin, originOpCode)
 		proxyMetrics.FailedRequestsBothFailedOnOriginOnly.Add(1)
-		return responseFromOriginCassandra, ClusterTypeOrigin
+		return responseFromOriginCassandra, common.ClusterTypeOrigin
 	} else {
 		log.Debugf("Aggregated response: failure only on %v, sending back %v response with opcode %d",
-			ClusterTypeTarget, ClusterTypeTarget, originOpCode)
+			common.ClusterTypeTarget, common.ClusterTypeTarget, originOpCode)
 		proxyMetrics.FailedRequestsBothFailedOnTargetOnly.Add(1)
-		return responseFromTargetCassandra, ClusterTypeTarget
+		return responseFromTargetCassandra, common.ClusterTypeTarget
 	}
 }
 
@@ -1881,13 +1888,13 @@ func (ch *ClientHandler) handleClientCredentials(f *frame.RawFrame) (*frame.RawF
 
 	ch.asyncHandshakeCreds = clientCreds
 	if ch.asyncConnector != nil {
-		if ch.targetCredsOnClientRequest && ch.asyncConnector.clusterType == ClusterTypeOrigin {
+		if ch.targetCredsOnClientRequest && ch.asyncConnector.clusterType == common.ClusterTypeOrigin {
 			ch.asyncHandshakeCreds = &AuthCredentials{
 				Username: ch.originUsername,
 				Password: ch.originPassword,
 			}
 		}
-		if !ch.targetCredsOnClientRequest && ch.asyncConnector.clusterType == ClusterTypeTarget {
+		if !ch.targetCredsOnClientRequest && ch.asyncConnector.clusterType == common.ClusterTypeTarget {
 			ch.asyncHandshakeCreds = &AuthCredentials{
 				Username: ch.targetUsername,
 				Password: ch.targetPassword,
@@ -2040,18 +2047,18 @@ func forwardAuthToTarget(
 	targetControlConn *ControlConn,
 	forwardClientCredsToOrigin bool) (forwardAuthToTarget bool, targetCredsOnClientRequest bool) {
 	authEnabledOnOrigin, err := originControlConn.IsAuthEnabled()
-	clusterType := ClusterTypeOrigin
+	clusterType := common.ClusterTypeOrigin
 	var authEnabledOnTarget bool
 	if err == nil {
 		authEnabledOnTarget, err = targetControlConn.IsAuthEnabled()
-		clusterType = ClusterTypeTarget
+		clusterType = common.ClusterTypeTarget
 	}
 
 	if err != nil {
 		log.Errorf("Error detected while checking if auth is enabled on %v to figure out which cluster should " +
 			"receive the auth credentials from the client. Falling back to sending auth to %v and assuming " +
 			"that client credentials are meant for %v. " +
-			"This is a bug, please report: %v", clusterType, ClusterTypeOrigin, ClusterTypeTarget, err)
+			"This is a bug, please report: %v", clusterType, common.ClusterTypeOrigin, common.ClusterTypeTarget, err)
 		return false, true
 	}
 

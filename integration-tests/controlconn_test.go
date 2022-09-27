@@ -732,8 +732,8 @@ func TestRefreshTopologyEventHandler(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			conf := setup.NewTestConfig("127.0.1.1", "127.0.1.2")
-			conf.OriginDatacenter = tt.originDcConf
-			conf.TargetDatacenter = tt.targetDcConf
+			conf.OriginLocalDatacenter = tt.originDcConf
+			conf.TargetLocalDatacenter = tt.targetDcConf
 
 			originRegisterMessages := make([]*message.Register, 0)
 			originRegisterLock := &sync.Mutex{}

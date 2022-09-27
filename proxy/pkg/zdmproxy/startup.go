@@ -5,6 +5,7 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/datastax/zdm-proxy/proxy/pkg/common"
 	log "github.com/sirupsen/logrus"
 	"net"
 	"time"
@@ -192,7 +193,7 @@ func handleSecondaryHandshakeResponse(
 	return phase, parsedFrame, done, nil
 }
 
-func validateSecondaryStartupResponse(f *frame.RawFrame, clusterType ClusterType) error {
+func validateSecondaryStartupResponse(f *frame.RawFrame, clusterType common.ClusterType) error {
 	switch f.Header.OpCode {
 	case primitive.OpCodeAuthenticate:
 	case primitive.OpCodeAuthChallenge:
