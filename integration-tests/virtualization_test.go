@@ -823,11 +823,11 @@ func TestVirtualizationPartitioner(t *testing.T) {
 		Password: "cassandra",
 	}
 
-	runTestWithSystemQueryForwarding := func(originPartitioner string, targetPartitioner string, systemQueriesToTarget bool, proxyShouldStartUp bool) {
+	runTestWithSystemQueryForwarding := func(t *testing.T, originPartitioner string, targetPartitioner string, systemQueriesToTarget bool, proxyShouldStartUp bool) {
 
 		serverConf := setup.NewTestConfig(originAddress, targetAddress)
 
-		testSetup, err := setup.NewCqlServerTestSetup(serverConf, false, false, false)
+		testSetup, err := setup.NewCqlServerTestSetup(t, serverConf, false, false, false)
 		require.Nil(t, err)
 		defer testSetup.Cleanup()
 
@@ -898,8 +898,8 @@ func TestVirtualizationPartitioner(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			runTestWithSystemQueryForwarding(tt.originPartitioner, tt.targetPartitioner, false, tt.proxyShouldStartUp)
-			runTestWithSystemQueryForwarding(tt.originPartitioner, tt.targetPartitioner, true, tt.proxyShouldStartUp)
+			runTestWithSystemQueryForwarding(t, tt.originPartitioner, tt.targetPartitioner, false, tt.proxyShouldStartUp)
+			runTestWithSystemQueryForwarding(t, tt.originPartitioner, tt.targetPartitioner, true, tt.proxyShouldStartUp)
 		})
 	}
 

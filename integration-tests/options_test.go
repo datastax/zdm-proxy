@@ -13,7 +13,7 @@ import (
 func TestOptionsShouldComeFromTarget(t *testing.T) {
 
 	conf := setup.NewTestConfig("127.0.1.1", "127.0.1.2")
-	testSetup, err := setup.NewCqlServerTestSetup(conf, false, false, false)
+	testSetup, err := setup.NewCqlServerTestSetup(t, conf, false, false, false)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 	testSetup.Origin.CqlServer.RequestHandlers = []client.RequestHandler{client.RegisterHandler, newOptionsHandler("origin"), client.HandshakeHandler, client.NewSystemTablesHandler("cluster2", "dc2")}

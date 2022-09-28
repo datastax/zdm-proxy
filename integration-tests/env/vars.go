@@ -20,7 +20,7 @@ var CassandraVersion string
 var DseVersion string
 var IsDse bool
 var UseCcm bool
-var SkipSimulacron bool
+var SkipMockTests bool
 var RunAllTlsTests bool
 var Debug bool
 
@@ -44,11 +44,11 @@ func InitGlobalVars() {
 			getEnvironmentVariableOrDefault("USE_CCM", "false"),
 			"USE_CCM"),
 
-		"SKIP_SIMULACRON":
+		"SKIP_MOCKTESTS":
 		flag.String(
-			"SKIP_SIMULACRON",
-			getEnvironmentVariableOrDefault("SKIP_SIMULACRON", "false"),
-			"SKIP_SIMULACRON"),
+			"SKIP_MOCKTESTS",
+			getEnvironmentVariableOrDefault("SKIP_MOCKTESTS", "false"),
+			"SKIP_MOCKTESTS"),
 
 		"RUN_ALL_TLS_TESTS":
 		flag.String(
@@ -68,7 +68,7 @@ func InitGlobalVars() {
 	CassandraVersion = *flags["CASSANDRA_VERSION"].(*string)
 	DseVersion = *flags["DSE_VERSION"].(*string)
 	useCcm := *flags["USE_CCM"].(*string)
-	skipSimulacron := *flags["SKIP_SIMULACRON"].(*string)
+	skipMockTests := *flags["SKIP_MOCKTESTS"].(*string)
 	runAllTlsTests := *flags["RUN_ALL_TLS_TESTS"].(*string)
 	Debug = *flags["DEBUG"].(*bool)
 
@@ -84,8 +84,8 @@ func InitGlobalVars() {
 		UseCcm = true
 	}
 
-	if strings.ToLower(skipSimulacron) == "true" {
-		SkipSimulacron = true
+	if strings.ToLower(skipMockTests) == "true" {
+		SkipMockTests = true
 	}
 
 	if strings.ToLower(runAllTlsTests) == "true" {

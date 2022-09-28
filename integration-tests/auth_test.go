@@ -526,7 +526,7 @@ func TestAuth(t *testing.T) {
 			}
 
 			testFunc := func(t *testing.T, proxyConfig *config.Config) {
-				testSetup, err := setup.NewCqlServerTestSetup(serverConf, false, false, false)
+				testSetup, err := setup.NewCqlServerTestSetup(t, serverConf, false, false, false)
 				require.Nil(t, err)
 				defer testSetup.Cleanup()
 
@@ -1012,7 +1012,7 @@ func TestProxyStartupAndHealthCheckWithAuth(t *testing.T) {
 			serverConf.OriginCassandraUsername = tt.originUsername
 			serverConf.OriginCassandraPassword = tt.originPassword
 
-			testSetup, err := setup.NewCqlServerTestSetup(serverConf, true, false, false)
+			testSetup, err := setup.NewCqlServerTestSetup(t, serverConf, true, false, false)
 			require.Nil(t, err)
 			defer testSetup.Cleanup()
 
