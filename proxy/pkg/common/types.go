@@ -2,7 +2,6 @@ package common
 
 import (
 	"fmt"
-	log "github.com/sirupsen/logrus"
 	"net"
 )
 
@@ -78,31 +77,10 @@ func (r SystemQueriesMode) String() string {
 	return r.slug
 }
 
-func (r SystemQueriesMode) IsForwardToTarget(primaryCluster ClusterType) bool {
-	switch r.slug {
-	case SystemQueriesModeOrigin.slug:
-		return false
-	case SystemQueriesModeTarget.slug:
-		return true
-	case SystemQueriesModePrimary.slug:
-		switch primaryCluster {
-		case ClusterTypeOrigin:
-			return false
-		case ClusterTypeTarget:
-			return true
-		}
-	}
-	log.Errorf("Unexpected IsForwardToTarget call on SystemQueriesMode with an invalid configuration. " +
-		"This is most likely a bug, please report. Falling back to ORIGIN for SystemQueriesMode. " +
-		"SystemQueriesMode = %v, PrimaryCluster = %v", r.slug, primaryCluster)
-	return false
-}
-
 var (
 	SystemQueriesModeUndefined = SystemQueriesMode{""}
 	SystemQueriesModeOrigin    = SystemQueriesMode{"ORIGIN"}
 	SystemQueriesModeTarget    = SystemQueriesMode{"TARGET"}
-	SystemQueriesModePrimary   = SystemQueriesMode{"PRIMARY"}
 )
 
 type ClusterType string

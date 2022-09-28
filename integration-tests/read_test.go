@@ -26,18 +26,12 @@ func TestForwardDecisionsForReads(t *testing.T) {
 	t.Run("PrimaryOrigin_SystemQueriesTarget", func(t *testing.T) {
 		testForwardDecisionsForReads(t, config.PrimaryClusterOrigin, config.SystemQueriesModeTarget)
 	})
-	t.Run("PrimaryOrigin_SystemQueriesPrimary", func(t *testing.T) {
-		testForwardDecisionsForReads(t, config.PrimaryClusterOrigin, config.SystemQueriesModePrimary)
-	})
 
 	t.Run("PrimaryTarget_SystemQueriesOrigin", func(t *testing.T) {
 		testForwardDecisionsForReads(t, config.PrimaryClusterTarget, config.SystemQueriesModeOrigin)
 	})
 	t.Run("PrimaryTarget_SystemQueriesTarget", func(t *testing.T) {
 		testForwardDecisionsForReads(t, config.PrimaryClusterTarget, config.SystemQueriesModeTarget)
-	})
-	t.Run("PrimaryTarget_SystemQueriesPrimary", func(t *testing.T) {
-		testForwardDecisionsForReads(t, config.PrimaryClusterTarget, config.SystemQueriesModePrimary)
 	})
 }
 
@@ -66,8 +60,6 @@ func testForwardDecisionsForReads(t *testing.T, primaryCluster string, systemQue
 		expectedSystemQueryCluster = testSetup.Origin
 	case config.SystemQueriesModeTarget:
 		expectedSystemQueryCluster = testSetup.Target
-	case config.SystemQueriesModePrimary:
-		expectedSystemQueryCluster = expectedNonSystemQueryCluster
 	default:
 		require.FailNow(t, "unexpected system queries mode: %v", systemQueriesMode)
 	}

@@ -285,7 +285,7 @@ func NewClientHandler(
 		originObserver:                       originObserver,
 		targetObserver:                       targetObserver,
 		primaryCluster:                       primaryCluster,
-		forwardSystemQueriesToTarget:         systemQueriesMode.IsForwardToTarget(primaryCluster),
+		forwardSystemQueriesToTarget:         systemQueriesMode == common.SystemQueriesModeTarget,
 		forwardAuthToTarget:                  forwardAuthToTarget,
 		targetCredsOnClientRequest:           targetCredsOnClientRequest,
 		queryModifier:                        NewQueryModifier(timeUuidGenerator),

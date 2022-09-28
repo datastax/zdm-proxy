@@ -61,7 +61,7 @@ type Config struct {
 	ProxyListenAddress        string `default:"localhost" split_words:"true"`
 	ProxyListenPort           int    `default:"14002" split_words:"true"`
 	ProxyRequestTimeoutMs     int    `default:"10000" split_words:"true"`
-	ProxyMaxClientConnections int    `default:"500" split_words:"true"`
+	ProxyMaxClientConnections int    `default:"1000" split_words:"true"`
 
 	ProxyTlsCaPath            string `split_words:"true"`
 	ProxyTlsCertPath          string `split_words:"true"`
@@ -91,7 +91,7 @@ type Config struct {
 	/// THE SETTINGS BELOW AREN'T SUPPORTED AND MAY CHANGE AT ANY TIME ///
 	//////////////////////////////////////////////////////////////////////
 
-	SystemQueriesMode string `default:"PRIMARY" split_words:"true"`
+	SystemQueriesMode string `default:"ORIGIN" split_words:"true"`
 
 	ForwardClientCredentialsToOrigin bool `default:"false" split_words:"true"` // only takes effect if both clusters have auth enabled
 
@@ -267,20 +267,17 @@ func (c *Config) Validate() error {
 const (
 	SystemQueriesModeOrigin  = "ORIGIN"
 	SystemQueriesModeTarget  = "TARGET"
-	SystemQueriesModePrimary = "PRIMARY"
 )
 
 func (c *Config) ParseSystemQueriesMode() (common.SystemQueriesMode, error) {
 	switch strings.ToUpper(c.SystemQueriesMode) {
-	case SystemQueriesModePrimary:
-		return common.SystemQueriesModePrimary, nil
 	case SystemQueriesModeTarget:
 		return common.SystemQueriesModeTarget, nil
 	case SystemQueriesModeOrigin:
 		return common.SystemQueriesModeOrigin, nil
 	default:
-		return common.SystemQueriesModeUndefined, fmt.Errorf("invalid value for ZDM_SYSTEM_QUERIES_MODE; possible values are: %v, %v and %v",
-			SystemQueriesModePrimary, SystemQueriesModeTarget, SystemQueriesModeOrigin)
+		return common.SystemQueriesModeUndefined, fmt.Errorf("invalid value for ZDM_SYSTEM_QUERIES_MODE; possible values are: %v and %v",
+			SystemQueriesModeTarget, SystemQueriesModeOrigin)
 	}
 }
 

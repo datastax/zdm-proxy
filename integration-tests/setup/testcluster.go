@@ -427,7 +427,7 @@ func NewTestConfig(originHost string, targetHost string) *config.Config {
 	conf.ResponseWriteBufferSizeBytes = 8192
 	conf.ResponseReadBufferSizeBytes = 32768
 
-	conf.ProxyMaxClientConnections = 500
+	conf.ProxyMaxClientConnections = 1000
 
 	conf.RequestResponseMaxWorkers = -1
 	conf.WriteMaxWorkers = -1
@@ -441,7 +441,7 @@ func NewTestConfig(originHost string, targetHost string) *config.Config {
 
 	conf.PrimaryCluster = config.PrimaryClusterOrigin
 	conf.ReadMode = config.ReadModePrimaryOnly
-	conf.SystemQueriesMode = config.SystemQueriesModePrimary
+	conf.SystemQueriesMode = config.SystemQueriesModeOrigin
 	conf.AsyncHandshakeTimeoutMs = 4000
 
 	conf.ProxyRequestTimeoutMs = 10000
