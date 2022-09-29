@@ -334,6 +334,10 @@ func (c *Config) ParseAsyncBuckets() ([]float64, error) {
 func (c *Config) parseBuckets(bucketsConfigStr string) ([]float64, error) {
 	var bucketsArr []float64
 	bucketsStrArr := strings.Split(bucketsConfigStr, ",")
+	if len(bucketsStrArr) == 0 {
+		return nil, fmt.Errorf("unable to parse buckets from %v: at least one bucket is required", bucketsConfigStr)
+	}
+
 	for _, bucketStr := range bucketsStrArr {
 		bucket, err := strconv.ParseFloat(strings.TrimSpace(bucketStr), 64)
 		if err != nil {

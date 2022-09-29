@@ -376,6 +376,7 @@ func (p *ZdmProxy) initializeGlobalStructures() error {
 	p.listenerScheduler = NewScheduler(p.listenerNumWorkers)
 
 	p.lock.Lock()
+	defer p.lock.Unlock()
 
 	p.globalClientHandlersWg = &sync.WaitGroup{}
 	p.clientHandlersShutdownRequestCtx, p.clientHandlersShutdownRequestCancelFn = context.WithCancel(context.Background())
@@ -389,27 +390,26 @@ func (p *ZdmProxy) initializeGlobalStructures() error {
 
 	p.originBuckets, err = p.Conf.ParseOriginBuckets()
 	if err != nil {
-		return fmt.Errorf("failed to parse origin buckets, falling back to default buckets: %w", err)
+		return fmt.Errorf("failed to parse origin latency buckets: %w", err)
 	} else {
-		log.Infof("Parsed Origin buckets: %v", p.originBuckets)
+		log.Infof("Parsed Origin latency buckets: %v", p.originBuckets)
 	}
 
 	p.targetBuckets, err = p.Conf.ParseTargetBuckets()
 	if err != nil {
-		return fmt.Errorf("failed to parse target buckets, falling back to default buckets: %w", err)
+		return fmt.Errorf("failed to parse target latency buckets: %w", err)
 	} else {
-		log.Infof("Parsed Target buckets: %v", p.targetBuckets)
+		log.Infof("Parsed Target latency buckets: %v", p.targetBuckets)
 	}
 
 	p.asyncBuckets, err = p.Conf.ParseAsyncBuckets()
 	if err != nil {
-		return fmt.Errorf("failed to parse async buckets, falling back to default buckets: %w", err)
+		return fmt.Errorf("failed to parse async latency buckets: %w", err)
 	} else {
-		log.Infof("Parsed Async buckets: %v", p.asyncBuckets)
+		log.Infof("Parsed Async latency buckets: %v", p.asyncBuckets)
 	}
 
 	p.activeClients = 0
-	p.lock.Unlock()
 	return nil
 }
 
