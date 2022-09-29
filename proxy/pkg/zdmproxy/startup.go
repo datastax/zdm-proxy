@@ -112,7 +112,7 @@ func (ch *ClientHandler) handleSecondaryHandshakeStartup(
 			channel := make(chan *customResponse, 1)
 			err := ch.executeRequest(
 				NewFrameDecodeContext(request),
-				NewGenericRequestInfo(forwardToSecondary, asyncConnector),
+				NewGenericRequestInfo(forwardToSecondary, asyncConnector, false),
 				ch.LoadCurrentKeyspace(),
 				overallRequestStartTime,
 				channel,

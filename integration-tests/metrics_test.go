@@ -44,11 +44,11 @@ var nodeMetrics = []metrics.Metric{
 }
 
 var proxyMetrics = []metrics.Metric{
-	metrics.FailedRequestsBothFailedOnTargetOnly,
-	metrics.FailedRequestsBothFailedOnOriginOnly,
-	metrics.FailedRequestsBoth,
-	metrics.FailedRequestsOrigin,
-	metrics.FailedRequestsTarget,
+	metrics.FailedWritesOnTarget,
+	metrics.FailedWritesOnOrigin,
+	metrics.FailedWritesOnBoth,
+	metrics.FailedReadsOrigin,
+	metrics.FailedReadsTarget,
 
 	metrics.PSCacheSize,
 	metrics.PSCacheMissCount,
@@ -233,11 +233,11 @@ func checkMetrics(
 	prefix := "cloudgate"
 	require.Contains(t, lines, fmt.Sprintf("%v %v", getPrometheusName(prefix, metrics.OpenClientConnections), openClientConns))
 
-	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.FailedRequestsBoth)))
-	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.FailedRequestsBothFailedOnOriginOnly)))
-	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.FailedRequestsBothFailedOnTargetOnly)))
-	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.FailedRequestsTarget)))
-	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.FailedRequestsOrigin)))
+	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.FailedWritesOnBoth)))
+	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.FailedWritesOnOrigin)))
+	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.FailedWritesOnTarget)))
+	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.FailedReadsTarget)))
+	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.FailedReadsOrigin)))
 
 
 	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.InFlightWrites)))

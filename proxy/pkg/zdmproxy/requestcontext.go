@@ -86,6 +86,7 @@ type RequestContext interface {
 	SetResponse(
 		nodeMetrics *metrics.NodeMetrics, f *frame.RawFrame,
 		cluster common.ClusterType, connectorType ClusterConnectorType) bool
+	GetRequestInfo() RequestInfo
 }
 
 type requestContextImpl struct {
@@ -114,6 +115,10 @@ func NewRequestContext(req *frame.RawFrame, requestInfo RequestInfo, startTime t
 	}
 }
 
+func (recv *requestContextImpl) GetRequestInfo() RequestInfo {
+	return recv.requestInfo
+}
+
 func (recv *requestContextImpl) SetTimer(timer *time.Timer) {
 	recv.timer = timer
 }
@@ -130,22 +135,24 @@ func (recv *requestContextImpl) SetTimeout(nodeMetrics *metrics.NodeMetrics, req
 	// check if it's the same request (could be a timeout for a previous one that has since completed)
 	if recv.request == req {
 		recv.state = RequestTimedOut
-		sentOrigin := false
-		sentTarget := false
-		switch recv.requestInfo.GetForwardDecision() {
-		case forwardToBoth:
-			sentOrigin = true
-			sentTarget = true
-		case forwardToOrigin:
-			sentOrigin = true
-		case forwardToTarget:
-			sentTarget = true
-		}
-		if sentOrigin && recv.originResponse == nil {
-			nodeMetrics.OriginMetrics.ClientTimeouts.Add(1)
-		}
-		if sentTarget && recv.targetResponse == nil {
-			nodeMetrics.TargetMetrics.ClientTimeouts.Add(1)
+		if recv.requestInfo.ShouldBeTrackedInMetrics() {
+			sentOrigin := false
+			sentTarget := false
+			switch recv.requestInfo.GetForwardDecision() {
+			case forwardToBoth:
+				sentOrigin = true
+				sentTarget = true
+			case forwardToOrigin:
+				sentOrigin = true
+			case forwardToTarget:
+				sentTarget = true
+			}
+			if sentOrigin && recv.originResponse == nil {
+				nodeMetrics.OriginMetrics.ClientTimeouts.Add(1)
+			}
+			if sentTarget && recv.targetResponse == nil {
+				nodeMetrics.TargetMetrics.ClientTimeouts.Add(1)
+			}
 		}
 		return true
 	}
@@ -181,17 +188,18 @@ func (recv *requestContextImpl) SetResponse(nodeMetrics *metrics.NodeMetrics, f 
 		recv.timer.Stop() // if timer is not stopped, there's a memory leak because the timer callback holds references!
 	}
 
-	switch connectorType {
-	case ClusterConnectorTypeOrigin:
-		log.Tracef("Received response from %v for query with stream id %d", cluster, f.Header.StreamId)
-		nodeMetrics.OriginMetrics.RequestDuration.Track(recv.startTime)
-	case ClusterConnectorTypeTarget:
-		log.Tracef("Received response from %v for query with stream id %d", cluster, f.Header.StreamId)
-		nodeMetrics.TargetMetrics.RequestDuration.Track(recv.startTime)
-	case ClusterConnectorTypeAsync:
-		log.Tracef("Received async response from %v for query with stream id %d", cluster, f.Header.StreamId)
-	default:
-		log.Errorf("could not recognize cluster type %v", cluster)
+	log.Tracef("Received response from %v for query with stream id %d", connectorType, f.Header.StreamId)
+
+	if recv.GetRequestInfo().ShouldBeTrackedInMetrics() {
+		switch connectorType {
+		case ClusterConnectorTypeOrigin:
+			nodeMetrics.OriginMetrics.RequestDuration.Track(recv.startTime)
+		case ClusterConnectorTypeTarget:
+			nodeMetrics.TargetMetrics.RequestDuration.Track(recv.startTime)
+		case ClusterConnectorTypeAsync:
+		default:
+			log.Errorf("could not recognize connector type %v", connectorType)
+		}
 	}
 
 	return finished
@@ -245,9 +253,10 @@ type asyncRequestContextImpl struct {
 	requestStreamId  int16
 	expectedResponse bool
 	startTime        time.Time
+	requestInfo      RequestInfo
 }
 
-func NewAsyncRequestContext(streamId int16, expectedResponse bool, startTime time.Time) *asyncRequestContextImpl {
+func NewAsyncRequestContext(requestInfo RequestInfo, streamId int16, expectedResponse bool, startTime time.Time) *asyncRequestContextImpl {
 	return &asyncRequestContextImpl{
 		state:            RequestPending,
 		timer:            nil,
@@ -255,7 +264,12 @@ func NewAsyncRequestContext(streamId int16, expectedResponse bool, startTime tim
 		requestStreamId:  streamId,
 		expectedResponse: expectedResponse,
 		startTime:        startTime,
+		requestInfo:      requestInfo,
 	}
+}
+
+func (recv *asyncRequestContextImpl) GetRequestInfo() RequestInfo {
+	return recv.requestInfo
 }
 
 func (recv *asyncRequestContextImpl) SetTimer(timer *time.Timer) {
@@ -271,8 +285,10 @@ func (recv *asyncRequestContextImpl) SetTimeout(nodeMetrics *metrics.NodeMetrics
 		return false
 	}
 
-	nodeMetrics.AsyncMetrics.InFlightRequests.Subtract(1)
-	nodeMetrics.AsyncMetrics.ClientTimeouts.Add(1)
+	if recv.requestInfo.ShouldBeTrackedInMetrics() {
+		nodeMetrics.AsyncMetrics.InFlightRequests.Subtract(1)
+		nodeMetrics.AsyncMetrics.ClientTimeouts.Add(1)
+	}
 
 	recv.state = RequestTimedOut
 	return true
@@ -287,7 +303,9 @@ func (recv *asyncRequestContextImpl) Cancel(nodeMetrics *metrics.NodeMetrics) bo
 		return false
 	}
 
-	nodeMetrics.AsyncMetrics.InFlightRequests.Subtract(1)
+	if recv.GetRequestInfo().ShouldBeTrackedInMetrics() {
+		nodeMetrics.AsyncMetrics.InFlightRequests.Subtract(1)
+	}
 
 	recv.state = RequestCanceled
 	if recv.timer != nil {
@@ -312,8 +330,10 @@ func (recv *asyncRequestContextImpl) SetResponse(
 		recv.timer.Stop() // if timer is not stopped, there's a memory leak because the timer callback holds references!
 	}
 
-	nodeMetrics.AsyncMetrics.RequestDuration.Track(recv.startTime)
-	nodeMetrics.AsyncMetrics.InFlightRequests.Subtract(1)
+	if recv.GetRequestInfo().ShouldBeTrackedInMetrics() {
+		nodeMetrics.AsyncMetrics.RequestDuration.Track(recv.startTime)
+		nodeMetrics.AsyncMetrics.InFlightRequests.Subtract(1)
+	}
 
 	return true
 }
