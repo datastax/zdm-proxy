@@ -5,10 +5,10 @@ bindings:
   rw_value: Hash(); <<valdist:Uniform(0,1000000000)->int>>; ToString() -> String
 
 scenarios:
-  rampup: run driver=cqld4 tags=phase:rampup cycles===20000
-  write: run driver=cqld4 tags=phase:rampup cycles===20000
-  read: run driver=cqld4 tags=phase:rampup cycles===20000
-  verify: run driver=cqld4 tags=phase:rampup cycles===20000
+  rampup: run driver=cqld4 tags=phase:rampup cycles===1000
+  write: run driver=cqld4 tags=phase:write cycles===1000
+  read: run driver=cqld4 tags=phase:read cycles===1000
+  verify: run driver=cqld4 tags=phase:verify cycles===2000
 
 blocks:
   - name: rampup
@@ -39,7 +39,7 @@ blocks:
           name: verify
   - name: read
     tags:
-      phase: main
+      phase: read
       type: read
       prepared: true
     params:
@@ -52,7 +52,7 @@ blocks:
           name: main-select
   - name: write
     tags:
-      phase: main
+      phase: write
       type: write
       prepared: true
     params:
