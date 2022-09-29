@@ -1,6 +1,7 @@
 package integration_tests
 
 import (
+	"fmt"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
 	"github.com/datastax/zdm-proxy/integration-tests/utils"
@@ -20,19 +21,15 @@ var rows = simulacron.NewRowsResult(
 })
 
 func TestForwardDecisionsForReads(t *testing.T) {
-	t.Run("PrimaryOrigin_SystemQueriesOrigin", func(t *testing.T) {
-		testForwardDecisionsForReads(t, config.PrimaryClusterOrigin, config.SystemQueriesModeOrigin)
-	})
-	t.Run("PrimaryOrigin_SystemQueriesTarget", func(t *testing.T) {
-		testForwardDecisionsForReads(t, config.PrimaryClusterOrigin, config.SystemQueriesModeTarget)
-	})
-
-	t.Run("PrimaryTarget_SystemQueriesOrigin", func(t *testing.T) {
-		testForwardDecisionsForReads(t, config.PrimaryClusterTarget, config.SystemQueriesModeOrigin)
-	})
-	t.Run("PrimaryTarget_SystemQueriesTarget", func(t *testing.T) {
-		testForwardDecisionsForReads(t, config.PrimaryClusterTarget, config.SystemQueriesModeTarget)
-	})
+	primaryClusters := []string{config.PrimaryClusterOrigin, config.PrimaryClusterTarget}
+	systemQueriesModes := []string{config.SystemQueriesModeOrigin, config.SystemQueriesModeTarget}
+	for _, primary := range primaryClusters {
+		for _, systemQueryMode := range systemQueriesModes {
+			t.Run(fmt.Sprintf("Primary-%v_SystemQueryMode-%v", primary, systemQueryMode), func(t *testing.T) {
+				testForwardDecisionsForReads(t, primary, systemQueryMode)
+			})
+		}
+	}
 }
 
 func testForwardDecisionsForReads(t *testing.T, primaryCluster string, systemQueriesMode string) {

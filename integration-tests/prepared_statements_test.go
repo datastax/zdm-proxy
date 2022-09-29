@@ -281,6 +281,7 @@ func TestPreparedIdReplacement(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			conf := setup.NewTestConfig("127.0.1.1", "127.0.1.2")
 			conf.ReadMode = test.readMode
+			dualReadsEnabled := test.readMode == config.ReadModeDualAsyncOnSecondary
 			conf.ReplaceCqlFunctions = test.replaceServerSideFunctions
 			testSetup, err := setup.NewCqlServerTestSetup(conf, false, false, false)
 			require.Nil(t, err)
@@ -427,13 +428,13 @@ func TestPreparedIdReplacement(t *testing.T) {
 			expectedTargetPrepares := 1
 			expectedTargetExecutes := 0
 			expectedTargetBatches := 0
-			if !test.read || test.readMode == config.ReadModeDualAsyncOnSecondary {
+			if !test.read || dualReadsEnabled {
 				expectedTargetExecutes += 1
 				if test.batchQuery != "" {
 					expectedTargetBatches += 1
 				}
 			}
-			if test.readMode == config.ReadModeDualAsyncOnSecondary {
+			if dualReadsEnabled {
 				expectedTargetPrepares += 1
 			}
 			if test.batchQuery != "" {
@@ -454,7 +455,7 @@ func TestPreparedIdReplacement(t *testing.T) {
 			require.Equal(t, expectedTargetPrepares, len(targetPrepareMessages))
 
 			require.Equal(t, expectedPrepareMsg, targetPrepareMessages[0])
-			if test.readMode == config.ReadModeDualAsyncOnSecondary {
+			if dualReadsEnabled {
 				require.Equal(t, expectedPrepareMsg, targetPrepareMessages[1])
 			}
 			require.Equal(t, expectedPrepareMsg, originPrepareMessages[0])
@@ -474,7 +475,7 @@ func TestPreparedIdReplacement(t *testing.T) {
 				require.Equal(t, executeMsg, originExecuteMessages[0])
 			}
 			if test.batchQuery != "" {
-				if test.readMode == config.ReadModeDualAsyncOnSecondary {
+				if dualReadsEnabled {
 					require.Equal(t, expectedBatchPrepareMsg, targetPrepareMessages[2])
 				} else {
 					require.Equal(t, expectedBatchPrepareMsg, targetPrepareMessages[1])
@@ -574,6 +575,7 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			conf := setup.NewTestConfig("127.0.1.1", "127.0.1.2")
 			conf.ReadMode = test.readMode
+			dualReadsEnabled := test.readMode == config.ReadModeDualAsyncOnSecondary
 			testSetup, err := setup.NewCqlServerTestSetup(conf, false, false, false)
 			require.Nil(t, err)
 			defer testSetup.Cleanup()
@@ -610,7 +612,7 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 				client2.NewDriverConnectionInitializationHandler("target", "dc1", func(_ string) {}),
 				NewPreparedTestHandler(targetLock, &targetPrepareMessages, &targetExecuteMessages, &targetBatchMessages,
 					test.batchQuery, targetPreparedId, targetBatchPreparedId, targetKey, targetValue, targetCtx, test.targetUnprepared,
-					nil, nil, test.readMode == config.ReadModeDualAsyncOnSecondary && test.read)}
+					nil, nil, dualReadsEnabled && test.read)}
 
 			err = testSetup.Start(conf, true, primitive.ProtocolVersion4)
 			require.Nil(t, err)
@@ -743,13 +745,13 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 			expectedTargetPrepares := 2
 			expectedTargetExecutes := 0
 			expectedTargetBatches := 0
-			if !test.read || test.readMode == config.ReadModeDualAsyncOnSecondary {
+			if !test.read || dualReadsEnabled {
 				expectedTargetExecutes = 2
 				if test.batchQuery != "" {
 					expectedTargetBatches += 2
 				}
 			}
-			if test.readMode == config.ReadModeDualAsyncOnSecondary {
+			if dualReadsEnabled {
 				expectedTargetPrepares += 3 // cluster connector sends a PREPARE on its own
 			}
 			if test.batchQuery != "" {
@@ -771,7 +773,7 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 			require.Equal(t, expectedTargetPrepares, len(targetPrepareMessages))
 			require.Equal(t, prepareMsg, targetPrepareMessages[0])
 			require.Equal(t, prepareMsg, targetPrepareMessages[1])
-			if test.readMode == config.ReadModeDualAsyncOnSecondary {
+			if dualReadsEnabled {
 				require.Equal(t, prepareMsg, targetPrepareMessages[2])
 				require.Equal(t, prepareMsg, targetPrepareMessages[3])
 			}
@@ -782,7 +784,7 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 			require.Equal(t, executeMsg, originExecuteMessages[1])
 
 			if test.batchQuery != "" {
-				if test.readMode == config.ReadModeDualAsyncOnSecondary {
+				if dualReadsEnabled {
 					require.Equal(t, batchPrepareMsg, targetPrepareMessages[4])
 					require.Equal(t, batchPrepareMsg, targetPrepareMessages[5])
 				} else {
@@ -819,7 +821,7 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 			require.Equal(t, nil, originCtx["VOID_" + string(targetBatchPreparedId)])
 			require.Equal(t, nil, originCtx["UNPREPARED_" + string(targetBatchPreparedId)])
 
-			if !test.read || test.readMode == config.ReadModeDualAsyncOnSecondary {
+			if !test.read || dualReadsEnabled {
 				require.Equal(t, 2, targetCtx["EXECUTE_" + string(targetPreparedId)])
 				if test.targetUnprepared {
 					require.Equal(t, 1, targetCtx["UNPREPARED_" + string(targetPreparedId)])

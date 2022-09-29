@@ -66,9 +66,9 @@ func ipAddresses(count int) string {
 	ipAddresses := ""
 	for i := 0; i < count; i++ {
 		if i == count-1 {
-			ipAddresses += fmt.Sprintf("127.0.0.%d", count+1)
+			ipAddresses += fmt.Sprintf("127.0.0.%d", i+1)
 		} else {
-			ipAddresses += fmt.Sprintf("127.0.0.%d,", count+1)
+			ipAddresses += fmt.Sprintf("127.0.0.%d,", i+1)
 		}
 	}
 	return ipAddresses
