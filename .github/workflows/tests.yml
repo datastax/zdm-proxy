@@ -1,6 +1,8 @@
 name: ZDM Tests
 on: push
 jobs:
+  # Runs a NoSQLBench job in docker-compose with 3 proxy nodes
+  # Verifies the written data matches in both ORIGIN and TARGET clusters
   nosqlbench-tests:
     name: NoSQLBench Tests
     runs-on: ubuntu-latest
@@ -12,6 +14,7 @@ jobs:
           sleep 720
           docker-compose -f docker-compose-tests.yml logs
           docker ps -a
+  # Runs all the unit tests under the proxy module (all the *_test.go files)
   unit-tests:
     name: Unit Tests
     runs-on: ubuntu-latest
@@ -33,8 +36,10 @@ jobs:
         with:
           paths: |
             report-unit.xml
-  integration-tests-simulacron:
-    name: Simulacron Tests
+  # Runs mock tests defined under integration-tests
+  # These tests use Simulacron and in-memory CQLServer
+  integration-tests-mock:
+    name: Mock Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
@@ -49,13 +54,14 @@ jobs:
           go install github.com/jstemmer/go-junit-report/v2@latest
           wget https://github.com/datastax/simulacron/releases/download/0.10.0/simulacron-standalone-0.10.0.jar
           export SIMULACRON_PATH=`pwd`/simulacron-standalone-0.10.0.jar
-          go test -timeout 180m -v 2>&1 ./integration-tests | go-junit-report -set-exit-code -iocopy -out report-integration-simulacron.xml
+          go test -timeout 180m -v 2>&1 ./integration-tests | go-junit-report -set-exit-code -iocopy -out report-integration-mock.xml
       - name: Test Summary
         uses: test-summary/action@v1
         if: always()
         with:
           paths: |
-            report-integration-simulacron.xml
+            report-integration-mock.xml
+  # Runs integration tests using CCM
   integration-tests-ccm:
     name: CCM Tests
     runs-on: ubuntu-latest
@@ -84,6 +90,7 @@ jobs:
         with:
           paths: |
             report-integration-ccm.xml
+  # Runs the mock tests with go's race checker to spot potential data races
   race-checker:
     name: Race Checker
     runs-on: ubuntu-latest
@@ -108,6 +115,7 @@ jobs:
         with:
           paths: |
             report-integration-race.xml
+  # Performs static analysis to check for things like context leaks
   go-vet:
     name: Go Vet
     runs-on: ubuntu-latest
@@ -123,19 +131,3 @@ jobs:
           export PATH=$PATH:/usr/local/go/bin
           export PATH=$PATH:`go env GOPATH`/bin
           go vet ./...
-  static-check:
-    name: Static Check
-    runs-on: ubuntu-latest
-    if: ${{ false }} # temporarily disabled
-    steps:
-      - uses: actions/checkout@v2
-      - name: Run
-        run: |
-          sudo apt update
-          sudo apt -y install openjdk-8-jdk gcc git pip wget
-          wget https://go.dev/dl/go1.19.linux-amd64.tar.gz
-          sudo tar -xzf go*.tar.gz -C /usr/local/
-          export PATH=$PATH:/usr/local/go/bin
-          export PATH=$PATH:`go env GOPATH`/bin
-          go install honnef.co/go/tools/cmd/staticcheck@latest
-          staticcheck ./...
