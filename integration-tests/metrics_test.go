@@ -136,7 +136,7 @@ func testMetrics(t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback)
 			}()
 
 			lines := gatherMetrics(t, conf, false)
-			checkMetrics(t, false, lines, conf.ReadMode == config.ReadModeDualAsyncOnSecondary, 0, 0, 0, 0, 0, 0, 0, 0, true, true, originEndpoint, targetEndpoint, asyncEndpoint)
+			checkMetrics(t, false, lines, conf.ReadMode, 0, 0, 0, 0, 0, 0, 0, 0, true, true, originEndpoint, targetEndpoint, asyncEndpoint)
 
 			err = testSetup.Client.Connect(primitive.ProtocolVersion4)
 			require.Nil(t, err)
@@ -147,7 +147,7 @@ func testMetrics(t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback)
 			// 1 on target: AUTH_RESPONSE
 			// 1 on both: STARTUP
 			// 2 on async: AUTH_RESPONSE and STARTUP
-			checkMetrics(t, true, lines, conf.ReadMode == config.ReadModeDualAsyncOnSecondary, 1, 1, 1, expectedAsyncConnections, 1, 1, 1, 2, true, true, originEndpoint, targetEndpoint, asyncEndpoint)
+			checkMetrics(t, true, lines, conf.ReadMode, 1, 1, 1, expectedAsyncConnections, 1, 1, 1, 2, true, true, originEndpoint, targetEndpoint, asyncEndpoint)
 
 			_, err = clientConn.SendAndReceive(insertQuery)
 			require.Nil(t, err)
@@ -157,7 +157,7 @@ func testMetrics(t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback)
 			// 1 on target: AUTH_RESPONSE
 			// 2 on both: STARTUP and QUERY INSERT INTO
 			// 2 on async: AUTH_RESPONSE and STARTUP
-			checkMetrics(t, true, lines, conf.ReadMode == config.ReadModeDualAsyncOnSecondary, 1, 1, 1, expectedAsyncConnections, 2, 1, 1, 2, true, true, originEndpoint, targetEndpoint, asyncEndpoint)
+			checkMetrics(t, true, lines, conf.ReadMode, 1, 1, 1, expectedAsyncConnections, 2, 1, 1, 2, true, true, originEndpoint, targetEndpoint, asyncEndpoint)
 
 			_, err = clientConn.SendAndReceive(selectQuery)
 			require.Nil(t, err)
@@ -170,7 +170,7 @@ func testMetrics(t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback)
 			if conf.ReadMode == config.ReadModeDualAsyncOnSecondary {
 				time.Sleep(200 * time.Millisecond)
 			}
-			checkMetrics(t, true, lines, conf.ReadMode == config.ReadModeDualAsyncOnSecondary, 1, 1, 1, expectedAsyncConnections, 2, 2, 1, 3, false, true, originEndpoint, targetEndpoint, asyncEndpoint)
+			checkMetrics(t, true, lines, conf.ReadMode, 1, 1, 1, expectedAsyncConnections, 2, 2, 1, 3, false, true, originEndpoint, targetEndpoint, asyncEndpoint)
 		})
 	}
 }
@@ -214,7 +214,7 @@ func checkMetrics(
 	t *testing.T,
 	checkNodeMetrics bool,
 	lines []string,
-	asyncEnabled bool,
+	readMode string,
 	openClientConns int,
 	openOriginConns int,
 	openTargetConns int,
@@ -229,6 +229,7 @@ func checkMetrics(
 	targetHost string,
 	asyncHost string,
 ) {
+	asyncEnabled := readMode == config.ReadModeDualAsyncOnSecondary
 	prefix := "cloudgate"
 	require.Contains(t, lines, fmt.Sprintf("%v %v", getPrometheusName(prefix, metrics.OpenClientConnections), openClientConns))
 

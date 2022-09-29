@@ -151,17 +151,14 @@ func (c *Config) ParseEnvVars() (*Config, error) {
 
 func (c *Config) ParseTopologyConfig() (*common.TopologyConfig, error) {
 	virtualizationEnabled := true
-	var proxyInstanceCount = -1
+	var proxyInstanceCount = 1
 	proxyAddressesTyped := []net.IP{net.ParseIP("127.0.0.1")}
 	if isNotDefined(c.ProxyTopologyAddresses) {
 		virtualizationEnabled = false
-		if proxyInstanceCount == -1 {
-			proxyInstanceCount = 1
-		}
 	} else {
 		proxyAddresses := strings.Split(strings.ReplaceAll(c.ProxyTopologyAddresses, " ", ""), ",")
 		if len(proxyAddresses) <= 0 {
-			return nil, fmt.Errorf("invalid ProxyTopologyAddresses: %v", c.ProxyTopologyAddresses)
+			return nil, fmt.Errorf("invalid ZDM_PROXY_TOPOLOGY_ADDRESSES: %v", c.ProxyTopologyAddresses)
 		}
 
 		proxyAddressesTyped = make([]net.IP, 0, len(proxyAddresses))
@@ -169,25 +166,21 @@ func (c *Config) ParseTopologyConfig() (*common.TopologyConfig, error) {
 			proxyAddr := proxyAddresses[i]
 			parsedIp := net.ParseIP(proxyAddr)
 			if parsedIp == nil {
-				return nil, fmt.Errorf("invalid proxy address in ProxyTopologyAddresses env var: %v", proxyAddr)
+				return nil, fmt.Errorf("invalid proxy address in ZDM_PROXY_TOPOLOGY_ADDRESSES env var: %v", proxyAddr)
 			}
 			proxyAddressesTyped = append(proxyAddressesTyped, parsedIp)
 		}
 		proxyInstanceCount = len(proxyAddressesTyped)
 	}
 
-	if proxyInstanceCount <= 0 {
-		return nil, fmt.Errorf("invalid TopologyInstanceCount: %v", proxyInstanceCount)
-	}
-
 	proxyIndex := c.ProxyTopologyIndex
 	if proxyIndex < 0 || proxyIndex >= proxyInstanceCount {
-		return nil, fmt.Errorf("invalid ProxyTopologyIndex and TopologyInstanceCount values; "+
-			"proxy index (%d) must be less than instance count (%d) and non negative", proxyIndex, proxyInstanceCount)
+		return nil, fmt.Errorf("invalid ZDM_PROXY_TOPOLOGY_INDEX and ZDM_PROXY_TOPOLOGY_ADDRESSES values; "+
+			"proxy index (%d) must be less than length of addresses (%d) and non negative", proxyIndex, proxyInstanceCount)
 	}
 
 	if c.ProxyTopologyNumTokens <= 0 || c.ProxyTopologyNumTokens > 256 {
-		return nil, fmt.Errorf("invalid ProxyTopologyNumTokens (%v), it must be positive and equal or less than 256", c.ProxyTopologyNumTokens)
+		return nil, fmt.Errorf("invalid ZDM_PROXY_TOPOLOGY_NUM_TOKENS (%v), it must be positive and equal or less than 256", c.ProxyTopologyNumTokens)
 	}
 
 	return &common.TopologyConfig{
