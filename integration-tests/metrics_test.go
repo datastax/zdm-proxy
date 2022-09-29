@@ -53,13 +53,13 @@ var proxyMetrics = []metrics.Metric{
 	metrics.PSCacheSize,
 	metrics.PSCacheMissCount,
 
-	metrics.ProxyRequestDurationTarget,
-	metrics.ProxyRequestDurationOrigin,
-	metrics.ProxyRequestDurationBoth,
+	metrics.ProxyReadsTargetDuration,
+	metrics.ProxyReadsOriginDuration,
+	metrics.ProxyWritesDuration,
 
-	metrics.InFlightRequestsTarget,
-	metrics.InFlightRequestsOrigin,
-	metrics.InFlightRequestsBoth,
+	metrics.InFlightReadsTarget,
+	metrics.InFlightReadsOrigin,
+	metrics.InFlightWrites,
 
 	metrics.OpenClientConnections,
 }
@@ -240,41 +240,41 @@ func checkMetrics(
 	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.FailedRequestsOrigin)))
 
 
-	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.InFlightRequestsBoth)))
-	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.InFlightRequestsOrigin)))
-	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.InFlightRequestsTarget)))
+	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.InFlightWrites)))
+	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.InFlightReadsOrigin)))
+	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.InFlightReadsTarget)))
 
 	if successOrigin == 0 {
-		require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithSuffix(prefix, metrics.ProxyRequestDurationOrigin, "sum")))
+		require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithSuffix(prefix, metrics.ProxyReadsOriginDuration, "sum")))
 	} else {
 		if !handshakeOnlyOrigin {
-			value, err := findMetricValue(lines, fmt.Sprintf("%v ", getPrometheusNameWithSuffix(prefix, metrics.ProxyRequestDurationOrigin, "sum")))
+			value, err := findMetricValue(lines, fmt.Sprintf("%v ", getPrometheusNameWithSuffix(prefix, metrics.ProxyReadsOriginDuration, "sum")))
 			require.Nil(t, err)
 			require.Greater(t, value, 0.0)
 		}
 	}
 
 	if successTarget == 0 {
-		require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithSuffix(prefix, metrics.ProxyRequestDurationTarget, "sum")))
+		require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithSuffix(prefix, metrics.ProxyReadsTargetDuration, "sum")))
 	} else {
 		if !handshakeOnlyTarget {
-			value, err := findMetricValue(lines, fmt.Sprintf("%v ", getPrometheusNameWithSuffix(prefix, metrics.ProxyRequestDurationTarget, "sum")))
+			value, err := findMetricValue(lines, fmt.Sprintf("%v ", getPrometheusNameWithSuffix(prefix, metrics.ProxyReadsTargetDuration, "sum")))
 			require.Nil(t, err)
 			require.Greater(t, value, 0.0)
 		}
 	}
 
 	if successBoth == 0 {
-		require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithSuffix(prefix, metrics.ProxyRequestDurationBoth, "sum")))
+		require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithSuffix(prefix, metrics.ProxyWritesDuration, "sum")))
 	} else {
-		value, err := findMetricValue(lines, fmt.Sprintf("%v ", getPrometheusNameWithSuffix(prefix, metrics.ProxyRequestDurationBoth, "sum")))
+		value, err := findMetricValue(lines, fmt.Sprintf("%v ", getPrometheusNameWithSuffix(prefix, metrics.ProxyWritesDuration, "sum")))
 		require.Nil(t, err)
 		require.Greater(t, value, 0.0)
 	}
 
-	require.Contains(t, lines, fmt.Sprintf("%v %v", getPrometheusNameWithSuffix(prefix, metrics.ProxyRequestDurationTarget, "count"), successTarget))
-	require.Contains(t, lines, fmt.Sprintf("%v %v", getPrometheusNameWithSuffix(prefix, metrics.ProxyRequestDurationOrigin, "count"), successOrigin))
-	require.Contains(t, lines, fmt.Sprintf("%v %v", getPrometheusNameWithSuffix(prefix, metrics.ProxyRequestDurationBoth, "count"), successBoth))
+	require.Contains(t, lines, fmt.Sprintf("%v %v", getPrometheusNameWithSuffix(prefix, metrics.ProxyReadsTargetDuration, "count"), successTarget))
+	require.Contains(t, lines, fmt.Sprintf("%v %v", getPrometheusNameWithSuffix(prefix, metrics.ProxyReadsOriginDuration, "count"), successOrigin))
+	require.Contains(t, lines, fmt.Sprintf("%v %v", getPrometheusNameWithSuffix(prefix, metrics.ProxyWritesDuration, "count"), successBoth))
 
 	if checkNodeMetrics {
 		if asyncEnabled {

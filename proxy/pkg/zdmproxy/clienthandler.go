@@ -672,14 +672,14 @@ func (ch *ClientHandler) finishRequest(holder *requestContextHolder, reqCtx *req
 	proxyMetrics := ch.metricHandler.GetProxyMetrics()
 	switch reqCtx.requestInfo.GetForwardDecision() {
 	case forwardToBoth:
-		proxyMetrics.ProxyRequestDurationBoth.Track(reqCtx.startTime)
-		proxyMetrics.InFlightRequestsBoth.Subtract(1)
+		proxyMetrics.ProxyWritesDuration.Track(reqCtx.startTime)
+		proxyMetrics.InFlightWrites.Subtract(1)
 	case forwardToOrigin:
-		proxyMetrics.ProxyRequestDurationOrigin.Track(reqCtx.startTime)
-		proxyMetrics.InFlightRequestsOrigin.Subtract(1)
+		proxyMetrics.ProxyReadsOriginDuration.Track(reqCtx.startTime)
+		proxyMetrics.InFlightReadsOrigin.Subtract(1)
 	case forwardToTarget:
-		proxyMetrics.ProxyRequestDurationTarget.Track(reqCtx.startTime)
-		proxyMetrics.InFlightRequestsTarget.Subtract(1)
+		proxyMetrics.ProxyReadsTargetDuration.Track(reqCtx.startTime)
+		proxyMetrics.InFlightReadsTarget.Subtract(1)
 	case forwardToAsyncOnly, forwardToNone:
 	default:
 		log.Errorf("unexpected forwardDecision %v, unable to track proxy level metrics", reqCtx.requestInfo.GetForwardDecision())
@@ -729,11 +729,11 @@ func (ch *ClientHandler) cancelRequest(holder *requestContextHolder, reqCtx *req
 	proxyMetrics := ch.metricHandler.GetProxyMetrics()
 	switch reqCtx.requestInfo.GetForwardDecision() {
 	case forwardToBoth:
-		proxyMetrics.InFlightRequestsBoth.Subtract(1)
+		proxyMetrics.InFlightWrites.Subtract(1)
 	case forwardToOrigin:
-		proxyMetrics.InFlightRequestsOrigin.Subtract(1)
+		proxyMetrics.InFlightReadsOrigin.Subtract(1)
 	case forwardToTarget:
-		proxyMetrics.InFlightRequestsTarget.Subtract(1)
+		proxyMetrics.InFlightReadsTarget.Subtract(1)
 	case forwardToAsyncOnly, forwardToNone:
 	default:
 		log.Errorf("unexpected forwardDecision %v, unable to track proxy level metrics", reqCtx.requestInfo.GetForwardDecision())
@@ -759,7 +759,7 @@ func (ch *ClientHandler) computeClientResponse(requestContext *requestContextImp
 		log.Tracef("Forward to origin: just returning the response received from %v: %d",
 			common.ClusterTypeOrigin, requestContext.originResponse.Header.OpCode)
 		if !isResponseSuccessful(requestContext.originResponse) {
-			ch.metricHandler.GetProxyMetrics().FailedRequestsOrigin.Add(1)
+			ch.metricHandler.GetProxyMetrics().FailedReadsOrigin.Add(1)
 		}
 		return requestContext.originResponse, common.ClusterTypeOrigin, nil
 	case forwardToTarget:
@@ -771,7 +771,7 @@ func (ch *ClientHandler) computeClientResponse(requestContext *requestContextImp
 		log.Tracef("Forward to target: just returning the response received from %v: %d",
 			common.ClusterTypeTarget, requestContext.targetResponse.Header.OpCode)
 		if !isResponseSuccessful(requestContext.targetResponse) {
-			ch.metricHandler.GetProxyMetrics().FailedRequestsTarget.Add(1)
+			ch.metricHandler.GetProxyMetrics().FailedReadsTarget.Add(1)
 		}
 		return requestContext.targetResponse, common.ClusterTypeTarget, nil
 	case forwardToBoth:
@@ -1376,11 +1376,11 @@ func (ch *ClientHandler) executeRequest(
 	proxyMetrics := ch.metricHandler.GetProxyMetrics()
 	switch fwdDecision {
 	case forwardToBoth:
-		proxyMetrics.InFlightRequestsBoth.Add(1)
+		proxyMetrics.InFlightWrites.Add(1)
 	case forwardToOrigin:
-		proxyMetrics.InFlightRequestsOrigin.Add(1)
+		proxyMetrics.InFlightReadsOrigin.Add(1)
 	case forwardToTarget:
-		proxyMetrics.InFlightRequestsTarget.Add(1)
+		proxyMetrics.InFlightReadsTarget.Add(1)
 	case forwardToAsyncOnly:
 	default:
 		log.Errorf("unexpected forwardDecision %v, unable to track proxy level metrics", fwdDecision)
@@ -1807,7 +1807,7 @@ func (ch *ClientHandler) aggregateAndTrackResponses(
 	if !isResponseSuccessful(responseFromOriginCassandra) && !isResponseSuccessful(responseFromTargetCassandra) {
 		log.Debugf("Aggregated response: both failures, sending back %v response with opcode %d",
 			common.ClusterTypeOrigin, originOpCode)
-		proxyMetrics.FailedRequestsBoth.Add(1)
+		proxyMetrics.FailedWritesOnBoth.Add(1)
 		return responseFromOriginCassandra, common.ClusterTypeOrigin
 	}
 
@@ -1815,12 +1815,12 @@ func (ch *ClientHandler) aggregateAndTrackResponses(
 	if !isResponseSuccessful(responseFromOriginCassandra) {
 		log.Debugf("Aggregated response: failure only on %v, sending back %v response with opcode %d",
 			common.ClusterTypeOrigin, common.ClusterTypeOrigin, originOpCode)
-		proxyMetrics.FailedRequestsBothFailedOnOriginOnly.Add(1)
+		proxyMetrics.FailedWritesOnOrigin.Add(1)
 		return responseFromOriginCassandra, common.ClusterTypeOrigin
 	} else {
 		log.Debugf("Aggregated response: failure only on %v, sending back %v response with opcode %d",
 			common.ClusterTypeTarget, common.ClusterTypeTarget, originOpCode)
-		proxyMetrics.FailedRequestsBothFailedOnTargetOnly.Add(1)
+		proxyMetrics.FailedWritesOnTarget.Add(1)
 		return responseFromTargetCassandra, common.ClusterTypeTarget
 	}
 }

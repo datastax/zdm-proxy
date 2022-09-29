@@ -214,20 +214,20 @@ func newFakeMetricHandler() *metrics.MetricHandler {
 
 func newFakeProxyMetrics() *metrics.ProxyMetrics {
 	return &metrics.ProxyMetrics{
-		FailedRequestsOrigin:                 newFakeCounter(),
-		FailedRequestsTarget:                 newFakeCounter(),
-		FailedRequestsBothFailedOnOriginOnly: newFakeCounter(),
-		FailedRequestsBothFailedOnTargetOnly: newFakeCounter(),
-		FailedRequestsBoth:                   newFakeCounter(),
-		PSCacheSize:                          newFakeGaugeFunc(),
-		PSCacheMissCount:                     newFakeCounter(),
-		ProxyRequestDurationOrigin:           newFakeHistogram(),
-		ProxyRequestDurationTarget:           newFakeHistogram(),
-		ProxyRequestDurationBoth:             newFakeHistogram(),
-		InFlightRequestsOrigin:               newFakeGauge(),
-		InFlightRequestsTarget:               newFakeGauge(),
-		InFlightRequestsBoth:                 newFakeGauge(),
-		OpenClientConnections:                newFakeGaugeFunc(),
+		FailedReadsOrigin:        newFakeCounter(),
+		FailedReadsTarget:        newFakeCounter(),
+		FailedWritesOnOrigin:     newFakeCounter(),
+		FailedWritesOnTarget:     newFakeCounter(),
+		FailedWritesOnBoth:       newFakeCounter(),
+		PSCacheSize:              newFakeGaugeFunc(),
+		PSCacheMissCount:         newFakeCounter(),
+		ProxyReadsOriginDuration: newFakeHistogram(),
+		ProxyReadsTargetDuration: newFakeHistogram(),
+		ProxyWritesDuration:      newFakeHistogram(),
+		InFlightReadsOrigin:      newFakeGauge(),
+		InFlightReadsTarget:      newFakeGauge(),
+		InFlightWrites:           newFakeGauge(),
+		OpenClientConnections:    newFakeGaugeFunc(),
 	}
 }
 
