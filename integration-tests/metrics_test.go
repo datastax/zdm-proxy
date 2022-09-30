@@ -230,7 +230,7 @@ func checkMetrics(
 	asyncHost string,
 ) {
 	asyncEnabled := readMode == config.ReadModeDualAsyncOnSecondary
-	prefix := "cloudgate"
+	prefix := "zdm"
 	require.Contains(t, lines, fmt.Sprintf("%v %v", getPrometheusName(prefix, metrics.OpenClientConnections), openClientConns))
 
 	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.FailedWritesOnBoth)))

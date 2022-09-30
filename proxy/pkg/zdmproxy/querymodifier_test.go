@@ -214,7 +214,7 @@ func TestReplaceQueryString(t *testing.T) {
 							if test.f.Header.OpCode == primitive.OpCodePrepare {
 								if test.namedGeneratedValues {
 									require.True(t, newTerm.isNamedBindMarker())
-									require.Equal(t, "cloudgate__now", newTerm.bindMarkerName)
+									require.Equal(t, "zdm__now", newTerm.bindMarkerName)
 								} else {
 									require.True(t, newTerm.isPositionalBindMarker())
 								}

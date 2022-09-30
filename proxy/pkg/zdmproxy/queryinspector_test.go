@@ -324,7 +324,7 @@ func TestNowFunctionCalls(t *testing.T) {
 			true,
 			"INSERT INTO ks1.table1 (foo) VALUES (7872e70a-5a68-11eb-ae93-0242ac130002)",
 			"INSERT INTO ks1.table1 (foo) VALUES (?)",
-			"INSERT INTO ks1.table1 (foo) VALUES (:cloudgate__now)",
+			"INSERT INTO ks1.table1 (foo) VALUES (:zdm__now)",
 			[]*term{
 				NewFunctionCallTerm(NewFunctionCall("", "now", 0, 37, 41), -1)},
 		},
@@ -336,7 +336,7 @@ func TestNowFunctionCalls(t *testing.T) {
 			true,
 			"INSERT INTO ks1.table1 (foo1, foo2, foo3, foo4) VALUES (?, 7872e70a-5a68-11eb-ae93-0242ac130002, 7872e70a-5a68-11eb-ae93-0242ac130002, ?)",
 			"INSERT INTO ks1.table1 (foo1, foo2, foo3, foo4) VALUES (?, ?, ?, ?)",
-			"INSERT INTO ks1.table1 (foo1, foo2, foo3, foo4) VALUES (?, :cloudgate__now, :cloudgate__now, ?)", // invalid but doesn't matter here
+			"INSERT INTO ks1.table1 (foo1, foo2, foo3, foo4) VALUES (?, :zdm__now, :zdm__now, ?)", // invalid but doesn't matter here
 			[]*term{
 				NewFunctionCallTerm(NewFunctionCall("", "now", 0, 59, 63), 0),
 				NewFunctionCallTerm(NewFunctionCall("", "now", 0, 66, 70), 0)},
@@ -349,7 +349,7 @@ func TestNowFunctionCalls(t *testing.T) {
 			true,
 			"INSERT INTO ks1.table1 (foo1, foo2, foo3, foo4) VALUES (7872e70a-5a68-11eb-ae93-0242ac130002, ?, ?, 7872e70a-5a68-11eb-ae93-0242ac130002)",
 			"INSERT INTO ks1.table1 (foo1, foo2, foo3, foo4) VALUES (?, ?, ?, ?)",
-			"INSERT INTO ks1.table1 (foo1, foo2, foo3, foo4) VALUES (:cloudgate__now, ?, ?, :cloudgate__now)", // invalid but doesn't matter here
+			"INSERT INTO ks1.table1 (foo1, foo2, foo3, foo4) VALUES (:zdm__now, ?, ?, :zdm__now)", // invalid but doesn't matter here
 			[]*term{
 				NewFunctionCallTerm(NewFunctionCall("", "now", 0, 56, 60), -1),
 				NewFunctionCallTerm(NewFunctionCall("", "now", 0, 69, 73), 1)},
@@ -362,7 +362,7 @@ func TestNowFunctionCalls(t *testing.T) {
 			true,
 			"INSERT INTO ks1.table1 (foo) VALUES (7872e70a-5a68-11eb-ae93-0242ac130002)",
 			"INSERT INTO ks1.table1 (foo) VALUES (?)",
-			"INSERT INTO ks1.table1 (foo) VALUES (:cloudgate__now)",
+			"INSERT INTO ks1.table1 (foo) VALUES (:zdm__now)",
 			[]*term{
 				NewFunctionCallTerm(NewFunctionCall("system", "now", 0, 37, 48), -1)},
 		},
@@ -374,7 +374,7 @@ func TestNowFunctionCalls(t *testing.T) {
 			true,
 			"INSERT INTO ks1.table1 (foo) VALUES ( 7872e70a-5a68-11eb-ae93-0242ac130002 )",
 			"INSERT INTO ks1.table1 (foo) VALUES ( ? )",
-			"INSERT INTO ks1.table1 (foo) VALUES ( :cloudgate__now )",
+			"INSERT INTO ks1.table1 (foo) VALUES ( :zdm__now )",
 			[]*term{
 				NewFunctionCallTerm(NewFunctionCall("system", "now", 0, 38, 57), -1)},
 		},
@@ -386,7 +386,7 @@ func TestNowFunctionCalls(t *testing.T) {
 			true,
 			"INSERT INTO ks1.table1 (foo) VALUES ( ( uuid ) 7872e70a-5a68-11eb-ae93-0242ac130002)",
 			"INSERT INTO ks1.table1 (foo) VALUES ( ( uuid ) ?)",
-			"INSERT INTO ks1.table1 (foo) VALUES ( ( uuid ) :cloudgate__now)",
+			"INSERT INTO ks1.table1 (foo) VALUES ( ( uuid ) :zdm__now)",
 			[]*term{
 				NewFunctionCallTerm(NewFunctionCall("system", "now", 0, 47, 58), -1)},
 		},
@@ -398,7 +398,7 @@ func TestNowFunctionCalls(t *testing.T) {
 			true,
 			"INSERT INTO ks1.table1 (foo, bar, qix) VALUES (7872e70a-5a68-11eb-ae93-0242ac130002, yesterday(), tomorrow())",
 			"INSERT INTO ks1.table1 (foo, bar, qix) VALUES (?, yesterday(), tomorrow())",
-			"INSERT INTO ks1.table1 (foo, bar, qix) VALUES (:cloudgate__now, yesterday(), tomorrow())",
+			"INSERT INTO ks1.table1 (foo, bar, qix) VALUES (:zdm__now, yesterday(), tomorrow())",
 			[]*term{
 				NewFunctionCallTerm(NewFunctionCall("", "now", 0, 47, 51), -1)},
 		},
@@ -410,7 +410,7 @@ func TestNowFunctionCalls(t *testing.T) {
 			true,
 			"INSERT INTO ks1.table1 (c1, c2, c3, c4) VALUES ( 7872e70a-5a68-11eb-ae93-0242ac130002, 7872e70a-5a68-11eb-ae93-0242ac130002, 7872e70a-5a68-11eb-ae93-0242ac130002, 7872e70a-5a68-11eb-ae93-0242ac130002)",
 			"INSERT INTO ks1.table1 (c1, c2, c3, c4) VALUES ( ?, ?, ?, ?)",
-			"INSERT INTO ks1.table1 (c1, c2, c3, c4) VALUES ( :cloudgate__now, :cloudgate__now, :cloudgate__now, :cloudgate__now)",
+			"INSERT INTO ks1.table1 (c1, c2, c3, c4) VALUES ( :zdm__now, :zdm__now, :zdm__now, :zdm__now)",
 			[]*term{
 				NewFunctionCallTerm(NewFunctionCall("", "now", 0, 49, 53), -1),
 				NewFunctionCallTerm(NewFunctionCall("", "now", 0, 56, 62), -1),
@@ -441,10 +441,10 @@ func TestNowFunctionCalls(t *testing.T) {
 				"INSERT INTO ks1.table1 (c1, c2) VALUES (42, ?) " +
 				"APPLY BATCH",
 			"BEGIN BATCH " +
-				"INSERT INTO ks1.table1 (c1, c2) VALUES (42, :cloudgate__now) " +
+				"INSERT INTO ks1.table1 (c1, c2) VALUES (42, :zdm__now) " +
 				"DELETE FROM ks1.table1 WHERE c1 = 42 " +
-				"INSERT INTO ks1.table1 (c1, c2) VALUES (42, :cloudgate__now) " +
-				"INSERT INTO ks1.table1 (c1, c2) VALUES (42, :cloudgate__now) " +
+				"INSERT INTO ks1.table1 (c1, c2) VALUES (42, :zdm__now) " +
+				"INSERT INTO ks1.table1 (c1, c2) VALUES (42, :zdm__now) " +
 				"APPLY BATCH",
 			[]*term{
 				NewFunctionCallTerm(NewFunctionCall("", "now", 0, 56, 60), -1),
@@ -478,11 +478,11 @@ func TestNowFunctionCalls(t *testing.T) {
 				"INSERT INTO ks1.table1 (c1, c2) VALUES (42, ?) " +
 				"APPLY BATCH",
 			"BEGIN BATCH " +
-				"INSERT INTO ks1.table1 (c1, c2) VALUES (42, :cloudgate__now) " +
-				"DELETE FROM ks1.table1 WHERE c1 = :cloudgate__now " +
-				"UPDATE ks1.table1 SET c2 = :cloudgate__now WHERE c1 = :cloudgate__now " +
-				"INSERT INTO ks1.table1 (c1, c2) VALUES (42, :cloudgate__now) " +
-				"INSERT INTO ks1.table1 (c1, c2) VALUES (42, :cloudgate__now) " +
+				"INSERT INTO ks1.table1 (c1, c2) VALUES (42, :zdm__now) " +
+				"DELETE FROM ks1.table1 WHERE c1 = :zdm__now " +
+				"UPDATE ks1.table1 SET c2 = :zdm__now WHERE c1 = :zdm__now " +
+				"INSERT INTO ks1.table1 (c1, c2) VALUES (42, :zdm__now) " +
+				"INSERT INTO ks1.table1 (c1, c2) VALUES (42, :zdm__now) " +
 				"APPLY BATCH",
 			[]*term{
 				NewFunctionCallTerm(NewFunctionCall("", "now", 0, 56, 60), -1),
@@ -511,7 +511,7 @@ func TestNowFunctionCalls(t *testing.T) {
 			true,
 			"UPDATE ks1.table1 SET foo = 'bar' WHERE col = 7872e70a-5a68-11eb-ae93-0242ac130002",
 			"UPDATE ks1.table1 SET foo = 'bar' WHERE col = ?",
-			"UPDATE ks1.table1 SET foo = 'bar' WHERE col = :cloudgate__now",
+			"UPDATE ks1.table1 SET foo = 'bar' WHERE col = :zdm__now",
 			[]*term{
 				NewFunctionCallTerm(NewFunctionCall("", "now", 0, 46, 50), -1)},
 		},
@@ -523,7 +523,7 @@ func TestNowFunctionCalls(t *testing.T) {
 			true,
 			"DELETE FROM ks1.table1 WHERE col = 7872e70a-5a68-11eb-ae93-0242ac130002",
 			"DELETE FROM ks1.table1 WHERE col = ?",
-			"DELETE FROM ks1.table1 WHERE col = :cloudgate__now",
+			"DELETE FROM ks1.table1 WHERE col = :zdm__now",
 			[]*term{
 				NewFunctionCallTerm(NewFunctionCall("", "now", 0, 35, 39), -1)},
 		},

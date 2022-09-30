@@ -22,7 +22,7 @@ const (
 	statementTypeUse    = statementType("use")
 	statementTypeOther  = statementType("other")
 
-	cloudgateNowNamedMarker = "cloudgate__now"
+	zdmNowNamedMarker = "zdm__now"
 )
 
 const (
@@ -33,8 +33,8 @@ const (
 )
 
 var (
-	sortedCloudgateNamedMarkers = []string{cloudgateNowNamedMarker}
-	parserPool = sync.Pool{New: func() interface{} {
+	sortedZdmNamedMarkers = []string{zdmNowNamedMarker}
+	parserPool            = sync.Pool{New: func() interface{} {
 		p := parser.NewSimplifiedCqlParser(nil)
 		p.RemoveErrorListeners()
 		p.SetErrorHandler(antlr.NewBailErrorStrategy())
@@ -879,7 +879,7 @@ func (l *cqlListener) replaceNowFunctionCallsWithPositionalBindMarkers() (QueryI
 func (l *cqlListener) replaceNowFunctionCallsWithNamedBindMarkers() (QueryInfo, []*term) {
 	return l.replaceFunctionCalls(func(query string, functionCall *functionCall) (string, replacementType) {
 		if functionCall.isNow() {
-			return fmt.Sprintf(":%s", cloudgateNowNamedMarker), namedMarkerReplacement
+			return fmt.Sprintf(":%s", zdmNowNamedMarker), namedMarkerReplacement
 		} else {
 			return "", noReplacement
 		}
@@ -905,6 +905,6 @@ func (l *cqlListener) shallowClone() *cqlListener {
 	}
 }
 
-func GetSortedCloudgateNamedMarkers() []string {
-	return sortedCloudgateNamedMarkers
+func GetSortedZdmNamedMarkers() []string {
+	return sortedZdmNamedMarkers
 }

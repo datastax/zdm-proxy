@@ -971,7 +971,7 @@ func (ch *ClientHandler) processPreparedResponse(
 
 				newPreparedBody.VariablesMetadata.Columns = newColumns
 			} else {
-				namedMarkersToRemove := GetSortedCloudgateNamedMarkers()
+				namedMarkersToRemove := GetSortedZdmNamedMarkers()
 				newCols := make([]*message.ColumnMetadata, 0, len(newPreparedBody.VariablesMetadata.Columns))
 				indicesToRemove := make([]int, 0, len(namedMarkersToRemove))
 				start := 0
