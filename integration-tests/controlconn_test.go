@@ -7,12 +7,12 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/google/uuid"
 	"github.com/datastax/zdm-proxy/integration-tests/env"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
 	"github.com/datastax/zdm-proxy/integration-tests/utils"
 	"github.com/datastax/zdm-proxy/proxy/pkg/zdmproxy"
+	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
 	"net"
@@ -62,66 +62,78 @@ func TestGetHosts(t *testing.T) {
 	checkHostsFunc(t, testSetup.Proxy.GetTargetControlConn(), testSetup.Target)
 }
 
+func ipAddresses(count int) string {
+	ipAddresses := ""
+	for i := 0; i < count; i++ {
+		if i == count-1 {
+			ipAddresses += fmt.Sprintf("127.0.0.%d", i+1)
+		} else {
+			ipAddresses += fmt.Sprintf("127.0.0.%d,", i+1)
+		}
+	}
+	return ipAddresses
+}
+
 func TestGetAssignedHosts(t *testing.T) {
 	testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodes(false, false, 3)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
 	type test struct {
-		name          string
-		instanceCount int
-		index         int
-		assigned      []int
+		name              string
+		topologyAddresses string
+		index             int
+		assigned          []int
 	}
 
 	tests := []test{
 		{
-			name:          "1 instances, 0 index, 3 hosts",
-			instanceCount: 1,
-			index:         0,
-			assigned:      []int{0, 1, 2},
+			name:              "1 instances, 0 index, 3 hosts",
+			topologyAddresses: ipAddresses(1),
+			index:             0,
+			assigned:          []int{0, 1, 2},
 		},
 		{
-			name:          "2 instances, 0 index, 3 hosts",
-			instanceCount: 2,
-			index:         0,
-			assigned:      []int{0, 2},
+			name:              "2 instances, 0 index, 3 hosts",
+			topologyAddresses: ipAddresses(2),
+			index:             0,
+			assigned:          []int{0, 2},
 		},
 		{
-			name:          "2 instances, 1 index, 3 hosts",
-			instanceCount: 2,
-			index:         1,
-			assigned:      []int{1},
+			name:              "2 instances, 1 index, 3 hosts",
+			topologyAddresses: ipAddresses(2),
+			index:             1,
+			assigned:          []int{1},
 		},
 		{
-			name:          "3 instances, 1 index, 3 hosts",
-			instanceCount: 3,
-			index:         1,
-			assigned:      []int{1},
+			name:              "3 instances, 1 index, 3 hosts",
+			topologyAddresses: ipAddresses(3),
+			index:             1,
+			assigned:          []int{1},
 		},
 		{
-			name:          "4 instances, 1 index, 3 hosts",
-			instanceCount: 4,
-			index:         1,
-			assigned:      []int{1},
+			name:              "4 instances, 1 index, 3 hosts",
+			topologyAddresses: ipAddresses(4),
+			index:             1,
+			assigned:          []int{1},
 		},
 		{
-			name:          "4 instances, 3 index, 3 hosts",
-			instanceCount: 4,
-			index:         3,
-			assigned:      []int{0},
+			name:              "4 instances, 3 index, 3 hosts",
+			topologyAddresses: ipAddresses(4),
+			index:             3,
+			assigned:          []int{0},
 		},
 		{
-			name:          "4 instances, 0 index, 3 hosts",
-			instanceCount: 4,
-			index:         0,
-			assigned:      []int{0},
+			name:              "4 instances, 0 index, 3 hosts",
+			topologyAddresses: ipAddresses(4),
+			index:             0,
+			assigned:          []int{0},
 		},
 		{
-			name:          "12 instances, 10 index, 3 hosts",
-			instanceCount: 12,
-			index:         10,
-			assigned:      []int{1},
+			name:              "12 instances, 10 index, 3 hosts",
+			topologyAddresses: ipAddresses(12),
+			index:             10,
+			assigned:          []int{1},
 		},
 	}
 
@@ -146,8 +158,8 @@ func TestGetAssignedHosts(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 
 			config := setup.NewTestConfig(testSetup.Origin.GetInitialContactPoint(), testSetup.Target.GetInitialContactPoint())
-			config.ProxyInstanceCount = tt.instanceCount
-			config.ProxyIndex = tt.index
+			config.ProxyTopologyIndex = tt.index
+			config.ProxyTopologyAddresses = tt.topologyAddresses
 			proxy, err := setup.NewProxyInstanceWithConfig(config)
 			require.Nil(t, err)
 			defer proxy.Shutdown()
@@ -164,60 +176,60 @@ func TestNextAssignedHost(t *testing.T) {
 	defer testSetup.Cleanup()
 
 	type test struct {
-		name          string
-		instanceCount int
-		index         int
-		assigned      []int
+		name              string
+		topologyAddresses string
+		index             int
+		assigned          []int
 	}
 
 	tests := []test{
 		{
-			name:          "1 instances, 0 index, 3 hosts",
-			instanceCount: 1,
-			index:         0,
-			assigned:      []int{0, 1, 2},
+			name:              "1 instances, 0 index, 3 hosts",
+			topologyAddresses: ipAddresses(1),
+			index:             0,
+			assigned:          []int{0, 1, 2},
 		},
 		{
-			name:          "2 instances, 0 index, 3 hosts",
-			instanceCount: 2,
-			index:         0,
-			assigned:      []int{0, 2},
+			name:              "2 instances, 0 index, 3 hosts",
+			topologyAddresses: ipAddresses(2),
+			index:             0,
+			assigned:          []int{0, 2},
 		},
 		{
-			name:          "2 instances, 1 index, 3 hosts",
-			instanceCount: 2,
-			index:         1,
-			assigned:      []int{1},
+			name:              "2 instances, 1 index, 3 hosts",
+			topologyAddresses: ipAddresses(2),
+			index:             1,
+			assigned:          []int{1},
 		},
 		{
-			name:          "3 instances, 1 index, 3 hosts",
-			instanceCount: 3,
-			index:         1,
-			assigned:      []int{1},
+			name:              "3 instances, 1 index, 3 hosts",
+			topologyAddresses: ipAddresses(3),
+			index:             1,
+			assigned:          []int{1},
 		},
 		{
-			name:          "4 instances, 1 index, 3 hosts",
-			instanceCount: 4,
-			index:         1,
-			assigned:      []int{1},
+			name:              "4 instances, 1 index, 3 hosts",
+			topologyAddresses: ipAddresses(4),
+			index:             1,
+			assigned:          []int{1},
 		},
 		{
-			name:          "4 instances, 3 index, 3 hosts",
-			instanceCount: 4,
-			index:         3,
-			assigned:      []int{0},
+			name:              "4 instances, 3 index, 3 hosts",
+			topologyAddresses: ipAddresses(4),
+			index:             3,
+			assigned:          []int{0},
 		},
 		{
-			name:          "4 instances, 0 index, 3 hosts",
-			instanceCount: 4,
-			index:         0,
-			assigned:      []int{0},
+			name:              "4 instances, 0 index, 3 hosts",
+			topologyAddresses: ipAddresses(4),
+			index:             0,
+			assigned:          []int{0},
 		},
 		{
-			name:          "12 instances, 10 index, 3 hosts",
-			instanceCount: 12,
-			index:         10,
-			assigned:      []int{1},
+			name:              "12 instances, 10 index, 3 hosts",
+			topologyAddresses: ipAddresses(12),
+			index:             10,
+			assigned:          []int{1},
 		},
 	}
 
@@ -292,8 +304,8 @@ func TestNextAssignedHost(t *testing.T) {
 			config := setup.NewTestConfig(testSetup.Origin.GetInitialContactPoint(), testSetup.Target.GetInitialContactPoint())
 			config.TargetEnableHostAssignment = true
 			config.OriginEnableHostAssignment = true
-			config.ProxyInstanceCount = tt.instanceCount
-			config.ProxyIndex = tt.index
+			config.ProxyTopologyIndex = tt.index
+			config.ProxyTopologyAddresses = tt.topologyAddresses
 			proxy, err := setup.NewProxyInstanceWithConfig(config)
 			require.Nil(t, err)
 			defer proxy.Shutdown()
@@ -314,7 +326,7 @@ func TestConnectionAssignment(t *testing.T) {
 
 	type test struct {
 		name                  string
-		instanceCount         int
+		topologyAddresses     string
 		index                 int
 		assigned              []int
 		hostAssignmentEnabled bool
@@ -323,63 +335,63 @@ func TestConnectionAssignment(t *testing.T) {
 	tests := []test{
 		{
 			name:                  "1 instances, 0 index, 3 hosts, no assignment",
-			instanceCount:         1,
+			topologyAddresses:     ipAddresses(1),
 			index:                 0,
 			assigned:              []int{0, 1, 2},
 			hostAssignmentEnabled: false,
 		},
 		{
 			name:                  "1 instances, 0 index, 3 hosts",
-			instanceCount:         1,
+			topologyAddresses:     ipAddresses(1),
 			index:                 0,
 			assigned:              []int{0, 1, 2},
 			hostAssignmentEnabled: true,
 		},
 		{
 			name:                  "2 instances, 0 index, 3 hosts",
-			instanceCount:         2,
+			topologyAddresses:     ipAddresses(2),
 			index:                 0,
 			assigned:              []int{0, 2},
 			hostAssignmentEnabled: true,
 		},
 		{
 			name:                  "2 instances, 1 index, 3 hosts",
-			instanceCount:         2,
+			topologyAddresses:     ipAddresses(2),
 			index:                 1,
 			assigned:              []int{1},
 			hostAssignmentEnabled: true,
 		},
 		{
 			name:                  "3 instances, 1 index, 3 hosts",
-			instanceCount:         3,
+			topologyAddresses:     ipAddresses(3),
 			index:                 1,
 			assigned:              []int{1},
 			hostAssignmentEnabled: true,
 		},
 		{
 			name:                  "4 instances, 1 index, 3 hosts",
-			instanceCount:         4,
+			topologyAddresses:     ipAddresses(4),
 			index:                 1,
 			assigned:              []int{1},
 			hostAssignmentEnabled: true,
 		},
 		{
 			name:                  "4 instances, 3 index, 3 hosts",
-			instanceCount:         4,
+			topologyAddresses:     ipAddresses(4),
 			index:                 3,
 			assigned:              []int{0},
 			hostAssignmentEnabled: true,
 		},
 		{
 			name:                  "4 instances, 0 index, 3 hosts",
-			instanceCount:         4,
+			topologyAddresses:     ipAddresses(4),
 			index:                 0,
 			assigned:              []int{0},
 			hostAssignmentEnabled: true,
 		},
 		{
 			name:                  "12 instances, 10 index, 3 hosts",
-			instanceCount:         12,
+			topologyAddresses:     ipAddresses(12),
 			index:                 10,
 			assigned:              []int{1},
 			hostAssignmentEnabled: true,
@@ -442,8 +454,8 @@ func TestConnectionAssignment(t *testing.T) {
 			config := setup.NewTestConfig(testSetup.Origin.GetInitialContactPoint(), testSetup.Target.GetInitialContactPoint())
 			config.TargetEnableHostAssignment = tt.hostAssignmentEnabled
 			config.OriginEnableHostAssignment = tt.hostAssignmentEnabled
-			config.ProxyInstanceCount = tt.instanceCount
-			config.ProxyIndex = tt.index
+			config.ProxyTopologyIndex = tt.index
+			config.ProxyTopologyAddresses = tt.topologyAddresses
 			proxy, err := setup.NewProxyInstanceWithConfig(config)
 			require.Nil(t, err)
 			defer proxy.Shutdown()
@@ -720,8 +732,8 @@ func TestRefreshTopologyEventHandler(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			conf := setup.NewTestConfig("127.0.1.1", "127.0.1.2")
-			conf.OriginDatacenter = tt.originDcConf
-			conf.TargetDatacenter = tt.targetDcConf
+			conf.OriginLocalDatacenter = tt.originDcConf
+			conf.TargetLocalDatacenter = tt.targetDcConf
 
 			originRegisterMessages := make([]*message.Register, 0)
 			originRegisterLock := &sync.Mutex{}

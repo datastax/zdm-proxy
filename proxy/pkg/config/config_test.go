@@ -15,13 +15,13 @@ func TestTargetConfig_WithBundleOnly(t *testing.T) {
 	setOriginContactPointsAndPortEnvVars()
 
 	// test-specific setup
-	setEnvVar("TARGET_CASSANDRA_SECURE_CONNECT_BUNDLE_PATH", "/path/to/target/bundle")
+	setEnvVar("ZDM_TARGET_SECURE_CONNECT_BUNDLE_PATH", "/path/to/target/bundle")
 
 	conf, err := New().ParseEnvVars()
 	require.Nil(t, err)
-	require.Equal(t, conf.TargetCassandraSecureConnectBundlePath, "/path/to/target/bundle")
-	require.Empty(t, conf.TargetCassandraContactPoints)
-	require.Equal(t, conf.TargetCassandraPort, 9042)
+	require.Equal(t, conf.TargetSecureConnectBundlePath, "/path/to/target/bundle")
+	require.Empty(t, conf.TargetContactPoints)
+	require.Equal(t, conf.TargetPort, 9042)
 }
 
 func TestTargetConfig_WithHostnameAndPortOnly(t *testing.T) {
@@ -38,9 +38,9 @@ func TestTargetConfig_WithHostnameAndPortOnly(t *testing.T) {
 
 	conf, err := New().ParseEnvVars()
 	require.Nil(t, err)
-	require.Equal(t, conf.TargetCassandraContactPoints, "target.hostname.com")
-	require.Equal(t, conf.TargetCassandraPort, 5647)
-	require.Empty(t, conf.TargetCassandraSecureConnectBundlePath)
+	require.Equal(t, conf.TargetContactPoints, "target.hostname.com")
+	require.Equal(t, conf.TargetPort, 5647)
+	require.Empty(t, conf.TargetSecureConnectBundlePath)
 }
 
 func TestTargetConfig_WithBundleAndHostname(t *testing.T) {
@@ -57,7 +57,7 @@ func TestTargetConfig_WithBundleAndHostname(t *testing.T) {
 	setTargetSecureConnectBundleEnvVar()
 
 	_, err := New().ParseEnvVars()
-	require.Error(t, err, "TargetCassandraSecureConnectBundlePath and TargetCassandraContactPoints are "+
+	require.Error(t, err, "TargetSecureConnectBundlePath and TargetContactPoints are "+
 		"mutually exclusive. Please specify only one of them.")
 }
 
@@ -73,7 +73,7 @@ func TestTargetConfig_WithoutBundleAndHostname(t *testing.T) {
 	// no test-specific setup in this case
 
 	_, err := New().ParseEnvVars()
-	require.Error(t, err, "Both TargetCassandraSecureConnectBundlePath and TargetCassandraContactPoints are "+
+	require.Error(t, err, "Both TargetSecureConnectBundlePath and TargetContactPoints are "+
 		"empty. Please specify either one of them.")
 }
 
@@ -87,9 +87,9 @@ func TestTargetConfig_WithHostnameButWithoutPort(t *testing.T) {
 	setOriginContactPointsAndPortEnvVars()
 
 	//test-specific setup
-	setEnvVar("TARGET_CASSANDRA_CONTACT_POINTS", "target.hostname.com")
+	setEnvVar("ZDM_TARGET_CONTACT_POINTS", "target.hostname.com")
 
 	c, err := New().ParseEnvVars()
 	require.Nil(t, err)
-	require.Equal(t, 9042, c.TargetCassandraPort)
+	require.Equal(t, 9042, c.TargetPort)
 }

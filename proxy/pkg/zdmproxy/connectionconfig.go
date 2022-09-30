@@ -4,14 +4,14 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"github.com/datastax/zdm-proxy/proxy/pkg/config"
+	"github.com/datastax/zdm-proxy/proxy/pkg/common"
 	log "github.com/sirupsen/logrus"
 	"net"
 	"sync"
 )
 
 type ConnectionConfig interface {
-	GetClusterType() ClusterType
+	GetClusterType() common.ClusterType
 	GetLocalDatacenter() string
 	GetTlsConfig() *tls.Config
 	UsesSNI() bool
@@ -21,8 +21,8 @@ type ConnectionConfig interface {
 	CreateEndpoint(h *Host) Endpoint
 }
 
-func InitializeConnectionConfig(clusterTlsConfig *config.ClusterTlsConfig, contactPointsFromConfig []string, port int,
-	connTimeoutInMs int, clusterType ClusterType, datacenterFromConfig string, ctx context.Context) (ConnectionConfig, error) {
+func InitializeConnectionConfig(clusterTlsConfig *common.ClusterTlsConfig, contactPointsFromConfig []string, port int,
+	connTimeoutInMs int, clusterType common.ClusterType, datacenterFromConfig string, ctx context.Context) (ConnectionConfig, error) {
 
 	var tlsConfig *tls.Config
 	var err error
@@ -48,11 +48,11 @@ func InitializeConnectionConfig(clusterTlsConfig *config.ClusterTlsConfig, conta
 type baseConnectionConfig struct {
 	tlsConfig           *tls.Config
 	connectionTimeoutMs int
-	clusterType         ClusterType
+	clusterType         common.ClusterType
 }
 
 func newBaseConnectionConfig(
-	tlsConfig *tls.Config, connectionTimeoutMs int, clusterType ClusterType) *baseConnectionConfig {
+	tlsConfig *tls.Config, connectionTimeoutMs int, clusterType common.ClusterType) *baseConnectionConfig {
 	return &baseConnectionConfig{
 		tlsConfig:           tlsConfig,
 		connectionTimeoutMs: connectionTimeoutMs,
@@ -68,7 +68,7 @@ func (cc *baseConnectionConfig) GetTlsConfig() *tls.Config {
 	return cc.tlsConfig
 }
 
-func (cc *baseConnectionConfig) GetClusterType() ClusterType {
+func (cc *baseConnectionConfig) GetClusterType() common.ClusterType {
 	return cc.clusterType
 }
 
@@ -79,7 +79,7 @@ type genericConnectionConfig struct {
 }
 
 func newGenericConnectionConfig(
-	tlsConfig *tls.Config, connectionTimeoutMs int, clusterType ClusterType, datacenter string, contactPoints []Endpoint) *genericConnectionConfig {
+	tlsConfig *tls.Config, connectionTimeoutMs int, clusterType common.ClusterType, datacenter string, contactPoints []Endpoint) *genericConnectionConfig {
 	return &genericConnectionConfig{
 		baseConnectionConfig: newBaseConnectionConfig(tlsConfig, connectionTimeoutMs, clusterType),
 		datacenter:           datacenter,
@@ -127,7 +127,7 @@ type astraConnectionConfigImpl struct {
 }
 
 func initializeAstraConnectionConfig(
-	connectionTimeoutMs int, clusterType ClusterType, secureConnectBundlePath string, ctx context.Context) (*astraConnectionConfigImpl, error) {
+	connectionTimeoutMs int, clusterType common.ClusterType, secureConnectBundlePath string, ctx context.Context) (*astraConnectionConfigImpl, error) {
 	fileMap, err := extractFilesFromZipArchive(secureConnectBundlePath)
 	if err != nil {
 		return nil, err

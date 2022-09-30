@@ -1,6 +1,7 @@
 package config
 
 import (
+	"github.com/datastax/zdm-proxy/proxy/pkg/common"
 	"github.com/stretchr/testify/require"
 	"testing"
 )
@@ -33,7 +34,7 @@ func TestOriginConfig_ClusterTlsConfig(t *testing.T) {
 			errMsg:             "",
 		},
 		{name: "SCB only",
-			envVars:            []envVar{{"ORIGIN_CASSANDRA_SECURE_CONNECT_BUNDLE_PATH", "/path/to/origin/bundle"}},
+			envVars:            []envVar{{"ZDM_ORIGIN_SECURE_CONNECT_BUNDLE_PATH", "/path/to/origin/bundle"}},
 			needsContactPoints: false,
 			tlsEnabled:         true,
 			serverCaPath:       "",
@@ -46,7 +47,7 @@ func TestOriginConfig_ClusterTlsConfig(t *testing.T) {
 		{name: "Custom TLS config only for one-way TLS",
 			needsContactPoints: true,
 			envVars: []envVar{
-				{"ORIGIN_TLS_SERVER_CA_PATH", "/path/to/origin/server/ca"},
+				{"ZDM_ORIGIN_TLS_SERVER_CA_PATH", "/path/to/origin/server/ca"},
 			},
 			tlsEnabled:     true,
 			serverCaPath:   "/path/to/origin/server/ca",
@@ -59,9 +60,9 @@ func TestOriginConfig_ClusterTlsConfig(t *testing.T) {
 		{name: "Custom TLS config only for mutual TLS",
 			needsContactPoints: true,
 			envVars: []envVar{
-				{"ORIGIN_TLS_SERVER_CA_PATH", "/path/to/origin/server/ca"},
-				{"ORIGIN_TLS_CLIENT_CERT_PATH", "/path/to/origin/client/cert"},
-				{"ORIGIN_TLS_CLIENT_KEY_PATH", "/path/to/origin/client/key"},
+				{"ZDM_ORIGIN_TLS_SERVER_CA_PATH", "/path/to/origin/server/ca"},
+				{"ZDM_ORIGIN_TLS_CLIENT_CERT_PATH", "/path/to/origin/client/cert"},
+				{"ZDM_ORIGIN_TLS_CLIENT_KEY_PATH", "/path/to/origin/client/key"},
 			},
 			tlsEnabled:     true,
 			serverCaPath:   "/path/to/origin/server/ca",
@@ -74,8 +75,8 @@ func TestOriginConfig_ClusterTlsConfig(t *testing.T) {
 		{name: "SCB and one-way TLS config",
 			needsContactPoints: false,
 			envVars: []envVar{
-				{"ORIGIN_CASSANDRA_SECURE_CONNECT_BUNDLE_PATH", "/path/to/origin/bundle"},
-				{"ORIGIN_TLS_SERVER_CA_PATH", "/path/to/origin/server/ca"},
+				{"ZDM_ORIGIN_SECURE_CONNECT_BUNDLE_PATH", "/path/to/origin/bundle"},
+				{"ZDM_ORIGIN_TLS_SERVER_CA_PATH", "/path/to/origin/server/ca"},
 			},
 			tlsEnabled:     false,
 			serverCaPath:   "",
@@ -88,10 +89,10 @@ func TestOriginConfig_ClusterTlsConfig(t *testing.T) {
 		{name: "SCB and mutual TLS config",
 			needsContactPoints: false,
 			envVars: []envVar{
-				{"ORIGIN_CASSANDRA_SECURE_CONNECT_BUNDLE_PATH", "/path/toorigin//bundle"},
-				{"ORIGIN_TLS_SERVER_CA_PATH", "/path/to/origin/server/ca"},
-				{"ORIGIN_TLS_CLIENT_CERT_PATH", "/path/to/origin/client/cert"},
-				{"ORIGIN_TLS_CLIENT_KEY_PATH", "/path/to/origin/client/key"},
+				{"ZDM_ORIGIN_SECURE_CONNECT_BUNDLE_PATH", "/path/toorigin//bundle"},
+				{"ZDM_ORIGIN_TLS_SERVER_CA_PATH", "/path/to/origin/server/ca"},
+				{"ZDM_ORIGIN_TLS_CLIENT_CERT_PATH", "/path/to/origin/client/cert"},
+				{"ZDM_ORIGIN_TLS_CLIENT_KEY_PATH", "/path/to/origin/client/key"},
 			},
 			tlsEnabled:     false,
 			serverCaPath:   "",
@@ -105,7 +106,7 @@ func TestOriginConfig_ClusterTlsConfig(t *testing.T) {
 		{name: "Incomplete custom TLS config - mutual TLS with Client Cert path only",
 			needsContactPoints: true,
 			envVars: []envVar{
-				{"ORIGIN_TLS_CLIENT_CERT_PATH", "/path/to/origin/client/cert"},
+				{"ZDM_ORIGIN_TLS_CLIENT_CERT_PATH", "/path/to/origin/client/cert"},
 			},
 			tlsEnabled:     false,
 			serverCaPath:   "",
@@ -118,7 +119,7 @@ func TestOriginConfig_ClusterTlsConfig(t *testing.T) {
 		{name: "Incomplete custom TLS config - Client Key path only",
 			needsContactPoints: true,
 			envVars: []envVar{
-				{"ORIGIN_TLS_CLIENT_KEY_PATH", "/path/to/origin/client/key"},
+				{"ZDM_ORIGIN_TLS_CLIENT_KEY_PATH", "/path/to/origin/client/key"},
 			},
 			tlsEnabled:     false,
 			serverCaPath:   "",
@@ -131,8 +132,8 @@ func TestOriginConfig_ClusterTlsConfig(t *testing.T) {
 		{name: "Incomplete custom TLS config - Server CA and Client Cert only",
 			needsContactPoints: true,
 			envVars: []envVar{
-				{"ORIGIN_TLS_SERVER_CA_PATH", "/path/to/origin/server/ca"},
-				{"ORIGIN_TLS_CLIENT_CERT_PATH", "/path/to/origin/client/cert"},
+				{"ZDM_ORIGIN_TLS_SERVER_CA_PATH", "/path/to/origin/server/ca"},
+				{"ZDM_ORIGIN_TLS_CLIENT_CERT_PATH", "/path/to/origin/client/cert"},
 			},
 			tlsEnabled:     false,
 			serverCaPath:   "",
@@ -145,8 +146,8 @@ func TestOriginConfig_ClusterTlsConfig(t *testing.T) {
 		{name: "Incomplete custom TLS config - Server CA and Client Key only",
 			needsContactPoints: true,
 			envVars: []envVar{
-				{"ORIGIN_TLS_SERVER_CA_PATH", "/path/to/origin/server/ca"},
-				{"ORIGIN_TLS_CLIENT_KEY_PATH", "/path/to/origin/client/key"},
+				{"ZDM_ORIGIN_TLS_SERVER_CA_PATH", "/path/to/origin/server/ca"},
+				{"ZDM_ORIGIN_TLS_CLIENT_KEY_PATH", "/path/to/origin/client/key"},
 			},
 			tlsEnabled:     false,
 			serverCaPath:   "",
@@ -159,8 +160,8 @@ func TestOriginConfig_ClusterTlsConfig(t *testing.T) {
 		{name: "Incomplete custom TLS config - Client Cert and Client Key only",
 			needsContactPoints: true,
 			envVars: []envVar{
-				{"ORIGIN_TLS_CLIENT_CERT_PATH", "/path/to/origin/client/cert"},
-				{"ORIGIN_TLS_CLIENT_KEY_PATH", "/path/to/origin/client/key"},
+				{"ZDM_ORIGIN_TLS_CLIENT_CERT_PATH", "/path/to/origin/client/cert"},
+				{"ZDM_ORIGIN_TLS_CLIENT_KEY_PATH", "/path/to/origin/client/key"},
 			},
 			tlsEnabled:     false,
 			serverCaPath:   "",
@@ -189,7 +190,7 @@ func TestOriginConfig_ClusterTlsConfig(t *testing.T) {
 			}
 			setTargetContactPointsAndPortEnvVars()
 
-			var tlsConf *ClusterTlsConfig
+			var tlsConf *common.ClusterTlsConfig
 			conf, err := New().ParseEnvVars()
 			if err != nil {
 				if tt.errExpected {
@@ -231,7 +232,7 @@ func TestTargetConfig_ClusterTlsConfig(t *testing.T) {
 			errMsg:             "",
 		},
 		{name: "SCB only",
-			envVars:            []envVar{{"TARGET_CASSANDRA_SECURE_CONNECT_BUNDLE_PATH", "/path/to/target/bundle"}},
+			envVars:            []envVar{{"ZDM_TARGET_SECURE_CONNECT_BUNDLE_PATH", "/path/to/target/bundle"}},
 			needsContactPoints: false,
 			tlsEnabled:         true,
 			serverCaPath:       "",
@@ -244,7 +245,7 @@ func TestTargetConfig_ClusterTlsConfig(t *testing.T) {
 		{name: "Custom TLS config only for one-way TLS",
 			needsContactPoints: true,
 			envVars: []envVar{
-				{"TARGET_TLS_SERVER_CA_PATH", "/path/to/target/server/ca"},
+				{"ZDM_TARGET_TLS_SERVER_CA_PATH", "/path/to/target/server/ca"},
 			},
 			tlsEnabled:     true,
 			serverCaPath:   "/path/to/target/server/ca",
@@ -257,9 +258,9 @@ func TestTargetConfig_ClusterTlsConfig(t *testing.T) {
 		{name: "Custom TLS config only for mutual TLS",
 			needsContactPoints: true,
 			envVars: []envVar{
-				{"TARGET_TLS_SERVER_CA_PATH", "/path/to/target/server/ca"},
-				{"TARGET_TLS_CLIENT_CERT_PATH", "/path/to/target/client/cert"},
-				{"TARGET_TLS_CLIENT_KEY_PATH", "/path/to/target/client/key"},
+				{"ZDM_TARGET_TLS_SERVER_CA_PATH", "/path/to/target/server/ca"},
+				{"ZDM_TARGET_TLS_CLIENT_CERT_PATH", "/path/to/target/client/cert"},
+				{"ZDM_TARGET_TLS_CLIENT_KEY_PATH", "/path/to/target/client/key"},
 			},
 			tlsEnabled:     true,
 			serverCaPath:   "/path/to/target/server/ca",
@@ -272,8 +273,8 @@ func TestTargetConfig_ClusterTlsConfig(t *testing.T) {
 		{name: "SCB and one-way TLS config",
 			needsContactPoints: false,
 			envVars: []envVar{
-				{"TARGET_CASSANDRA_SECURE_CONNECT_BUNDLE_PATH", "/path/to/target/bundle"},
-				{"TARGET_TLS_SERVER_CA_PATH", "/path/to/target/server/ca"},
+				{"ZDM_TARGET_SECURE_CONNECT_BUNDLE_PATH", "/path/to/target/bundle"},
+				{"ZDM_TARGET_TLS_SERVER_CA_PATH", "/path/to/target/server/ca"},
 			},
 			tlsEnabled:     false,
 			serverCaPath:   "",
@@ -286,10 +287,10 @@ func TestTargetConfig_ClusterTlsConfig(t *testing.T) {
 		{name: "SCB and mutual TLS config",
 			needsContactPoints: false,
 			envVars: []envVar{
-				{"TARGET_CASSANDRA_SECURE_CONNECT_BUNDLE_PATH", "/path/to/target/bundle"},
-				{"TARGET_TLS_SERVER_CA_PATH", "/path/to/target/server/ca"},
-				{"TARGET_TLS_CLIENT_CERT_PATH", "/path/to/target/client/cert"},
-				{"TARGET_TLS_CLIENT_KEY_PATH", "/path/to/target/client/key"},
+				{"ZDM_TARGET_SECURE_CONNECT_BUNDLE_PATH", "/path/to/target/bundle"},
+				{"ZDM_TARGET_TLS_SERVER_CA_PATH", "/path/to/target/server/ca"},
+				{"ZDM_TARGET_TLS_CLIENT_CERT_PATH", "/path/to/target/client/cert"},
+				{"ZDM_TARGET_TLS_CLIENT_KEY_PATH", "/path/to/target/client/key"},
 			},
 			tlsEnabled:     false,
 			serverCaPath:   "",
@@ -303,7 +304,7 @@ func TestTargetConfig_ClusterTlsConfig(t *testing.T) {
 		{name: "Incomplete custom TLS config - mutual TLS with Client Cert path only",
 			needsContactPoints: true,
 			envVars: []envVar{
-				{"TARGET_TLS_CLIENT_CERT_PATH", "/path/to/target/client/cert"},
+				{"ZDM_TARGET_TLS_CLIENT_CERT_PATH", "/path/to/target/client/cert"},
 			},
 			tlsEnabled:     false,
 			serverCaPath:   "",
@@ -316,7 +317,7 @@ func TestTargetConfig_ClusterTlsConfig(t *testing.T) {
 		{name: "Incomplete custom TLS config - Client Key path only",
 			needsContactPoints: true,
 			envVars: []envVar{
-				{"TARGET_TLS_CLIENT_KEY_PATH", "/path/to/target/client/key"},
+				{"ZDM_TARGET_TLS_CLIENT_KEY_PATH", "/path/to/target/client/key"},
 			},
 			tlsEnabled:     false,
 			serverCaPath:   "",
@@ -329,8 +330,8 @@ func TestTargetConfig_ClusterTlsConfig(t *testing.T) {
 		{name: "Incomplete custom TLS config - Server CA and Client Cert only",
 			needsContactPoints: true,
 			envVars: []envVar{
-				{"TARGET_TLS_SERVER_CA_PATH", "/path/to/target/server/ca"},
-				{"TARGET_TLS_CLIENT_CERT_PATH", "/path/to/target/client/cert"},
+				{"ZDM_TARGET_TLS_SERVER_CA_PATH", "/path/to/target/server/ca"},
+				{"ZDM_TARGET_TLS_CLIENT_CERT_PATH", "/path/to/target/client/cert"},
 			},
 			tlsEnabled:     false,
 			serverCaPath:   "",
@@ -343,8 +344,8 @@ func TestTargetConfig_ClusterTlsConfig(t *testing.T) {
 		{name: "Incomplete custom TLS config - Server CA and Client Key only",
 			needsContactPoints: true,
 			envVars: []envVar{
-				{"TARGET_TLS_SERVER_CA_PATH", "/path/to/target/server/ca"},
-				{"TARGET_TLS_CLIENT_KEY_PATH", "/path/to/target/client/key"},
+				{"ZDM_TARGET_TLS_SERVER_CA_PATH", "/path/to/target/server/ca"},
+				{"ZDM_TARGET_TLS_CLIENT_KEY_PATH", "/path/to/target/client/key"},
 			},
 			tlsEnabled:     false,
 			serverCaPath:   "",
@@ -357,8 +358,8 @@ func TestTargetConfig_ClusterTlsConfig(t *testing.T) {
 		{name: "Incomplete custom TLS config - Client Cert and Client Key only",
 			needsContactPoints: true,
 			envVars: []envVar{
-				{"TARGET_TLS_CLIENT_CERT_PATH", "/path/to/target/client/cert"},
-				{"TARGET_TLS_CLIENT_KEY_PATH", "/path/to/target/client/key"},
+				{"ZDM_TARGET_TLS_CLIENT_CERT_PATH", "/path/to/target/client/cert"},
+				{"ZDM_TARGET_TLS_CLIENT_KEY_PATH", "/path/to/target/client/key"},
 			},
 			tlsEnabled:     false,
 			serverCaPath:   "",
@@ -387,7 +388,7 @@ func TestTargetConfig_ClusterTlsConfig(t *testing.T) {
 			}
 			setOriginContactPointsAndPortEnvVars()
 
-			var tlsConf *ClusterTlsConfig
+			var tlsConf *common.ClusterTlsConfig
 			conf, err := New().ParseEnvVars()
 			if err != nil {
 				if tt.errExpected {

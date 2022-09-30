@@ -53,7 +53,7 @@ func TestMaxClientsThreshold(t *testing.T) {
 	defer testSetup.Cleanup()
 
 	config := setup.NewTestConfig(testSetup.Origin.GetInitialContactPoint(), testSetup.Target.GetInitialContactPoint())
-	config.MaxClientsThreshold = maxClients
+	config.ProxyMaxClientConnections = maxClients
 	proxyInstance, err := setup.NewProxyInstanceWithConfig(config)
 	require.Nil(t, err)
 	defer proxyInstance.Shutdown()
@@ -197,14 +197,12 @@ func TestReturnedProtocolVersionUnsupportedByProxy(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Run("no async reads", func(t *testing.T) {
 				cfg := setup.NewTestConfig("127.0.1.1", "127.0.1.2")
-				cfg.DualReadsEnabled = false
-				cfg.AsyncReadsOnSecondary = false
+				cfg.ReadMode = config.ReadModePrimaryOnly
 				runTestFunc(t, test, cfg)
 			})
 			t.Run("async reads", func(t *testing.T) {
 				cfg := setup.NewTestConfig("127.0.1.1", "127.0.1.2")
-				cfg.DualReadsEnabled = true
-				cfg.AsyncReadsOnSecondary = true
+				cfg.ReadMode = config.ReadModeDualAsyncOnSecondary
 				runTestFunc(t, test, cfg)
 			})
 		})

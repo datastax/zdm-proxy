@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"github.com/datastax/zdm-proxy/proxy/pkg/common"
 	log "github.com/sirupsen/logrus"
 	"io/ioutil"
 )
@@ -67,6 +68,6 @@ func retrieveConfigParameterAsString(configMap map[string]interface{}, paramName
 	return paramString, nil
 }
 
-func initializeTlsConfigurationFromSecureConnectBundle(fileMap map[string][]byte, metadataServiceHostName string, clusterType ClusterType) (*tls.Config, error) {
+func initializeTlsConfigurationFromSecureConnectBundle(fileMap map[string][]byte, metadataServiceHostName string, clusterType common.ClusterType) (*tls.Config, error) {
 	return getClientSideTlsConfig(fileMap["ca.crt"], fileMap["cert"], fileMap["key"], metadataServiceHostName, metadataServiceHostName, clusterType)
 }

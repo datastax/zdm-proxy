@@ -74,7 +74,7 @@ func testHttpEndpointsWithProxyNotInitialized(
 
 	time.Sleep(500 * time.Millisecond)
 
-	httpAddr := fmt.Sprintf("%s:%d", conf.ProxyMetricsAddress, conf.ProxyMetricsPort)
+	httpAddr := fmt.Sprintf("%s:%d", conf.MetricsAddress, conf.MetricsPort)
 
 	require.Nil(t, utils.CheckMetricsEndpointResult(httpAddr, false))
 
@@ -109,7 +109,7 @@ func testHttpEndpointsWithProxyInitialized(
 		runner.RunMain(conf, ctx, metricsHandler, healthHandler)
 	}()
 
-	httpAddr := fmt.Sprintf("%s:%d", conf.ProxyMetricsAddress, conf.ProxyMetricsPort)
+	httpAddr := fmt.Sprintf("%s:%d", conf.MetricsAddress, conf.MetricsPort)
 
 	utils.RequireWithRetries(t, func() (err error, fatal bool) {
 		fatal = false
@@ -160,7 +160,7 @@ func testHttpEndpointsWithUnavailableNode(
 		runner.RunMain(conf, ctx, metricsHandler, healthHandler)
 	}()
 
-	httpAddr := fmt.Sprintf("%s:%d", conf.ProxyMetricsAddress, conf.ProxyMetricsPort)
+	httpAddr := fmt.Sprintf("%s:%d", conf.MetricsAddress, conf.MetricsPort)
 
 	utils.RequireWithRetries(t, func() (err error, fatal bool) {
 		fatal = false
@@ -333,6 +333,7 @@ func modifyConfForHealthTests(config *config.Config) {
 	config.HeartbeatRetryIntervalMinMs = 250
 	config.HeartbeatRetryIntervalMaxMs = 500
 	config.HeartbeatIntervalMs = 500
-	config.ClusterConnectionTimeoutMs = 2000
+	config.OriginConnectionTimeoutMs = 2000
+	config.TargetConnectionTimeoutMs = 2000
 	config.HeartbeatFailureThreshold = 2
 }

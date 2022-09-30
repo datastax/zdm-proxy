@@ -4,6 +4,7 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/datastax/zdm-proxy/proxy/pkg/common"
 	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
 	"github.com/stretchr/testify/require"
 	"reflect"
@@ -14,7 +15,7 @@ type params struct {
 	psCache                      *PreparedStatementCache
 	mh                           *metrics.MetricHandler
 	kn                           string
-	forwardReadsToTarget         bool
+	primaryCluster               common.ClusterType
 	forwardSystemQueriesToTarget bool
 	forwardAuthToTarget          bool
 	virtualizationEnabled        bool
@@ -29,7 +30,7 @@ func getGeneralParamsForTests(t *testing.T) params {
 		psCache:                      NewPreparedStatementCache(),
 		mh:                           newFakeMetricHandler(),
 		kn:                           "",
-		forwardReadsToTarget:         false,
+		primaryCluster:               common.ClusterTypeOrigin,
 		forwardSystemQueriesToTarget: false,
 		forwardAuthToTarget:          false,
 		virtualizationEnabled:        false,
@@ -76,7 +77,7 @@ func parseEncodedRequestForTests(queryRawFrame *frame.RawFrame, t *testing.T) (R
 		generalParams.psCache,
 		generalParams.mh,
 		generalParams.kn,
-		generalParams.forwardReadsToTarget,
+		generalParams.primaryCluster,
 		generalParams.forwardSystemQueriesToTarget,
 		generalParams.virtualizationEnabled,
 		generalParams.forwardAuthToTarget,

@@ -7,8 +7,8 @@ import (
 	"github.com/datastax/zdm-proxy/integration-tests/cqlserver"
 	"github.com/datastax/zdm-proxy/integration-tests/env"
 	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
-	"github.com/datastax/zdm-proxy/proxy/pkg/zdmproxy"
 	"github.com/datastax/zdm-proxy/proxy/pkg/config"
+	"github.com/datastax/zdm-proxy/proxy/pkg/zdmproxy"
 	log "github.com/sirupsen/logrus"
 	"math"
 	"sync"
@@ -118,7 +118,7 @@ func CleanUpClusters() {
 type SimulacronTestSetup struct {
 	Origin *simulacron.Cluster
 	Target *simulacron.Cluster
-	Proxy  *zdmproxy.CloudgateProxy
+	Proxy  *zdmproxy.ZdmProxy
 }
 
 func NewSimulacronTestSetupWithSession(createProxy bool, createSession bool) (*SimulacronTestSetup, error) {
@@ -142,13 +142,13 @@ func NewSimulacronTestSetupWithSessionAndNodesAndConfig(createProxy bool, create
 	if err != nil {
 		log.Panic("simulacron target startup failed: ", err)
 	}
-	var proxyInstance *zdmproxy.CloudgateProxy
+	var proxyInstance *zdmproxy.ZdmProxy
 	if createProxy {
 		if config == nil {
 			config = NewTestConfig(origin.GetInitialContactPoint(), target.GetInitialContactPoint())
 		} else {
-			config.OriginCassandraContactPoints = origin.GetInitialContactPoint()
-			config.TargetCassandraContactPoints = target.GetInitialContactPoint()
+			config.OriginContactPoints = origin.GetInitialContactPoint()
+			config.TargetContactPoints = target.GetInitialContactPoint()
 		}
 		proxyInstance, err = NewProxyInstanceWithConfig(config)
 		if err != nil {
@@ -191,7 +191,7 @@ func (setup *SimulacronTestSetup) Cleanup() {
 type CcmTestSetup struct {
 	Origin *ccm.Cluster
 	Target *ccm.Cluster
-	Proxy  *zdmproxy.CloudgateProxy
+	Proxy  *zdmproxy.ZdmProxy
 }
 
 func NewTemporaryCcmTestSetup(start bool, createProxy bool) (*CcmTestSetup, error) {
@@ -208,7 +208,7 @@ func NewTemporaryCcmTestSetup(start bool, createProxy bool) (*CcmTestSetup, erro
 		return nil, err
 	}
 
-	var proxyInstance *zdmproxy.CloudgateProxy
+	var proxyInstance *zdmproxy.ZdmProxy
 	if createProxy {
 		proxyInstance, err = NewProxyInstance(origin, target)
 		if err != nil {
@@ -264,18 +264,18 @@ func (setup *CcmTestSetup) Cleanup() {
 type CqlServerTestSetup struct {
 	Origin *cqlserver.Cluster
 	Target *cqlserver.Cluster
-	Proxy  *zdmproxy.CloudgateProxy
+	Proxy  *zdmproxy.ZdmProxy
 	Client *cqlserver.Client
 }
 
 func NewCqlServerTestSetup(conf *config.Config, start bool, createProxy bool, connectClient bool) (*CqlServerTestSetup, error) {
-	origin, err := cqlserver.NewCqlServerCluster(conf.OriginCassandraContactPoints, conf.OriginCassandraPort,
-		conf.OriginCassandraUsername, conf.OriginCassandraPassword, start)
+	origin, err := cqlserver.NewCqlServerCluster(conf.OriginContactPoints, conf.OriginPort,
+		conf.OriginUsername, conf.OriginPassword, start)
 	if err != nil {
 		return nil, err
 	}
-	target, err := cqlserver.NewCqlServerCluster(conf.TargetCassandraContactPoints, conf.TargetCassandraPort,
-		conf.TargetCassandraUsername, conf.TargetCassandraPassword, start)
+	target, err := cqlserver.NewCqlServerCluster(conf.TargetContactPoints, conf.TargetPort,
+		conf.TargetUsername, conf.TargetPassword, start)
 	if err != nil {
 		err2 := origin.Close()
 		if err2 != nil {
@@ -284,7 +284,7 @@ func NewCqlServerTestSetup(conf *config.Config, start bool, createProxy bool, co
 		return nil, err
 	}
 
-	var proxyInstance *zdmproxy.CloudgateProxy
+	var proxyInstance *zdmproxy.ZdmProxy
 	if createProxy {
 		proxyInstance, err = NewProxyInstanceWithConfig(conf)
 		if err != nil {
@@ -302,8 +302,8 @@ func NewCqlServerTestSetup(conf *config.Config, start bool, createProxy bool, co
 		proxyInstance = nil
 	}
 
-	cqlClient, err := cqlserver.NewCqlClient(conf.ProxyQueryAddress, conf.ProxyQueryPort,
-		conf.OriginCassandraUsername, conf.OriginCassandraPassword, connectClient)
+	cqlClient, err := cqlserver.NewCqlClient(conf.ProxyListenAddress, conf.ProxyListenPort,
+		conf.OriginUsername, conf.OriginPassword, connectClient)
 
 	if err != nil {
 		err2 := origin.Close()
@@ -369,43 +369,43 @@ func (setup *CqlServerTestSetup) Cleanup() {
 	}
 }
 
-func NewProxyInstance(origin TestCluster, target TestCluster) (*zdmproxy.CloudgateProxy, error) {
+func NewProxyInstance(origin TestCluster, target TestCluster) (*zdmproxy.ZdmProxy, error) {
 	return NewProxyInstanceWithConfig(NewTestConfig(origin.GetInitialContactPoint(), target.GetInitialContactPoint()))
 }
 
-func NewProxyInstanceWithConfig(config *config.Config) (*zdmproxy.CloudgateProxy, error) {
+func NewProxyInstanceWithConfig(config *config.Config) (*zdmproxy.ZdmProxy, error) {
 	return zdmproxy.Run(config, context.Background())
 }
 
 func NewTestConfig(originHost string, targetHost string) *config.Config {
 	conf := config.New()
 
-	conf.ProxyIndex = 0
-	conf.ProxyInstanceCount = -1
-	conf.ProxyAddresses = ""
-	conf.ProxyNumTokens = 8
+	conf.ProxyTopologyIndex = 0
+	conf.ProxyTopologyAddresses = ""
+	conf.ProxyTopologyNumTokens = 8
 
 	conf.OriginEnableHostAssignment = true
 	conf.TargetEnableHostAssignment = true
 
-	conf.OriginCassandraContactPoints = originHost
-	conf.OriginCassandraUsername = "cassandra"
-	conf.OriginCassandraPassword = "cassandra"
-	conf.OriginCassandraPort = 9042
+	conf.OriginContactPoints = originHost
+	conf.OriginUsername = "cassandra"
+	conf.OriginPassword = "cassandra"
+	conf.OriginPort = 9042
 
-	conf.TargetCassandraContactPoints = targetHost
-	conf.TargetCassandraUsername = "cassandra"
-	conf.TargetCassandraPassword = "cassandra"
-	conf.TargetCassandraPort = 9042
+	conf.TargetContactPoints = targetHost
+	conf.TargetUsername = "cassandra"
+	conf.TargetPassword = "cassandra"
+	conf.TargetPort = 9042
 
 	conf.ForwardClientCredentialsToOrigin = false
 
-	conf.ProxyMetricsAddress = "localhost"
-	conf.ProxyMetricsPort = 14001
-	conf.ProxyQueryPort = 14002
-	conf.ProxyQueryAddress = "localhost"
+	conf.MetricsAddress = "localhost"
+	conf.MetricsPort = 14001
+	conf.ProxyListenPort = 14002
+	conf.ProxyListenAddress = "localhost"
 
-	conf.ClusterConnectionTimeoutMs = 30000
+	conf.OriginConnectionTimeoutMs = 30000
+	conf.TargetConnectionTimeoutMs = 30000
 	conf.HeartbeatIntervalMs = 30000
 
 	conf.HeartbeatRetryIntervalMaxMs = 30000
@@ -413,11 +413,11 @@ func NewTestConfig(originHost string, targetHost string) *config.Config {
 	conf.HeartbeatRetryBackoffFactor = 2
 	conf.HeartbeatFailureThreshold = 1
 
-	conf.OriginBucketsMs = "1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000"
-	conf.TargetBucketsMs = "1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000"
-	conf.AsyncBucketsMs = "1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000"
+	conf.MetricsOriginLatencyBucketsMs = "1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000"
+	conf.MetricsTargetLatencyBucketsMs = "1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000"
+	conf.MetricsAsyncReadLatencyBucketsMs = "1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000"
 
-	conf.EnableMetrics = true
+	conf.MetricsEnabled = true
 
 	conf.RequestWriteQueueSizeFrames = 128
 	conf.RequestWriteBufferSizeBytes = 4096
@@ -427,7 +427,7 @@ func NewTestConfig(originHost string, targetHost string) *config.Config {
 	conf.ResponseWriteBufferSizeBytes = 8192
 	conf.ResponseReadBufferSizeBytes = 32768
 
-	conf.MaxClientsThreshold = 500
+	conf.ProxyMaxClientConnections = 1000
 
 	conf.RequestResponseMaxWorkers = -1
 	conf.WriteMaxWorkers = -1
@@ -439,13 +439,12 @@ func NewTestConfig(originHost string, targetHost string) *config.Config {
 	conf.AsyncConnectorWriteQueueSizeFrames = 2048
 	conf.AsyncConnectorWriteBufferSizeBytes = 4096
 
-	conf.ForwardReadsToTarget = false
-	conf.ForwardSystemQueriesToTarget = false
-	conf.DualReadsEnabled = false
-	conf.AsyncReadsOnSecondary = false
+	conf.PrimaryCluster = config.PrimaryClusterOrigin
+	conf.ReadMode = config.ReadModePrimaryOnly
+	conf.SystemQueriesMode = config.SystemQueriesModeOrigin
 	conf.AsyncHandshakeTimeoutMs = 4000
 
-	conf.RequestTimeoutMs = 10000
+	conf.ProxyRequestTimeoutMs = 10000
 
 	conf.LogLevel = "INFO"
 

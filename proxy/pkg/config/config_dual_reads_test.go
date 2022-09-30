@@ -1,6 +1,7 @@
 package config
 
 import (
+	"github.com/datastax/zdm-proxy/proxy/pkg/common"
 	"github.com/stretchr/testify/require"
 	"testing"
 )
@@ -10,76 +11,39 @@ func TestConfig_ParseReadMode(t *testing.T) {
 	type test struct {
 		name             string
 		envVars          []envVar
-		expectedReadMode ReadMode
+		expectedReadMode common.ReadMode
 		errExpected      bool
 		errMsg           string
 	}
 
 	tests := []test{
 		{
-			name:           "Valid: Dual reads disabled, async reads on secondary disabled",
-			envVars:        []envVar{
-				{"DUAL_READS_ENABLED", "false"},
-				{"ASYNC_READS_ON_SECONDARY", "false"},
-			},
-			expectedReadMode: ReadModePrimaryOnly,
+			name:             "Valid: Async reads on secondary disabled",
+			envVars:          []envVar{{"ZDM_READ_MODE", "PRIMARY_ONLY"}},
+			expectedReadMode: common.ReadModePrimaryOnly,
 			errExpected:      false,
 			errMsg:           "",
 		},
 		{
-			name:           "Valid: Dual reads enabled, async reads on secondary enabled",
-			envVars:        []envVar{
-				{"DUAL_READS_ENABLED", "true"},
-				{"ASYNC_READS_ON_SECONDARY", "true"},
-			},
-			expectedReadMode: ReadModeSecondaryAsync,
+			name:             "Valid: Async reads on secondary enabled",
+			envVars:          []envVar{{"ZDM_READ_MODE", "DUAL_ASYNC_ON_SECONDARY"}},
+			expectedReadMode: common.ReadModeDualAsyncOnSecondary,
 			errExpected:      false,
 			errMsg:           "",
 		},
 		{
-			name:           "Invalid: Dual reads enabled but async reads on secondary disabled",
-			envVars:        []envVar{
-				{"DUAL_READS_ENABLED", "true"},
-				{"ASYNC_READS_ON_SECONDARY", "false"},
-			},
-			expectedReadMode: ReadModeUndefined,
+			name:             "Invalid: Dual reads enabled but async reads on secondary disabled",
+			envVars:          []envVar{{"ZDM_READ_MODE", "DUAL_SYNC"}},
+			expectedReadMode: common.ReadModeUndefined,
 			errExpected:      true,
-			errMsg:           "combination of DUAL_READS_ENABLED (true) and ASYNC_READS_ON_SECONDARY (false) not yet implemented",
+			errMsg:           "invalid value for ZDM_READ_MODE; possible values are: PRIMARY_ONLY and DUAL_ASYNC_ON_SECONDARY",
 		},
 		{
-			name:           "Invalid: Dual reads disabled but async reads on secondary enabled",
-			envVars:        []envVar{
-				{"DUAL_READS_ENABLED", "false"},
-				{"ASYNC_READS_ON_SECONDARY", "true"},
-			},
-			expectedReadMode: ReadModeUndefined,
-			errExpected:      true,
-			errMsg:           "invalid combination of DUAL_READS_ENABLED (false) and ASYNC_READS_ON_SECONDARY (true)",
-		},
-		{
-			name:           "Valid: Dual reads unset, async reads on secondary unset",
-			envVars:        []envVar{},
-			expectedReadMode: ReadModePrimaryOnly,
+			name:             "Valid: Read mode unset",
+			envVars:          []envVar{},
+			expectedReadMode: common.ReadModePrimaryOnly,
 			errExpected:      false,
 			errMsg:           "",
-		},
-		{
-			name:           "Invalid: Dual reads enabled but async reads on secondary unset",
-			envVars:        []envVar{
-				{"DUAL_READS_ENABLED", "true"},
-			},
-			expectedReadMode: ReadModeUndefined,
-			errExpected:      true,
-			errMsg:           "combination of DUAL_READS_ENABLED (true) and ASYNC_READS_ON_SECONDARY (false) not yet implemented",
-		},
-		{
-			name:           "Invalid: Dual reads unset but async reads on secondary enabled",
-			envVars:        []envVar{
-				{"ASYNC_READS_ON_SECONDARY", "true"},
-			},
-			expectedReadMode: ReadModeUndefined,
-			errExpected:      true,
-			errMsg:           "invalid combination of DUAL_READS_ENABLED (false) and ASYNC_READS_ON_SECONDARY (true)",
 		},
 	}
 
@@ -111,7 +75,7 @@ func TestConfig_ParseReadMode(t *testing.T) {
 			if conf == nil {
 				t.Fatal("No configuration validation error was thrown but the parsed configuration is null, stopping test here")
 			} else {
-				actualReadMode, _ := conf.GetReadMode()
+				actualReadMode, _ := conf.ParseReadMode()
 				require.Equal(t, tt.expectedReadMode, actualReadMode)
 			}
 		})

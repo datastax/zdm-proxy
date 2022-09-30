@@ -5,12 +5,13 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"github.com/jpillora/backoff"
-	"github.com/prometheus/client_golang/prometheus"
+	"github.com/datastax/zdm-proxy/proxy/pkg/common"
 	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
 	"github.com/datastax/zdm-proxy/proxy/pkg/metrics/noopmetrics"
 	"github.com/datastax/zdm-proxy/proxy/pkg/metrics/prommetrics"
+	"github.com/jpillora/backoff"
+	"github.com/prometheus/client_golang/prometheus"
 	log "github.com/sirupsen/logrus"
 	"math/rand"
 	"net"
@@ -20,18 +21,20 @@ import (
 	"time"
 )
 
-type CloudgateProxy struct {
+type ZdmProxy struct {
 	Conf           *config.Config
-	TopologyConfig *config.TopologyConfig
+	TopologyConfig *common.TopologyConfig
 
 	originConnectionConfig ConnectionConfig
 	targetConnectionConfig ConnectionConfig
 
-	proxyTlsConfig *config.ProxyTlsConfig
+	proxyTlsConfig *common.ProxyTlsConfig
 
 	timeUuidGenerator TimeUuidGenerator
 
-	readMode config.ReadMode
+	primaryCluster    common.ClusterType
+	readMode          common.ReadMode
+	systemQueriesMode common.SystemQueriesMode
 
 	proxyRand *rand.Rand
 
@@ -76,20 +79,24 @@ type CloudgateProxy struct {
 	metricHandler *metrics.MetricHandler
 }
 
-func NewCloudgateProxy(conf *config.Config) *CloudgateProxy {
-	cp := &CloudgateProxy{
+func NewZdmProxy(conf *config.Config) (*ZdmProxy, error) {
+	zdmProxy := &ZdmProxy{
 		Conf: conf,
 	}
-	cp.initializeGlobalStructures()
-	return cp
+	err := zdmProxy.initializeGlobalStructures()
+	if err != nil {
+		zdmProxy.Shutdown()
+		return nil, err
+	}
+	return zdmProxy, nil
 }
 
-func (p *CloudgateProxy) GetMetricHandler() *metrics.MetricHandler {
+func (p *ZdmProxy) GetMetricHandler() *metrics.MetricHandler {
 	return p.metricHandler
 }
 
 // Start starts up the proxy and start listening for client connections.
-func (p *CloudgateProxy) Start(ctx context.Context) error {
+func (p *ZdmProxy) Start(ctx context.Context) error {
 	log.Infof("Validating config...")
 	err := p.Conf.Validate()
 	if err != nil {
@@ -159,16 +166,16 @@ func (p *CloudgateProxy) Start(ctx context.Context) error {
 		return err
 	}
 
-	err = p.acceptConnectionsFromClients(p.Conf.ProxyQueryAddress, p.Conf.ProxyQueryPort, serverSideTlsConfig)
+	err = p.acceptConnectionsFromClients(p.Conf.ProxyListenAddress, p.Conf.ProxyListenPort, serverSideTlsConfig)
 	if err != nil {
 		return err
 	}
 
-	log.Infof("Proxy connected and ready to accept queries on %v:%d", p.Conf.ProxyQueryAddress, p.Conf.ProxyQueryPort)
+	log.Infof("Proxy connected and ready to accept queries on %v:%d", p.Conf.ProxyListenAddress, p.Conf.ProxyListenPort)
 	return nil
 }
 
-func (p *CloudgateProxy) initializeControlConnections(ctx context.Context) error {
+func (p *ZdmProxy) initializeControlConnections(ctx context.Context) error {
 	var err error
 
 	topologyConfig, err := p.Conf.ParseTopologyConfig()
@@ -207,10 +214,10 @@ func (p *CloudgateProxy) initializeControlConnections(ctx context.Context) error
 	// Initialize origin connection configuration and control connection endpoint configuration
 	originConnectionConfig, err := InitializeConnectionConfig(originTlsConfig,
 		parsedOriginContactPoints,
-		p.Conf.OriginCassandraPort,
-		p.Conf.ClusterConnectionTimeoutMs,
-		ClusterTypeOrigin,
-		p.Conf.OriginDatacenter,
+		p.Conf.OriginPort,
+		p.Conf.OriginConnectionTimeoutMs,
+		common.ClusterTypeOrigin,
+		p.Conf.OriginLocalDatacenter,
 		ctx)
 	if err != nil {
 		return fmt.Errorf("error initializing the connection configuration or control connection for Origin: %w", err)
@@ -228,10 +235,10 @@ func (p *CloudgateProxy) initializeControlConnections(ctx context.Context) error
 	// Initialize target connection configuration and control connection endpoint configuration
 	targetConnectionConfig, err := InitializeConnectionConfig(targetTlsConfig,
 		parsedTargetContactPoints,
-		p.Conf.TargetCassandraPort,
-		p.Conf.ClusterConnectionTimeoutMs,
-		ClusterTypeTarget,
-		p.Conf.TargetDatacenter,
+		p.Conf.TargetPort,
+		p.Conf.TargetConnectionTimeoutMs,
+		common.ClusterTypeTarget,
+		p.Conf.TargetLocalDatacenter,
 		ctx)
 	if err != nil {
 		return fmt.Errorf("error initializing the connection configuration or control connection for Target: %w", err)
@@ -241,8 +248,8 @@ func (p *CloudgateProxy) initializeControlConnections(ctx context.Context) error
 	p.lock.Unlock()
 
 	originControlConn := NewControlConn(
-		p.controlConnShutdownCtx, p.Conf.OriginCassandraPort, p.originConnectionConfig,
-		p.Conf.OriginCassandraUsername, p.Conf.OriginCassandraPassword, p.Conf, topologyConfig, p.proxyRand)
+		p.controlConnShutdownCtx, p.Conf.OriginPort, p.originConnectionConfig,
+		p.Conf.OriginUsername, p.Conf.OriginPassword, p.Conf, topologyConfig, p.proxyRand)
 
 	if err := originControlConn.Start(p.controlConnShutdownWg, ctx); err != nil {
 		return fmt.Errorf("failed to initialize origin control connection: %w", err)
@@ -253,8 +260,8 @@ func (p *CloudgateProxy) initializeControlConnections(ctx context.Context) error
 	p.lock.Unlock()
 
 	targetControlConn := NewControlConn(
-		p.controlConnShutdownCtx, p.Conf.TargetCassandraPort, p.targetConnectionConfig,
-		p.Conf.TargetCassandraUsername, p.Conf.TargetCassandraPassword, p.Conf, topologyConfig, p.proxyRand)
+		p.controlConnShutdownCtx, p.Conf.TargetPort, p.targetConnectionConfig,
+		p.Conf.TargetUsername, p.Conf.TargetPassword, p.Conf, topologyConfig, p.proxyRand)
 
 	if err := targetControlConn.Start(p.controlConnShutdownWg, ctx); err != nil {
 		return fmt.Errorf("failed to initialize target control connection: %w", err)
@@ -267,7 +274,7 @@ func (p *CloudgateProxy) initializeControlConnections(ctx context.Context) error
 	return nil
 }
 
-func (p *CloudgateProxy) initializeMetricHandler() error {
+func (p *ZdmProxy) initializeMetricHandler() error {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
@@ -277,7 +284,7 @@ func (p *CloudgateProxy) initializeMetricHandler() error {
 	// You will also need to change the HTTP handler, see runner.go.
 
 	var metricFactory metrics.MetricFactory
-	if p.Conf.EnableMetrics {
+	if p.Conf.MetricsEnabled {
 		metricFactory = prommetrics.NewPrometheusMetricFactory(prometheus.DefaultRegisterer)
 	} else {
 		metricFactory = noopmetrics.NewNoopMetricFactory()
@@ -295,7 +302,7 @@ func (p *CloudgateProxy) initializeMetricHandler() error {
 	return nil
 }
 
-func (p *CloudgateProxy) initializeGlobalStructures() {
+func (p *ZdmProxy) initializeGlobalStructures() error {
 	p.lock = &sync.RWMutex{}
 
 	p.listenerLock = &sync.Mutex{}
@@ -305,14 +312,24 @@ func (p *CloudgateProxy) initializeGlobalStructures() {
 	maxProcs := runtime.GOMAXPROCS(0)
 
 	var err error
-	p.readMode, err = p.Conf.GetReadMode()
+	p.readMode, err = p.Conf.ParseReadMode()
 	if err != nil {
-		p.readMode = config.ReadModePrimaryOnly // just to compute workers, proxy.Start() will call validate() and return the error
+		return err
+	}
+
+	p.primaryCluster, err = p.Conf.ParsePrimaryCluster()
+	if err != nil {
+		return err
+	}
+
+	p.systemQueriesMode, err = p.Conf.ParseSystemQueriesMode()
+	if err != nil {
+		return err
 	}
 
 	defaultReadWorkers := maxProcs * 8
 	defaultWriteWorkers := maxProcs * 4
-	if p.readMode == config.ReadModeSecondaryAsync {
+	if p.readMode == common.ReadModeDualAsyncOnSecondary {
 		defaultReadWorkers = maxProcs * 12
 		defaultWriteWorkers = maxProcs * 6
 	}
@@ -359,6 +376,7 @@ func (p *CloudgateProxy) initializeGlobalStructures() {
 	p.listenerScheduler = NewScheduler(p.listenerNumWorkers)
 
 	p.lock.Lock()
+	defer p.lock.Unlock()
 
 	p.globalClientHandlersWg = &sync.WaitGroup{}
 	p.clientHandlersShutdownRequestCtx, p.clientHandlersShutdownRequestCancelFn = context.WithCancel(context.Background())
@@ -372,32 +390,32 @@ func (p *CloudgateProxy) initializeGlobalStructures() {
 
 	p.originBuckets, err = p.Conf.ParseOriginBuckets()
 	if err != nil {
-		log.Errorf("Failed to parse origin buckets, falling back to default buckets: %v", err)
+		return fmt.Errorf("failed to parse origin latency buckets: %w", err)
 	} else {
-		log.Infof("Parsed Origin buckets: %v", p.originBuckets)
+		log.Infof("Parsed Origin latency buckets: %v", p.originBuckets)
 	}
 
 	p.targetBuckets, err = p.Conf.ParseTargetBuckets()
 	if err != nil {
-		log.Errorf("Failed to parse target buckets, falling back to default buckets: %v", err)
+		return fmt.Errorf("failed to parse target latency buckets: %w", err)
 	} else {
-		log.Infof("Parsed Target buckets: %v", p.targetBuckets)
+		log.Infof("Parsed Target latency buckets: %v", p.targetBuckets)
 	}
 
 	p.asyncBuckets, err = p.Conf.ParseAsyncBuckets()
 	if err != nil {
-		log.Errorf("Failed to parse async buckets, falling back to default buckets: %v", err)
+		return fmt.Errorf("failed to parse async latency buckets: %w", err)
 	} else {
-		log.Infof("Parsed Async buckets: %v", p.asyncBuckets)
+		log.Infof("Parsed Async latency buckets: %v", p.asyncBuckets)
 	}
 
 	p.activeClients = 0
-	p.lock.Unlock()
+	return nil
 }
 
 // acceptConnectionsFromClients creates a listener on the passed in port argument, and every connection
 // that is received over that port instantiates a ClientHandler that then takes over managing that connection
-func (p *CloudgateProxy) acceptConnectionsFromClients(address string, port int, serverSideTlsConfig *tls.Config) error {
+func (p *ZdmProxy) acceptConnectionsFromClients(address string, port int, serverSideTlsConfig *tls.Config) error {
 
 	protocol := "tcp"
 	listenAddr := fmt.Sprintf("%s:%d", address, port)
@@ -447,10 +465,10 @@ func (p *CloudgateProxy) acceptConnectionsFromClients(address string, port int, 
 			}
 
 			currentClients := atomic.LoadInt32(&p.activeClients)
-			if int(currentClients) >= p.Conf.MaxClientsThreshold {
+			if int(currentClients) >= p.Conf.ProxyMaxClientConnections {
 				log.Warnf(
 					"Refusing client connection from %v because max clients threshold has been hit (%v).",
-					conn.RemoteAddr(), p.Conf.MaxClientsThreshold)
+					conn.RemoteAddr(), p.Conf.ProxyMaxClientConnections)
 				err = conn.Close()
 				if err != nil {
 					log.Warnf("Error closing client connection from %v: %v", conn.RemoteAddr(), err)
@@ -471,7 +489,7 @@ func (p *CloudgateProxy) acceptConnectionsFromClients(address string, port int, 
 }
 
 // handleNewConnection creates the client handler and connectors for the new client connection
-func (p *CloudgateProxy) handleNewConnection(clientConn net.Conn) {
+func (p *ZdmProxy) handleNewConnection(clientConn net.Conn) {
 
 	errFunc := func(e error) {
 		log.Errorf("Client Handler could not be created: %v", e)
@@ -528,10 +546,10 @@ func (p *CloudgateProxy) handleNewConnection(clientConn net.Conn) {
 		p.targetControlConn,
 		p.Conf,
 		p.TopologyConfig,
-		p.Conf.TargetCassandraUsername,
-		p.Conf.TargetCassandraPassword,
-		p.Conf.OriginCassandraUsername,
-		p.Conf.OriginCassandraPassword,
+		p.Conf.TargetUsername,
+		p.Conf.TargetPassword,
+		p.Conf.OriginUsername,
+		p.Conf.OriginPassword,
 		p.PreparedStatementCache,
 		p.metricHandler,
 		p.globalClientHandlersWg,
@@ -543,7 +561,9 @@ func (p *CloudgateProxy) handleNewConnection(clientConn net.Conn) {
 		originHost,
 		targetHost,
 		p.timeUuidGenerator,
-		p.readMode)
+		p.readMode,
+		p.primaryCluster,
+		p.systemQueriesMode)
 
 	if err != nil {
 		errFunc(err)
@@ -554,7 +574,7 @@ func (p *CloudgateProxy) handleNewConnection(clientConn net.Conn) {
 	clientHandler.run(&p.activeClients)
 }
 
-func (p *CloudgateProxy) Shutdown() {
+func (p *ZdmProxy) Shutdown() {
 	log.Info("Initiating proxy shutdown...")
 
 	log.Debug("Requesting shutdown of the client listener...")
@@ -599,39 +619,43 @@ func (p *CloudgateProxy) Shutdown() {
 	log.Info("Proxy shutdown complete.")
 }
 
-func (p *CloudgateProxy) GetOriginControlConn() *ControlConn {
+func (p *ZdmProxy) GetOriginControlConn() *ControlConn {
 	p.lock.RLock()
 	defer p.lock.RUnlock()
 
 	return p.originControlConn
 }
 
-func (p *CloudgateProxy) GetTargetControlConn() *ControlConn {
+func (p *ZdmProxy) GetTargetControlConn() *ControlConn {
 	p.lock.RLock()
 	defer p.lock.RUnlock()
 
 	return p.targetControlConn
 }
 
-func Run(conf *config.Config, ctx context.Context) (*CloudgateProxy, error) {
-	cp := NewCloudgateProxy(conf)
-
-	err := cp.Start(ctx)
+func Run(conf *config.Config, ctx context.Context) (*ZdmProxy, error) {
+	zdmProxy, err := NewZdmProxy(conf)
 	if err != nil {
-		log.Errorf("Couldn't start proxy: %v.", err)
-		cp.Shutdown()
+		log.Errorf("Couldn't create proxy: %v.", err)
 		return nil, err
 	}
 
-	return cp, nil
+	err = zdmProxy.Start(ctx)
+	if err != nil {
+		log.Errorf("Couldn't start proxy: %v.", err)
+		zdmProxy.Shutdown()
+		return nil, err
+	}
+
+	return zdmProxy, nil
 }
 
-func RunWithRetries(conf *config.Config, ctx context.Context, b *backoff.Backoff) (*CloudgateProxy, error) {
+func RunWithRetries(conf *config.Config, ctx context.Context, b *backoff.Backoff) (*ZdmProxy, error) {
 	log.Info("Attempting to start the proxy...")
 	for {
-		cp, err := Run(conf, ctx)
-		if cp != nil {
-			return cp, nil
+		zdmProxy, err := Run(conf, ctx)
+		if zdmProxy != nil {
+			return zdmProxy, nil
 		}
 
 		nextDuration := b.Duration()
@@ -658,7 +682,7 @@ func sleepWithContext(d time.Duration, ctx context.Context, reconnectCh chan boo
 	}
 }
 
-func (p *CloudgateProxy) CreateProxyMetrics(metricFactory metrics.MetricFactory) (*metrics.ProxyMetrics, error) {
+func (p *ZdmProxy) CreateProxyMetrics(metricFactory metrics.MetricFactory) (*metrics.ProxyMetrics, error) {
 	failedRequestsOrigin, err := metricFactory.GetOrCreateCounter(metrics.FailedRequestsOrigin)
 	if err != nil {
 		return nil, err
@@ -751,7 +775,7 @@ func (p *CloudgateProxy) CreateProxyMetrics(metricFactory metrics.MetricFactory)
 	return proxyMetrics, nil
 }
 
-func (p *CloudgateProxy) CreateOriginNodeMetrics(
+func (p *ZdmProxy) CreateOriginNodeMetrics(
 	metricFactory metrics.MetricFactory, originNodeDescription string, originBuckets []float64) (*metrics.NodeMetricsInstance, error) {
 	originClientTimeouts, err := metrics.CreateCounterNodeMetric(metricFactory, originNodeDescription, metrics.OriginClientTimeouts)
 	if err != nil {
@@ -830,7 +854,7 @@ func (p *CloudgateProxy) CreateOriginNodeMetrics(
 	}, nil
 }
 
-func (p *CloudgateProxy) CreateAsyncNodeMetrics(
+func (p *ZdmProxy) CreateAsyncNodeMetrics(
 	metricFactory metrics.MetricFactory, asyncNodeDescription string, asyncBuckets []float64) (*metrics.NodeMetricsInstance, error) {
 	asyncClientTimeouts, err := metrics.CreateCounterNodeMetric(metricFactory, asyncNodeDescription, metrics.AsyncClientTimeouts)
 	if err != nil {
@@ -908,7 +932,7 @@ func (p *CloudgateProxy) CreateAsyncNodeMetrics(
 	}, nil
 }
 
-func (p *CloudgateProxy) CreateTargetNodeMetrics(
+func (p *ZdmProxy) CreateTargetNodeMetrics(
 	metricFactory metrics.MetricFactory, targetNodeDescription string, targetBuckets []float64) (*metrics.NodeMetricsInstance, error) {
 	targetClientTimeouts, err := metrics.CreateCounterNodeMetric(metricFactory, targetNodeDescription, metrics.TargetClientTimeouts)
 	if err != nil {

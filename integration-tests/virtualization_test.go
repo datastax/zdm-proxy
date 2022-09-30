@@ -8,12 +8,13 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/gocql/gocql"
-	"github.com/google/uuid"
 	"github.com/datastax/zdm-proxy/integration-tests/env"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/integration-tests/utils"
+	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 	"github.com/datastax/zdm-proxy/proxy/pkg/zdmproxy"
+	"github.com/gocql/gocql"
+	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
 	"math/big"
@@ -103,10 +104,10 @@ func TestVirtualizationNumberOfConnections(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			proxies := make([]*zdmproxy.CloudgateProxy, tt.proxyInstanceCreationCount)
+			proxies := make([]*zdmproxy.ZdmProxy, tt.proxyInstanceCreationCount)
 			for i := 0; i < tt.proxyInstanceCreationCount; i++ {
 				proxies[i], err = LaunchProxyWithTopologyConfig(
-					strings.Join(tt.proxyAddresses[i], ","), tt.proxyIndexes[i], tt.proxyInstanceCount,
+					strings.Join(tt.proxyAddresses[i], ","), tt.proxyIndexes[i],
 					fmt.Sprintf("%s%d", "127.0.0.", i+1), 8, testSetup.Origin, testSetup.Target)
 				j := i
 				require.Nil(t, err)
@@ -271,10 +272,10 @@ func TestVirtualizationTokenAwareness(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			proxies := make([]*zdmproxy.CloudgateProxy, tt.proxyInstanceCreationCount)
+			proxies := make([]*zdmproxy.ZdmProxy, tt.proxyInstanceCreationCount)
 			for i := 0; i < tt.proxyInstanceCreationCount; i++ {
 				proxies[i], err = LaunchProxyWithTopologyConfig(
-					strings.Join(tt.proxyAddresses[i], ","), tt.proxyIndexes[i], tt.proxyInstanceCount,
+					strings.Join(tt.proxyAddresses[i], ","), tt.proxyIndexes[i],
 					fmt.Sprintf("%s%d", "127.0.0.", i+1), tt.numTokens, origin, target)
 				j := i
 				require.Nil(t, err)
@@ -689,17 +690,15 @@ func TestInterceptedQueries(t *testing.T) {
 	}
 	for _, testVars := range tests {
 		t.Run(fmt.Sprintf("%s_proxy%d_%dtotalproxies", testVars.query, testVars.connectProxyIndex, testVars.proxyInstanceCount), func(t *testing.T) {
-			proxyInstanceCount := 3
 			proxyAddresses := []string{"127.0.0.1", "127.0.0.2", "127.0.0.3"}
 			if testVars.proxyInstanceCount == 1 {
 				proxyAddresses = []string{"127.0.0.1"}
-				proxyInstanceCount = 1
 			} else if testVars.proxyInstanceCount != 3 {
 				require.Fail(t, "unsupported proxy instance count %v", testVars.proxyInstanceCount)
 			}
 			proxyAddressToConnect := fmt.Sprintf("127.0.0.%v", testVars.connectProxyIndex+1)
 			proxy, err := LaunchProxyWithTopologyConfig(
-				strings.Join(proxyAddresses, ","), testVars.connectProxyIndex, proxyInstanceCount,
+				strings.Join(proxyAddresses, ","), testVars.connectProxyIndex,
 				proxyAddressToConnect, numTokens, testSetup.Origin, testSetup.Target)
 			require.Nil(t, err)
 			defer proxy.Shutdown()
@@ -823,7 +822,7 @@ func TestVirtualizationPartitioner(t *testing.T) {
 		Password: "cassandra",
 	}
 
-	runTestWithSystemQueryForwarding := func(originPartitioner string, targetPartitioner string, systemQueriesToTarget bool, proxyShouldStartUp bool) {
+	runTestWithQueryForwarding := func(originPartitioner string, targetPartitioner string, primaryCluster string, proxyShouldStartUp bool) {
 
 		serverConf := setup.NewTestConfig(originAddress, targetAddress)
 
@@ -861,8 +860,8 @@ func TestVirtualizationPartitioner(t *testing.T) {
 		require.NotNil(t, buffer)
 
 		proxyConfig := setup.NewTestConfig(originAddress, targetAddress)
-		proxyConfig.ProxyAddresses = "127.0.0.1" // needed to enable virtualization. TODO Remove once ZDM-321 is fixed
-		proxyConfig.ForwardSystemQueriesToTarget = systemQueriesToTarget
+		proxyConfig.ProxyTopologyAddresses = "127.0.0.1" // needed to enable virtualization. TODO Remove once ZDM-321 is fixed
+		proxyConfig.PrimaryCluster = primaryCluster
 		proxy, err := setup.NewProxyInstanceWithConfig(proxyConfig)
 		defer func() {
 			if proxy != nil {
@@ -898,23 +897,22 @@ func TestVirtualizationPartitioner(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			runTestWithSystemQueryForwarding(tt.originPartitioner, tt.targetPartitioner, false, tt.proxyShouldStartUp)
-			runTestWithSystemQueryForwarding(tt.originPartitioner, tt.targetPartitioner, true, tt.proxyShouldStartUp)
+			runTestWithQueryForwarding(tt.originPartitioner, tt.targetPartitioner, config.PrimaryClusterOrigin, tt.proxyShouldStartUp)
+			runTestWithQueryForwarding(tt.originPartitioner, tt.targetPartitioner, config.PrimaryClusterTarget, tt.proxyShouldStartUp)
 		})
 	}
 
 }
 
 func LaunchProxyWithTopologyConfig(
-	proxyAddresses string, proxyIndex int, instanceCount int, listenAddress string, numTokens int,
-	origin setup.TestCluster, target setup.TestCluster) (*zdmproxy.CloudgateProxy, error) {
+	proxyAddresses string, proxyIndex int, listenAddress string, numTokens int,
+	origin setup.TestCluster, target setup.TestCluster) (*zdmproxy.ZdmProxy, error) {
 	conf := setup.NewTestConfig(origin.GetInitialContactPoint(), target.GetInitialContactPoint())
-	conf.ProxyIndex = proxyIndex
-	conf.ProxyInstanceCount = instanceCount
-	conf.ProxyAddresses = proxyAddresses
-	conf.ProxyQueryAddress = listenAddress
-	conf.ProxyMetricsAddress = listenAddress
-	conf.ProxyNumTokens = numTokens
+	conf.ProxyTopologyIndex = proxyIndex
+	conf.ProxyTopologyAddresses = proxyAddresses
+	conf.ProxyListenAddress = listenAddress
+	conf.MetricsAddress = listenAddress
+	conf.ProxyTopologyNumTokens = numTokens
 	return setup.NewProxyInstanceWithConfig(conf)
 }
 

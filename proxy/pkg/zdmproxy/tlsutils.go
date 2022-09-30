@@ -4,7 +4,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
-	"github.com/datastax/zdm-proxy/proxy/pkg/config"
+	"github.com/datastax/zdm-proxy/proxy/pkg/common"
 	log "github.com/sirupsen/logrus"
 	"io/ioutil"
 	"runtime"
@@ -22,7 +22,7 @@ func loadTlsFile(filePath string) ([]byte, error) {
 	return file, err
 }
 
-func getClientSideTlsConfigFromProxyClusterTlsConfig(clusterTlsConfig *config.ClusterTlsConfig, clusterType ClusterType) (*tls.Config, error) {
+func getClientSideTlsConfigFromProxyClusterTlsConfig(clusterTlsConfig *common.ClusterTlsConfig, clusterType common.ClusterType) (*tls.Config, error) {
 	// create tls config object using the values provided in the cluster security config
 	serverCAFile, err := loadTlsFile(clusterTlsConfig.ServerCaPath)
 	if err != nil {
@@ -41,7 +41,7 @@ func getClientSideTlsConfigFromProxyClusterTlsConfig(clusterTlsConfig *config.Cl
 }
 
 func getClientSideTlsConfig(
-	caCert []byte, cert []byte, key []byte, serverName string, dnsName string, clusterType ClusterType) (*tls.Config, error) {
+	caCert []byte, cert []byte, key []byte, serverName string, dnsName string, clusterType common.ClusterType) (*tls.Config, error) {
 
 	rootCAs, err := x509.SystemCertPool()
 	if err != nil {
@@ -124,7 +124,7 @@ func getClientSideVerifyConnectionCallback(certificateDnsName string, rootCAs *x
 	}
 }
 
-func getServerSideTlsConfigFromProxyClusterTlsConfig(proxyTlsConfig *config.ProxyTlsConfig) (*tls.Config, error) {
+func getServerSideTlsConfigFromProxyClusterTlsConfig(proxyTlsConfig *common.ProxyTlsConfig) (*tls.Config, error) {
 	// create tls config object using the values provided in the cluster security config
 	proxyCaFile, err := loadTlsFile(proxyTlsConfig.ProxyCaPath)
 	if err != nil {
