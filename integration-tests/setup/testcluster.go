@@ -135,8 +135,8 @@ func NewSimulacronTestSetupWithSessionAndNodes(t *testing.T, createProxy bool, c
 }
 
 func NewSimulacronTestSetupWithSessionAndNodesAndConfig(t *testing.T, createProxy bool, createSession bool, nodes int, config *config.Config) (*SimulacronTestSetup, error) {
-	if env.SkipMockTests {
-		t.Skip("Skipping Simulacron tests, SKIP_MOCKTESTS is set")
+	if !env.RunMockTests {
+		t.Skip("Skipping Simulacron tests, RUN_MOCKTESTS is set false")
 	}
 	origin, err := simulacron.GetNewCluster(createSession, nodes)
 	if err != nil {
@@ -273,8 +273,8 @@ type CqlServerTestSetup struct {
 }
 
 func NewCqlServerTestSetup(t *testing.T, conf *config.Config, start bool, createProxy bool, connectClient bool) (*CqlServerTestSetup, error) {
-	if env.SkipMockTests {
-		t.Skip("Skipping CQLServer tests, SKIP_MOCKTESTS is set")
+	if !env.RunMockTests {
+		t.Skip("Skipping CQLServer tests, RUN_MOCKTESTS is false")
 	}
 	origin, err := cqlserver.NewCqlServerCluster(conf.OriginCassandraContactPoints, conf.OriginCassandraPort,
 		conf.OriginCassandraUsername, conf.OriginCassandraPassword, start)
