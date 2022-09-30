@@ -9,17 +9,17 @@ const (
 	failedRequestsClusterTarget = "target"
 	failedRequestsClusterBoth   = "both"
 
-	failedReadsName            = "proxy_failed_reads_total"
-	failedReadsDescription     = "Running total of failed reads"
-	failedReadsClusterLabel    = "cluster"
+	failedReadsName         = "proxy_failed_reads_total"
+	failedReadsDescription  = "Running total of failed reads"
+	failedReadsClusterLabel = "cluster"
 
-	failedWritesName              = "proxy_failed_writes_total"
-	failedWritesDescription       = "Running total of failed writes"
+	failedWritesName                     = "proxy_failed_writes_total"
+	failedWritesDescription              = "Running total of failed writes"
 	failedWritesFailedOnClusterTypeLabel = "failed_on"
 
-	requestDurationName             = "proxy_request_duration_seconds"
-	requestDurationTypeLabel        = "type"
-	requestDurationDescription      = "Histogram that tracks the latency of requests at proxy entry point"
+	requestDurationName        = "proxy_request_duration_seconds"
+	requestDurationTypeLabel   = "type"
+	requestDurationDescription = "Histogram that tracks the latency of requests at proxy entry point"
 
 	inFlightRequestsName        = "proxy_inflight_requests_total"
 	inFlightRequestsTypeLabel   = "type"

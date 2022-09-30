@@ -147,7 +147,8 @@ func testMetrics(t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback)
 			// 1 on target: AUTH_RESPONSE
 			// 1 on both: STARTUP
 			// 2 on async: AUTH_RESPONSE and STARTUP
-			checkMetrics(t, true, lines, conf.ReadMode, 1, 1, 1, expectedAsyncConnections, 1, 1, 1, 2, true, true, originEndpoint, targetEndpoint, asyncEndpoint)
+			// but all of these are "system" requests so not tracked
+			checkMetrics(t, true, lines, conf.ReadMode, 1, 1, 1, expectedAsyncConnections, 0, 0, 0, 0, true, true, originEndpoint, targetEndpoint, asyncEndpoint)
 
 			_, err = clientConn.SendAndReceive(insertQuery)
 			require.Nil(t, err)
@@ -157,7 +158,8 @@ func testMetrics(t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback)
 			// 1 on target: AUTH_RESPONSE
 			// 2 on both: STARTUP and QUERY INSERT INTO
 			// 2 on async: AUTH_RESPONSE and STARTUP
-			checkMetrics(t, true, lines, conf.ReadMode, 1, 1, 1, expectedAsyncConnections, 2, 1, 1, 2, true, true, originEndpoint, targetEndpoint, asyncEndpoint)
+			// only QUERY is tracked
+			checkMetrics(t, true, lines, conf.ReadMode, 1, 1, 1, expectedAsyncConnections, 1, 0, 0, 0, true, true, originEndpoint, targetEndpoint, asyncEndpoint)
 
 			_, err = clientConn.SendAndReceive(selectQuery)
 			require.Nil(t, err)
@@ -167,10 +169,11 @@ func testMetrics(t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback)
 			// 1 on target: AUTH_RESPONSE
 			// 2 on both: STARTUP and QUERY INSERT INTO
 			// 3 on async: AUTH_RESPONSE, STARTUP AND QUERY SELECT
+			// ONLY QUERY is tracked
 			if conf.ReadMode == config.ReadModeDualAsyncOnSecondary {
 				time.Sleep(200 * time.Millisecond)
 			}
-			checkMetrics(t, true, lines, conf.ReadMode, 1, 1, 1, expectedAsyncConnections, 2, 2, 1, 3, false, true, originEndpoint, targetEndpoint, asyncEndpoint)
+			checkMetrics(t, true, lines, conf.ReadMode, 1, 1, 1, expectedAsyncConnections, 1, 1, 0, 1, false, true, originEndpoint, targetEndpoint, asyncEndpoint)
 		})
 	}
 }
