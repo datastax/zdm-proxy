@@ -5,6 +5,7 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/datastax/zdm-proxy/proxy/pkg/common"
 	log "github.com/sirupsen/logrus"
 	"net"
 	"time"
@@ -30,7 +31,7 @@ func (ch *ClientHandler) handleSecondaryHandshakeStartup(
 	var clusterAddress net.Addr
 	var logIdentifier string
 	var forwardToSecondary forwardDecision
-	requestTimeout := time.Duration(ch.conf.RequestTimeoutMs) * time.Millisecond
+	requestTimeout := time.Duration(ch.conf.ProxyRequestTimeoutMs) * time.Millisecond
 	if asyncConnector {
 		clusterAddress = ch.asyncConnector.connection.RemoteAddr()
 		logIdentifier = fmt.Sprintf("ASYNC-%v", ch.asyncConnector.clusterType)
@@ -192,7 +193,7 @@ func handleSecondaryHandshakeResponse(
 	return phase, parsedFrame, done, nil
 }
 
-func validateSecondaryStartupResponse(f *frame.RawFrame, clusterType ClusterType) error {
+func validateSecondaryStartupResponse(f *frame.RawFrame, clusterType common.ClusterType) error {
 	switch f.Header.OpCode {
 	case primitive.OpCodeAuthenticate:
 	case primitive.OpCodeAuthChallenge:

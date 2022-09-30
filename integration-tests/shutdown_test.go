@@ -11,6 +11,7 @@ import (
 	"github.com/datastax/zdm-proxy/integration-tests/client"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
+	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 	"github.com/rs/zerolog"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
@@ -24,19 +25,16 @@ import (
 
 func TestShutdownInFlightRequests(t *testing.T) {
 	testDef := []struct {
-		name                  string
-		dualReadsEnabled      bool
-		asyncReadsOnSecondary bool
+		name     string
+		readMode string
 	}{
 		{
-			name:                  "No dual reads",
-			dualReadsEnabled:      false,
-			asyncReadsOnSecondary: false,
+			name:     "No dual reads",
+			readMode: config.ReadModePrimaryOnly,
 		},
 		{
-			name:                  "Async Reads on Secondary",
-			dualReadsEnabled:      true,
-			asyncReadsOnSecondary: true,
+			name:     "Async Reads on Secondary",
+			readMode: config.ReadModeDualAsyncOnSecondary,
 		},
 	}
 	for _, test := range testDef {
@@ -45,9 +43,8 @@ func TestShutdownInFlightRequests(t *testing.T) {
 			defer testSetup.Cleanup()
 
 			config := setup.NewTestConfig(testSetup.Origin.GetInitialContactPoint(), testSetup.Target.GetInitialContactPoint())
-			config.RequestTimeoutMs = 30000
-			config.DualReadsEnabled = test.dualReadsEnabled
-			config.AsyncReadsOnSecondary = test.asyncReadsOnSecondary
+			config.ProxyRequestTimeoutMs = 30000
+			config.ReadMode = test.readMode
 			proxy, err := setup.NewProxyInstanceWithConfig(config)
 			require.Nil(t, err)
 			shutdownProxyTriggered := false
@@ -161,19 +158,16 @@ func TestShutdownInFlightRequests(t *testing.T) {
 func TestStressShutdown(t *testing.T) {
 	t.Skip("test is currently failing due to ZDM-378") //TODO ZDM-378
 	testDef := []struct {
-		name                  string
-		dualReadsEnabled      bool
-		asyncReadsOnSecondary bool
+		name     string
+		readMode string
 	}{
 		{
-			name:                  "No dual reads",
-			dualReadsEnabled:      false,
-			asyncReadsOnSecondary: false,
+			name:     "No dual reads",
+			readMode: config.ReadModePrimaryOnly,
 		},
 		{
-			name:                  "Async Reads on Secondary",
-			dualReadsEnabled:      true,
-			asyncReadsOnSecondary: true,
+			name:     "Async Reads on Secondary",
+			readMode: config.ReadModeDualAsyncOnSecondary,
 		},
 	}
 	for _, test := range testDef {
@@ -183,9 +177,7 @@ func TestStressShutdown(t *testing.T) {
 				require.Nil(t, err)
 				defer testSetup.Cleanup()
 				cfg := setup.NewTestConfig(testSetup.Origin.GetInitialContactPoint(), testSetup.Target.GetInitialContactPoint())
-				cfg.AsyncReadsOnSecondary = test.asyncReadsOnSecondary
-				cfg.DualReadsEnabled = test.dualReadsEnabled
-				cfg.RequestTimeoutMs = 5000
+				cfg.ReadMode = test.readMode
 				proxy, err := setup.NewProxyInstanceWithConfig(cfg)
 				require.Nil(t, err)
 

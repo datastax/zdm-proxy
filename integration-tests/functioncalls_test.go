@@ -2433,6 +2433,6 @@ func createSimulacronTestSetupWithServerSideFunctionReplacementConfig(t *testing
 	targetAddress := "127.0.1.2"
 
 	conf := setup.NewTestConfig(originAddress, targetAddress)
-	conf.ReplaceServerSideFunctions = replaceServerSideFunctions
+	conf.ReplaceCqlFunctions = replaceServerSideFunctions
 	return setup.NewSimulacronTestSetupWithConfig(t, conf)
 }

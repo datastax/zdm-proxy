@@ -511,16 +511,16 @@ func TestAuth(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 
 			serverConf := setup.NewTestConfig(originAddress, targetAddress)
-			serverConf.TargetCassandraUsername = tt.targetUsername
-			serverConf.TargetCassandraPassword = tt.targetPassword
-			serverConf.OriginCassandraUsername = tt.originUsername
-			serverConf.OriginCassandraPassword = tt.originPassword
+			serverConf.TargetUsername = tt.targetUsername
+			serverConf.TargetPassword = tt.targetPassword
+			serverConf.OriginUsername = tt.originUsername
+			serverConf.OriginPassword = tt.originPassword
 
 			proxyConf := setup.NewTestConfig(originAddress, targetAddress)
-			proxyConf.TargetCassandraUsername = tt.proxyTargetUsername
-			proxyConf.TargetCassandraPassword = tt.proxyTargetPassword
-			proxyConf.OriginCassandraUsername = tt.proxyOriginUsername
-			proxyConf.OriginCassandraPassword = tt.proxyOriginPassword
+			proxyConf.TargetUsername = tt.proxyTargetUsername
+			proxyConf.TargetPassword = tt.proxyTargetPassword
+			proxyConf.OriginUsername = tt.proxyOriginUsername
+			proxyConf.OriginPassword = tt.proxyOriginPassword
 			if tt.forwardClientCredsToOrigin != nil {
 				proxyConf.ForwardClientCredentialsToOrigin = *tt.forwardClientCredsToOrigin
 			}
@@ -566,7 +566,7 @@ func TestAuth(t *testing.T) {
 					}
 				}
 				testClient := client.NewCqlClient(
-					fmt.Sprintf("%s:%d", proxyConf.ProxyQueryAddress, proxyConf.ProxyQueryPort),
+					fmt.Sprintf("%s:%d", proxyConf.ProxyListenAddress, proxyConf.ProxyListenPort),
 					authCreds)
 				cqlConn, err := testClient.Connect(context.Background())
 				require.Nil(t, err, "client connection failed: %v", err)
@@ -602,7 +602,7 @@ func TestAuth(t *testing.T) {
 				checkedTarget := false
 				secondaryHandshakeIsTarget := true
 				asyncIsTarget := true
-				if proxyConf.ForwardReadsToTarget {
+				if proxyConf.PrimaryCluster == config.PrimaryClusterTarget {
 					asyncIsTarget = false
 				}
 
@@ -611,7 +611,7 @@ func TestAuth(t *testing.T) {
 				var asyncRequests []*frame.Frame
 
 				controlConnection := 1
-				if proxyConf.DualReadsEnabled {
+				if proxyConf.ReadMode == config.ReadModeDualAsyncOnSecondary {
 					if asyncIsTarget {
 						if len(targetRequestsByConn) == controlConnection + 2 {
 							asyncRequests = targetRequestsByConn[1]
@@ -711,7 +711,7 @@ func TestAuth(t *testing.T) {
 					require.Equal(t, primitive.OpCodeAuthResponse, targetRequests[1].Header.OpCode)
 				}
 
-				if proxyConf.DualReadsEnabled {
+				if proxyConf.ReadMode == config.ReadModeDualAsyncOnSecondary {
 					if asyncHandshakeAttempted {
 						if (asyncIsTarget && len(targetRequests) == 2) || (!asyncIsTarget && len(originRequests) == 2) {
 							require.Equal(t, 2, len(asyncRequests))
@@ -730,14 +730,13 @@ func TestAuth(t *testing.T) {
 				testFunc(t, proxyConf)
 			})
 
-			proxyConf.DualReadsEnabled = true
-			proxyConf.AsyncReadsOnSecondary = true
-			proxyConf.ForwardReadsToTarget = false
+			proxyConf.ReadMode = config.ReadModeDualAsyncOnSecondary
+			proxyConf.PrimaryCluster = config.PrimaryClusterOrigin
 			t.Run("AsyncReadsOnTarget", func(t *testing.T) {
 				testFunc(t, proxyConf)
 			})
 
-			proxyConf.ForwardReadsToTarget = true
+			proxyConf.PrimaryCluster = config.PrimaryClusterTarget
 			t.Run("AsyncReadsOnOrigin", func(t *testing.T) {
 				testFunc(t, proxyConf)
 			})
@@ -1007,10 +1006,10 @@ func TestProxyStartupAndHealthCheckWithAuth(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 
 			serverConf := setup.NewTestConfig(originAddress, targetAddress)
-			serverConf.TargetCassandraUsername = tt.targetUsername
-			serverConf.TargetCassandraPassword = tt.targetPassword
-			serverConf.OriginCassandraUsername = tt.originUsername
-			serverConf.OriginCassandraPassword = tt.originPassword
+			serverConf.TargetUsername = tt.targetUsername
+			serverConf.TargetPassword = tt.targetPassword
+			serverConf.OriginUsername = tt.originUsername
+			serverConf.OriginPassword = tt.originPassword
 
 			testSetup, err := setup.NewCqlServerTestSetup(t, serverConf, true, false, false)
 			require.Nil(t, err)
@@ -1020,10 +1019,10 @@ func TestProxyStartupAndHealthCheckWithAuth(t *testing.T) {
 			proxyConf.HeartbeatIntervalMs = 200
 			proxyConf.HeartbeatRetryIntervalMaxMs = 500
 			proxyConf.HeartbeatRetryIntervalMinMs = 200
-			proxyConf.TargetCassandraUsername = tt.proxyTargetUsername
-			proxyConf.TargetCassandraPassword = tt.proxyTargetPassword
-			proxyConf.OriginCassandraUsername = tt.proxyOriginUsername
-			proxyConf.OriginCassandraPassword = tt.proxyOriginPassword
+			proxyConf.TargetUsername = tt.proxyTargetUsername
+			proxyConf.TargetPassword = tt.proxyTargetPassword
+			proxyConf.OriginUsername = tt.proxyOriginUsername
+			proxyConf.OriginPassword = tt.proxyOriginPassword
 			proxy, err := setup.NewProxyInstanceWithConfig(proxyConf)
 			if proxy != nil {
 				defer proxy.Shutdown()

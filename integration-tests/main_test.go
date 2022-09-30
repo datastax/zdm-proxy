@@ -43,7 +43,7 @@ func RunTests(m *testing.M) int {
 	return m.Run()
 }
 
-func NewProxyInstanceForGlobalCcmClusters() (*zdmproxy.CloudgateProxy, error) {
+func NewProxyInstanceForGlobalCcmClusters() (*zdmproxy.ZdmProxy, error) {
 	originCluster, targetCluster, err := SetupOrGetGlobalCcmClusters()
 	if err != nil {
 		return nil, err

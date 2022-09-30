@@ -23,8 +23,7 @@ import (
 
 func TestAsyncReadError(t *testing.T) {
 	c := setup.NewTestConfig("", "")
-	c.DualReadsEnabled = true
-	c.AsyncReadsOnSecondary = true
+	c.ReadMode = config.ReadModeDualAsyncOnSecondary
 	testSetup, err := setup.NewSimulacronTestSetupWithConfig(t, c)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
@@ -70,8 +69,7 @@ func TestAsyncReadError(t *testing.T) {
 
 func TestAsyncReadHighLatency(t *testing.T) {
 	c := setup.NewTestConfig("", "")
-	c.DualReadsEnabled = true
-	c.AsyncReadsOnSecondary = true
+	c.ReadMode = config.ReadModeDualAsyncOnSecondary
 	testSetup, err := setup.NewSimulacronTestSetupWithConfig(t, c)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
@@ -119,8 +117,7 @@ func TestAsyncReadHighLatency(t *testing.T) {
 
 func TestAsyncExhaustedStreamIds(t *testing.T) {
 	c := setup.NewTestConfig("", "")
-	c.DualReadsEnabled = true
-	c.AsyncReadsOnSecondary = true
+	c.ReadMode = config.ReadModeDualAsyncOnSecondary
 	testSetup, err := setup.NewSimulacronTestSetupWithConfig(t, c)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
@@ -350,7 +347,7 @@ func TestAsyncReadsRequestTypes(t *testing.T) {
 
 				sentOrigin := 0
 				sentTarget := 0
-				if conf.ForwardReadsToTarget {
+				if conf.PrimaryCluster == config.PrimaryClusterTarget {
 					if tt.sentAsync {
 						sentOrigin++
 					}
@@ -399,7 +396,7 @@ func TestAsyncReadsRequestTypes(t *testing.T) {
 						}
 						sentOrigin = 0
 						sentTarget = 0
-						if conf.ForwardReadsToTarget {
+						if conf.PrimaryCluster == config.PrimaryClusterTarget {
 							if tt.sentExecuteToAsync {
 								sentOrigin++
 							}
@@ -435,15 +432,14 @@ func TestAsyncReadsRequestTypes(t *testing.T) {
 	}
 
 	c := setup.NewTestConfig(testSetup.Origin.GetInitialContactPoint(), testSetup.Target.GetInitialContactPoint())
-	c.DualReadsEnabled = true
-	c.AsyncReadsOnSecondary = true
+	c.ReadMode = config.ReadModeDualAsyncOnSecondary
 
-	c.ForwardReadsToTarget = true
+	c.PrimaryCluster = config.PrimaryClusterTarget
 	t.Run("ForwardReadsToTarget", func(t *testing.T) {
 		testFunc(t, c)
 	})
 
-	c.ForwardReadsToTarget = false
+	c.PrimaryCluster = config.PrimaryClusterOrigin
 	t.Run("ForwardReadsToOrigin", func(t *testing.T) {
 		testFunc(t, c)
 	})

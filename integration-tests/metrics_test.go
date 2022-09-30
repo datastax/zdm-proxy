@@ -80,19 +80,19 @@ var selectQuery = frame.NewFrame(
 
 func testMetrics(t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback) {
 
-	tests := []struct{
+	tests := []struct {
 		name                  string
-		dualReadsEnabled      bool
+		readMode              string
 		asyncReadsOnSecondary bool
 	}{
 		{
 			name:                  "default",
-			dualReadsEnabled:      false,
+			readMode:              config.ReadModePrimaryOnly,
 			asyncReadsOnSecondary: false,
 		},
 		{
 			name:                  "dual reads, async on secondary",
-			dualReadsEnabled:      true,
+			readMode:              config.ReadModeDualAsyncOnSecondary,
 			asyncReadsOnSecondary: true,
 		},
 	}
@@ -104,16 +104,15 @@ func testMetrics(t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback)
 			originEndpoint := fmt.Sprintf("%v:9042", originHost)
 			targetEndpoint := fmt.Sprintf("%v:9042", targetHost)
 			conf := setup.NewTestConfig(originHost, targetHost)
-			conf.DualReadsEnabled = test.dualReadsEnabled
-			conf.AsyncReadsOnSecondary = test.asyncReadsOnSecondary
+			conf.ReadMode = test.readMode
 
 			expectedAsyncConnections := 0
-			if conf.AsyncReadsOnSecondary {
+			if conf.ReadMode == config.ReadModeDualAsyncOnSecondary {
 				expectedAsyncConnections = 1
 			}
 
 			asyncEndpoint := targetEndpoint
-			if conf.ForwardReadsToTarget {
+			if conf.PrimaryCluster == config.PrimaryClusterTarget {
 				asyncEndpoint = originEndpoint
 			}
 
@@ -137,7 +136,7 @@ func testMetrics(t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback)
 			}()
 
 			lines := gatherMetrics(t, conf, false)
-			checkMetrics(t, false, lines, conf.AsyncReadsOnSecondary, 0, 0, 0, 0, 0, 0, 0, 0, true, true, originEndpoint, targetEndpoint, asyncEndpoint)
+			checkMetrics(t, false, lines, conf.ReadMode, 0, 0, 0, 0, 0, 0, 0, 0, true, true, originEndpoint, targetEndpoint, asyncEndpoint)
 
 			err = testSetup.Client.Connect(primitive.ProtocolVersion4)
 			require.Nil(t, err)
@@ -148,7 +147,7 @@ func testMetrics(t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback)
 			// 1 on target: AUTH_RESPONSE
 			// 1 on both: STARTUP
 			// 2 on async: AUTH_RESPONSE and STARTUP
-			checkMetrics(t, true, lines, conf.AsyncReadsOnSecondary, 1, 1, 1, expectedAsyncConnections, 1, 1, 1, 2, true, true, originEndpoint, targetEndpoint, asyncEndpoint)
+			checkMetrics(t, true, lines, conf.ReadMode, 1, 1, 1, expectedAsyncConnections, 1, 1, 1, 2, true, true, originEndpoint, targetEndpoint, asyncEndpoint)
 
 			_, err = clientConn.SendAndReceive(insertQuery)
 			require.Nil(t, err)
@@ -158,7 +157,7 @@ func testMetrics(t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback)
 			// 1 on target: AUTH_RESPONSE
 			// 2 on both: STARTUP and QUERY INSERT INTO
 			// 2 on async: AUTH_RESPONSE and STARTUP
-			checkMetrics(t, true, lines, conf.AsyncReadsOnSecondary, 1, 1, 1, expectedAsyncConnections, 2, 1, 1, 2, true, true, originEndpoint, targetEndpoint, asyncEndpoint)
+			checkMetrics(t, true, lines, conf.ReadMode, 1, 1, 1, expectedAsyncConnections, 2, 1, 1, 2, true, true, originEndpoint, targetEndpoint, asyncEndpoint)
 
 			_, err = clientConn.SendAndReceive(selectQuery)
 			require.Nil(t, err)
@@ -168,21 +167,10 @@ func testMetrics(t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback)
 			// 1 on target: AUTH_RESPONSE
 			// 2 on both: STARTUP and QUERY INSERT INTO
 			// 3 on async: AUTH_RESPONSE, STARTUP AND QUERY SELECT
-			if conf.AsyncReadsOnSecondary {
-				utils.RequireWithRetries(t, func() (err error, fatal bool) {
-					valueToCheck := fmt.Sprintf("%v %v", getPrometheusNameWithNodeLabel("cloudgate", metrics.InFlightRequestsAsync, asyncEndpoint), 0)
-					if !containsLine(lines, valueToCheck) {
-						return fmt.Errorf("%v does not contain %v", lines, valueToCheck), false
-					}
-					valueToCheck = fmt.Sprintf("%v{node=\"%v\"} %v", getPrometheusNameWithSuffix("cloudgate", metrics.AsyncRequestDuration, "count"), asyncEndpoint, 3)
-					if !containsLine(lines, valueToCheck) {
-						return fmt.Errorf("%v does not contain %v", lines, valueToCheck), false
-					}
-					return nil, false
-				}, 10, 200 * time.Millisecond)
+			if conf.ReadMode == config.ReadModeDualAsyncOnSecondary {
+				time.Sleep(200 * time.Millisecond)
 			}
-
-			checkMetrics(t, true, lines, conf.AsyncReadsOnSecondary, 1, 1, 1, expectedAsyncConnections, 2, 2, 1, 3, false, true, originEndpoint, targetEndpoint, asyncEndpoint)
+			checkMetrics(t, true, lines, conf.ReadMode, 1, 1, 1, expectedAsyncConnections, 2, 2, 1, 3, false, true, originEndpoint, targetEndpoint, asyncEndpoint)
 		})
 	}
 }
@@ -198,7 +186,7 @@ func containsLine(lines []string, line string) bool {
 
 func startMetricsHandler(
 	t *testing.T, conf *config.Config, wg *sync.WaitGroup, metricsHandler *httpzdmproxy.HandlerWithFallback) *http.Server {
-	httpAddr := fmt.Sprintf("%s:%d", conf.ProxyMetricsAddress, conf.ProxyMetricsPort)
+	httpAddr := fmt.Sprintf("%s:%d", conf.MetricsAddress, conf.MetricsPort)
 	srv := httpzdmproxy.StartHttpServer(httpAddr, wg)
 	require.NotNil(t, srv)
 	metricsHandler.SetHandler(promhttp.Handler())
@@ -206,7 +194,7 @@ func startMetricsHandler(
 }
 
 func gatherMetrics(t *testing.T, conf *config.Config, checkNodeMetrics bool) []string {
-	httpAddr := fmt.Sprintf("%s:%d", conf.ProxyMetricsAddress, conf.ProxyMetricsPort)
+	httpAddr := fmt.Sprintf("%s:%d", conf.MetricsAddress, conf.MetricsPort)
 	statusCode, rspStr, err := utils.GetMetrics(httpAddr)
 	require.Nil(t, err)
 	require.Equal(t, http.StatusOK, statusCode)
@@ -235,7 +223,7 @@ func checkMetrics(
 	t *testing.T,
 	checkNodeMetrics bool,
 	lines []string,
-	asyncEnabled bool,
+	readMode string,
 	openClientConns int,
 	openOriginConns int,
 	openTargetConns int,
@@ -250,6 +238,7 @@ func checkMetrics(
 	targetHost string,
 	asyncHost string,
 ) {
+	asyncEnabled := readMode == config.ReadModeDualAsyncOnSecondary
 	prefix := "cloudgate"
 	require.Contains(t, lines, fmt.Sprintf("%v %v", getPrometheusName(prefix, metrics.OpenClientConnections), openClientConns))
 
