@@ -19,7 +19,7 @@ var ServerVersion string
 var CassandraVersion string
 var DseVersion string
 var IsDse bool
-var UseCcm bool
+var RunCcmTests bool
 var RunMockTests bool
 var RunAllTlsTests bool
 var Debug bool
@@ -38,11 +38,11 @@ func InitGlobalVars() {
 			getEnvironmentVariableOrDefault("DSE_VERSION", ""),
 			"DSE_VERSION"),
 
-		"USE_CCM":
+		"RUN_CCMTESTS":
 		flag.String(
-			"USE_CCM",
-			getEnvironmentVariableOrDefault("USE_CCM", "false"),
-			"USE_CCM"),
+			"RUN_CCMTESTS",
+			getEnvironmentVariableOrDefault("RUN_CCMTESTS", "false"),
+			"RUN_CCMTESTS"),
 
 		"RUN_MOCKTESTS":
 		flag.String(
@@ -67,7 +67,7 @@ func InitGlobalVars() {
 
 	CassandraVersion = *flags["CASSANDRA_VERSION"].(*string)
 	DseVersion = *flags["DSE_VERSION"].(*string)
-	useCcm := *flags["USE_CCM"].(*string)
+	runCcmTests := *flags["RUN_CCMTESTS"].(*string)
 	runMockTests := *flags["RUN_MOCKTESTS"].(*string)
 	runAllTlsTests := *flags["RUN_ALL_TLS_TESTS"].(*string)
 	Debug = *flags["DEBUG"].(*bool)
@@ -80,8 +80,8 @@ func InitGlobalVars() {
 		IsDse = false
 	}
 
-	if strings.ToLower(useCcm) == "true" {
-		UseCcm = true
+	if strings.ToLower(runCcmTests) == "true" {
+		RunCcmTests = true
 	}
 
 	if strings.ToLower(runMockTests) == "true" {

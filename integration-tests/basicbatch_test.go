@@ -15,8 +15,8 @@ import (
 // The test runs a basic batch statement, which includes an insert and update,
 // and then runs an insert and update after to make sure it works
 func TestBasicBatch(t *testing.T) {
-	if !env.UseCcm {
-		t.Skip("Test requires CCM, set USE_CCM env variable to TRUE")
+	if !env.RunCcmTests {
+		t.Skip("Test requires CCM, set RUN_CCMTESTS env variable to TRUE")
 	}
 
 	proxyInstance, err := NewProxyInstanceForGlobalCcmClusters()

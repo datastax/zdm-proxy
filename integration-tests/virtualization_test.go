@@ -184,8 +184,8 @@ func TestVirtualizationNumberOfConnections(t *testing.T) {
 }
 
 func TestVirtualizationTokenAwareness(t *testing.T) {
-	if !env.UseCcm {
-		t.Skip("Test requires CCM, set USE_CCM env variable to TRUE")
+	if !env.RunCcmTests {
+		t.Skip("Test requires CCM, set RUN_CCMTESTS env variable to TRUE")
 	}
 
 	type test struct {

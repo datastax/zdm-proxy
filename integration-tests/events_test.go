@@ -16,8 +16,8 @@ import (
 
 // TestSchemaEvents tests the schema event message handling
 func TestSchemaEvents(t *testing.T) {
-	if !env.UseCcm {
-		t.Skip("Test requires CCM, set USE_CCM env variable to TRUE")
+	if !env.RunCcmTests {
+		t.Skip("Test requires CCM, set RUN_CCMTESTS env variable to TRUE")
 	}
 
 	originCluster, targetCluster, err := SetupOrGetGlobalCcmClusters()
@@ -107,8 +107,8 @@ func TestSchemaEvents(t *testing.T) {
 
 // TestTopologyStatusEvents tests the topology and status events handling
 func TestTopologyStatusEvents(t *testing.T) {
-	if !env.UseCcm {
-		t.Skip("Test requires CCM, set USE_CCM env variable to TRUE")
+	if !env.RunCcmTests {
+		t.Skip("Test requires CCM, set RUN_CCMTESTS env variable to TRUE")
 	}
 
 	tempCcmSetup, err := setup.NewTemporaryCcmTestSetup(true, false)

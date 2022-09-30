@@ -83,7 +83,7 @@ jobs:
           which ccm
           sudo ln -s /home/runner/.local/bin/ccm /usr/local/bin/ccm
           /usr/local/bin/ccm list
-          go test -timeout 180m -v 2>&1 ./integration-tests -RUN_MOCKTESTS=false -USE_CCM=true | go-junit-report -set-exit-code -iocopy -out report-integration-ccm.xml
+          go test -timeout 180m -v 2>&1 ./integration-tests -RUN_MOCKTESTS=false -RUN_CCMTESTS=true | go-junit-report -set-exit-code -iocopy -out report-integration-ccm.xml
       - name: Test Summary
         uses: test-summary/action@v1
         if: always()
