@@ -36,7 +36,7 @@ func testForwardDecisionsForReads(t *testing.T, primaryCluster string, systemQue
 	c := setup.NewTestConfig("", "")
 	c.PrimaryCluster = primaryCluster
 	c.SystemQueriesMode = systemQueriesMode
-	testSetup, err := setup.NewSimulacronTestSetupWithConfig(c)
+	testSetup, err := setup.NewSimulacronTestSetupWithConfig(t, c)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 

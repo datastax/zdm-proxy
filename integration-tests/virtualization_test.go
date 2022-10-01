@@ -47,7 +47,7 @@ func (recv *connectObserver) ObserveConnect(a gocql.ObservedConnect) {
 }
 
 func TestVirtualizationNumberOfConnections(t *testing.T) {
-	testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodes(false, false, 3)
+	testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodes(t, false, false, 3)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
@@ -184,8 +184,8 @@ func TestVirtualizationNumberOfConnections(t *testing.T) {
 }
 
 func TestVirtualizationTokenAwareness(t *testing.T) {
-	if !env.UseCcm {
-		t.Skip("Test requires CCM, set USE_CCM env variable to TRUE")
+	if !env.RunCcmTests {
+		t.Skip("Test requires CCM, set RUN_CCMTESTS env variable to TRUE")
 	}
 
 	type test struct {
@@ -374,7 +374,7 @@ CREATE TABLE system.local (
 
  */
 func TestInterceptedQueries(t *testing.T) {
-	testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodes(false, false, 3)
+	testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodes(t, false, false, 3)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
@@ -822,11 +822,11 @@ func TestVirtualizationPartitioner(t *testing.T) {
 		Password: "cassandra",
 	}
 
-	runTestWithQueryForwarding := func(originPartitioner string, targetPartitioner string, primaryCluster string, proxyShouldStartUp bool) {
+	runTestWithQueryForwarding := func(t *testing.T, originPartitioner string, targetPartitioner string, primaryCluster string, proxyShouldStartUp bool) {
 
 		serverConf := setup.NewTestConfig(originAddress, targetAddress)
 
-		testSetup, err := setup.NewCqlServerTestSetup(serverConf, false, false, false)
+		testSetup, err := setup.NewCqlServerTestSetup(t, serverConf, false, false, false)
 		require.Nil(t, err)
 		defer testSetup.Cleanup()
 
@@ -897,8 +897,8 @@ func TestVirtualizationPartitioner(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			runTestWithQueryForwarding(tt.originPartitioner, tt.targetPartitioner, config.PrimaryClusterOrigin, tt.proxyShouldStartUp)
-			runTestWithQueryForwarding(tt.originPartitioner, tt.targetPartitioner, config.PrimaryClusterTarget, tt.proxyShouldStartUp)
+			runTestWithQueryForwarding(t, tt.originPartitioner, tt.targetPartitioner, config.PrimaryClusterOrigin, tt.proxyShouldStartUp)
+			runTestWithQueryForwarding(t, tt.originPartitioner, tt.targetPartitioner, config.PrimaryClusterTarget, tt.proxyShouldStartUp)
 		})
 	}
 

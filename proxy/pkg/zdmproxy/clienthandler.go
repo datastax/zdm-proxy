@@ -115,6 +115,7 @@ type ClientHandler struct {
 	timeUuidGenerator TimeUuidGenerator
 
 	clientHandlerShutdownRequestCancelFn context.CancelFunc
+	clientHandlerShutdownRequestContext  context.Context
 }
 
 func NewClientHandler(
@@ -292,6 +293,7 @@ func NewClientHandler(
 		parameterModifier:                    NewParameterModifier(timeUuidGenerator),
 		timeUuidGenerator:                    timeUuidGenerator,
 		clientHandlerShutdownRequestCancelFn: clientHandlerShutdownRequestCancelFn,
+		clientHandlerShutdownRequestContext:  clientHandlerShutdownRequestContext,
 	}, nil
 }
 
@@ -373,6 +375,11 @@ func (ch *ClientHandler) requestLoop() {
 			f, ok := <-ch.reqChannel
 			if !ok {
 				break
+			}
+
+			if ch.clientHandlerShutdownRequestContext.Err() != nil {
+				ch.clientConnector.sendOverloadedToClient(f)
+				continue
 			}
 
 			log.Tracef("Request received on client handler: %v", f.Header)
