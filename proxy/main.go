@@ -13,20 +13,20 @@ import (
 )
 
 // TODO: to be managed externally
-const ZdmVersionNumber = "2.0"
+const ZdmVersionString = "2.0.0"
 
-var displayVersion = flag.Bool("version", false, "Display the zdm-proxy version and exit")
+var displayVersion = flag.Bool("version", false, "Display the ZDM proxy version and exit")
 
 func main() {
 
 	flag.Parse()
 	if *displayVersion {
-		fmt.Printf("zdm-proxy version %v\n", ZdmVersionNumber)
+		fmt.Printf("ZDM proxy version %v\n", ZdmVersionString)
 		os.Exit(0)
 	}
 
 	// Always record version information (very) early in the log
-	log.Infof("zdm-proxy version %v", ZdmVersionNumber)
+	log.Infof("Starting ZDM proxy version %v", ZdmVersionString)
 
 	launchProxy(false)
 }
