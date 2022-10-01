@@ -21,7 +21,7 @@ import (
 
 func TestPreparedIdProxyCacheMiss(t *testing.T) {
 
-	simulacronSetup, err := setup.NewSimulacronTestSetup()
+	simulacronSetup, err := setup.NewSimulacronTestSetup(t)
 	require.Nil(t, err)
 	defer simulacronSetup.Cleanup()
 
@@ -62,7 +62,7 @@ func TestPreparedIdProxyCacheMiss(t *testing.T) {
 
 func TestPreparedIdPreparationMismatch(t *testing.T) {
 
-	simulacronSetup, err := setup.NewSimulacronTestSetup()
+	simulacronSetup, err := setup.NewSimulacronTestSetup(t)
 	require.Nil(t, err)
 	defer simulacronSetup.Cleanup()
 
@@ -283,7 +283,7 @@ func TestPreparedIdReplacement(t *testing.T) {
 			conf.ReadMode = test.readMode
 			dualReadsEnabled := test.readMode == config.ReadModeDualAsyncOnSecondary
 			conf.ReplaceCqlFunctions = test.replaceServerSideFunctions
-			testSetup, err := setup.NewCqlServerTestSetup(conf, false, false, false)
+			testSetup, err := setup.NewCqlServerTestSetup(t, conf, false, false, false)
 			require.Nil(t, err)
 			defer testSetup.Cleanup()
 
@@ -576,7 +576,7 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 			conf := setup.NewTestConfig("127.0.1.1", "127.0.1.2")
 			conf.ReadMode = test.readMode
 			dualReadsEnabled := test.readMode == config.ReadModeDualAsyncOnSecondary
-			testSetup, err := setup.NewCqlServerTestSetup(conf, false, false, false)
+			testSetup, err := setup.NewCqlServerTestSetup(t, conf, false, false, false)
 			require.Nil(t, err)
 			defer testSetup.Cleanup()
 

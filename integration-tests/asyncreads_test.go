@@ -24,7 +24,7 @@ import (
 func TestAsyncReadError(t *testing.T) {
 	c := setup.NewTestConfig("", "")
 	c.ReadMode = config.ReadModeDualAsyncOnSecondary
-	testSetup, err := setup.NewSimulacronTestSetupWithConfig(c)
+	testSetup, err := setup.NewSimulacronTestSetupWithConfig(t, c)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
@@ -70,7 +70,7 @@ func TestAsyncReadError(t *testing.T) {
 func TestAsyncReadHighLatency(t *testing.T) {
 	c := setup.NewTestConfig("", "")
 	c.ReadMode = config.ReadModeDualAsyncOnSecondary
-	testSetup, err := setup.NewSimulacronTestSetupWithConfig(c)
+	testSetup, err := setup.NewSimulacronTestSetupWithConfig(t, c)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
@@ -118,7 +118,7 @@ func TestAsyncReadHighLatency(t *testing.T) {
 func TestAsyncExhaustedStreamIds(t *testing.T) {
 	c := setup.NewTestConfig("", "")
 	c.ReadMode = config.ReadModeDualAsyncOnSecondary
-	testSetup, err := setup.NewSimulacronTestSetupWithConfig(c)
+	testSetup, err := setup.NewSimulacronTestSetupWithConfig(t, c)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
@@ -287,7 +287,7 @@ func TestAsyncReadsRequestTypes(t *testing.T) {
 	}
 
 	testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodesAndConfig(
-		false, false,1, nil)
+		t, false, false,1, nil)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 

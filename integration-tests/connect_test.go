@@ -17,7 +17,7 @@ import (
 )
 
 func TestGoCqlConnect(t *testing.T) {
-	testSetup, err := setup.NewSimulacronTestSetup()
+	testSetup, err := setup.NewSimulacronTestSetup(t)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
@@ -48,7 +48,7 @@ func TestMaxClientsThreshold(t *testing.T) {
 	goCqlConnectionsPerHost := 1
 	maxSessions := 5 // each session spawns 2 connections (1 control connection)
 
-	testSetup, err := setup.NewSimulacronTestSetupWithSession(false, false)
+	testSetup, err := setup.NewSimulacronTestSetupWithSession(t, false, false)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
@@ -101,7 +101,7 @@ func TestRequestedProtocolVersionUnsupportedByProxy(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			cfg := setup.NewTestConfig("127.0.1.1", "127.0.1.2")
-			testSetup, err := setup.NewCqlServerTestSetup(cfg, false, false, false)
+			testSetup, err := setup.NewCqlServerTestSetup(t, cfg, false, false, false)
 			require.Nil(t, err)
 			defer testSetup.Cleanup()
 
@@ -153,7 +153,7 @@ func TestReturnedProtocolVersionUnsupportedByProxy(t *testing.T) {
 	}
 
 	runTestFunc := func(t *testing.T, test *test, cfg *config.Config ) {
-		testSetup, err := setup.NewCqlServerTestSetup(cfg, false, false, false)
+		testSetup, err := setup.NewCqlServerTestSetup(t, cfg, false, false, false)
 		require.Nil(t, err)
 		defer testSetup.Cleanup()
 

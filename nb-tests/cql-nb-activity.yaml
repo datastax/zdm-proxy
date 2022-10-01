@@ -1,18 +1,14 @@
-# create keyspace if not exists <<keyspace:baselines>>
-#          WITH replication = {'class': 'SimpleStrategy', 'replication_factor': '<<rf:1>>'}
-#          AND durable_writes = true;
-#
-# create table if not exists <<keyspace:baselines>>.<<table:keyvalue>> (
-#          key text,
-#           value text,
-#           PRIMARY KEY (key)
-#          );
-
 bindings:
   seq_key: Mod(<<keycount:1000000000>>); ToInt();
   seq_value: Hash(); Mod(<<valuecount:1000000000>>); ToString() -> String
   rw_key: <<keydist:Uniform(0,1000000000)->int>>;
   rw_value: Hash(); <<valdist:Uniform(0,1000000000)->int>>; ToString() -> String
+
+scenarios:
+  rampup: run driver=cqld4 tags=phase:rampup cycles=20000
+  write: run driver=cqld4 tags=phase:write cycles=20000
+  read: run driver=cqld4 tags=phase:read cycles=20000
+  verify: run driver=cqld4 tags=phase:verify cycles=20000
 
 blocks:
   - name: rampup
@@ -37,13 +33,13 @@ blocks:
       prepared: true
     statements:
       - verify-select: |
-          select * from <<keyspace:test>>.<<table:keyvalue>> where key={seq_key};
-        verify-fields: key->seq_key, value->seq_value
+          select * from <<keyspace:test>>.<<table:keyvalue>> where key={rw_key};
+        verify-fields: key->rw_key, value->rw_value
         tags:
           name: verify
-  - name: main-read
+  - name: read
     tags:
-      phase: main
+      phase: read
       type: read
       prepared: true
     params:
@@ -54,9 +50,9 @@ blocks:
           select * from <<keyspace:test>>.<<table:keyvalue>> where key={rw_key};
         tags:
           name: main-select
-  - name: main-write
+  - name: write
     tags:
-      phase: main
+      phase: write
       type: write
       prepared: true
     params:

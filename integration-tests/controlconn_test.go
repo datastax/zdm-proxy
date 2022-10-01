@@ -24,7 +24,7 @@ import (
 )
 
 func TestGetHosts(t *testing.T) {
-	testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodes(true, false, 3)
+	testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodes(t, true, false, 3)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
@@ -75,7 +75,7 @@ func ipAddresses(count int) string {
 }
 
 func TestGetAssignedHosts(t *testing.T) {
-	testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodes(false, false, 3)
+	testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodes(t, false, false, 3)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
@@ -171,7 +171,7 @@ func TestGetAssignedHosts(t *testing.T) {
 }
 
 func TestNextAssignedHost(t *testing.T) {
-	testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodes(false, false, 3)
+	testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodes(t, false, false, 3)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
@@ -320,7 +320,7 @@ func TestConnectionAssignment(t *testing.T) {
 	const nodes = 3
 	const nrRequests = 90
 
-	testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodes(false, false, 3)
+	testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodes(t, false, false, 3)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
@@ -752,7 +752,7 @@ func TestRefreshTopologyEventHandler(t *testing.T) {
 				}
 			}
 
-			testSetup, err := setup.NewCqlServerTestSetup(conf, false, false, false)
+			testSetup, err := setup.NewCqlServerTestSetup(t, conf, false, false, false)
 			require.Nil(t, err)
 			defer testSetup.Cleanup()
 			testSetup.Origin.CqlServer.RequestHandlers = []client.RequestHandler{

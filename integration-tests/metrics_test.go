@@ -116,7 +116,7 @@ func testMetrics(t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback)
 				asyncEndpoint = originEndpoint
 			}
 
-			testSetup, err := setup.NewCqlServerTestSetup(conf, false, false, false)
+			testSetup, err := setup.NewCqlServerTestSetup(t, conf, false, false, false)
 			require.Nil(t, err)
 			defer testSetup.Cleanup()
 			testSetup.Origin.CqlServer.RequestHandlers = []client.RequestHandler{client.RegisterHandler, client.HeartbeatHandler, client.HandshakeHandler, client.NewSystemTablesHandler("cluster1", "dc1"), handleReads, handleWrites}
@@ -176,6 +176,15 @@ func testMetrics(t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback)
 			checkMetrics(t, true, lines, conf.ReadMode, 1, 1, 1, expectedAsyncConnections, 1, 1, 0, 1, false, true, originEndpoint, targetEndpoint, asyncEndpoint)
 		})
 	}
+}
+
+func containsLine(lines []string, line string) bool {
+	for i := 0; i < len(lines); i++ {
+		if lines[i] == line {
+			return true
+		}
+	}
+	return false
 }
 
 func startMetricsHandler(

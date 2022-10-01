@@ -38,7 +38,7 @@ services:
     volumes:
       - .:/source
     entrypoint:
-      - /source/compose/proxy-entrypoint.sh
+      - /source/compose/proxy-entrypoint-debug.sh
     networks:
       proxy:
         ipv4_address: 192.168.100.103

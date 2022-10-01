@@ -900,8 +900,8 @@ func skipNonEssentialTests(essentialTest bool, t *testing.T) {
 }
 
 func setupOriginAndTargetClusters(clusterConf clusterTlsConfiguration, t *testing.T) (*setup.CcmTestSetup, error) {
-	if !env.UseCcm {
-		t.Skip("Test requires CCM, set USE_CCM env variable to TRUE")
+	if !env.RunCcmTests {
+		t.Skip("Test requires CCM, set RUN_CCMTESTS env variable to TRUE")
 	}
 
 	ccmSetup, err := setup.NewTemporaryCcmTestSetup(false, false)

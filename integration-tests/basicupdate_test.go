@@ -14,8 +14,8 @@ import (
 // performs an update where through the proxy
 // then loads the unloaded data into the destination
 func TestBasicUpdate(t *testing.T) {
-	if !env.UseCcm {
-		t.Skip("Test requires CCM, set USE_CCM env variable to TRUE")
+	if !env.RunCcmTests {
+		t.Skip("Test requires CCM, set RUN_CCMTESTS env variable to TRUE")
 	}
 
 	proxyInstance, err := NewProxyInstanceForGlobalCcmClusters()
