@@ -139,7 +139,7 @@ func (cc *ClientConnector) listenForRequests() {
 		defer wg.Wait()
 		defer log.Debugf("[%s] Shutting down request listener, waiting until request listener tasks are done...", ClientConnectorLogPrefix)
 
-		lock := &sync.Mutex{}
+		lock := &sync.RWMutex{}
 		closed := false
 
 		setDrainModeNowFunc := func() {
@@ -189,26 +189,31 @@ func (cc *ClientConnector) listenForRequests() {
 			cc.readScheduler.Schedule(func() {
 				defer wg.Done()
 				log.Tracef("[%s] Received request on client connector: %v", ClientConnectorLogPrefix, f.Header)
-				lock.Lock()
+				lock.RLock()
 				if closed {
-					lock.Unlock()
-					msg := &message.Overloaded{
-						ErrorMessage: "Shutting down, please retry on next host.",
-					}
-					response := frame.NewFrame(f.Header.Version, f.Header.StreamId, msg)
-					rawResponse, err := defaultCodec.ConvertToRawFrame(response)
-					if err != nil {
-						log.Errorf("[%s] Could not convert frame (%v) to raw frame: %v", ClientConnectorLogPrefix, response, err)
-					}
-					cc.sendResponseToClient(rawResponse)
+					lock.RUnlock()
+					cc.sendOverloadedToClient(f)
 					return
 				}
 				cc.requestChannel <- f
-				lock.Unlock()
+				lock.RUnlock()
 				log.Tracef("[%s] Request sent to client connector's request channel: %v", ClientConnectorLogPrefix, f.Header)
 			})
 		}
 	}()
+}
+
+func (cc *ClientConnector) sendOverloadedToClient(request *frame.RawFrame) {
+	msg := &message.Overloaded{
+		ErrorMessage: "Shutting down, please retry on next host.",
+	}
+	response := frame.NewFrame(request.Header.Version, request.Header.StreamId, msg)
+	rawResponse, err := defaultCodec.ConvertToRawFrame(response)
+	if err != nil {
+		log.Errorf("[%s] Could not convert frame (%v) to raw frame: %v", ClientConnectorLogPrefix, response, err)
+	} else {
+		cc.sendResponseToClient(rawResponse)
+	}
 }
 
 func checkProtocolError(f *frame.RawFrame, connErr error, protocolErrorOccurred bool, prefix string) (protocolErrResponse *frame.RawFrame, fatalErr error) {

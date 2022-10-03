@@ -241,7 +241,7 @@ To include `CCM` based tests run:
 
 ```shell
 # from the root of the repository
-go test -v ./integration-tests -USE_CCM=true
+go test -v ./integration-tests -RUN_CCMTESTS=true
 ```
 
 If using IntelliJ Goland or the go plugin for IntelliJ Idea Ultimate, you can create a run configuration as shown here (you can remove the `Program arguments` to exclude `CCM` tests):
@@ -254,7 +254,7 @@ If you want to specify which C*/DSE version is used for `CCM` and `Simulacron`, 
 
 ```shell
 # from the root of the repository
-go test -v ./integration-tests -USE_CCM=true -CASSANDRA_VERSION=3.11.8
+go test -v ./integration-tests -RUN_CCMTESTS=true -CASSANDRA_VERSION=3.11.8
 ```
 
 Also note that any of the test flags can also be provided via environment variables instead. If both are present then the test flag is used instead of the environment variable.

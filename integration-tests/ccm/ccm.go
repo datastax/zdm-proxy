@@ -93,7 +93,7 @@ func Start(jvmArgs ...string) (string, error) {
 	if runtime.GOOS == "windows" {
 		return execCcm(append([]string{"start", "--quiet-windows", "--wait-for-binary-proto"}, newJvmArgs...)...)
 	} else {
-		return execCcm(append([]string{"start", "--wait-for-binary-proto"}, newJvmArgs...)...)
+		return execCcm(append([]string{"start", "--verbose", "--root", "--wait-for-binary-proto"}, newJvmArgs...)...)
 	}
 }
 
@@ -107,7 +107,7 @@ func StartNode(nodeName string, jvmArgs ...string) (string, error) {
 	if runtime.GOOS == "windows" {
 		return execCcm(append([]string{nodeName, "start", "--quiet-windows", "--wait-for-binary-proto"}, newJvmArgs...)...)
 	} else {
-		return execCcm(append([]string{nodeName, "start", "--wait-for-binary-proto"}, newJvmArgs...)...)
+		return execCcm(append([]string{nodeName, "start", "--verbose", "--root", "--wait-for-binary-proto"}, newJvmArgs...)...)
 	}
 }
 

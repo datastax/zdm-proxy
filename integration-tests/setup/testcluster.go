@@ -12,6 +12,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"math"
 	"sync"
+	"testing"
 )
 
 type TestCluster interface {
@@ -121,19 +122,22 @@ type SimulacronTestSetup struct {
 	Proxy  *zdmproxy.ZdmProxy
 }
 
-func NewSimulacronTestSetupWithSession(createProxy bool, createSession bool) (*SimulacronTestSetup, error) {
-	return NewSimulacronTestSetupWithSessionAndConfig(createProxy, createSession, nil)
+func NewSimulacronTestSetupWithSession(t *testing.T, createProxy bool, createSession bool) (*SimulacronTestSetup, error) {
+	return NewSimulacronTestSetupWithSessionAndConfig(t, createProxy, createSession, nil)
 }
 
-func NewSimulacronTestSetupWithSessionAndConfig(createProxy bool, createSession bool, config *config.Config) (*SimulacronTestSetup, error) {
-	return NewSimulacronTestSetupWithSessionAndNodesAndConfig(createProxy, createSession, 1, config)
+func NewSimulacronTestSetupWithSessionAndConfig(t *testing.T, createProxy bool, createSession bool, config *config.Config) (*SimulacronTestSetup, error) {
+	return NewSimulacronTestSetupWithSessionAndNodesAndConfig(t, createProxy, createSession, 1, config)
 }
 
-func NewSimulacronTestSetupWithSessionAndNodes(createProxy bool, createSession bool, nodes int) (*SimulacronTestSetup, error) {
-	return NewSimulacronTestSetupWithSessionAndNodesAndConfig(createProxy, createSession, nodes, nil)
+func NewSimulacronTestSetupWithSessionAndNodes(t *testing.T, createProxy bool, createSession bool, nodes int) (*SimulacronTestSetup, error) {
+	return NewSimulacronTestSetupWithSessionAndNodesAndConfig(t, createProxy, createSession, nodes, nil)
 }
 
-func NewSimulacronTestSetupWithSessionAndNodesAndConfig(createProxy bool, createSession bool, nodes int, config *config.Config) (*SimulacronTestSetup, error) {
+func NewSimulacronTestSetupWithSessionAndNodesAndConfig(t *testing.T, createProxy bool, createSession bool, nodes int, config *config.Config) (*SimulacronTestSetup, error) {
+	if !env.RunMockTests {
+		t.Skip("Skipping Simulacron tests, RUN_MOCKTESTS is set false")
+	}
 	origin, err := simulacron.GetNewCluster(createSession, nodes)
 	if err != nil {
 		log.Panic("simulacron origin startup failed: ", err)
@@ -164,12 +168,12 @@ func NewSimulacronTestSetupWithSessionAndNodesAndConfig(createProxy bool, create
 	}, nil
 }
 
-func NewSimulacronTestSetup() (*SimulacronTestSetup, error) {
-	return NewSimulacronTestSetupWithSession(true, false)
+func NewSimulacronTestSetup(t *testing.T) (*SimulacronTestSetup, error) {
+	return NewSimulacronTestSetupWithSession(t, true, false)
 }
 
-func NewSimulacronTestSetupWithConfig(c *config.Config) (*SimulacronTestSetup, error) {
-	return NewSimulacronTestSetupWithSessionAndConfig(true, false, c)
+func NewSimulacronTestSetupWithConfig(t *testing.T, c *config.Config) (*SimulacronTestSetup, error) {
+	return NewSimulacronTestSetupWithSessionAndConfig(t, true, false, c)
 }
 
 func (setup *SimulacronTestSetup) Cleanup() {
@@ -268,7 +272,10 @@ type CqlServerTestSetup struct {
 	Client *cqlserver.Client
 }
 
-func NewCqlServerTestSetup(conf *config.Config, start bool, createProxy bool, connectClient bool) (*CqlServerTestSetup, error) {
+func NewCqlServerTestSetup(t *testing.T, conf *config.Config, start bool, createProxy bool, connectClient bool) (*CqlServerTestSetup, error) {
+    if !env.RunMockTests {
+        t.Skip("Skipping CQLServer tests, RUN_MOCKTESTS is false")
+    }
 	origin, err := cqlserver.NewCqlServerCluster(conf.OriginContactPoints, conf.OriginPort,
 		conf.OriginUsername, conf.OriginPassword, start)
 	if err != nil {

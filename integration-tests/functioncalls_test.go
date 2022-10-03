@@ -10,9 +10,9 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/google/uuid"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"regexp"
 	"testing"
@@ -144,9 +144,9 @@ func TestNowFunctionReplacementSimpleStatement(t *testing.T) {
 		var err error
 
 		if enableNowReplacement {
-			simulacronSetup, err = createSimulacronTestSetupWithServerSideFunctionReplacement()
+			simulacronSetup, err = createSimulacronTestSetupWithServerSideFunctionReplacement(t)
 		} else {
-			simulacronSetup, err = createSimulacronTestSetupWithoutServerSideFunctionReplacement()
+			simulacronSetup, err = createSimulacronTestSetupWithoutServerSideFunctionReplacement(t)
 		}
 
 		require.Nil(t, err)
@@ -1348,9 +1348,9 @@ func TestNowFunctionReplacementPreparedStatement(t *testing.T) {
 		var err error
 
 		if enableNowReplacement {
-			simulacronSetup, err = createSimulacronTestSetupWithServerSideFunctionReplacement()
+			simulacronSetup, err = createSimulacronTestSetupWithServerSideFunctionReplacement(t)
 		} else {
-			simulacronSetup, err = createSimulacronTestSetupWithoutServerSideFunctionReplacement()
+			simulacronSetup, err = createSimulacronTestSetupWithoutServerSideFunctionReplacement(t)
 		}
 		require.Nil(t, err)
 		defer simulacronSetup.Cleanup()
@@ -2163,9 +2163,9 @@ func TestNowFunctionReplacementBatchStatement(t *testing.T) {
 		var err error
 
 		if enableNowReplacement {
-			simulacronSetup, err = createSimulacronTestSetupWithServerSideFunctionReplacement()
+			simulacronSetup, err = createSimulacronTestSetupWithServerSideFunctionReplacement(t)
 		} else {
-			simulacronSetup, err = createSimulacronTestSetupWithoutServerSideFunctionReplacement()
+			simulacronSetup, err = createSimulacronTestSetupWithoutServerSideFunctionReplacement(t)
 		}
 
 		require.Nil(t, err)
@@ -2420,19 +2420,19 @@ func TestNowFunctionReplacementBatchStatement(t *testing.T) {
 	})
 }
 
-func createSimulacronTestSetupWithServerSideFunctionReplacement() (*setup.SimulacronTestSetup, error) {
-	return createSimulacronTestSetupWithServerSideFunctionReplacementConfig(true)
+func createSimulacronTestSetupWithServerSideFunctionReplacement(t *testing.T) (*setup.SimulacronTestSetup, error) {
+	return createSimulacronTestSetupWithServerSideFunctionReplacementConfig(t, true)
 }
 
-func createSimulacronTestSetupWithoutServerSideFunctionReplacement() (*setup.SimulacronTestSetup, error) {
-	return createSimulacronTestSetupWithServerSideFunctionReplacementConfig(false)
+func createSimulacronTestSetupWithoutServerSideFunctionReplacement(t *testing.T) (*setup.SimulacronTestSetup, error) {
+	return createSimulacronTestSetupWithServerSideFunctionReplacementConfig(t, false)
 }
 
-func createSimulacronTestSetupWithServerSideFunctionReplacementConfig(replaceServerSideFunctions bool) (*setup.SimulacronTestSetup, error) {
+func createSimulacronTestSetupWithServerSideFunctionReplacementConfig(t *testing.T, replaceServerSideFunctions bool) (*setup.SimulacronTestSetup, error) {
 	originAddress := "127.0.1.1"
 	targetAddress := "127.0.1.2"
 
 	conf := setup.NewTestConfig(originAddress, targetAddress)
 	conf.ReplaceCqlFunctions = replaceServerSideFunctions
-	return setup.NewSimulacronTestSetupWithConfig(conf)
+	return setup.NewSimulacronTestSetupWithConfig(t, conf)
 }

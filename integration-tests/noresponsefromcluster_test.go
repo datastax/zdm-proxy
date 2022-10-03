@@ -14,7 +14,7 @@ import (
 
 func TestAtLeastOneClusterReturnsNoResponse(t *testing.T) {
 
-	simulacronSetup, err := setup.NewSimulacronTestSetup()
+	simulacronSetup, err := setup.NewSimulacronTestSetup(t)
 	require.Nil(t, err)
 	defer simulacronSetup.Cleanup()
 

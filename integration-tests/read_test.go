@@ -39,7 +39,7 @@ func testForwardDecisionsForReads(t *testing.T, primaryCluster string, systemQue
 	c.PrimaryCluster = primaryCluster
 	c.SystemQueriesMode = systemQueriesMode
 	c.ProxyTopologyAddresses = "127.0.0.1"
-	testSetup, err := setup.NewSimulacronTestSetupWithConfig(c)
+	testSetup, err := setup.NewSimulacronTestSetupWithConfig(t, c)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 

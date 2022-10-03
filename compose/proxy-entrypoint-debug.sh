@@ -3,6 +3,8 @@
 apt-get update
 apt-get -y install netcat
 
+go install github.com/go-delve/delve/cmd/dlv@latest
+
 function test_conn() {
 	nc -z -v  $1 9042;
 	while [ $? -ne 0 ];
@@ -28,7 +30,10 @@ cp -r /source/antlr ./antlr
 ls .
 
 # Build the application
-go build -o main ./proxy
+GOOS=windows GOARCH=amd64 go build -gcflags="all=-N -l" -o main ./proxy
+
+# Copy binary from /build to /dist
+cp /build/main /main
 
 # Wait for clusters to be ready
 test_conn 192.168.100.101
@@ -47,4 +52,4 @@ export TARGET_CASSANDRA_PORT="9042"
 export PROXY_QUERY_PORT="9042"
 
 # Command to run
-./main
+dlv --listen=:2345 --headless=true --api-version=2 exec /main
