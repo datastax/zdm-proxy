@@ -8,7 +8,7 @@ scenarios:
   rampup: run driver=cqld4 tags=phase:rampup cycles=20000
   write: run driver=cqld4 tags=phase:write cycles=20000
   read: run driver=cqld4 tags=phase:read cycles=20000
-  verify: run driver=cqld4 tags=phase:verify cycles=20000
+  verify: run driver=cqld4 tags=phase:verify compare=all cycles=20000
 
 blocks:
   - name: rampup

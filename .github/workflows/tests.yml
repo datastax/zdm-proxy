@@ -10,10 +10,7 @@ jobs:
       - uses: actions/checkout@v2
       - name: Start docker-compose
         run: |
-          docker-compose -f docker-compose-tests.yml up -d
-          sleep 720
-          docker-compose -f docker-compose-tests.yml logs
-          docker ps -a
+          docker-compose -f docker-compose-tests.yml up --abort-on-container-exit --exit-code-from=nosqlbench
   # Runs all the unit tests under the proxy module (all the *_test.go files)
   unit-tests:
     name: Unit Tests
