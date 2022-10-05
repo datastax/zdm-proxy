@@ -64,6 +64,8 @@ java -jar /nb.jar \
   localdc=datacenter1 \
   -v
 
+echo "truncate test.keyvalue;" | cqlsh zdm_tests_target --protocol-version=4
+
 echo "Running NoSQLBench VERIFY job on TARGET"
 java -jar /nb.jar \
   --show-stacktraces \
