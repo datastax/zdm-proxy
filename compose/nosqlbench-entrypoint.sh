@@ -17,6 +17,8 @@ test_conn zdm_tests_origin
 test_conn zdm_tests_target
 test_conn zdm_tests_proxy
 
+set -e
+
 echo "Creating schema"
 cat /source/nb-tests/schema.cql | cqlsh zdm_tests_proxy
 
