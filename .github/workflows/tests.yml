@@ -16,7 +16,7 @@ jobs:
         if: ${{ failure() }}
         run: |
           docker container ls --all | grep zdm_tests_nb | awk '{print $1}' | xargs -I {} docker container cp {}:/logs reports
-          GITHUB_STEP_SUMMARY=`cat reports/*.summary`
+          cat reports/*.summary >> $GITHUB_STEP_SUMMARY
   # Runs all the unit tests under the proxy module (all the *_test.go files)
   unit-tests:
     name: Unit Tests
