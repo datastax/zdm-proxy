@@ -13,7 +13,7 @@ jobs:
         run: |
           docker-compose -f docker-compose-tests.yml up --abort-on-container-exit --exit-code-from=nosqlbench
       - name: Test Summary
-        if: steps.compose.outcome == 'failure'
+        if: ${{ failure() }}
         run: |
           docker container ls --all | grep zdm_tests_nb | awk '{print $1}' | xargs -I {} docker container cp {}:/logs reports
           GITHUB_STEP_SUMMARY=`cat reports/*.summary`
