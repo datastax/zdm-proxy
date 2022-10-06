@@ -46,8 +46,8 @@ type ClientHandler struct {
 
 	preparedStatementCache *PreparedStatementCache
 
-	metricHandler *metrics.MetricHandler
-	nodeMetrics   *metrics.NodeMetrics
+	metricHandler          *metrics.MetricHandler
+	nodeMetrics            *metrics.NodeMetrics
 
 	clientHandlerContext    context.Context
 	clientHandlerCancelFunc context.CancelFunc
@@ -315,10 +315,10 @@ func (ch *ClientHandler) run(activeClients *int32) {
 	addObserver(ch.targetObserver, ch.targetControlConn)
 
 	go func() {
-		<-ch.originCassandraConnector.doneChan
-		<-ch.targetCassandraConnector.doneChan
+		<- ch.originCassandraConnector.doneChan
+		<- ch.targetCassandraConnector.doneChan
 		if ch.asyncConnector != nil {
-			<-ch.asyncConnector.doneChan
+			<- ch.asyncConnector.doneChan
 		}
 		ch.closedRespChannelLock.Lock()
 		defer ch.closedRespChannelLock.Unlock()
@@ -444,7 +444,7 @@ func (ch *ClientHandler) clearRequestContexts(contextHoldersMap *sync.Map) {
 		if canceled {
 			typedReqCtx, ok := reqCtx.(*requestContextImpl)
 			if !ok {
-				log.Errorf("Failed to cancel request because request context conversion failed. "+
+				log.Errorf("Failed to cancel request because request context conversion failed. " +
 					"This is most likely a bug, please report. RequestContext: %v", reqCtx)
 			} else {
 				ch.cancelRequest(reqCtxHolder, typedReqCtx)
@@ -557,7 +557,7 @@ func (ch *ClientHandler) responseLoop() {
 		protocolErrOccurred := int32(0)
 
 		for {
-			response, ok := <-ch.respChannel
+			response, ok := <- ch.respChannel
 			if !ok {
 				break
 			}
@@ -592,7 +592,7 @@ func (ch *ClientHandler) responseLoop() {
 				holder := getOrCreateRequestContextHolder(contextHoldersMap, streamId)
 				reqCtx := holder.Get()
 				if reqCtx == nil {
-					log.Warnf("Could not find request context for stream id %d received from %v. "+
+					log.Warnf("Could not find request context for stream id %d received from %v. " +
 						"It either timed out or a protocol error occurred.", streamId, response.connectorType)
 					return
 				}
@@ -610,7 +610,7 @@ func (ch *ClientHandler) responseLoop() {
 				if finished {
 					typedReqCtx, ok := reqCtx.(*requestContextImpl)
 					if !ok {
-						log.Errorf("Failed to finish request because request context conversion failed. "+
+						log.Errorf("Failed to finish request because request context conversion failed. " +
 							"This is most likely a bug, please report. RequestContext: %v", reqCtx)
 					} else {
 						ch.finishRequest(holder, typedReqCtx)
@@ -885,7 +885,7 @@ func (ch *ClientHandler) processClientResponse(
 			}
 			newFrame.Body.Message = newUnprepared
 
-			log.Infof("Received UNPREPARED from %v, generating UNPREPARED response with prepared ID %s. "+
+			log.Infof("Received UNPREPARED from %v, generating UNPREPARED response with prepared ID %s. " +
 				"Prepared ID in response from %v: %v. Original error: %v",
 				responseClusterType, hex.EncodeToString(unpreparedId),
 				responseClusterType, hex.EncodeToString(bodyMsg.Id), bodyMsg.ErrorMessage)
@@ -933,7 +933,7 @@ func (ch *ClientHandler) processPreparedResponse(
 			newResponse = response.Clone()
 			newPreparedBody, ok := newResponse.Body.Message.(*message.PreparedResult)
 			if !ok {
-				return nil, fmt.Errorf("could not modify prepared result to remove generated parameters because "+
+				return nil, fmt.Errorf("could not modify prepared result to remove generated parameters because " +
 					"cloned PreparedResult is of different type: %v", newResponse.Body)
 			}
 
@@ -951,11 +951,11 @@ func (ch *ClientHandler) processPreparedResponse(
 					return nil, fmt.Errorf("prepared response variables metadata has less parameters than the number of markers to remove: %v", newPreparedBody)
 				}
 
-				newColumns := make([]*message.ColumnMetadata, 0, len(newPreparedBody.VariablesMetadata.Columns)-len(positionalMarkersToRemove))
+				newColumns := make([]*message.ColumnMetadata, 0, len(newPreparedBody.VariablesMetadata.Columns) - len(positionalMarkersToRemove))
 				indicesToRemove := make([]int, 0, len(positionalMarkersToRemove))
 				start := 0
 				for _, positionalIndexToRemove := range positionalMarkersToRemove {
-					if positionalIndexToRemove < len(newPreparedBody.VariablesMetadata.Columns)-1 {
+					if positionalIndexToRemove < len(newPreparedBody.VariablesMetadata.Columns) - 1 {
 						indicesToRemove = append(indicesToRemove, positionalIndexToRemove)
 						newColumns = append(newColumns, newPreparedBody.VariablesMetadata.Columns[start:positionalIndexToRemove]...)
 						start = positionalIndexToRemove + 1
@@ -1166,7 +1166,7 @@ func (ch *ClientHandler) handleHandshakeRequest(request *frame.RawFrame, wg *syn
 			if ch.asyncConnector != nil {
 				asyncConnectorHandshakeChannel, err = ch.startSecondaryHandshake(true)
 				if err != nil {
-					log.Errorf("Error occured in async connector (%v) handshake: %v. "+
+					log.Errorf("Error occured in async connector (%v) handshake: %v. " +
 						"Async requests will not be forwarded.", ch.asyncConnector.clusterType, err.Error())
 					ch.asyncConnector.Shutdown()
 					asyncConnectorHandshakeChannel = nil
@@ -1215,7 +1215,7 @@ func (ch *ClientHandler) handleHandshakeRequest(request *frame.RawFrame, wg *syn
 		scheduledTaskChannel <- tempResult
 	})
 
-	result, ok = <-scheduledTaskChannel
+	result, ok = <- scheduledTaskChannel
 	if !ok {
 		return false, errors.New("unexpected scheduledTaskChannel closure in handle handshake request")
 	}
@@ -1491,7 +1491,7 @@ func (ch *ClientHandler) handleInterceptedRequest(
 
 	switch interceptedQueryType {
 	case peersV2:
-		interceptedQueryResponse = &message.Invalid{
+		interceptedQueryResponse = &message.Invalid {
 			ErrorMessage: "unconfigured table peers_v2",
 		}
 	case peersV1:
@@ -2079,9 +2079,9 @@ func forwardAuthToTarget(
 	}
 
 	if err != nil {
-		log.Errorf("Error detected while checking if auth is enabled on %v to figure out which cluster should "+
-			"receive the auth credentials from the client. Falling back to sending auth to %v and assuming "+
-			"that client credentials are meant for %v. "+
+		log.Errorf("Error detected while checking if auth is enabled on %v to figure out which cluster should " +
+			"receive the auth credentials from the client. Falling back to sending auth to %v and assuming " +
+			"that client credentials are meant for %v. " +
 			"This is a bug, please report: %v", clusterType, common.ClusterTypeOrigin, common.ClusterTypeTarget, err)
 		return false, true
 	}
