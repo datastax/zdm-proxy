@@ -58,7 +58,7 @@ func TestMaxClientsThreshold(t *testing.T) {
 	require.Nil(t, err)
 	defer proxyInstance.Shutdown()
 
-	for i := 0; i < maxSessions + 1; i++ {
+	for i := 0; i < maxSessions+1; i++ {
 		// Connect to proxy as a "client"
 		cluster := utils.NewCluster("127.0.0.1", "", "", 14002)
 		cluster.NumConns = goCqlConnectionsPerHost
@@ -78,7 +78,7 @@ func TestMaxClientsThreshold(t *testing.T) {
 }
 
 func TestRequestedProtocolVersionUnsupportedByProxy(t *testing.T) {
-	tests := []struct{
+	tests := []struct {
 		name            string
 		requestVersion  primitive.ProtocolVersion
 		expectedVersion primitive.ProtocolVersion
@@ -114,7 +114,7 @@ func TestRequestedProtocolVersionUnsupportedByProxy(t *testing.T) {
 			testClient, err := client.NewTestClient(context.Background(), "127.0.0.1:14002")
 			require.Nil(t, err)
 
-			encodedFrame, err := createFrameWithUnsupportedVersion(test.requestVersion, 0,false)
+			encodedFrame, err := createFrameWithUnsupportedVersion(test.requestVersion, 0, false)
 			require.Nil(t, err)
 			rsp, err := testClient.SendRawRequest(context.Background(), 0, encodedFrame)
 			require.Nil(t, err)
@@ -128,7 +128,7 @@ func TestRequestedProtocolVersionUnsupportedByProxy(t *testing.T) {
 }
 
 func TestReturnedProtocolVersionUnsupportedByProxy(t *testing.T) {
-	type test struct{
+	type test struct {
 		name            string
 		requestVersion  primitive.ProtocolVersion
 		returnedVersion primitive.ProtocolVersion
@@ -152,7 +152,7 @@ func TestReturnedProtocolVersionUnsupportedByProxy(t *testing.T) {
 		},
 	}
 
-	runTestFunc := func(t *testing.T, test *test, cfg *config.Config ) {
+	runTestFunc := func(t *testing.T, test *test, cfg *config.Config) {
 		testSetup, err := setup.NewCqlServerTestSetup(t, cfg, false, false, false)
 		require.Nil(t, err)
 		defer testSetup.Cleanup()

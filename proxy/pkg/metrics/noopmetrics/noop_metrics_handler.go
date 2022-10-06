@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-type noopMetricFactory struct {}
+type noopMetricFactory struct{}
 
 func NewNoopMetricFactory() metrics.MetricFactory {
 	return &noopMetricFactory{}
@@ -39,7 +39,7 @@ func (noop *noopMetricFactory) HttpHandler() http.Handler {
 	})
 }
 
-type NoopMetric struct {}
+type NoopMetric struct{}
 
 func (recv *NoopMetric) Add(val int) {}
 

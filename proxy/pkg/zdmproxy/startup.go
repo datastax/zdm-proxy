@@ -88,8 +88,8 @@ func (ch *ClientHandler) handleSecondaryHandshakeStartup(
 		case 2:
 			if authenticator == nil {
 				return fmt.Errorf(
-					"secondary cluster (%v) requested authentication but primary did not, " +
-					"can not proceed with secondary handshake", logIdentifier)
+					"secondary cluster (%v) requested authentication but primary did not, "+
+						"can not proceed with secondary handshake", logIdentifier)
 			}
 
 			var err error
@@ -124,7 +124,7 @@ func (ch *ClientHandler) handleSecondaryHandshakeStartup(
 
 			select {
 			case customResponse, ok := <-channel:
-				if !ok || customResponse == nil{
+				if !ok || customResponse == nil {
 					if ch.clientHandlerContext.Err() != nil {
 						return ShutdownErr
 					}
@@ -149,7 +149,7 @@ func (ch *ClientHandler) handleSecondaryHandshakeStartup(
 					return nil
 				} else {
 					return fmt.Errorf(
-						"could not set async connector (%v) as ready after a successful handshake " +
+						"could not set async connector (%v) as ready after a successful handshake "+
 							"because the connector was already shutdown", logIdentifier)
 				}
 			}
@@ -162,7 +162,7 @@ func (ch *ClientHandler) handleSecondaryHandshakeStartup(
 
 func handleSecondaryHandshakeResponse(
 	phase int, f *frame.RawFrame, clientIPAddress net.Addr,
-	clusterAddress net.Addr, logIdentifier string) (int, *frame.Frame, bool, error){
+	clusterAddress net.Addr, logIdentifier string) (int, *frame.Frame, bool, error) {
 	parsedFrame, err := defaultCodec.ConvertFromRawFrame(f)
 	if err != nil {
 		return phase, nil, false, fmt.Errorf("could not decode frame from %v: %w", clusterAddress, err)

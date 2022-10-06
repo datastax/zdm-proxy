@@ -273,9 +273,9 @@ type CqlServerTestSetup struct {
 }
 
 func NewCqlServerTestSetup(t *testing.T, conf *config.Config, start bool, createProxy bool, connectClient bool) (*CqlServerTestSetup, error) {
-    if !env.RunMockTests {
-        t.Skip("Skipping CQLServer tests, RUN_MOCKTESTS is false")
-    }
+	if !env.RunMockTests {
+		t.Skip("Skipping CQLServer tests, RUN_MOCKTESTS is false")
+	}
 	origin, err := cqlserver.NewCqlServerCluster(conf.OriginContactPoints, conf.OriginPort,
 		conf.OriginUsername, conf.OriginPassword, start)
 	if err != nil {

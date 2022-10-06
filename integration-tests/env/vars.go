@@ -26,38 +26,32 @@ var Debug bool
 
 func InitGlobalVars() {
 	flags := map[string]interface{}{
-		"CASSANDRA_VERSION":
-		flag.String(
+		"CASSANDRA_VERSION": flag.String(
 			"CASSANDRA_VERSION",
 			getEnvironmentVariableOrDefault("CASSANDRA_VERSION", "3.11.7"),
 			"CASSANDRA_VERSION"),
 
-		"DSE_VERSION":
-		flag.String(
+		"DSE_VERSION": flag.String(
 			"DSE_VERSION",
 			getEnvironmentVariableOrDefault("DSE_VERSION", ""),
 			"DSE_VERSION"),
 
-		"RUN_CCMTESTS":
-		flag.String(
+		"RUN_CCMTESTS": flag.String(
 			"RUN_CCMTESTS",
 			getEnvironmentVariableOrDefault("RUN_CCMTESTS", "false"),
 			"RUN_CCMTESTS"),
 
-		"RUN_MOCKTESTS":
-		flag.String(
+		"RUN_MOCKTESTS": flag.String(
 			"RUN_MOCKTESTS",
 			getEnvironmentVariableOrDefault("RUN_MOCKTESTS", "true"),
 			"RUN_MOCKTESTS"),
 
-		"RUN_ALL_TLS_TESTS":
-		flag.String(
+		"RUN_ALL_TLS_TESTS": flag.String(
 			"RUN_ALL_TLS_TESTS",
 			getEnvironmentVariableOrDefault("RUN_ALL_TLS_TESTS", "false"),
 			"RUN_ALL_TLS_TESTS"),
 
-		"DEBUG":
-		flag.Bool(
+		"DEBUG": flag.Bool(
 			"DEBUG",
 			getEnvironmentVariableBoolOrDefault("DEBUG", false),
 			"DEBUG"),

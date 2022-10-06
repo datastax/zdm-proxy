@@ -253,7 +253,7 @@ func newFakeHistogram() metrics.Histogram {
 	return h
 }
 
-type fakeMetric struct { }
+type fakeMetric struct{}
 
 func (recv *fakeMetric) GetName() string {
 	return ""
@@ -271,7 +271,7 @@ func (recv *fakeMetric) String() string {
 	return ""
 }
 
-func (recv *fakeMetric) WithLabels(map[string] string) metrics.Metric {
+func (recv *fakeMetric) WithLabels(map[string]string) metrics.Metric {
 	return newFakeMetric()
 }
 

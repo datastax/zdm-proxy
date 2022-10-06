@@ -6,8 +6,8 @@ import (
 )
 
 type HandlerWithFallback struct {
-	rwMutex sync.RWMutex
-	handler http.Handler
+	rwMutex        sync.RWMutex
+	handler        http.Handler
 	defaultHandler http.Handler
 }
 

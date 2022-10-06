@@ -12,15 +12,15 @@ import (
 )
 
 type ContactInfo struct {
-	TypeName string `json:"type"`
-	LocalDc string `json:"local_dc"`
-	SniProxyAddress string `json:"sni_proxy_address"`
-	ContactPoints []string `json:"contact_points"`
+	TypeName        string   `json:"type"`
+	LocalDc         string   `json:"local_dc"`
+	SniProxyAddress string   `json:"sni_proxy_address"`
+	ContactPoints   []string `json:"contact_points"`
 }
 
 type AstraMetadata struct {
-	Version int `json:"version"`
-	Region string `json:"region"`
+	Version     int         `json:"version"`
+	Region      string      `json:"region"`
 	ContactInfo ContactInfo `json:"contact_info"`
 }
 

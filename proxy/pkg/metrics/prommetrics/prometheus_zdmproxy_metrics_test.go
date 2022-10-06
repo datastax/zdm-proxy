@@ -232,7 +232,7 @@ func TestPrometheusZdmProxyMetrics_IncrementCountByOne_Counter_Labels(t *testing
 
 func TestPrometheusZdmProxyMetrics_IncrementCountByOne_Gauge_Labels(t *testing.T) {
 	handler := NewPrometheusMetricFactory(prometheus.NewRegistry())
-	gaugeMetric := newTestMetricWithLabels("test_add_count_by_one_counter_labels", map[string]string{"label":"value"})
+	gaugeMetric := newTestMetricWithLabels("test_add_count_by_one_counter_labels", map[string]string{"label": "value"})
 	g, err := handler.GetOrCreateGauge(gaugeMetric)
 	assert.Nil(t, err)
 	g.Add(1)

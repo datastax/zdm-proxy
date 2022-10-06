@@ -251,7 +251,6 @@ func checkMetrics(
 	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.FailedReadsTarget)))
 	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.FailedReadsOrigin)))
 
-
 	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.InFlightWrites)))
 	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.InFlightReadsOrigin)))
 	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.InFlightReadsTarget)))
@@ -441,7 +440,7 @@ func getPrometheusNameWithSuffixAndNodeLabel(prefix string, mn metrics.Metric, s
 		newLabels[key] = value
 	}
 	if node != "" {
-		newLabels["node"] = node		
+		newLabels["node"] = node
 	}
 	labels = newLabels
 	if labels != nil && len(labels) > 0 {

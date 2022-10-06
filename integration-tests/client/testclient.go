@@ -49,7 +49,7 @@ const (
 )
 
 func NewTestClient(ctx context.Context, address string) (*TestClient, error) {
-	return NewTestClientWithRequestTimeout(ctx, address, 2 * time.Second)
+	return NewTestClientWithRequestTimeout(ctx, address, 2*time.Second)
 }
 
 func NewTestClientWithRequestTimeout(ctx context.Context, address string, requestTimeout time.Duration) (*TestClient, error) {

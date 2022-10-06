@@ -13,19 +13,19 @@ type Endpoint interface {
 }
 
 type DefaultEndpoint struct {
-	socketEndpoint 	string
-	tlsConfig		*tls.Config
+	socketEndpoint string
+	tlsConfig      *tls.Config
 }
 
 func NewDefaultEndpoint(addr string, port int, tlsConfig *tls.Config) *DefaultEndpoint {
 	return &DefaultEndpoint{
 		socketEndpoint: fmt.Sprintf("%s:%d", addr, port),
-		tlsConfig: tlsConfig,
+		tlsConfig:      tlsConfig,
 	}
 }
 
 func (recv *DefaultEndpoint) GetSocketEndpoint() string {
-	 return recv.socketEndpoint
+	return recv.socketEndpoint
 }
 
 func (recv *DefaultEndpoint) GetTlsConfig() *tls.Config {

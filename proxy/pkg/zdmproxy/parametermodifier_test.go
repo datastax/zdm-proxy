@@ -74,7 +74,7 @@ func TestAddValuesToExecuteFrame_PositionalValues(t *testing.T) {
 			false,
 			[]*testParam{
 				{
-					name:         "p0",
+					name: "p0",
 					// arity and start index are irrelevant here, they only matter when parsing/replacing the actual query string
 					replacedTerm: NewFunctionCallTerm(NewFunctionCall("", "now", 0, 0, 0), -1),
 					paramType:    datatype.Timeuuid,
@@ -204,14 +204,14 @@ func TestAddValuesToExecuteFrame_PositionalValues(t *testing.T) {
 				ResultMetadataId: nil,
 				Options:          clonedQueryOpts,
 			})
-			containsPositionalMarkers := ((len(requestPosVals)+len(replacedTerms)) > 0) && !test.prepareContainsNamedValues
+			containsPositionalMarkers := ((len(requestPosVals) + len(replacedTerms)) > 0) && !test.prepareContainsNamedValues
 			prepareRequestInfo := NewPrepareRequestInfo(NewGenericRequestInfo(forwardToBoth, false, true), replacedTerms, containsPositionalMarkers, "", "")
 
 			replacementTimeUuids := parameterModifier.generateTimeUuids(prepareRequestInfo)
 			executeMsg, err := parameterModifier.AddValuesToExecuteFrame(f, prepareRequestInfo, vm, replacementTimeUuids)
 
 			require.Nil(t, err)
-			require.Equal(t, len(requestPosVals) + len(replacedTerms), len(executeMsg.Options.PositionalValues))
+			require.Equal(t, len(requestPosVals)+len(replacedTerms), len(executeMsg.Options.PositionalValues))
 			var generatedValue *primitive.Value
 			generatedCount := 0
 			for idx, requestParamVal := range test.testParams {
@@ -241,10 +241,10 @@ func TestAddValuesToExecuteFrame_NamedValues(t *testing.T) {
 	now, err := uuid.NewUUID()
 	require.Nil(t, err)
 	type testParam struct {
-		name string
+		name         string
 		replacedTerm *term
-		paramType datatype.DataType
-		value interface{}
+		paramType    datatype.DataType
+		value        interface{}
 	}
 
 	type testCase struct {
@@ -257,7 +257,7 @@ func TestAddValuesToExecuteFrame_NamedValues(t *testing.T) {
 			"three_parameters_two_generated",
 			[]*testParam{
 				{
-					name:         "zdm__now",
+					name: "zdm__now",
 					// arity and start index are irrelevant here, they only matter when parsing/replacing the actual query string
 					// previousPositionalIndex is also irrelevant since we are using named values
 					replacedTerm: NewFunctionCallTerm(NewFunctionCall("", "now", 0, 0, 0), -1),
@@ -359,7 +359,7 @@ func TestAddValuesToExecuteFrame_NamedValues(t *testing.T) {
 			if len(replacedTerms) == 0 {
 				require.Equal(t, len(requestNamedVals), len(executeMsg.Options.NamedValues))
 			} else {
-				require.Equal(t, len(requestNamedVals) + 1, len(executeMsg.Options.NamedValues))
+				require.Equal(t, len(requestNamedVals)+1, len(executeMsg.Options.NamedValues))
 			}
 			for requestParamName, requestParamVal := range requestNamedVals {
 				require.NotEqual(t, "zdm__now", requestParamName)
