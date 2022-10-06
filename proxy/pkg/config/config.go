@@ -149,12 +149,38 @@ func (c *Config) ParseEnvVars() (*Config, error) {
 	return c, nil
 }
 
+func lookupFirstIp4(host string) (net.IP, error) {
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return nil, err
+	}
+	for _, ip := range ips {
+		ip4 := ip.To4()
+		if ip4 != nil {
+			return ip4, nil
+		}
+	}
+	return nil, fmt.Errorf("could not resolve %v to an ipv4 address", host)
+}
+
 func (c *Config) ParseTopologyConfig() (*common.TopologyConfig, error) {
-	virtualizationEnabled := true
-	var proxyInstanceCount = 1
-	proxyAddressesTyped := []net.IP{net.ParseIP("127.0.0.1")}
+	var proxyAddressesTyped []net.IP
+	defaultLocalIp4Addr := net.IPv4(127, 0, 0, 1)
 	if isNotDefined(c.ProxyTopologyAddresses) {
-		virtualizationEnabled = false
+		log.Debugf("[TopologyConfig] Proxy Topology Addresses not defined, attempting to use proxy listen address for system.local: %v.", c.ProxyListenAddress)
+		if isDefined(c.ProxyListenAddress) {
+			parsedListenAddress, err := lookupFirstIp4(c.ProxyListenAddress)
+			if err != nil {
+				log.Debugf("[TopologyConfig] Could not resolve Proxy Listen Address to an IPv4 address: %v. Falling back to default: %v.", err, defaultLocalIp4Addr.String())
+			} else {
+				proxyAddressesTyped = []net.IP{parsedListenAddress}
+			}
+		} else {
+			log.Debugf("[TopologyConfig] Proxy Listen Address not defined, falling back to default: %v.", defaultLocalIp4Addr.String())
+		}
+		if len(proxyAddressesTyped) == 0 {
+			proxyAddressesTyped = []net.IP{defaultLocalIp4Addr}
+		}
 	} else {
 		proxyAddresses := strings.Split(strings.ReplaceAll(c.ProxyTopologyAddresses, " ", ""), ",")
 		if len(proxyAddresses) <= 0 {
@@ -170,9 +196,10 @@ func (c *Config) ParseTopologyConfig() (*common.TopologyConfig, error) {
 			}
 			proxyAddressesTyped = append(proxyAddressesTyped, parsedIp)
 		}
-		proxyInstanceCount = len(proxyAddressesTyped)
+
 	}
 
+	proxyInstanceCount := len(proxyAddressesTyped)
 	proxyIndex := c.ProxyTopologyIndex
 	if proxyIndex < 0 || proxyIndex >= proxyInstanceCount {
 		return nil, fmt.Errorf("invalid ZDM_PROXY_TOPOLOGY_INDEX and ZDM_PROXY_TOPOLOGY_ADDRESSES values; "+
@@ -184,7 +211,7 @@ func (c *Config) ParseTopologyConfig() (*common.TopologyConfig, error) {
 	}
 
 	return &common.TopologyConfig{
-		VirtualizationEnabled: virtualizationEnabled,
+		VirtualizationEnabled: true, // keep flag for now until we are absolutely certain we will never need it again
 		Addresses:             proxyAddressesTyped,
 		Index:                 proxyIndex,
 		Count:                 proxyInstanceCount,
