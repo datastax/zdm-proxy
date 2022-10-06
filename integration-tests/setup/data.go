@@ -15,12 +15,6 @@ type Task struct {
 	TTL       int
 }
 
-// DataIds is the seed id column data
-var DataIds []string
-
-// DataTasks is the seed task column data
-var DataTasks []string
-
 // SeedKeyspace seeds the specified source and dest sessions with TestKeyspace
 func SeedKeyspace(session *gocql.Session) error {
 	log.Info("Seeding keyspace...")
@@ -69,52 +63,10 @@ func SeedData(source *gocql.Session, dest *gocql.Session, table string, dataIds 
 	}
 }
 
-// MapToTaskWithTimestamps converts a map loaded by Iter.MapScan() into a Task
-func MapToTaskWithTimestamps(row map[string]interface{}) Task {
-	return Task{
-		ID:        row["id"].(gocql.UUID),
-		Task:      row["task"].(string),
-		WriteTime: row["w_task"].(int64),
-		TTL:       row["l_task"].(int),
-	}
-}
-
 // MapToTask converts a map loaded by Iter.MapScan() into a Task
 func MapToTask(row map[string]interface{}) Task {
 	return Task{
 		ID:   row["id"].(gocql.UUID),
 		Task: row["task"].(string),
-	}
-}
-
-// UnloadData unloads data from the specified source session
-func UnloadData(source *gocql.Session, table string) []Task {
-	unloadedData := make([]Task, 0)
-
-	query := fmt.Sprintf(`SELECT id, task, WRITETIME(task) as w_task, TTL(task) as l_task FROM cloudgate_test.%s;`, table)
-	itr := source.Query(query).Iter()
-
-	for {
-		row := make(map[string]interface{})
-		if !itr.MapScan(row) {
-			break
-		}
-
-		unloadedData = append(unloadedData, MapToTaskWithTimestamps(row))
-	}
-	return unloadedData
-}
-
-// LoadData loads the given data into the specified destination session
-func LoadData(dest *gocql.Session, unloadedData []Task, table string) {
-	query := "BEGIN BATCH "
-	for _, task := range unloadedData {
-		query += fmt.Sprintf("INSERT INTO cloudgate_test.%s(id, task) VALUES (%s, '%s') USING TIMESTAMP %d AND TTL %d; ",
-			table, task.ID, task.Task, task.WriteTime, task.TTL)
-	}
-	query += "APPLY BATCH;"
-	err := dest.Query(query).Exec()
-	if err != nil {
-		log.Fatal(err)
 	}
 }

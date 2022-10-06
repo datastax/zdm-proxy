@@ -683,27 +683,27 @@ func sleepWithContext(d time.Duration, ctx context.Context, reconnectCh chan boo
 }
 
 func (p *ZdmProxy) CreateProxyMetrics(metricFactory metrics.MetricFactory) (*metrics.ProxyMetrics, error) {
-	failedRequestsOrigin, err := metricFactory.GetOrCreateCounter(metrics.FailedRequestsOrigin)
+	failedReadsOrigin, err := metricFactory.GetOrCreateCounter(metrics.FailedReadsOrigin)
 	if err != nil {
 		return nil, err
 	}
 
-	failedRequestsTarget, err := metricFactory.GetOrCreateCounter(metrics.FailedRequestsTarget)
+	failedReadsTarget, err := metricFactory.GetOrCreateCounter(metrics.FailedReadsTarget)
 	if err != nil {
 		return nil, err
 	}
 
-	failedRequestsBothFailedOnOriginOnly, err := metricFactory.GetOrCreateCounter(metrics.FailedRequestsBothFailedOnOriginOnly)
+	failedWritesOnOrigin, err := metricFactory.GetOrCreateCounter(metrics.FailedWritesOnOrigin)
 	if err != nil {
 		return nil, err
 	}
 
-	failedRequestsBothFailedOnTargetOnly, err := metricFactory.GetOrCreateCounter(metrics.FailedRequestsBothFailedOnTargetOnly)
+	failedWritesOnTarget, err := metricFactory.GetOrCreateCounter(metrics.FailedWritesOnTarget)
 	if err != nil {
 		return nil, err
 	}
 
-	failedRequestsBoth, err := metricFactory.GetOrCreateCounter(metrics.FailedRequestsBoth)
+	failedWritesOnBoth, err := metricFactory.GetOrCreateCounter(metrics.FailedWritesOnBoth)
 	if err != nil {
 		return nil, err
 	}
@@ -718,32 +718,32 @@ func (p *ZdmProxy) CreateProxyMetrics(metricFactory metrics.MetricFactory) (*met
 		return nil, err
 	}
 
-	proxyRequestDurationOrigin, err := metricFactory.GetOrCreateHistogram(metrics.ProxyRequestDurationOrigin, p.originBuckets)
+	proxyReadsOriginDuration, err := metricFactory.GetOrCreateHistogram(metrics.ProxyReadsOriginDuration, p.originBuckets)
 	if err != nil {
 		return nil, err
 	}
 
-	proxyRequestDurationTarget, err := metricFactory.GetOrCreateHistogram(metrics.ProxyRequestDurationTarget, p.targetBuckets)
+	proxyReadsTargetDuration, err := metricFactory.GetOrCreateHistogram(metrics.ProxyReadsTargetDuration, p.targetBuckets)
 	if err != nil {
 		return nil, err
 	}
 
-	proxyRequestDurationBoth, err := metricFactory.GetOrCreateHistogram(metrics.ProxyRequestDurationBoth, p.originBuckets)
+	proxyWritesDuration, err := metricFactory.GetOrCreateHistogram(metrics.ProxyWritesDuration, p.originBuckets)
 	if err != nil {
 		return nil, err
 	}
 
-	inflightRequestsOrigin, err := metricFactory.GetOrCreateGauge(metrics.InFlightRequestsOrigin)
+	inFlightReadsOrigin, err := metricFactory.GetOrCreateGauge(metrics.InFlightReadsOrigin)
 	if err != nil {
 		return nil, err
 	}
 
-	inflightRequestsTarget, err := metricFactory.GetOrCreateGauge(metrics.InFlightRequestsTarget)
+	inFlightReadsTarget, err := metricFactory.GetOrCreateGauge(metrics.InFlightReadsTarget)
 	if err != nil {
 		return nil, err
 	}
 
-	inflightRequestsBoth, err := metricFactory.GetOrCreateGauge(metrics.InFlightRequestsBoth)
+	inFlightWrites, err := metricFactory.GetOrCreateGauge(metrics.InFlightWrites)
 	if err != nil {
 		return nil, err
 	}
@@ -756,20 +756,20 @@ func (p *ZdmProxy) CreateProxyMetrics(metricFactory metrics.MetricFactory) (*met
 	}
 
 	proxyMetrics := &metrics.ProxyMetrics{
-		FailedRequestsOrigin:                 failedRequestsOrigin,
-		FailedRequestsTarget:                 failedRequestsTarget,
-		FailedRequestsBothFailedOnOriginOnly: failedRequestsBothFailedOnOriginOnly,
-		FailedRequestsBothFailedOnTargetOnly: failedRequestsBothFailedOnTargetOnly,
-		FailedRequestsBoth:                   failedRequestsBoth,
-		PSCacheSize:                          psCacheSize,
-		PSCacheMissCount:                     psCacheMissCount,
-		ProxyRequestDurationOrigin:           proxyRequestDurationOrigin,
-		ProxyRequestDurationTarget:           proxyRequestDurationTarget,
-		ProxyRequestDurationBoth:             proxyRequestDurationBoth,
-		InFlightRequestsOrigin:               inflightRequestsOrigin,
-		InFlightRequestsTarget:               inflightRequestsTarget,
-		InFlightRequestsBoth:                 inflightRequestsBoth,
-		OpenClientConnections:                openClientConnections,
+		FailedReadsOrigin:        failedReadsOrigin,
+		FailedReadsTarget:        failedReadsTarget,
+		FailedWritesOnOrigin:     failedWritesOnOrigin,
+		FailedWritesOnTarget:     failedWritesOnTarget,
+		FailedWritesOnBoth:       failedWritesOnBoth,
+		PSCacheSize:              psCacheSize,
+		PSCacheMissCount:         psCacheMissCount,
+		ProxyReadsOriginDuration: proxyReadsOriginDuration,
+		ProxyReadsTargetDuration: proxyReadsTargetDuration,
+		ProxyWritesDuration:      proxyWritesDuration,
+		InFlightReadsOrigin:      inFlightReadsOrigin,
+		InFlightReadsTarget:      inFlightReadsTarget,
+		InFlightWrites:           inFlightWrites,
+		OpenClientConnections:    openClientConnections,
 	}
 
 	return proxyMetrics, nil

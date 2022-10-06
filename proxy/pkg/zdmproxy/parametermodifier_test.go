@@ -20,7 +20,7 @@ func TestAddValuesToExecuteFrame_NoReplacedTerms(t *testing.T) {
 		ResultMetadataId: nil,
 		Options:          &message.QueryOptions{},
 	})
-	prepareRequestInfo := NewPrepareRequestInfo(NewGenericRequestInfo(forwardToBoth, false), []*term{}, false, "", "")
+	prepareRequestInfo := NewPrepareRequestInfo(NewGenericRequestInfo(forwardToBoth, false, true), []*term{}, false, "", "")
 	variablesMetadata := &message.VariablesMetadata{
 		PkIndices: nil,
 		Columns:   nil,
@@ -42,7 +42,7 @@ func TestAddValuesToExecuteFrame_InvalidMessageType(t *testing.T) {
 		Query:   "SELECT * FROM asd WHERE a = :param1",
 		Options: &message.QueryOptions{},
 	})
-	prepareRequestInfo := NewPrepareRequestInfo(NewGenericRequestInfo(forwardToBoth, false), []*term{}, false, "", "")
+	prepareRequestInfo := NewPrepareRequestInfo(NewGenericRequestInfo(forwardToBoth, false, true), []*term{}, false, "", "")
 	variablesMetadata := &message.VariablesMetadata{
 		PkIndices: nil,
 		Columns:   nil,
@@ -117,7 +117,7 @@ func TestAddValuesToExecuteFrame_PositionalValues(t *testing.T) {
 			true,
 			[]*testParam{
 				{
-					name:         "cloudgate__now",
+					name:         "zdm__now",
 					replacedTerm: NewFunctionCallTerm(NewFunctionCall("", "now", 0, 0, 0), -1),
 					paramType:    datatype.Timeuuid,
 					value:        nil,
@@ -205,7 +205,7 @@ func TestAddValuesToExecuteFrame_PositionalValues(t *testing.T) {
 				Options:          clonedQueryOpts,
 			})
 			containsPositionalMarkers := ((len(requestPosVals)+len(replacedTerms)) > 0) && !test.prepareContainsNamedValues
-			prepareRequestInfo := NewPrepareRequestInfo(NewGenericRequestInfo(forwardToBoth, false), replacedTerms, containsPositionalMarkers, "", "")
+			prepareRequestInfo := NewPrepareRequestInfo(NewGenericRequestInfo(forwardToBoth, false, true), replacedTerms, containsPositionalMarkers, "", "")
 
 			replacementTimeUuids := parameterModifier.generateTimeUuids(prepareRequestInfo)
 			executeMsg, err := parameterModifier.AddValuesToExecuteFrame(f, prepareRequestInfo, vm, replacementTimeUuids)
@@ -257,7 +257,7 @@ func TestAddValuesToExecuteFrame_NamedValues(t *testing.T) {
 			"three_parameters_two_generated",
 			[]*testParam{
 				{
-					name:         "cloudgate__now",
+					name:         "zdm__now",
 					// arity and start index are irrelevant here, they only matter when parsing/replacing the actual query string
 					// previousPositionalIndex is also irrelevant since we are using named values
 					replacedTerm: NewFunctionCallTerm(NewFunctionCall("", "now", 0, 0, 0), -1),
@@ -271,7 +271,7 @@ func TestAddValuesToExecuteFrame_NamedValues(t *testing.T) {
 					value:        "testval0",
 				},
 				{
-					name:         "cloudgate__now",
+					name:         "zdm__now",
 					replacedTerm: NewFunctionCallTerm(NewFunctionCall("", "now", 0, 0, 0), -1),
 					paramType:    datatype.Timeuuid,
 					value:        nil,
@@ -282,7 +282,7 @@ func TestAddValuesToExecuteFrame_NamedValues(t *testing.T) {
 			"two_parameters_one_generated",
 			[]*testParam{
 				{
-					name:         "cloudgate__now",
+					name:         "zdm__now",
 					replacedTerm: NewFunctionCallTerm(NewFunctionCall("", "now", 0, 0, 0), -1),
 					paramType:    datatype.Timeuuid,
 					value:        nil,
@@ -350,7 +350,7 @@ func TestAddValuesToExecuteFrame_NamedValues(t *testing.T) {
 				ResultMetadataId: nil,
 				Options:          clonedQueryOpts,
 			})
-			prepareRequestInfo := NewPrepareRequestInfo(NewGenericRequestInfo(forwardToBoth, false), replacedTerms, false, "", "")
+			prepareRequestInfo := NewPrepareRequestInfo(NewGenericRequestInfo(forwardToBoth, false, true), replacedTerms, false, "", "")
 
 			replacementTimeUuids := parameterModifier.generateTimeUuids(prepareRequestInfo)
 			executeMsg, err := parameterModifier.AddValuesToExecuteFrame(f, prepareRequestInfo, vm, replacementTimeUuids)
@@ -362,12 +362,12 @@ func TestAddValuesToExecuteFrame_NamedValues(t *testing.T) {
 				require.Equal(t, len(requestNamedVals) + 1, len(executeMsg.Options.NamedValues))
 			}
 			for requestParamName, requestParamVal := range requestNamedVals {
-				require.NotEqual(t, "cloudgate__now", requestParamName)
+				require.NotEqual(t, "zdm__now", requestParamName)
 				paramVal, ok := executeMsg.Options.NamedValues[requestParamName]
 				require.True(t, ok)
 				require.Equal(t, requestParamVal, paramVal)
 			}
-			generatedValue, ok := executeMsg.Options.NamedValues["cloudgate__now"]
+			generatedValue, ok := executeMsg.Options.NamedValues["zdm__now"]
 			if len(replacedTerms) == 0 {
 				require.False(t, ok)
 			} else {

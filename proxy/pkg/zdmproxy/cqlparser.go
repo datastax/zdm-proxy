@@ -144,14 +144,14 @@ func buildRequestInfo(
 		}
 	case primitive.OpCodeAuthResponse:
 		if forwardAuthToTarget {
-			return NewGenericRequestInfo(forwardToTarget, false), nil
+			return NewGenericRequestInfo(forwardToTarget, false, false), nil
 		} else {
-			return NewGenericRequestInfo(forwardToOrigin, false), nil
+			return NewGenericRequestInfo(forwardToOrigin, false, false), nil
 		}
 	case primitive.OpCodeRegister, primitive.OpCodeStartup:
-		return NewGenericRequestInfo(forwardToBoth, false), nil
+		return NewGenericRequestInfo(forwardToBoth, false, false), nil
 	default:
-		return NewGenericRequestInfo(forwardToBoth, true), nil
+		return NewGenericRequestInfo(forwardToBoth, true, false), nil
 	}
 }
 
@@ -220,7 +220,7 @@ func getRequestInfoFromQueryInfo(
 
 	log.Tracef("Forward decision: %s", forwardDecision)
 
-	return NewGenericRequestInfo(forwardDecision, sendAlsoToAsync)
+	return NewGenericRequestInfo(forwardDecision, sendAlsoToAsync, true)
 }
 
 func isSystemQuery(info QueryInfo) bool {

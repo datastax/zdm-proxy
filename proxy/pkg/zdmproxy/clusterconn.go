@@ -311,7 +311,9 @@ func (cc *ClusterConnector) handleAsyncResponse(response *frame.RawFrame) *frame
 		} else {
 			callDone := true
 			if errMsg != nil {
-				trackClusterErrorMetricsFromErrorMessage(errMsg, cc.connectorType, cc.nodeMetrics)
+				if reqCtx.GetRequestInfo().ShouldBeTrackedInMetrics() {
+					trackClusterErrorMetricsFromErrorMessage(errMsg, cc.connectorType, cc.nodeMetrics)
+				}
 				switch msg := errMsg.(type) {
 				case *message.Unprepared:
 					var preparedData PreparedData
@@ -335,7 +337,7 @@ func (cc *ClusterConnector) handleAsyncResponse(response *frame.RawFrame) *frame
 							log.Errorf("Could not send async PREPARE because convert raw frame failed: %v.", err.Error())
 						} else {
 							sent := cc.sendAsyncRequest(
-								prepareRawFrame, false, time.Now(),
+								preparedData.GetPrepareRequestInfo(), prepareRawFrame, false, time.Now(),
 								time.Duration(cc.conf.ProxyRequestTimeoutMs) * time.Millisecond,
 								func() {
 									cc.clientHandlerRequestWg.Done()
@@ -420,6 +422,7 @@ func handleConnectionError(err error, ctx context.Context, cancelFn context.Canc
 }
 
 func (cc *ClusterConnector) sendAsyncRequest(
+	requestInfo RequestInfo,
 	asyncRequest *frame.RawFrame,
 	expectedResponse bool,
 	overallRequestStartTime time.Time,
@@ -430,14 +433,16 @@ func (cc *ClusterConnector) sendAsyncRequest(
 		return false
 	}
 
-	asyncReqCtx := NewAsyncRequestContext(asyncRequest.Header.StreamId, expectedResponse, overallRequestStartTime)
+	asyncReqCtx := NewAsyncRequestContext(requestInfo, asyncRequest.Header.StreamId, expectedResponse, overallRequestStartTime)
 	var newStreamId int16
 	newStreamId, err := cc.asyncPendingRequests.store(asyncReqCtx)
 	storedAsync := err == nil
 	if err != nil {
 		log.Warnf("Could not send async request due to an error while storing the request state: %v.", err.Error())
 	} else {
-		cc.nodeMetrics.AsyncMetrics.InFlightRequests.Add(1)
+		if requestInfo.ShouldBeTrackedInMetrics() {
+			cc.nodeMetrics.AsyncMetrics.InFlightRequests.Add(1)
+		}
 		asyncRequest.Header.StreamId = newStreamId
 		timer := time.AfterFunc(requestTimeout, func() {
 			if cc.asyncPendingRequests.timeOut(newStreamId, asyncReqCtx, asyncRequest) {

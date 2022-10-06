@@ -1,4 +1,4 @@
-# Zero Downtime Migration (Cloud-Gate) Proxy
+# Zero Downtime Migration (ZDM) Proxy
 
 ## Overview
 
@@ -92,10 +92,6 @@ ccm node1 cqlsh
 ```
 
 Clone this project into the following directory, using the exact same path specified here: `~/go/src/github.com/riptano`
-
-If using IntelliJ Goland or the go plugin for IntelliJ Idea Ultimate, create a run configuration as shown here:
-
-![Run configuration](img/cloudgate_proxy_run_config.png)
   
 In the configuration, use this environment variable list: `ORIGIN_CASSANDRA_CONTACT_POINTS=127.0.0.1;ORIGIN_CASSANDRA_USERNAME=cassandra;ORIGIN_CASSANDRA_PASSWORD=cassandra;ORIGIN_CASSANDRA_PORT=9042;TARGET_CASSANDRA_CONTACT_POINTS=127.0.0.10;TARGET_CASSANDRA_USERNAME=cassandra;TARGET_CASSANDRA_PASSWORD=cassandra;TARGET_CASSANDRA_PORT=9042;DEBUG=true;PROXY_METRICS_PORT=14001;PROXY_QUERY_PORT=14002`
 
@@ -285,4 +281,4 @@ These files can then be accessed using `go tool pprof` (see [here](https://go.de
 
 ## Project Dependencies
 
-For information on the packaged dependencies of the Zero Downtime Migration (Cloud-Gate) Proxy and their licenses, check out our [open source report](https://app.fossa.com/reports/910065e9-5620-4ed7-befb-b69c45ebce6e).
+For information on the packaged dependencies of the Zero Downtime Migration (ZDM) Proxy and their licenses, check out our [open source report](https://app.fossa.com/reports/910065e9-5620-4ed7-befb-b69c45ebce6e).

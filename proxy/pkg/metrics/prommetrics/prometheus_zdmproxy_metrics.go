@@ -3,16 +3,16 @@ package prommetrics
 import (
 	"errors"
 	"fmt"
+	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
 	"net/http"
 	"strings"
 	"sync"
 )
 
-const metricsPrefix = "cloudgate"
+const metricsPrefix = "zdm"
 
 type PrometheusMetricFactory struct {
 	registerer           prometheus.Registerer

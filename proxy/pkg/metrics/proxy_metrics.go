@@ -1,63 +1,65 @@
 package metrics
 
 const (
-	destinationOrigin = "origin"
-	destinationTarget = "target"
-	destinationBoth = "both"
+	typeReadsOrigin = "reads_origin"
+	typeReadsTarget = "reads_target"
+	typeWrites      = "writes"
 
-	failedRequestsName = "proxy_requests_failed_total"
-	failedRequestsSentFailedLabel = "sent_failed"
-	sentOriginFailedOrigin = "sent_origin_failed_origin"
-	sentTargetFailedTarget = "sent_target_failed_target"
-	sentBothFailedOrigin = "sent_both_failed_origin"
-	sentBothFailedTarget = "sent_both_failed_target"
-	sentBothFailedBoth = "sent_both_failed_both"
+	failedRequestsClusterOrigin = "origin"
+	failedRequestsClusterTarget = "target"
+	failedRequestsClusterBoth   = "both"
 
-	failedRequestsDescription = "Running total of failed requests"
+	failedReadsName         = "proxy_failed_reads_total"
+	failedReadsDescription  = "Running total of failed reads"
+	failedReadsClusterLabel = "cluster"
 
-	requestDurationName = "proxy_request_duration_seconds"
-	requestDurationDestinationLabel = "destination"
+	failedWritesName                     = "proxy_failed_writes_total"
+	failedWritesDescription              = "Running total of failed writes"
+	failedWritesFailedOnClusterTypeLabel = "failed_on"
+
+	requestDurationName        = "proxy_request_duration_seconds"
+	requestDurationTypeLabel   = "type"
 	requestDurationDescription = "Histogram that tracks the latency of requests at proxy entry point"
 
-	inFlightRequestsName = "proxy_inflight_requests_total"
-	inFlightRequestsDestinationLabel = "destination"
+	inFlightRequestsName        = "proxy_inflight_requests_total"
+	inFlightRequestsTypeLabel   = "type"
 	inFlightRequestsDescription = "Number of requests currently in flight in the proxy"
 )
 
 var (
-	FailedRequestsOrigin = NewMetricWithLabels(
-		failedRequestsName,
-		failedRequestsDescription,
+	FailedReadsOrigin = NewMetricWithLabels(
+		failedReadsName,
+		failedReadsDescription,
 		map[string]string{
-			failedRequestsSentFailedLabel: sentOriginFailedOrigin,
+			failedReadsClusterLabel: failedRequestsClusterOrigin,
 		},
 	)
-	FailedRequestsTarget = NewMetricWithLabels(
-		failedRequestsName,
-		failedRequestsDescription,
+	FailedReadsTarget = NewMetricWithLabels(
+		failedReadsName,
+		failedReadsDescription,
 		map[string]string{
-			failedRequestsSentFailedLabel: sentTargetFailedTarget,
+			failedReadsClusterLabel: failedRequestsClusterTarget,
 		},
 	)
-	FailedRequestsBothFailedOnOriginOnly = NewMetricWithLabels(
-		failedRequestsName,
-		failedRequestsDescription,
+	FailedWritesOnOrigin = NewMetricWithLabels(
+		failedWritesName,
+		failedWritesDescription,
 		map[string]string{
-			failedRequestsSentFailedLabel: sentBothFailedOrigin,
+			failedWritesFailedOnClusterTypeLabel: failedRequestsClusterOrigin,
 		},
 	)
-	FailedRequestsBothFailedOnTargetOnly = NewMetricWithLabels(
-		failedRequestsName,
-		failedRequestsDescription,
+	FailedWritesOnTarget = NewMetricWithLabels(
+		failedWritesName,
+		failedWritesDescription,
 		map[string]string{
-			failedRequestsSentFailedLabel: sentBothFailedTarget,
+			failedWritesFailedOnClusterTypeLabel: failedRequestsClusterTarget,
 		},
 	)
-	FailedRequestsBoth = NewMetricWithLabels(
-		failedRequestsName,
-		failedRequestsDescription,
+	FailedWritesOnBoth = NewMetricWithLabels(
+		failedWritesName,
+		failedWritesDescription,
 		map[string]string{
-			failedRequestsSentFailedLabel: sentBothFailedBoth,
+			failedWritesFailedOnClusterTypeLabel: failedRequestsClusterBoth,
 		},
 	)
 
@@ -70,47 +72,47 @@ var (
 		"Running total of prepared statement cache misses in the proxy",
 	)
 
-	ProxyRequestDurationOrigin = NewMetricWithLabels(
+	ProxyReadsOriginDuration = NewMetricWithLabels(
 		requestDurationName,
 		requestDurationDescription,
 		map[string]string{
-			requestDurationDestinationLabel: destinationOrigin,
+			requestDurationTypeLabel: typeReadsOrigin,
 		},
 	)
-	ProxyRequestDurationTarget = NewMetricWithLabels(
+	ProxyReadsTargetDuration = NewMetricWithLabels(
 		requestDurationName,
 		requestDurationDescription,
 		map[string]string{
-			requestDurationDestinationLabel: destinationTarget,
+			requestDurationTypeLabel: typeReadsTarget,
 		},
 	)
-	ProxyRequestDurationBoth = NewMetricWithLabels(
+	ProxyWritesDuration = NewMetricWithLabels(
 		requestDurationName,
 		requestDurationDescription,
 		map[string]string{
-			requestDurationDestinationLabel: destinationBoth,
+			requestDurationTypeLabel: typeWrites,
 		},
 	)
 
-	InFlightRequestsOrigin = NewMetricWithLabels(
+	InFlightReadsOrigin = NewMetricWithLabels(
 		inFlightRequestsName,
 		inFlightRequestsDescription,
 		map[string]string{
-			inFlightRequestsDestinationLabel: destinationOrigin,
+			inFlightRequestsTypeLabel: typeReadsOrigin,
 		},
 	)
-	InFlightRequestsTarget = NewMetricWithLabels(
+	InFlightReadsTarget = NewMetricWithLabels(
 		inFlightRequestsName,
 		inFlightRequestsDescription,
 		map[string]string{
-			inFlightRequestsDestinationLabel: destinationTarget,
+			inFlightRequestsTypeLabel: typeReadsTarget,
 		},
 	)
-	InFlightRequestsBoth = NewMetricWithLabels(
+	InFlightWrites = NewMetricWithLabels(
 		inFlightRequestsName,
 		inFlightRequestsDescription,
 		map[string]string{
-			inFlightRequestsDestinationLabel: destinationBoth,
+			inFlightRequestsTypeLabel: typeWrites,
 		},
 	)
 
@@ -121,22 +123,22 @@ var (
 )
 
 type ProxyMetrics struct {
-	FailedRequestsOrigin                 Counter
-	FailedRequestsTarget                 Counter
-	FailedRequestsBothFailedOnOriginOnly Counter
-	FailedRequestsBothFailedOnTargetOnly Counter
-	FailedRequestsBoth                   Counter
+	FailedReadsOrigin    Counter
+	FailedReadsTarget    Counter
+	FailedWritesOnOrigin Counter
+	FailedWritesOnTarget Counter
+	FailedWritesOnBoth   Counter
 
 	PSCacheSize      GaugeFunc
 	PSCacheMissCount Counter
 
-	ProxyRequestDurationOrigin Histogram
-	ProxyRequestDurationTarget Histogram
-	ProxyRequestDurationBoth   Histogram
+	ProxyReadsOriginDuration Histogram
+	ProxyReadsTargetDuration Histogram
+	ProxyWritesDuration      Histogram
 
-	InFlightRequestsOrigin Gauge
-	InFlightRequestsTarget Gauge
-	InFlightRequestsBoth   Gauge
+	InFlightReadsOrigin Gauge
+	InFlightReadsTarget Gauge
+	InFlightWrites      Gauge
 
 	OpenClientConnections GaugeFunc
 }
