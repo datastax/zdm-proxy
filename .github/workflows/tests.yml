@@ -9,11 +9,14 @@ jobs:
     steps:
       - uses: actions/checkout@v2
       - name: Start docker-compose
+        id: compose
         run: |
-          docker-compose -f docker-compose-tests.yml up -d
-          sleep 720
-          docker-compose -f docker-compose-tests.yml logs
-          docker ps -a
+          docker-compose -f docker-compose-tests.yml up --abort-on-container-exit --exit-code-from=nosqlbench
+      - name: Test Summary
+        if: ${{ failure() }}
+        run: |
+          docker container ls --all | grep zdm_tests_nb | awk '{print $1}' | xargs -I {} docker container cp {}:/logs reports
+          cat reports/*.summary >> $GITHUB_STEP_SUMMARY
   # Runs all the unit tests under the proxy module (all the *_test.go files)
   unit-tests:
     name: Unit Tests
