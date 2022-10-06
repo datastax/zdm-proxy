@@ -46,7 +46,7 @@ func TestTimeUuidGenerator(t *testing.T) {
 	require.LessOrEqual(t, secondTimeUnixNano, nowPlusTwoSeconds.UnixNano())
 
 	secondClockSeq := secondTimeUuid.ClockSequence()
-	require.Equal(t, clockSeq + 1, secondClockSeq)
+	require.Equal(t, clockSeq+1, secondClockSeq)
 
 	secondNodeId := secondTimeUuid.NodeID()
 	require.Equal(t, nodeId, secondNodeId)
@@ -62,7 +62,7 @@ func TestSpecificTimeUuid(t *testing.T) {
 	expectedNanoseconds := int64(705370600)
 	expectedClockSequence := uint16(123)
 	expectedTime := time.Unix(expectedSeconds, expectedNanoseconds).UTC()
-	expectedNodeId := [6]byte{0, 2, 4, 6, 7 , 8}
+	expectedNodeId := [6]byte{0, 2, 4, 6, 7, 8}
 
 	timeComponent := generator.getTime(expectedTime)
 	timeUuid := newTimeUuid(timeComponent, expectedClockSequence, expectedNodeId)

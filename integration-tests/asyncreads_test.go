@@ -287,7 +287,7 @@ func TestAsyncReadsRequestTypes(t *testing.T) {
 	}
 
 	testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodesAndConfig(
-		t, false, false,1, nil)
+		t, false, false, 1, nil)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
@@ -303,7 +303,7 @@ func TestAsyncReadsRequestTypes(t *testing.T) {
 		cqlClientConn, err := client.ConnectAndInit(context.Background(), primitive.ProtocolVersion4, 0)
 		require.Nil(t, err)
 		defer cqlClientConn.Close()
-		
+
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				err = testSetup.Origin.DeleteLogs()
@@ -343,7 +343,6 @@ func TestAsyncReadsRequestTypes(t *testing.T) {
 				default:
 					require.Fail(t, "unexpected request type")
 				}
-
 
 				sentOrigin := 0
 				sentTarget := 0
@@ -425,7 +424,7 @@ func TestAsyncReadsRequestTypes(t *testing.T) {
 						}
 					}
 					return nil, false
-				}, 15, 100 * time.Millisecond)
+				}, 15, 100*time.Millisecond)
 
 			})
 		}

@@ -335,7 +335,8 @@ func TestVirtualizationTokenAwareness(t *testing.T) {
 		})
 	}
 }
- /*
+
+/*
 cqlsh> describe system.local;
 #3.11
 CREATE TABLE system.local (
@@ -372,7 +373,7 @@ CREATE TABLE system.local (
      tokens set<text>
  )
 
- */
+*/
 func TestInterceptedQueries(t *testing.T) {
 	testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodes(t, false, false, 3)
 	require.Nil(t, err)
@@ -424,73 +425,73 @@ func TestInterceptedQueries(t *testing.T) {
 		},
 		{
 			query:        "SELECT rack FROM system.local",
-			expectedCols: []string{ "rack" },
+			expectedCols: []string{"rack"},
 			expectedValues: [][]interface{}{
 				{
 					"rack0",
 				},
 			},
-			errExpected: nil,
+			errExpected:        nil,
 			proxyInstanceCount: 3,
 			connectProxyIndex:  0,
 		},
 		{
 			query:        "SELECT rack as r FROM system.local",
-			expectedCols: []string{ "r" },
+			expectedCols: []string{"r"},
 			expectedValues: [][]interface{}{
 				{
 					"rack0",
 				},
 			},
-			errExpected: nil,
+			errExpected:        nil,
 			proxyInstanceCount: 3,
 			connectProxyIndex:  0,
 		},
 		{
 			query:        "SELECT count(*) FROM system.local",
-			expectedCols: []string{ "count" },
+			expectedCols: []string{"count"},
 			expectedValues: [][]interface{}{
 				{
 					int32(1),
 				},
 			},
-			errExpected: nil,
+			errExpected:        nil,
 			proxyInstanceCount: 3,
 			connectProxyIndex:  0,
 		},
 		{
-			query:        "SELECT dsa, key, asd FROM system.local",
-			expectedCols: nil,
-			expectedValues: nil,
-			errExpected: &message.Invalid{ErrorMessage: "Undefined column name dsa"},
+			query:              "SELECT dsa, key, asd FROM system.local",
+			expectedCols:       nil,
+			expectedValues:     nil,
+			errExpected:        &message.Invalid{ErrorMessage: "Undefined column name dsa"},
 			proxyInstanceCount: 3,
 			connectProxyIndex:  0,
 		},
 		{
-			query:        "SELECT dsa FROM system.local",
-			expectedCols: nil,
-			expectedValues: nil,
-			errExpected: &message.Invalid{ErrorMessage: "Undefined column name dsa"},
+			query:              "SELECT dsa FROM system.local",
+			expectedCols:       nil,
+			expectedValues:     nil,
+			errExpected:        &message.Invalid{ErrorMessage: "Undefined column name dsa"},
 			proxyInstanceCount: 3,
 			connectProxyIndex:  0,
 		},
 		{
-			query:        "SELECT key, asd FROM system.local",
-			expectedCols: nil,
-			expectedValues: nil,
-			errExpected: &message.Invalid{ErrorMessage: "Undefined column name asd"},
+			query:              "SELECT key, asd FROM system.local",
+			expectedCols:       nil,
+			expectedValues:     nil,
+			errExpected:        &message.Invalid{ErrorMessage: "Undefined column name asd"},
 			proxyInstanceCount: 3,
 			connectProxyIndex:  0,
 		},
 		{
 			query:        "SELECT rack as r, count(*) as c, rack FROM system.peers",
-			expectedCols: []string{ "r", "c", "rack" },
+			expectedCols: []string{"r", "c", "rack"},
 			expectedValues: [][]interface{}{
 				{
 					"rack0", int32(2), "rack0",
 				},
 			},
-			errExpected: nil,
+			errExpected:        nil,
 			proxyInstanceCount: 3,
 			connectProxyIndex:  0,
 		},
@@ -505,7 +506,7 @@ func TestInterceptedQueries(t *testing.T) {
 					net.ParseIP("127.0.0.3").To4(), "dc1", env.DseVersion, false, primitiveHostId3, net.ParseIP("127.0.0.3").To4(), "rack0", env.CassandraVersion, net.ParseIP("127.0.0.3").To4(), nil, []string{"1234"},
 				},
 			},
-			errExpected: nil,
+			errExpected:        nil,
 			proxyInstanceCount: 3,
 			connectProxyIndex:  0,
 		},
@@ -520,21 +521,21 @@ func TestInterceptedQueries(t *testing.T) {
 					net.ParseIP("127.0.0.3").To4(), "dc1", env.DseVersion, false, primitiveHostId3, net.ParseIP("127.0.0.3").To4(), "rack0", env.CassandraVersion, net.ParseIP("127.0.0.3").To4(), nil, []string{"1234"},
 				},
 			},
-			errExpected: nil,
+			errExpected:        nil,
 			proxyInstanceCount: 3,
 			connectProxyIndex:  1,
 		},
 		{
-			query:        "SELECT * FROM system.peers",
-			expectedCols: expectedPeersCols,
-			expectedValues: [][]interface{}{},
-			errExpected: nil,
+			query:              "SELECT * FROM system.peers",
+			expectedCols:       expectedPeersCols,
+			expectedValues:     [][]interface{}{},
+			errExpected:        nil,
 			proxyInstanceCount: 1,
 			connectProxyIndex:  0,
 		},
 		{
 			query:        "SELECT rack FROM system.peers",
-			expectedCols: []string{ "rack" },
+			expectedCols: []string{"rack"},
 			expectedValues: [][]interface{}{
 				{
 					"rack0",
@@ -543,13 +544,13 @@ func TestInterceptedQueries(t *testing.T) {
 					"rack0",
 				},
 			},
-			errExpected: nil,
+			errExpected:        nil,
 			proxyInstanceCount: 3,
 			connectProxyIndex:  0,
 		},
 		{
 			query:        "SELECT rack as r FROM system.peers",
-			expectedCols: []string{ "r" },
+			expectedCols: []string{"r"},
 			expectedValues: [][]interface{}{
 				{
 					"rack0",
@@ -558,91 +559,91 @@ func TestInterceptedQueries(t *testing.T) {
 					"rack0",
 				},
 			},
-			errExpected: nil,
+			errExpected:        nil,
 			proxyInstanceCount: 3,
 			connectProxyIndex:  0,
 		},
 		{
 			query:        "SELECT peer, count(*) FROM system.peers",
-			expectedCols: []string{ "peer", "count" },
+			expectedCols: []string{"peer", "count"},
 			expectedValues: [][]interface{}{
 				{
 					net.ParseIP("127.0.0.2").To4(), int32(2),
 				},
 			},
-			errExpected: nil,
+			errExpected:        nil,
 			proxyInstanceCount: 3,
 			connectProxyIndex:  0,
 		},
 		{
 			query:        "SELECT peer, count(*), count(*) as c, peer as p FROM system.peers",
-			expectedCols: []string{ "peer", "count", "c", "p" },
+			expectedCols: []string{"peer", "count", "c", "p"},
 			expectedValues: [][]interface{}{
 				{
 					nil, int32(0), int32(0), nil,
 				},
 			},
-			errExpected: nil,
+			errExpected:        nil,
 			proxyInstanceCount: 1,
 			connectProxyIndex:  0,
 		},
 		{
 			query:        "SELECT count(*) FROM system.peers",
-			expectedCols: []string{ "count" },
+			expectedCols: []string{"count"},
 			expectedValues: [][]interface{}{
 				{
 					int32(2),
 				},
 			},
-			errExpected: nil,
+			errExpected:        nil,
 			proxyInstanceCount: 3,
 			connectProxyIndex:  0,
 		},
 		{
 			query:        "SELECT count(*) FROM system.peers",
-			expectedCols: []string{ "count" },
+			expectedCols: []string{"count"},
 			expectedValues: [][]interface{}{
 				{
 					int32(0),
 				},
 			},
-			errExpected: nil,
+			errExpected:        nil,
 			proxyInstanceCount: 1,
 			connectProxyIndex:  0,
 		},
 		{
-			query:        "SELECT asd, peer, dsa FROM system.peers",
-			expectedCols: nil,
-			expectedValues: nil,
-			errExpected: &message.Invalid{ErrorMessage: "Undefined column name asd"},
+			query:              "SELECT asd, peer, dsa FROM system.peers",
+			expectedCols:       nil,
+			expectedValues:     nil,
+			errExpected:        &message.Invalid{ErrorMessage: "Undefined column name asd"},
 			proxyInstanceCount: 3,
 			connectProxyIndex:  0,
 		},
 		{
-			query:        "SELECT asd FROM system.peers",
-			expectedCols: nil,
-			expectedValues: nil,
-			errExpected: &message.Invalid{ErrorMessage: "Undefined column name asd"},
+			query:              "SELECT asd FROM system.peers",
+			expectedCols:       nil,
+			expectedValues:     nil,
+			errExpected:        &message.Invalid{ErrorMessage: "Undefined column name asd"},
 			proxyInstanceCount: 3,
 			connectProxyIndex:  0,
 		},
 		{
-			query:        "SELECT peer, dsa FROM system.peers",
-			expectedCols: nil,
-			expectedValues: nil,
-			errExpected: &message.Invalid{ErrorMessage: "Undefined column name dsa"},
+			query:              "SELECT peer, dsa FROM system.peers",
+			expectedCols:       nil,
+			expectedValues:     nil,
+			errExpected:        &message.Invalid{ErrorMessage: "Undefined column name dsa"},
 			proxyInstanceCount: 3,
 			connectProxyIndex:  0,
 		},
 		{
 			query:        "SELECT peer as p, count(*) as c, peer FROM system.peers",
-			expectedCols: []string{ "p", "c", "peer" },
+			expectedCols: []string{"p", "c", "peer"},
 			expectedValues: [][]interface{}{
 				{
 					net.ParseIP("127.0.0.2").To4(), int32(2), net.ParseIP("127.0.0.2").To4(),
 				},
 			},
-			errExpected: nil,
+			errExpected:        nil,
 			proxyInstanceCount: 3,
 			connectProxyIndex:  0,
 		},

@@ -3,8 +3,8 @@ package health
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/google/uuid"
 	"github.com/datastax/zdm-proxy/proxy/pkg/zdmproxy"
+	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
 	"net/http"
 )
@@ -29,9 +29,9 @@ type ControlConnStatus struct {
 type Status string
 
 const (
-	UP               = Status("UP")
-	DOWN             = Status("DOWN")
-	STARTUP          = Status("STARTUP")
+	UP      = Status("UP")
+	DOWN    = Status("DOWN")
+	STARTUP = Status("STARTUP")
 )
 
 func ReadinessHandler(proxy *zdmproxy.ZdmProxy) http.Handler {

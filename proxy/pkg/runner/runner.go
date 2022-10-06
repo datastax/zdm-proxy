@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-func SetupHandlers() (metricsHandler *httpzdmproxy.HandlerWithFallback, readinessHandler *httpzdmproxy.HandlerWithFallback){
+func SetupHandlers() (metricsHandler *httpzdmproxy.HandlerWithFallback, readinessHandler *httpzdmproxy.HandlerWithFallback) {
 	metricsHandler = httpzdmproxy.NewHandlerWithFallback(metrics.DefaultHttpHandler())
 	readinessHandler = httpzdmproxy.NewHandlerWithFallback(health.DefaultReadinessHandler())
 
@@ -60,7 +60,7 @@ func RunMain(
 	}
 
 	log.Info("Shutting down httpzdmproxy server, waiting up to 5 seconds.")
-	srvShutdownCtx, _ := context.WithTimeout(context.Background(), 5 * time.Second)
+	srvShutdownCtx, _ := context.WithTimeout(context.Background(), 5*time.Second)
 	if err := srv.Shutdown(srvShutdownCtx); err != nil {
 		log.Errorf("Failed to gracefully shutdown httpzdmproxy server: %v", err)
 	}

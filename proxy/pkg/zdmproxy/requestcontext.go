@@ -23,13 +23,13 @@ import (
 // inserts and updates (not deletes).
 type requestContextHolder struct {
 	reqCtx RequestContext
-	lock  *sync.RWMutex
+	lock   *sync.RWMutex
 }
 
 func NewRequestContextHolder() *requestContextHolder {
 	return &requestContextHolder{
 		reqCtx: nil,
-		lock:  &sync.RWMutex{},
+		lock:   &sync.RWMutex{},
 	}
 }
 
@@ -90,14 +90,14 @@ type RequestContext interface {
 }
 
 type requestContextImpl struct {
-	request        *frame.RawFrame
-	requestInfo    RequestInfo
-	originResponse *frame.RawFrame
-	targetResponse *frame.RawFrame
-	state          int
-	timer          *time.Timer
-	lock           *sync.Mutex
-	startTime      time.Time
+	request               *frame.RawFrame
+	requestInfo           RequestInfo
+	originResponse        *frame.RawFrame
+	targetResponse        *frame.RawFrame
+	state                 int
+	timer                 *time.Timer
+	lock                  *sync.Mutex
+	startTime             time.Time
 	customResponseChannel chan *customResponse
 }
 

@@ -197,7 +197,7 @@ func TestStressShutdown(t *testing.T) {
 					defer globalWg.Done()
 					select {
 					case <-globalCtx.Done():
-					case <-time.After(60*time.Second):
+					case <-time.After(60 * time.Second):
 					}
 
 					shutdownProxyTriggeredMutex.Lock()
@@ -219,7 +219,7 @@ func TestStressShutdown(t *testing.T) {
 				zerolog.SetGlobalLevel(zerolog.WarnLevel)
 				defer zerolog.SetGlobalLevel(oldZeroLogLevel)
 
-				cqlConn, err := client.NewTestClientWithRequestTimeout(context.Background(), "127.0.0.1:14002", 10 * time.Second)
+				cqlConn, err := client.NewTestClientWithRequestTimeout(context.Background(), "127.0.0.1:14002", 10*time.Second)
 				require.Nil(t, err)
 				defer cqlConn.Shutdown()
 
@@ -250,7 +250,7 @@ func TestStressShutdown(t *testing.T) {
 						for {
 							id := rand.Int()
 							connTimeoutCtx, connTimeoutCancelFn := context.WithTimeout(globalCtx, 5*time.Second)
-							tempCqlConn, err := client.NewTestClientWithRequestTimeout(connTimeoutCtx, "127.0.0.1:14002", 10 *time.Second)
+							tempCqlConn, err := client.NewTestClientWithRequestTimeout(connTimeoutCtx, "127.0.0.1:14002", 10*time.Second)
 							connTimeoutCancelFn() // avoid context leak
 
 							// create new waitgroup dedicated for this "iteration" so the next iteration starts only

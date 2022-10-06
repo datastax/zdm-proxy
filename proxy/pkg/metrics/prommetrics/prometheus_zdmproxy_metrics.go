@@ -51,8 +51,8 @@ func (pm *PrometheusMetricFactory) GetOrCreateCounter(mn metrics.Metric) (metric
 	} else {
 		c = prometheus.NewCounter(prometheus.CounterOpts{
 			Namespace: metricsPrefix,
-			Name: mn.GetName(),
-			Help: mn.GetDescription(),
+			Name:      mn.GetName(),
+			Help:      mn.GetDescription(),
 		})
 	}
 
@@ -164,10 +164,10 @@ func (pm *PrometheusMetricFactory) GetOrCreateHistogram(mn metrics.Metric, bucke
 			getLabelNames(mn))
 	} else {
 		h = prometheus.NewHistogram(prometheus.HistogramOpts{
-			Namespace:   metricsPrefix,
-			Name:        mn.GetName(),
-			Help:        mn.GetDescription(),
-			Buckets:     buckets,
+			Namespace: metricsPrefix,
+			Name:      mn.GetName(),
+			Help:      mn.GetDescription(),
+			Buckets:   buckets,
 		})
 	}
 

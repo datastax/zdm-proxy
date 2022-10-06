@@ -280,13 +280,12 @@ func (c *Config) Validate() error {
 		return err
 	}
 
-
 	return nil
 }
 
 const (
-	SystemQueriesModeOrigin  = "ORIGIN"
-	SystemQueriesModeTarget  = "TARGET"
+	SystemQueriesModeOrigin = "ORIGIN"
+	SystemQueriesModeTarget = "TARGET"
 )
 
 func (c *Config) ParseSystemQueriesMode() (common.SystemQueriesMode, error) {
