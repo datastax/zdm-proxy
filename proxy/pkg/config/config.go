@@ -308,7 +308,7 @@ const (
 func (c *Config) ParsePrimaryCluster() (common.ClusterType, error) {
 	switch strings.ToUpper(c.PrimaryCluster) {
 	case PrimaryClusterOrigin:
-		return common.ClusterTypeOrigin, nil
+		  return common.ClusterTypeOrigin, nil
 	case PrimaryClusterTarget:
 		return common.ClusterTypeTarget, nil
 	default:
