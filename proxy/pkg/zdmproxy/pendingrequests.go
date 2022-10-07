@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/datastax/go-cassandra-native-protocol/frame"
+	"github.com/datastax/zdm-proxy/proxy/pkg/common"
 	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
 	"sync"
@@ -36,7 +37,7 @@ func (p *pendingRequests) getOrCreateRequestContextHolder(streamId int16) *reque
 	if ok {
 		return holder.(*requestContextHolder)
 	} else {
-		holder, _ =  p.pending.LoadOrStore(streamId, NewRequestContextHolder())
+		holder, _ = p.pending.LoadOrStore(streamId, NewRequestContextHolder())
 		return holder.(*requestContextHolder)
 	}
 }
@@ -74,11 +75,11 @@ func (p *pendingRequests) cancel(streamId int16, reqCtx RequestContext) bool {
 }
 
 func (p *pendingRequests) markAsDone(
-	streamId int16, f *frame.RawFrame, cluster ClusterType, connectorType ClusterConnectorType) (RequestContext, bool) {
+	streamId int16, f *frame.RawFrame, cluster common.ClusterType, connectorType ClusterConnectorType) (RequestContext, bool) {
 	holder := p.getOrCreateRequestContextHolder(streamId)
 	reqCtx := holder.Get()
 	if reqCtx == nil {
-		log.Warnf("Could not find async request context for stream id %d received from async connector. " +
+		log.Warnf("Could not find async request context for stream id %d received from async connector. "+
 			"It either timed out or a protocol error occurred.", streamId)
 		return nil, false
 	}
@@ -124,7 +125,7 @@ func (p *pendingRequests) releaseStreamId(streamId int16) error {
 
 func (p *pendingRequests) reserveStreamId() (int16, error) {
 	select {
-	case streamId := <- p.streams:
+	case streamId := <-p.streams:
 		return streamId, nil
 	default:
 		return -1, errors.New("channel was empty")

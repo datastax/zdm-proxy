@@ -1,11 +1,11 @@
 package integration_tests
 
 import (
-	"github.com/gocql/gocql"
 	"github.com/datastax/zdm-proxy/integration-tests/ccm"
 	"github.com/datastax/zdm-proxy/integration-tests/env"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/proxy/pkg/zdmproxy"
+	"github.com/gocql/gocql"
 	log "github.com/sirupsen/logrus"
 	"os"
 	"testing"
@@ -43,7 +43,7 @@ func RunTests(m *testing.M) int {
 	return m.Run()
 }
 
-func NewProxyInstanceForGlobalCcmClusters() (*zdmproxy.CloudgateProxy, error) {
+func NewProxyInstanceForGlobalCcmClusters() (*zdmproxy.ZdmProxy, error) {
 	originCluster, targetCluster, err := SetupOrGetGlobalCcmClusters()
 	if err != nil {
 		return nil, err

@@ -8,31 +8,31 @@ type envVar struct {
 }
 
 func setOriginCredentialsEnvVars() {
-	setEnvVar("ORIGIN_CASSANDRA_USERNAME", "originUser")
-	setEnvVar("ORIGIN_CASSANDRA_PASSWORD", "originPassword")
+	setEnvVar("ZDM_ORIGIN_USERNAME", "originUser")
+	setEnvVar("ZDM_ORIGIN_PASSWORD", "originPassword")
 }
 
 func setTargetCredentialsEnvVars() {
-	setEnvVar("TARGET_CASSANDRA_USERNAME", "targetUser")
-	setEnvVar("TARGET_CASSANDRA_PASSWORD", "targetPassword")
+	setEnvVar("ZDM_TARGET_USERNAME", "targetUser")
+	setEnvVar("ZDM_TARGET_PASSWORD", "targetPassword")
 }
 
 func setOriginContactPointsAndPortEnvVars() {
-	setEnvVar("ORIGIN_CASSANDRA_CONTACT_POINTS", "origin.hostname.com")
-	setEnvVar("ORIGIN_CASSANDRA_PORT", "7890")
+	setEnvVar("ZDM_ORIGIN_CONTACT_POINTS", "origin.hostname.com")
+	setEnvVar("ZDM_ORIGIN_PORT", "7890")
 }
 
 func setTargetContactPointsAndPortEnvVars() {
-	setEnvVar("TARGET_CASSANDRA_CONTACT_POINTS", "target.hostname.com")
-	setEnvVar("TARGET_CASSANDRA_PORT", "5647")
+	setEnvVar("ZDM_TARGET_CONTACT_POINTS", "target.hostname.com")
+	setEnvVar("ZDM_TARGET_PORT", "5647")
 }
 
 func setOriginSecureConnectBundleEnvVar() {
-	setEnvVar("ORIGIN_CASSANDRA_SECURE_CONNECT_BUNDLE_PATH", "/path/to/origin/bundle")
+	setEnvVar("ZDM_ORIGIN_SECURE_CONNECT_BUNDLE_PATH", "/path/to/origin/bundle")
 }
 
 func setTargetSecureConnectBundleEnvVar() {
-	setEnvVar("TARGET_CASSANDRA_SECURE_CONNECT_BUNDLE_PATH", "/path/to/origin/bundle")
+	setEnvVar("ZDM_TARGET_SECURE_CONNECT_BUNDLE_PATH", "/path/to/origin/bundle")
 }
 
 func setEnvVar(key string, value string) {

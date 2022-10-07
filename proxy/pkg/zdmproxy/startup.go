@@ -5,6 +5,7 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/datastax/zdm-proxy/proxy/pkg/common"
 	log "github.com/sirupsen/logrus"
 	"net"
 	"time"
@@ -30,7 +31,7 @@ func (ch *ClientHandler) handleSecondaryHandshakeStartup(
 	var clusterAddress net.Addr
 	var logIdentifier string
 	var forwardToSecondary forwardDecision
-	requestTimeout := time.Duration(ch.conf.RequestTimeoutMs) * time.Millisecond
+	requestTimeout := time.Duration(ch.conf.ProxyRequestTimeoutMs) * time.Millisecond
 	if asyncConnector {
 		clusterAddress = ch.asyncConnector.connection.RemoteAddr()
 		logIdentifier = fmt.Sprintf("ASYNC-%v", ch.asyncConnector.clusterType)
@@ -87,8 +88,8 @@ func (ch *ClientHandler) handleSecondaryHandshakeStartup(
 		case 2:
 			if authenticator == nil {
 				return fmt.Errorf(
-					"secondary cluster (%v) requested authentication but primary did not, " +
-					"can not proceed with secondary handshake", logIdentifier)
+					"secondary cluster (%v) requested authentication but primary did not, "+
+						"can not proceed with secondary handshake", logIdentifier)
 			}
 
 			var err error
@@ -111,7 +112,7 @@ func (ch *ClientHandler) handleSecondaryHandshakeStartup(
 			channel := make(chan *customResponse, 1)
 			err := ch.executeRequest(
 				NewFrameDecodeContext(request),
-				NewGenericRequestInfo(forwardToSecondary, asyncConnector),
+				NewGenericRequestInfo(forwardToSecondary, asyncConnector, false),
 				ch.LoadCurrentKeyspace(),
 				overallRequestStartTime,
 				channel,
@@ -123,7 +124,7 @@ func (ch *ClientHandler) handleSecondaryHandshakeStartup(
 
 			select {
 			case customResponse, ok := <-channel:
-				if !ok || customResponse == nil{
+				if !ok || customResponse == nil {
 					if ch.clientHandlerContext.Err() != nil {
 						return ShutdownErr
 					}
@@ -148,7 +149,7 @@ func (ch *ClientHandler) handleSecondaryHandshakeStartup(
 					return nil
 				} else {
 					return fmt.Errorf(
-						"could not set async connector (%v) as ready after a successful handshake " +
+						"could not set async connector (%v) as ready after a successful handshake "+
 							"because the connector was already shutdown", logIdentifier)
 				}
 			}
@@ -161,7 +162,7 @@ func (ch *ClientHandler) handleSecondaryHandshakeStartup(
 
 func handleSecondaryHandshakeResponse(
 	phase int, f *frame.RawFrame, clientIPAddress net.Addr,
-	clusterAddress net.Addr, logIdentifier string) (int, *frame.Frame, bool, error){
+	clusterAddress net.Addr, logIdentifier string) (int, *frame.Frame, bool, error) {
 	parsedFrame, err := defaultCodec.ConvertFromRawFrame(f)
 	if err != nil {
 		return phase, nil, false, fmt.Errorf("could not decode frame from %v: %w", clusterAddress, err)
@@ -192,7 +193,7 @@ func handleSecondaryHandshakeResponse(
 	return phase, parsedFrame, done, nil
 }
 
-func validateSecondaryStartupResponse(f *frame.RawFrame, clusterType ClusterType) error {
+func validateSecondaryStartupResponse(f *frame.RawFrame, clusterType common.ClusterType) error {
 	switch f.Header.OpCode {
 	case primitive.OpCodeAuthenticate:
 	case primitive.OpCodeAuthChallenge:

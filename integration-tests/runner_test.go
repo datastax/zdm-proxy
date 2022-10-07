@@ -47,7 +47,7 @@ func TestWithHttpHandlers(t *testing.T) {
 func testHttpEndpointsWithProxyNotInitialized(
 	t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback, healthHandler *httpzdmproxy.HandlerWithFallback) {
 
-	simulacronSetup, err := setup.NewSimulacronTestSetupWithSession(false, false)
+	simulacronSetup, err := setup.NewSimulacronTestSetupWithSession(t, false, false)
 	require.Nil(t, err)
 	defer simulacronSetup.Cleanup()
 
@@ -57,7 +57,7 @@ func testHttpEndpointsWithProxyNotInitialized(
 	require.Nil(t, err, "target disable listener failed: %v", err)
 
 	conf := setup.NewTestConfig(simulacronSetup.Origin.GetInitialContactPoint(), simulacronSetup.Target.GetInitialContactPoint())
-	modifyConfForHealthTests(conf)
+	modifyConfForHealthTests(conf, 2)
 
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	wg := &sync.WaitGroup{}
@@ -74,7 +74,7 @@ func testHttpEndpointsWithProxyNotInitialized(
 
 	time.Sleep(500 * time.Millisecond)
 
-	httpAddr := fmt.Sprintf("%s:%d", conf.ProxyMetricsAddress, conf.ProxyMetricsPort)
+	httpAddr := fmt.Sprintf("%s:%d", conf.MetricsAddress, conf.MetricsPort)
 
 	require.Nil(t, utils.CheckMetricsEndpointResult(httpAddr, false))
 
@@ -89,12 +89,12 @@ func testHttpEndpointsWithProxyNotInitialized(
 func testHttpEndpointsWithProxyInitialized(
 	t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback, healthHandler *httpzdmproxy.HandlerWithFallback) {
 
-	simulacronSetup, err := setup.NewSimulacronTestSetupWithSession(false, false)
+	simulacronSetup, err := setup.NewSimulacronTestSetupWithSession(t, false, false)
 	require.Nil(t, err)
 	defer simulacronSetup.Cleanup()
 
 	conf := setup.NewTestConfig(simulacronSetup.Origin.GetInitialContactPoint(), simulacronSetup.Target.GetInitialContactPoint())
-	modifyConfForHealthTests(conf)
+	modifyConfForHealthTests(conf, 2)
 
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	wg := &sync.WaitGroup{}
@@ -109,13 +109,13 @@ func testHttpEndpointsWithProxyInitialized(
 		runner.RunMain(conf, ctx, metricsHandler, healthHandler)
 	}()
 
-	httpAddr := fmt.Sprintf("%s:%d", conf.ProxyMetricsAddress, conf.ProxyMetricsPort)
+	httpAddr := fmt.Sprintf("%s:%d", conf.MetricsAddress, conf.MetricsPort)
 
 	utils.RequireWithRetries(t, func() (err error, fatal bool) {
 		fatal = false
 		err = utils.CheckMetricsEndpointResult(httpAddr, true)
 		return
-	}, 10, 100 * time.Millisecond)
+	}, 10, 100*time.Millisecond)
 
 	statusCode, report, err := utils.GetReadinessStatusReport(httpAddr)
 	require.Nil(t, err, "failed to get readiness response: %v", err)
@@ -140,12 +140,12 @@ func testHttpEndpointsWithProxyInitialized(
 func testHttpEndpointsWithUnavailableNode(
 	t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback, healthHandler *httpzdmproxy.HandlerWithFallback) {
 
-	simulacronSetup, err := setup.NewSimulacronTestSetupWithSession(false, false)
+	simulacronSetup, err := setup.NewSimulacronTestSetupWithSession(t, false, false)
 	require.Nil(t, err)
 	defer simulacronSetup.Cleanup()
 
 	conf := setup.NewTestConfig(simulacronSetup.Origin.GetInitialContactPoint(), simulacronSetup.Target.GetInitialContactPoint())
-	modifyConfForHealthTests(conf)
+	modifyConfForHealthTests(conf, 5)
 
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	wg := &sync.WaitGroup{}
@@ -160,13 +160,13 @@ func testHttpEndpointsWithUnavailableNode(
 		runner.RunMain(conf, ctx, metricsHandler, healthHandler)
 	}()
 
-	httpAddr := fmt.Sprintf("%s:%d", conf.ProxyMetricsAddress, conf.ProxyMetricsPort)
+	httpAddr := fmt.Sprintf("%s:%d", conf.MetricsAddress, conf.MetricsPort)
 
 	utils.RequireWithRetries(t, func() (err error, fatal bool) {
 		fatal = false
 		err = utils.CheckMetricsEndpointResult(httpAddr, true)
 		return
-	}, 10, 100 * time.Millisecond)
+	}, 10, 100*time.Millisecond)
 
 	statusCode, msg, err := utils.GetLivenessResponse(httpAddr)
 	require.Nil(t, err)
@@ -195,13 +195,19 @@ func testHttpEndpointsWithUnavailableNode(
 		}
 
 		if r.OriginStatus.CurrentFailureCount == 0 {
-			return fmt.Errorf("expected current failure count on origin greater than 0 but got %v", r.OriginStatus.CurrentFailureCount), false
+			return fmt.Errorf("expected current failure count on origin greater than 0 but got %v",
+				r.OriginStatus.CurrentFailureCount), false
+		}
+
+		if r.OriginStatus.CurrentFailureCount >= r.OriginStatus.FailureCountThreshold {
+			return fmt.Errorf("expected current failure count on origin less than threshold (%v) but got %v",
+				r.OriginStatus.FailureCountThreshold, r.OriginStatus.CurrentFailureCount), true
 		}
 
 		*healthReportPtr = r
 		*statusCodePtr = statusCode
 		return nil, false
-	}, 100, 50*time.Millisecond)
+	}, 20, 100*time.Millisecond)
 
 	healthReport := *healthReportPtr
 	statusCode = *statusCodePtr
@@ -273,10 +279,15 @@ func testHttpEndpointsWithUnavailableNode(
 			return fmt.Errorf("expected current failure count on target greater than 0 but got %v", r.TargetStatus.CurrentFailureCount), false
 		}
 
+		if r.TargetStatus.CurrentFailureCount >= r.TargetStatus.FailureCountThreshold {
+			return fmt.Errorf("expected current failure count on target less than threshold (%v) but got %v",
+				r.TargetStatus.FailureCountThreshold, r.TargetStatus.CurrentFailureCount), true
+		}
+
 		*healthReportPtr = r
 		*statusCodePtr = statusCode
 		return nil, false
-	}, 100, 50*time.Millisecond)
+	}, 20, 100*time.Millisecond)
 
 	healthReport = *healthReportPtr
 	statusCode = *statusCodePtr
@@ -329,10 +340,11 @@ func testHttpEndpointsWithUnavailableNode(
 	require.Nil(t, utils.CheckMetricsEndpointResult(httpAddr, true))
 }
 
-func modifyConfForHealthTests(config *config.Config) {
+func modifyConfForHealthTests(config *config.Config, failureThreshold int) {
 	config.HeartbeatRetryIntervalMinMs = 250
 	config.HeartbeatRetryIntervalMaxMs = 500
 	config.HeartbeatIntervalMs = 500
-	config.ClusterConnectionTimeoutMs = 2000
+	config.OriginConnectionTimeoutMs = 2000
+	config.TargetConnectionTimeoutMs = 2000
 	config.HeartbeatFailureThreshold = 2
 }

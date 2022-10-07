@@ -7,6 +7,7 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/datastax/zdm-proxy/proxy/pkg/common"
 	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
 	"strings"
@@ -31,11 +32,11 @@ const (
 )
 
 const (
-	systemPeersTableName = "peers"
+	systemPeersTableName   = "peers"
 	systemPeersV2TableName = "peers_v2"
-	systemLocalTableName = "local"
-	systemKeyspaceName = "system"
-	nowFunctionName = "now"
+	systemLocalTableName   = "local"
+	systemKeyspaceName     = "system"
+	nowFunctionName        = "now"
 )
 
 type UnpreparedExecuteError struct {
@@ -64,7 +65,7 @@ func buildRequestInfo(
 	psCache *PreparedStatementCache,
 	mh *metrics.MetricHandler,
 	currentKeyspaceName string,
-	forwardReadsToTarget bool,
+	primaryCluster common.ClusterType,
 	forwardSystemQueriesToTarget bool,
 	virtualizationEnabled bool,
 	forwardAuthToTarget bool,
@@ -78,7 +79,7 @@ func buildRequestInfo(
 			return nil, fmt.Errorf("could not inspect QUERY frame: %w", err)
 		}
 		return getRequestInfoFromQueryInfo(
-			frameContext.GetRawFrame(), forwardReadsToTarget,
+			frameContext.GetRawFrame(), primaryCluster,
 			forwardSystemQueriesToTarget, virtualizationEnabled, stmtQueryData.queryData), nil
 	case primitive.OpCodePrepare:
 		stmtQueryData, err := frameContext.GetOrInspectStatement(currentKeyspaceName, timeUuidGenerator)
@@ -94,7 +95,7 @@ func buildRequestInfo(
 			return nil, fmt.Errorf("unexpected message type when decoding PREPARE message: %v", decodedFrame.Body.Message)
 		}
 		baseRequestInfo := getRequestInfoFromQueryInfo(
-			frameContext.GetRawFrame(), forwardReadsToTarget,
+			frameContext.GetRawFrame(), primaryCluster,
 			forwardSystemQueriesToTarget, virtualizationEnabled, stmtQueryData.queryData)
 		replacedTerms := make([]*term, 0)
 		if len(stmtsReplacedTerms) > 1 {
@@ -143,14 +144,14 @@ func buildRequestInfo(
 		}
 	case primitive.OpCodeAuthResponse:
 		if forwardAuthToTarget {
-			return NewGenericRequestInfo(forwardToTarget, false), nil
+			return NewGenericRequestInfo(forwardToTarget, false, false), nil
 		} else {
-			return NewGenericRequestInfo(forwardToOrigin, false), nil
+			return NewGenericRequestInfo(forwardToOrigin, false, false), nil
 		}
 	case primitive.OpCodeRegister, primitive.OpCodeStartup:
-		return NewGenericRequestInfo(forwardToBoth, false), nil
+		return NewGenericRequestInfo(forwardToBoth, false, false), nil
 	default:
-		return NewGenericRequestInfo(forwardToBoth, true), nil
+		return NewGenericRequestInfo(forwardToBoth, true, false), nil
 	}
 }
 
@@ -174,7 +175,7 @@ func getPreparedData(
 
 func getRequestInfoFromQueryInfo(
 	f *frame.RawFrame,
-	forwardReadsToTarget bool,
+	primaryCluster common.ClusterType,
 	forwardSystemQueriesToTarget bool,
 	virtualizationEnabled bool,
 	queryInfo QueryInfo) RequestInfo {
@@ -205,7 +206,7 @@ func getRequestInfoFromQueryInfo(
 				forwardDecision = forwardToOrigin
 			}
 		} else {
-			if forwardReadsToTarget {
+			if primaryCluster == common.ClusterTypeTarget {
 				forwardDecision = forwardToTarget
 			} else {
 				forwardDecision = forwardToOrigin
@@ -219,7 +220,7 @@ func getRequestInfoFromQueryInfo(
 
 	log.Tracef("Forward decision: %s", forwardDecision)
 
-	return NewGenericRequestInfo(forwardDecision, sendAlsoToAsync)
+	return NewGenericRequestInfo(forwardDecision, sendAlsoToAsync, true)
 }
 
 func isSystemQuery(info QueryInfo) bool {
@@ -336,14 +337,14 @@ func (recv *frameDecodeContext) inspectStatements(currentKeyspace string, timeUu
 			currentKeyspace = typedMsg.Options.Keyspace
 		}
 		statementsQueryData = []*statementQueryData{
-			&statementQueryData{statementIndex: 0, queryData: inspectCqlQuery(typedMsg.Query, currentKeyspace, timeUuidGenerator)}}
+			{statementIndex: 0, queryData: inspectCqlQuery(typedMsg.Query, currentKeyspace, timeUuidGenerator)}}
 	case *message.Prepare:
 		if protocolSupportsKeyspaceInRequest(decodedFrame.Header.Version) &&
 			typedMsg.Flags().Contains(primitive.PrepareFlagWithKeyspace) {
 			currentKeyspace = typedMsg.Keyspace
 		}
 		statementsQueryData = []*statementQueryData{
-			&statementQueryData{statementIndex: 0, queryData: inspectCqlQuery(typedMsg.Query, currentKeyspace, timeUuidGenerator)}}
+			{statementIndex: 0, queryData: inspectCqlQuery(typedMsg.Query, currentKeyspace, timeUuidGenerator)}}
 	case *message.Batch:
 		if protocolSupportsKeyspaceInRequest(decodedFrame.Header.Version) &&
 			typedMsg.Flags().Contains(primitive.QueryFlagWithKeyspace) {

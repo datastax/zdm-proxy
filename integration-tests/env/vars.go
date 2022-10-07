@@ -19,38 +19,39 @@ var ServerVersion string
 var CassandraVersion string
 var DseVersion string
 var IsDse bool
-var UseCcm bool
+var RunCcmTests bool
+var RunMockTests bool
 var RunAllTlsTests bool
 var Debug bool
 
 func InitGlobalVars() {
 	flags := map[string]interface{}{
-		"CASSANDRA_VERSION":
-		flag.String(
+		"CASSANDRA_VERSION": flag.String(
 			"CASSANDRA_VERSION",
 			getEnvironmentVariableOrDefault("CASSANDRA_VERSION", "3.11.7"),
 			"CASSANDRA_VERSION"),
 
-		"DSE_VERSION":
-		flag.String(
+		"DSE_VERSION": flag.String(
 			"DSE_VERSION",
 			getEnvironmentVariableOrDefault("DSE_VERSION", ""),
 			"DSE_VERSION"),
 
-		"USE_CCM":
-		flag.String(
-			"USE_CCM",
-			getEnvironmentVariableOrDefault("USE_CCM", "false"),
-			"USE_CCM"),
+		"RUN_CCMTESTS": flag.String(
+			"RUN_CCMTESTS",
+			getEnvironmentVariableOrDefault("RUN_CCMTESTS", "false"),
+			"RUN_CCMTESTS"),
 
-		"RUN_ALL_TLS_TESTS":
-		flag.String(
+		"RUN_MOCKTESTS": flag.String(
+			"RUN_MOCKTESTS",
+			getEnvironmentVariableOrDefault("RUN_MOCKTESTS", "true"),
+			"RUN_MOCKTESTS"),
+
+		"RUN_ALL_TLS_TESTS": flag.String(
 			"RUN_ALL_TLS_TESTS",
 			getEnvironmentVariableOrDefault("RUN_ALL_TLS_TESTS", "false"),
 			"RUN_ALL_TLS_TESTS"),
 
-		"DEBUG":
-		flag.Bool(
+		"DEBUG": flag.Bool(
 			"DEBUG",
 			getEnvironmentVariableBoolOrDefault("DEBUG", false),
 			"DEBUG"),
@@ -60,7 +61,8 @@ func InitGlobalVars() {
 
 	CassandraVersion = *flags["CASSANDRA_VERSION"].(*string)
 	DseVersion = *flags["DSE_VERSION"].(*string)
-	useCcm := *flags["USE_CCM"].(*string)
+	runCcmTests := *flags["RUN_CCMTESTS"].(*string)
+	runMockTests := *flags["RUN_MOCKTESTS"].(*string)
 	runAllTlsTests := *flags["RUN_ALL_TLS_TESTS"].(*string)
 	Debug = *flags["DEBUG"].(*bool)
 
@@ -72,8 +74,12 @@ func InitGlobalVars() {
 		IsDse = false
 	}
 
-	if strings.ToLower(useCcm) == "true" {
-		UseCcm = true
+	if strings.ToLower(runCcmTests) == "true" {
+		RunCcmTests = true
+	}
+
+	if strings.ToLower(runMockTests) == "true" {
+		RunMockTests = true
 	}
 
 	if strings.ToLower(runAllTlsTests) == "true" {

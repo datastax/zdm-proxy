@@ -1,7 +1,7 @@
 package setup
 
 // TestKeyspace is the dedicated keyspace for testing
-const TestKeyspace = "cloudgate_test"
+const TestKeyspace = "zdmproxy_test"
 
 // TestTable is the dedicated table for testing
 const TestTable = "tasks"

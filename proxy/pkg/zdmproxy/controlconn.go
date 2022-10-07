@@ -6,9 +6,10 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/datastax/zdm-proxy/proxy/pkg/common"
+	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 	"github.com/google/uuid"
 	"github.com/jpillora/backoff"
-	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 	log "github.com/sirupsen/logrus"
 	"math"
 	"math/big"
@@ -23,7 +24,7 @@ import (
 
 type ControlConn struct {
 	conf                     *config.Config
-	topologyConfig           *config.TopologyConfig
+	topologyConfig           *common.TopologyConfig
 	cqlConn                  CqlConnection
 	retryBackoffPolicy       *backoff.Backoff
 	heartbeatPeriod          time.Duration
@@ -59,7 +60,7 @@ const ccWriteTimeout = 5 * time.Second
 const ccReadTimeout = 10 * time.Second
 
 func NewControlConn(ctx context.Context, defaultPort int, connConfig ConnectionConfig,
-	username string, password string, conf *config.Config, topologyConfig *config.TopologyConfig, proxyRand *rand.Rand) *ControlConn {
+	username string, password string, conf *config.Config, topologyConfig *common.TopologyConfig, proxyRand *rand.Rand) *ControlConn {
 	authEnabled := &atomic.Value{}
 	authEnabled.Store(true)
 	return &ControlConn{
@@ -81,7 +82,7 @@ func NewControlConn(ctx context.Context, defaultPort int, connConfig ConnectionC
 		password:                 password,
 		counterLock:              &sync.RWMutex{},
 		consecutiveFailures:      0,
-		OpenConnectionTimeout:    time.Duration(conf.ClusterConnectionTimeoutMs) * time.Millisecond,
+		OpenConnectionTimeout:    time.Duration(connConfig.GetConnectionTimeoutMs()) * time.Millisecond,
 		cqlConnLock:              &sync.Mutex{},
 		topologyLock:             &sync.RWMutex{},
 		orderedHostsInLocalDc:    nil,
@@ -450,7 +451,7 @@ func (cc *ControlConn) RefreshHosts(conn CqlConnection, ctx context.Context) ([]
 		virtualHosts = make([]*VirtualHost, 0)
 	}
 
-	log.Infof("Refreshed %v orderedHostsInLocalDc. Assigned Hosts: %v, VirtualHosts: %v, ProxyIndex: %v",
+	log.Infof("Refreshed %v orderedHostsInLocalDc. Assigned Hosts: %v, VirtualHosts: %v, ProxyTopologyIndex: %v",
 		cc.connConfig.GetClusterType(), assignedHosts, virtualHosts, cc.topologyConfig.Index)
 
 	cc.topologyLock.Lock()
@@ -473,7 +474,7 @@ func (cc *ControlConn) RefreshHosts(conn CqlConnection, ctx context.Context) ([]
 		}
 
 		for _, removedHost := range removedHosts {
-			for observer, _ := range cc.protocolEventSubscribers {
+			for observer := range cc.protocolEventSubscribers {
 				observer.OnHostRemoved(removedHost)
 			}
 		}
@@ -586,7 +587,7 @@ func (cc *ControlConn) setConn(oldConn CqlConnection, newConn CqlConnection, new
 		cc.currentContactPoint = newContactPoint
 		authEnabled, err := newConn.IsAuthEnabled()
 		if err != nil {
-			log.Errorf("Error detected when trying to set whether auth is enabled or not in control connection, " +
+			log.Errorf("Error detected when trying to set whether auth is enabled or not in control connection, "+
 				"this is a bug, please report: %v", err)
 		} else {
 			cc.authEnabled.Store(authEnabled)
@@ -667,7 +668,7 @@ func shuffleHosts(rnd *rand.Rand, hosts []*Host) {
 	})
 }
 
-func computeVirtualHosts(topologyConfig *config.TopologyConfig, orderedHosts []*Host) ([]*VirtualHost, error) {
+func computeVirtualHosts(topologyConfig *common.TopologyConfig, orderedHosts []*Host) ([]*VirtualHost, error) {
 	proxyAddresses := topologyConfig.Addresses
 	numTokens := topologyConfig.NumTokens
 	twoPow64 := new(big.Int).Exp(big.NewInt(2), big.NewInt(64), nil)
@@ -734,7 +735,7 @@ func filterHosts(hosts []*Host, currentDc string, connConfig ConnectionConfig, l
 	if datacenter != "" {
 		filteredOrderedHosts := filterHostsByDatacenter(datacenter, hosts)
 		if len(filteredOrderedHosts) == 0 {
-			log.Warnf("datacenter was set to '%v' but no hosts were found with that DC " +
+			log.Warnf("datacenter was set to '%v' but no hosts were found with that DC "+
 				"so falling back to local host's DC '%v' (hosts=%v)",
 				datacenter, localHost.Datacenter, hosts)
 		} else {

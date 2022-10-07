@@ -33,7 +33,7 @@ func NewCqlClient(addr string, port int, username string, password string, conne
 	}
 
 	return &Client{
-		CqlClient: clt,
+		CqlClient:     clt,
 		CqlConnection: clientConn,
 	}, nil
 }

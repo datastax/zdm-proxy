@@ -1,22 +1,22 @@
 package prommetrics
 
 import (
+	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
-	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
 )
 
-func TestNewPrometheusCloudgateProxyMetrics(t *testing.T) {
+func TestNewPrometheusZdmProxyMetrics(t *testing.T) {
 	actual := NewPrometheusMetricFactory(prometheus.NewRegistry())
 	assert.NotNil(t, actual)
 	assert.Empty(t, actual.registeredCollectors)
 }
 
-func TestPrometheusCloudgateProxyMetrics_AddCounter(t *testing.T) {
+func TestPrometheusZdmProxyMetrics_AddCounter(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	counterMetric := newTestMetric("test_counter")
 	handler := NewPrometheusMetricFactory(registry)
@@ -38,7 +38,7 @@ func TestPrometheusCloudgateProxyMetrics_AddCounter(t *testing.T) {
 	assert.Len(t, gather, 1)
 }
 
-func TestPrometheusCloudgateProxyMetrics_AddCounterWithLabels(t *testing.T) {
+func TestPrometheusZdmProxyMetrics_AddCounterWithLabels(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	counterMetric := newTestMetricWithLabels("test_counter", map[string]string{"counter_type": "type1"})
 	handler := NewPrometheusMetricFactory(registry)
@@ -67,7 +67,7 @@ func TestPrometheusCloudgateProxyMetrics_AddCounterWithLabels(t *testing.T) {
 	assert.Len(t, gather, 1)
 }
 
-func TestPrometheusCloudgateProxyMetrics_AddGauge(t *testing.T) {
+func TestPrometheusZdmProxyMetrics_AddGauge(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	gaugeMetric := newTestMetric("test_gauge")
 	handler := NewPrometheusMetricFactory(registry)
@@ -89,7 +89,7 @@ func TestPrometheusCloudgateProxyMetrics_AddGauge(t *testing.T) {
 	assert.Len(t, gather, 1)
 }
 
-func TestPrometheusCloudgateProxyMetrics_AddGaugeWithLabels(t *testing.T) {
+func TestPrometheusZdmProxyMetrics_AddGaugeWithLabels(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	gaugeMetric := newTestMetricWithLabels("test_gauge_with_labels", map[string]string{"gauge_type": "gauge1"})
 	handler := NewPrometheusMetricFactory(registry)
@@ -120,7 +120,7 @@ func TestPrometheusCloudgateProxyMetrics_AddGaugeWithLabels(t *testing.T) {
 	assert.Len(t, gather, 1)
 }
 
-func TestPrometheusCloudgateProxyMetrics_AddGaugeFunction(t *testing.T) {
+func TestPrometheusZdmProxyMetrics_AddGaugeFunction(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	gaugeFuncMetric := newTestMetric("test_gauge_func")
 	handler := NewPrometheusMetricFactory(registry)
@@ -142,7 +142,7 @@ func TestPrometheusCloudgateProxyMetrics_AddGaugeFunction(t *testing.T) {
 	assert.Len(t, gather, 1)
 }
 
-func TestPrometheusCloudgateProxyMetrics_AddHistogram(t *testing.T) {
+func TestPrometheusZdmProxyMetrics_AddHistogram(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	histogramMetric := newTestMetric("test_histogram")
 	handler := NewPrometheusMetricFactory(registry)
@@ -164,7 +164,7 @@ func TestPrometheusCloudgateProxyMetrics_AddHistogram(t *testing.T) {
 	assert.Len(t, gather, 1)
 }
 
-func TestPrometheusCloudgateProxyMetrics_AddHistogramWithLabels(t *testing.T) {
+func TestPrometheusZdmProxyMetrics_AddHistogramWithLabels(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	histogramMetric := newTestMetricWithLabels("test_histogram_with_labels", map[string]string{"label1": "value1"})
 	handler := NewPrometheusMetricFactory(registry)
@@ -197,7 +197,7 @@ func TestPrometheusCloudgateProxyMetrics_AddHistogramWithLabels(t *testing.T) {
 	assert.Len(t, gather, 1)
 }
 
-func TestPrometheusCloudgateProxyMetrics_IncrementCountByOne_Counter(t *testing.T) {
+func TestPrometheusZdmProxyMetrics_IncrementCountByOne_Counter(t *testing.T) {
 	handler := NewPrometheusMetricFactory(prometheus.NewRegistry())
 	counterMetric := newTestMetric("test_add_count_by_one_counter")
 	c, err := handler.GetOrCreateCounter(counterMetric)
@@ -208,7 +208,7 @@ func TestPrometheusCloudgateProxyMetrics_IncrementCountByOne_Counter(t *testing.
 	assert.EqualValues(t, 1, value)
 }
 
-func TestPrometheusCloudgateProxyMetrics_IncrementCountByOne_Gauge(t *testing.T) {
+func TestPrometheusZdmProxyMetrics_IncrementCountByOne_Gauge(t *testing.T) {
 	handler := NewPrometheusMetricFactory(prometheus.NewRegistry())
 	gaugeMetric := newTestMetric("test_add_count_by_one_counter")
 	g, err := handler.GetOrCreateGauge(gaugeMetric)
@@ -219,7 +219,7 @@ func TestPrometheusCloudgateProxyMetrics_IncrementCountByOne_Gauge(t *testing.T)
 	assert.EqualValues(t, 1, value)
 }
 
-func TestPrometheusCloudgateProxyMetrics_IncrementCountByOne_Counter_Labels(t *testing.T) {
+func TestPrometheusZdmProxyMetrics_IncrementCountByOne_Counter_Labels(t *testing.T) {
 	handler := NewPrometheusMetricFactory(prometheus.NewRegistry())
 	counterMetric := newTestMetricWithLabels("test_add_count_by_one_counter_labels", map[string]string{"l": "v"})
 	c, err := handler.GetOrCreateCounter(counterMetric)
@@ -230,9 +230,9 @@ func TestPrometheusCloudgateProxyMetrics_IncrementCountByOne_Counter_Labels(t *t
 	assert.EqualValues(t, 1, value)
 }
 
-func TestPrometheusCloudgateProxyMetrics_IncrementCountByOne_Gauge_Labels(t *testing.T) {
+func TestPrometheusZdmProxyMetrics_IncrementCountByOne_Gauge_Labels(t *testing.T) {
 	handler := NewPrometheusMetricFactory(prometheus.NewRegistry())
-	gaugeMetric := newTestMetricWithLabels("test_add_count_by_one_counter_labels", map[string]string{"label":"value"})
+	gaugeMetric := newTestMetricWithLabels("test_add_count_by_one_counter_labels", map[string]string{"label": "value"})
 	g, err := handler.GetOrCreateGauge(gaugeMetric)
 	assert.Nil(t, err)
 	g.Add(1)
@@ -241,7 +241,7 @@ func TestPrometheusCloudgateProxyMetrics_IncrementCountByOne_Gauge_Labels(t *tes
 	assert.EqualValues(t, 1, value)
 }
 
-func TestPrometheusCloudgateProxyMetrics_DecrementCountByOne(t *testing.T) {
+func TestPrometheusZdmProxyMetrics_DecrementCountByOne(t *testing.T) {
 	handler := NewPrometheusMetricFactory(prometheus.NewRegistry())
 	gaugeMetric := newTestMetric("test_decrement_count_gauge")
 	g, err := handler.GetOrCreateGauge(gaugeMetric)
@@ -252,7 +252,7 @@ func TestPrometheusCloudgateProxyMetrics_DecrementCountByOne(t *testing.T) {
 	assert.EqualValues(t, -1, value)
 }
 
-func TestPrometheusCloudgateProxyMetrics_DecrementCountByOne_Labels(t *testing.T) {
+func TestPrometheusZdmProxyMetrics_DecrementCountByOne_Labels(t *testing.T) {
 	handler := NewPrometheusMetricFactory(prometheus.NewRegistry())
 	gaugeMetric := newTestMetricWithLabels("test_decrement_count_gauge_labels", map[string]string{"label": "value"})
 	g, err := handler.GetOrCreateGauge(gaugeMetric)
@@ -263,7 +263,7 @@ func TestPrometheusCloudgateProxyMetrics_DecrementCountByOne_Labels(t *testing.T
 	assert.EqualValues(t, -1, value)
 }
 
-func TestPrometheusCloudgateProxyMetrics_TrackInHistogram(t *testing.T) {
+func TestPrometheusZdmProxyMetrics_TrackInHistogram(t *testing.T) {
 	handler := NewPrometheusMetricFactory(prometheus.NewRegistry())
 	histogramMetric := newTestMetric("test_histogram")
 	h, err := handler.GetOrCreateHistogram(histogramMetric, nil)
@@ -279,7 +279,7 @@ func TestPrometheusCloudgateProxyMetrics_TrackInHistogram(t *testing.T) {
 	assert.InDelta(t, 500, sum, 5)
 }
 
-func TestPrometheusCloudgateProxyMetrics_TrackInHistogram_WithLabels(t *testing.T) {
+func TestPrometheusZdmProxyMetrics_TrackInHistogram_WithLabels(t *testing.T) {
 	handler := NewPrometheusMetricFactory(prometheus.NewRegistry())
 	histogramMetric := newTestMetricWithLabels("test_histogram_with_labels", map[string]string{"l": "v"})
 	h, err := handler.GetOrCreateHistogram(histogramMetric, nil)
@@ -295,7 +295,7 @@ func TestPrometheusCloudgateProxyMetrics_TrackInHistogram_WithLabels(t *testing.
 	assert.InDelta(t, 500, sum, 5)
 }
 
-func TestPrometheusCloudgateProxyMetrics_UnregisterAllMetrics(t *testing.T) {
+func TestPrometheusZdmProxyMetrics_UnregisterAllMetrics(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	handler := NewPrometheusMetricFactory(registry)
 	counterMetric := newTestMetric("test_counter")

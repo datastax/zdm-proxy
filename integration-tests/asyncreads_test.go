@@ -7,11 +7,11 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/gocql/gocql"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
 	"github.com/datastax/zdm-proxy/integration-tests/utils"
 	"github.com/datastax/zdm-proxy/proxy/pkg/config"
+	"github.com/gocql/gocql"
 	"github.com/rs/zerolog"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -23,9 +23,8 @@ import (
 
 func TestAsyncReadError(t *testing.T) {
 	c := setup.NewTestConfig("", "")
-	c.DualReadsEnabled = true
-	c.AsyncReadsOnSecondary = true
-	testSetup, err := setup.NewSimulacronTestSetupWithConfig(c)
+	c.ReadMode = config.ReadModeDualAsyncOnSecondary
+	testSetup, err := setup.NewSimulacronTestSetupWithConfig(t, c)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
@@ -70,9 +69,8 @@ func TestAsyncReadError(t *testing.T) {
 
 func TestAsyncReadHighLatency(t *testing.T) {
 	c := setup.NewTestConfig("", "")
-	c.DualReadsEnabled = true
-	c.AsyncReadsOnSecondary = true
-	testSetup, err := setup.NewSimulacronTestSetupWithConfig(c)
+	c.ReadMode = config.ReadModeDualAsyncOnSecondary
+	testSetup, err := setup.NewSimulacronTestSetupWithConfig(t, c)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
@@ -119,9 +117,8 @@ func TestAsyncReadHighLatency(t *testing.T) {
 
 func TestAsyncExhaustedStreamIds(t *testing.T) {
 	c := setup.NewTestConfig("", "")
-	c.DualReadsEnabled = true
-	c.AsyncReadsOnSecondary = true
-	testSetup, err := setup.NewSimulacronTestSetupWithConfig(c)
+	c.ReadMode = config.ReadModeDualAsyncOnSecondary
+	testSetup, err := setup.NewSimulacronTestSetupWithConfig(t, c)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
@@ -290,7 +287,7 @@ func TestAsyncReadsRequestTypes(t *testing.T) {
 	}
 
 	testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodesAndConfig(
-		false, false,1, nil)
+		t, false, false, 1, nil)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
@@ -306,7 +303,7 @@ func TestAsyncReadsRequestTypes(t *testing.T) {
 		cqlClientConn, err := client.ConnectAndInit(context.Background(), primitive.ProtocolVersion4, 0)
 		require.Nil(t, err)
 		defer cqlClientConn.Close()
-		
+
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				err = testSetup.Origin.DeleteLogs()
@@ -347,10 +344,9 @@ func TestAsyncReadsRequestTypes(t *testing.T) {
 					require.Fail(t, "unexpected request type")
 				}
 
-
 				sentOrigin := 0
 				sentTarget := 0
-				if conf.ForwardReadsToTarget {
+				if conf.PrimaryCluster == config.PrimaryClusterTarget {
 					if tt.sentAsync {
 						sentOrigin++
 					}
@@ -399,7 +395,7 @@ func TestAsyncReadsRequestTypes(t *testing.T) {
 						}
 						sentOrigin = 0
 						sentTarget = 0
-						if conf.ForwardReadsToTarget {
+						if conf.PrimaryCluster == config.PrimaryClusterTarget {
 							if tt.sentExecuteToAsync {
 								sentOrigin++
 							}
@@ -428,22 +424,21 @@ func TestAsyncReadsRequestTypes(t *testing.T) {
 						}
 					}
 					return nil, false
-				}, 15, 100 * time.Millisecond)
+				}, 15, 100*time.Millisecond)
 
 			})
 		}
 	}
 
 	c := setup.NewTestConfig(testSetup.Origin.GetInitialContactPoint(), testSetup.Target.GetInitialContactPoint())
-	c.DualReadsEnabled = true
-	c.AsyncReadsOnSecondary = true
+	c.ReadMode = config.ReadModeDualAsyncOnSecondary
 
-	c.ForwardReadsToTarget = true
+	c.PrimaryCluster = config.PrimaryClusterTarget
 	t.Run("ForwardReadsToTarget", func(t *testing.T) {
 		testFunc(t, c)
 	})
 
-	c.ForwardReadsToTarget = false
+	c.PrimaryCluster = config.PrimaryClusterOrigin
 	t.Run("ForwardReadsToOrigin", func(t *testing.T) {
 		testFunc(t, c)
 	})

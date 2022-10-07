@@ -10,9 +10,9 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/google/uuid"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"regexp"
 	"testing"
@@ -144,9 +144,9 @@ func TestNowFunctionReplacementSimpleStatement(t *testing.T) {
 		var err error
 
 		if enableNowReplacement {
-			simulacronSetup, err = createSimulacronTestSetupWithServerSideFunctionReplacement()
+			simulacronSetup, err = createSimulacronTestSetupWithServerSideFunctionReplacement(t)
 		} else {
-			simulacronSetup, err = createSimulacronTestSetupWithoutServerSideFunctionReplacement()
+			simulacronSetup, err = createSimulacronTestSetupWithoutServerSideFunctionReplacement(t)
 		}
 
 		require.Nil(t, err)
@@ -214,11 +214,11 @@ func TestNowFunctionReplacementSimpleStatement(t *testing.T) {
 
 	}
 
-	t.Run("now replacement enabled", func (t *testing.T) {
+	t.Run("now replacement enabled", func(t *testing.T) {
 		runTests(tests, true, t)
 	})
 
-	t.Run("now replacement disabled", func (t *testing.T) {
+	t.Run("now replacement disabled", func(t *testing.T) {
 		runTests(tests, false, t)
 	})
 }
@@ -255,7 +255,7 @@ func TestNowFunctionReplacementPreparedStatement(t *testing.T) {
 		{
 			name:          "Insert_Named",
 			originalQuery: "INSERT INTO ks.table (name, id) VALUES (:nameparam, now())",
-			modifiedQuery: "INSERT INTO ks.table (name, id) VALUES (:nameparam, :cloudgate__now)",
+			modifiedQuery: "INSERT INTO ks.table (name, id) VALUES (:nameparam, :zdm__now)",
 			params: []*param{
 				{
 					name:            "nameparam",
@@ -266,7 +266,7 @@ func TestNowFunctionReplacementPreparedStatement(t *testing.T) {
 					simulacronType:  simulacron.DataTypeText,
 				},
 				{
-					name:            "cloudgate__now",
+					name:            "zdm__now",
 					isReplacedNow:   true,
 					value:           primitive.UUID(timeUuidStart),
 					valueSimulacron: timeUuidStart.String(),
@@ -309,7 +309,7 @@ func TestNowFunctionReplacementPreparedStatement(t *testing.T) {
 		{
 			name:          "Update_Named",
 			originalQuery: "UPDATE blah SET a = :aparam, b = now() WHERE a = now()",
-			modifiedQuery: "UPDATE blah SET a = :aparam, b = :cloudgate__now WHERE a = :cloudgate__now",
+			modifiedQuery: "UPDATE blah SET a = :aparam, b = :zdm__now WHERE a = :zdm__now",
 			params: []*param{
 				{
 					name:            "aparam",
@@ -320,7 +320,7 @@ func TestNowFunctionReplacementPreparedStatement(t *testing.T) {
 					simulacronType:  simulacron.DataTypeText,
 				},
 				{
-					name:            "cloudgate__now",
+					name:            "zdm__now",
 					isReplacedNow:   true,
 					value:           primitive.UUID(timeUuidStart),
 					valueSimulacron: timeUuidStart.String(),
@@ -363,7 +363,7 @@ func TestNowFunctionReplacementPreparedStatement(t *testing.T) {
 		{
 			name:          "Update_Conditional_Named",
 			originalQuery: "UPDATE blah SET a = :aparam, b = 123 WHERE a = now() IF b = now()",
-			modifiedQuery: "UPDATE blah SET a = :aparam, b = 123 WHERE a = :cloudgate__now IF b = :cloudgate__now",
+			modifiedQuery: "UPDATE blah SET a = :aparam, b = 123 WHERE a = :zdm__now IF b = :zdm__now",
 			params: []*param{
 				{
 					name:            "aparam",
@@ -374,7 +374,7 @@ func TestNowFunctionReplacementPreparedStatement(t *testing.T) {
 					simulacronType:  simulacron.DataTypeText,
 				},
 				{
-					name:            "cloudgate__now",
+					name:            "zdm__now",
 					isReplacedNow:   true,
 					value:           primitive.UUID(timeUuidStart),
 					valueSimulacron: timeUuidStart.String(),
@@ -425,7 +425,7 @@ func TestNowFunctionReplacementPreparedStatement(t *testing.T) {
 		{
 			name:          "Update_Complex_Named",
 			originalQuery: "UPDATE blah SET a[:aparam] = :avalueparam, b[now()] = 123, c[1] = now() WHERE a = 123",
-			modifiedQuery: "UPDATE blah SET a[:aparam] = :avalueparam, b[:cloudgate__now] = 123, c[1] = :cloudgate__now WHERE a = 123",
+			modifiedQuery: "UPDATE blah SET a[:aparam] = :avalueparam, b[:zdm__now] = 123, c[1] = :zdm__now WHERE a = 123",
 			params: []*param{
 				{
 					name:            "aparam",
@@ -444,7 +444,7 @@ func TestNowFunctionReplacementPreparedStatement(t *testing.T) {
 					simulacronType:  simulacron.DataTypeText,
 				},
 				{
-					name:            "cloudgate__now",
+					name:            "zdm__now",
 					isReplacedNow:   true,
 					value:           primitive.UUID(timeUuidStart),
 					valueSimulacron: timeUuidStart.String(),
@@ -582,13 +582,13 @@ func TestNowFunctionReplacementPreparedStatement(t *testing.T) {
 				"c IN (:cparam, now(), 2) AND " +
 				"a = now()",
 			modifiedQuery: "UPDATE blah SET a = :aparam, b = 123 " +
-				"WHERE f[:cloudgate__now] = :fparam " +
+				"WHERE f[:zdm__now] = :fparam " +
 				"IF " +
-				"g[123] IN (2, 3, :gparam, :cloudgate__now, :gtwoparam, :cloudgate__now) AND " +
+				"g[123] IN (2, 3, :gparam, :zdm__now, :gtwoparam, :zdm__now) AND " +
 				"j = :aparam AND " +
 				"d IN :dparam AND " +
-				"c IN (:cparam, :cloudgate__now, 2) AND " +
-				"a = :cloudgate__now",
+				"c IN (:cparam, :zdm__now, 2) AND " +
+				"a = :zdm__now",
 			params: []*param{
 
 				{
@@ -600,7 +600,7 @@ func TestNowFunctionReplacementPreparedStatement(t *testing.T) {
 					simulacronType:  simulacron.DataTypeText,
 				},
 				{
-					name:            "cloudgate__now",
+					name:            "zdm__now",
 					isReplacedNow:   true,
 					value:           primitive.UUID(timeUuidStart),
 					valueSimulacron: timeUuidStart.String(),
@@ -808,14 +808,14 @@ func TestNowFunctionReplacementPreparedStatement(t *testing.T) {
 				"(a, b, c) > (1, now(), :c_last_param)",
 			modifiedQuery: "UPDATE blah " +
 				"USING TIMESTAMP :ts AND TTL :ttl " +
-				"SET a = :aparam, b = :cloudgate__now " +
+				"SET a = :aparam, b = :zdm__now " +
 				"WHERE " +
 				"(a IN :a_col_param) AND " +
-				"(b IN (:cloudgate__now, :bparam)) AND " +
+				"(b IN (:zdm__now, :bparam)) AND " +
 				"(a, b, c) IN :abc_col_param AND " +
-				"(a, b, c) IN ((1, 2, :cparam), (:cloudgate__now, 5, 6)) AND " +
+				"(a, b, c) IN ((1, 2, :cparam), (:zdm__now, 5, 6)) AND " +
 				"(a, b, c) IN (:a_param, :b_param, :c_param) AND " +
-				"(a, b, c) > (1, :cloudgate__now, :c_last_param)",
+				"(a, b, c) > (1, :zdm__now, :c_last_param)",
 			params: []*param{
 				{
 					name:            "ts",
@@ -842,7 +842,7 @@ func TestNowFunctionReplacementPreparedStatement(t *testing.T) {
 					simulacronType:  simulacron.DataTypeText,
 				},
 				{
-					name:            "cloudgate__now",
+					name:            "zdm__now",
 					isReplacedNow:   true,
 					value:           primitive.UUID(timeUuidStart),
 					valueSimulacron: timeUuidStart.String(),
@@ -951,7 +951,7 @@ func TestNowFunctionReplacementPreparedStatement(t *testing.T) {
 		{
 			name:          "Delete_Using_Named",
 			originalQuery: "DELETE FROM blah USING TIMESTAMP :ts WHERE b = 123 AND c = :cparam AND a = now()",
-			modifiedQuery: "DELETE FROM blah USING TIMESTAMP :ts WHERE b = 123 AND c = :cparam AND a = :cloudgate__now",
+			modifiedQuery: "DELETE FROM blah USING TIMESTAMP :ts WHERE b = 123 AND c = :cparam AND a = :zdm__now",
 			params: []*param{
 				{
 					name:            "ts",
@@ -970,7 +970,7 @@ func TestNowFunctionReplacementPreparedStatement(t *testing.T) {
 					simulacronType:  simulacron.DataTypeInt,
 				},
 				{
-					name:            "cloudgate__now",
+					name:            "zdm__now",
 					isReplacedNow:   true,
 					value:           primitive.UUID(timeUuidStart),
 					valueSimulacron: timeUuidStart.String(),
@@ -1028,7 +1028,7 @@ func TestNowFunctionReplacementPreparedStatement(t *testing.T) {
 		{
 			name:          "Delete_Conditional_Named",
 			originalQuery: "DELETE a FROM blah WHERE b = :bparam AND a = now() IF b = now()",
-			modifiedQuery: "DELETE a FROM blah WHERE b = :bparam AND a = :cloudgate__now IF b = :cloudgate__now",
+			modifiedQuery: "DELETE a FROM blah WHERE b = :bparam AND a = :zdm__now IF b = :zdm__now",
 			params: []*param{
 				{
 					name:            "bparam",
@@ -1039,7 +1039,7 @@ func TestNowFunctionReplacementPreparedStatement(t *testing.T) {
 					simulacronType:  simulacron.DataTypeText,
 				},
 				{
-					name:            "cloudgate__now",
+					name:            "zdm__now",
 					isReplacedNow:   true,
 					value:           primitive.UUID(timeUuidStart),
 					valueSimulacron: timeUuidStart.String(),
@@ -1082,7 +1082,7 @@ func TestNowFunctionReplacementPreparedStatement(t *testing.T) {
 		{
 			name:          "Delete_Complex_Named",
 			originalQuery: "DELETE c[1], a[:aparam], b[now()] FROM blah WHERE b = 123 AND a = now()",
-			modifiedQuery: "DELETE c[1], a[:aparam], b[:cloudgate__now] FROM blah WHERE b = 123 AND a = :cloudgate__now",
+			modifiedQuery: "DELETE c[1], a[:aparam], b[:zdm__now] FROM blah WHERE b = 123 AND a = :zdm__now",
 			params: []*param{
 				{
 					name:            "aparam",
@@ -1093,7 +1093,7 @@ func TestNowFunctionReplacementPreparedStatement(t *testing.T) {
 					simulacronType:  simulacron.DataTypeText,
 				},
 				{
-					name:            "cloudgate__now",
+					name:            "zdm__now",
 					isReplacedNow:   true,
 					value:           primitive.UUID(timeUuidStart),
 					valueSimulacron: timeUuidStart.String(),
@@ -1279,8 +1279,8 @@ func TestNowFunctionReplacementPreparedStatement(t *testing.T) {
 				"UPDATE blahh SET a = :a2param, b = 123 WHERE a = now() IF b = now() " +
 				"APPLY BATCH;",
 			modifiedQuery: "BEGIN UNLOGGED BATCH USING TIMESTAMP :ts AND TTL :ttl " +
-				"UPDATE blah USING TTL :ts1 AND TIMESTAMP :ttl1 SET a = :aparam, b = :cloudgate__now WHERE a = :cloudgate__now; " +
-				"UPDATE blahh SET a = :a2param, b = 123 WHERE a = :cloudgate__now IF b = :cloudgate__now " +
+				"UPDATE blah USING TTL :ts1 AND TIMESTAMP :ttl1 SET a = :aparam, b = :zdm__now WHERE a = :zdm__now; " +
+				"UPDATE blahh SET a = :a2param, b = 123 WHERE a = :zdm__now IF b = :zdm__now " +
 				"APPLY BATCH;",
 			params: []*param{
 				{
@@ -1324,7 +1324,7 @@ func TestNowFunctionReplacementPreparedStatement(t *testing.T) {
 					simulacronType:  simulacron.DataTypeText,
 				},
 				{
-					name:            "cloudgate__now",
+					name:            "zdm__now",
 					isReplacedNow:   true,
 					value:           primitive.UUID(timeUuidStart),
 					valueSimulacron: timeUuidStart.String(),
@@ -1348,9 +1348,9 @@ func TestNowFunctionReplacementPreparedStatement(t *testing.T) {
 		var err error
 
 		if enableNowReplacement {
-			simulacronSetup, err = createSimulacronTestSetupWithServerSideFunctionReplacement()
+			simulacronSetup, err = createSimulacronTestSetupWithServerSideFunctionReplacement(t)
 		} else {
-			simulacronSetup, err = createSimulacronTestSetupWithoutServerSideFunctionReplacement()
+			simulacronSetup, err = createSimulacronTestSetupWithoutServerSideFunctionReplacement(t)
 		}
 		require.Nil(t, err)
 		defer simulacronSetup.Cleanup()
@@ -1589,11 +1589,11 @@ func TestNowFunctionReplacementPreparedStatement(t *testing.T) {
 		}
 	}
 
-	t.Run("now replacement enabled", func (t *testing.T) {
+	t.Run("now replacement enabled", func(t *testing.T) {
 		runTests(tests, true, &timeUuidStart, t)
 	})
 
-	t.Run("now replacement disabled", func (t *testing.T) {
+	t.Run("now replacement disabled", func(t *testing.T) {
 		runTests(tests, false, nil, t)
 	})
 
@@ -1640,7 +1640,7 @@ func TestNowFunctionReplacementBatchStatement(t *testing.T) {
 				},
 				{
 					prepared:      true,
-					originalQuery:         "DELETE c[1], a[?], b[now()] FROM blah WHERE b = 123 AND a = now()",
+					originalQuery: "DELETE c[1], a[?], b[now()] FROM blah WHERE b = 123 AND a = now()",
 					modifiedQuery: "DELETE c[1], a[?], b[?] FROM blah WHERE b = 123 AND a = ?",
 					params: []*param{
 						{
@@ -2163,9 +2163,9 @@ func TestNowFunctionReplacementBatchStatement(t *testing.T) {
 		var err error
 
 		if enableNowReplacement {
-			simulacronSetup, err = createSimulacronTestSetupWithServerSideFunctionReplacement()
+			simulacronSetup, err = createSimulacronTestSetupWithServerSideFunctionReplacement(t)
 		} else {
-			simulacronSetup, err = createSimulacronTestSetupWithoutServerSideFunctionReplacement()
+			simulacronSetup, err = createSimulacronTestSetupWithoutServerSideFunctionReplacement(t)
 		}
 
 		require.Nil(t, err)
@@ -2411,28 +2411,28 @@ func TestNowFunctionReplacementBatchStatement(t *testing.T) {
 
 	}
 
-	t.Run("now replacement enabled", func (t *testing.T) {
+	t.Run("now replacement enabled", func(t *testing.T) {
 		runTests(tests, true, &timeUuidStart, t)
 	})
 
-	t.Run("now replacement disabled", func (t *testing.T) {
+	t.Run("now replacement disabled", func(t *testing.T) {
 		runTests(tests, false, nil, t)
 	})
 }
 
-func createSimulacronTestSetupWithServerSideFunctionReplacement() (*setup.SimulacronTestSetup, error) {
-	return createSimulacronTestSetupWithServerSideFunctionReplacementConfig(true)
+func createSimulacronTestSetupWithServerSideFunctionReplacement(t *testing.T) (*setup.SimulacronTestSetup, error) {
+	return createSimulacronTestSetupWithServerSideFunctionReplacementConfig(t, true)
 }
 
-func createSimulacronTestSetupWithoutServerSideFunctionReplacement() (*setup.SimulacronTestSetup, error) {
-	return createSimulacronTestSetupWithServerSideFunctionReplacementConfig(false)
+func createSimulacronTestSetupWithoutServerSideFunctionReplacement(t *testing.T) (*setup.SimulacronTestSetup, error) {
+	return createSimulacronTestSetupWithServerSideFunctionReplacementConfig(t, false)
 }
 
-func createSimulacronTestSetupWithServerSideFunctionReplacementConfig(replaceServerSideFunctions bool) (*setup.SimulacronTestSetup, error) {
+func createSimulacronTestSetupWithServerSideFunctionReplacementConfig(t *testing.T, replaceServerSideFunctions bool) (*setup.SimulacronTestSetup, error) {
 	originAddress := "127.0.1.1"
 	targetAddress := "127.0.1.2"
 
 	conf := setup.NewTestConfig(originAddress, targetAddress)
-	conf.ReplaceServerSideFunctions = replaceServerSideFunctions
-	return setup.NewSimulacronTestSetupWithConfig(conf)
+	conf.ReplaceCqlFunctions = replaceServerSideFunctions
+	return setup.NewSimulacronTestSetupWithConfig(t, conf)
 }

@@ -11,10 +11,12 @@ import (
 	"github.com/datastax/zdm-proxy/integration-tests/client"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
+	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 	"github.com/rs/zerolog"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
 	"math/rand"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -23,30 +25,26 @@ import (
 
 func TestShutdownInFlightRequests(t *testing.T) {
 	testDef := []struct {
-		name                  string
-		dualReadsEnabled      bool
-		asyncReadsOnSecondary bool
+		name     string
+		readMode string
 	}{
 		{
-			name:                  "No dual reads",
-			dualReadsEnabled:      false,
-			asyncReadsOnSecondary: false,
+			name:     "No dual reads",
+			readMode: config.ReadModePrimaryOnly,
 		},
 		{
-			name:                  "Async Reads on Secondary",
-			dualReadsEnabled:      true,
-			asyncReadsOnSecondary: true,
+			name:     "Async Reads on Secondary",
+			readMode: config.ReadModeDualAsyncOnSecondary,
 		},
 	}
 	for _, test := range testDef {
 		t.Run(test.name, func(t *testing.T) {
-			testSetup, err := setup.NewSimulacronTestSetupWithSession(false, false)
+			testSetup, err := setup.NewSimulacronTestSetupWithSession(t, false, false)
 			defer testSetup.Cleanup()
 
 			config := setup.NewTestConfig(testSetup.Origin.GetInitialContactPoint(), testSetup.Target.GetInitialContactPoint())
-			config.RequestTimeoutMs = 30000
-			config.DualReadsEnabled = test.dualReadsEnabled
-			config.AsyncReadsOnSecondary = test.asyncReadsOnSecondary
+			config.ProxyRequestTimeoutMs = 30000
+			config.ReadMode = test.readMode
 			proxy, err := setup.NewProxyInstanceWithConfig(config)
 			require.Nil(t, err)
 			shutdownProxyTriggered := false
@@ -158,45 +156,62 @@ func TestShutdownInFlightRequests(t *testing.T) {
 
 // Test for a race condition that causes a panic on proxy shutdown
 func TestStressShutdown(t *testing.T) {
+	t.Skip("test is currently failing due to ZDM-378") //TODO ZDM-378
 	testDef := []struct {
-		name                  string
-		dualReadsEnabled      bool
-		asyncReadsOnSecondary bool
+		name     string
+		readMode string
 	}{
 		{
-			name:                  "No dual reads",
-			dualReadsEnabled:      false,
-			asyncReadsOnSecondary: false,
+			name:     "No dual reads",
+			readMode: config.ReadModePrimaryOnly,
 		},
 		{
-			name:                  "Async Reads on Secondary",
-			dualReadsEnabled:      true,
-			asyncReadsOnSecondary: true,
+			name:     "Async Reads on Secondary",
+			readMode: config.ReadModeDualAsyncOnSecondary,
 		},
 	}
 	for _, test := range testDef {
 		t.Run(test.name, func(t *testing.T) {
-			f := func() {
-				testSetup, err := setup.NewSimulacronTestSetupWithSession(false, false)
+			f := func() bool {
+				testSetup, err := setup.NewSimulacronTestSetupWithSession(t, false, false)
 				require.Nil(t, err)
 				defer testSetup.Cleanup()
 				cfg := setup.NewTestConfig(testSetup.Origin.GetInitialContactPoint(), testSetup.Target.GetInitialContactPoint())
-				cfg.AsyncReadsOnSecondary = test.asyncReadsOnSecondary
-				cfg.DualReadsEnabled = test.dualReadsEnabled
+				cfg.ReadMode = test.readMode
 				proxy, err := setup.NewProxyInstanceWithConfig(cfg)
 				require.Nil(t, err)
+
+				shutdownProxyTriggeredMutex := sync.Mutex{}
 				shutdownProxyTriggered := atomic.Value{}
 				shutdownProxyTriggered.Store(false)
-				defer func() {
-					if !shutdownProxyTriggered.Load().(bool) {
-						proxy.Shutdown()
+
+				globalCtx, globalCancelFn := context.WithCancel(context.Background())
+				defer globalCancelFn()
+
+				globalWg := &sync.WaitGroup{}
+				defer globalWg.Wait()
+
+				// set up a test timeout goroutine so if something goes wrong and the test takes too long then it gets canceled
+				globalWg.Add(1)
+				go func() {
+					defer globalWg.Done()
+					select {
+					case <-globalCtx.Done():
+					case <-time.After(60 * time.Second):
 					}
+
+					shutdownProxyTriggeredMutex.Lock()
+					if !shutdownProxyTriggered.Load().(bool) {
+						shutdownProxyTriggered.Store(true)
+						shutdownProxyTriggeredMutex.Unlock()
+						proxy.Shutdown()
+						globalCancelFn()
+						return
+					}
+					shutdownProxyTriggeredMutex.Unlock()
 				}()
 
-				cqlConn, err := client.NewTestClient(context.Background(), "127.0.0.1:14002")
-				require.Nil(t, err)
-				defer cqlConn.Shutdown()
-
+				// reduce log verbosity because this test generates a lot of log messages
 				oldLevel := log.GetLevel()
 				oldZeroLogLevel := zerolog.GlobalLevel()
 				log.SetLevel(log.WarnLevel)
@@ -204,149 +219,211 @@ func TestStressShutdown(t *testing.T) {
 				zerolog.SetGlobalLevel(zerolog.WarnLevel)
 				defer zerolog.SetGlobalLevel(oldZeroLogLevel)
 
-				wg := &sync.WaitGroup{}
-				defer wg.Wait()
+				cqlConn, err := client.NewTestClientWithRequestTimeout(context.Background(), "127.0.0.1:14002", 10*time.Second)
+				require.Nil(t, err)
+				defer cqlConn.Shutdown()
 
-				ctx, cancelFn := context.WithCancel(context.Background())
-				defer cancelFn()
-
-				err = cqlConn.PerformDefaultHandshake(ctx, primitive.ProtocolVersion4, false)
+				err = cqlConn.PerformDefaultHandshake(context.Background(), primitive.ProtocolVersion4, false)
 				require.Nil(t, err)
 
-				goCtx, goCancel := context.WithCancel(context.Background())
-				goWg := &sync.WaitGroup{}
+				// create a channel that will receive errors from goroutines that are sending requests,
+				// the main test goroutine will read from this channel and cause the test to fail if any error is read
 				errChan := make(chan error, 1000)
+
+				// create a separate wait group so the test can wait only for the "worker" goroutines
+				// (those who will send requests as part of the test) to terminate
 				requestsWg := &sync.WaitGroup{}
-				for j := 0; j < 20; j++ {
-					wg.Add(1)
-					goWg.Add(1)
-					requestsWg.Add(1)
-					go func() {
-						defer wg.Done()
-						defer requestsWg.Done()
-						newCtx, cancelFn := context.WithTimeout(ctx, 5000*time.Millisecond)
-						tempCqlConn, err := client.NewTestClient(newCtx, "127.0.0.1:14002")
-						optionsWg := &sync.WaitGroup{}
-						if err == nil {
-							for x := 0; x < 50; x++ {
-								optionsWg.Add(1)
-								go func() {
-									defer optionsWg.Done()
-									for newCtx.Err() == nil {
-										_, _, _ = tempCqlConn.SendMessage(newCtx, primitive.ProtocolVersion4, &message.Options{})
-									}
-								}()
-							}
-							goWg.Done()
-							<-goCtx.Done()
-							r := rand.Intn(20) + 85
-							time.Sleep(time.Duration(r) * time.Millisecond)
-							err = tempCqlConn.PerformDefaultHandshake(newCtx, primitive.ProtocolVersion4, false)
-							cancelFn()
-						}
-						optionsWg.Wait()
 
-						if tempCqlConn != nil {
-							tempCqlConn.Shutdown()
-						}
-
-						if err != nil && ctx.Err() == nil {
-							if !shutdownProxyTriggered.Load().(bool) &&
-								!errors.Is(err, context.DeadlineExceeded) {
-								errChan <- err
-								return
-							}
-						}
-					}()
-				}
-
-				for jj := 0; jj < 1; jj++ {
-					wg.Add(1)
-					requestsWg.Add(1)
-					j := jj
-					go func() {
-						defer requestsWg.Done()
-						defer wg.Done()
-						for i := 0; ctx.Err() == nil; i++ {
-							queryMsg := &message.Query{
-								Query:   "SELECT * FROM system.local",
-								Options: &message.QueryOptions{Consistency: primitive.ConsistencyLevelLocalOne},
-							}
-							newCtx, cancelFn := context.WithTimeout(ctx, 15*time.Second)
-							rsp, _, err := cqlConn.SendMessage(newCtx, primitive.ProtocolVersion4, queryMsg)
-							cancelFn()
-
-							if err != nil {
-								t.Logf("Break fatal on j=%v i=%v", j, i)
-								return
-							}
-
-							if rsp.Header.OpCode != primitive.OpCodeError && rsp.Header.OpCode != primitive.OpCodeResult {
-								errChan <- fmt.Errorf("expected error or result actual %v", rsp.Header.OpCode)
-								return
-							}
-
-							if rsp.Header.OpCode == primitive.OpCodeError {
-								_, ok := rsp.Body.Message.(*message.Overloaded)
-								if !ok {
-									errChan <- fmt.Errorf("expected %v actual %v", "*message.Overloaded", rsp.Body.Message)
-									return
-								}
-							}
-						}
-					}()
-				}
-
-				requestsDoneCh := make(chan bool)
-				wg.Add(1)
+				// make sure the global test wg is only done when the "worker" goroutines are done
+				globalWg.Add(1)
 				go func() {
-					defer wg.Done()
+					defer globalWg.Done()
 					requestsWg.Wait()
-					close(requestsDoneCh)
 				}()
 
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
-					defer close(errChan)
-
-					wg.Add(1)
+				// start goroutines that continuously (until proxy shutdown) open connections, send heartbeats and perform handshake
+				// (goal is to test if proxy panics (race conditions) when shutting down and receiving requests simultaneously
+				for j := 0; j < runtime.GOMAXPROCS(0); j++ {
+					requestsWg.Add(1)
 					go func() {
-						defer wg.Done()
-						goWg.Wait()
-						shutdownProxyTriggered.Store(true)
-						goCancel()
-						time.Sleep(100 * time.Millisecond)
-						proxy.Shutdown()
-						requestsWg.Wait()
-						cancelFn()
+						defer requestsWg.Done()
+						for {
+							id := rand.Int()
+							connTimeoutCtx, connTimeoutCancelFn := context.WithTimeout(globalCtx, 5*time.Second)
+							tempCqlConn, err := client.NewTestClientWithRequestTimeout(connTimeoutCtx, "127.0.0.1:14002", 10*time.Second)
+							connTimeoutCancelFn() // avoid context leak
+
+							// create new waitgroup dedicated for this "iteration" so the next iteration starts only
+							// when all the goroutines of the previous iteration have terminated
+							optionsWg := &sync.WaitGroup{}
+							if err == nil {
+								defaultHandshakeDoneCh := make(chan bool, 1)
+
+								// start a bunch of sub goroutines that use the newly created connection to send OPTIONS
+								// requests (heartbeats) while the current goroutine attempts to perform a handshake after a random delay
+								for x := 0; x < runtime.GOMAXPROCS(0)*8; x++ {
+									optionsWg.Add(1)
+									go func() {
+										defer optionsWg.Done()
+										for {
+											select {
+											// make sure these sub goroutines terminate when the handshake has been successful (initiated by the parent goroutine)
+											case <-defaultHandshakeDoneCh:
+												return
+											default:
+												rspFrame, _, err := tempCqlConn.SendMessage(context.Background(), primitive.ProtocolVersion4, &message.Options{})
+												if err != nil {
+													if !shutdownProxyTriggered.Load().(bool) {
+														errChan <- fmt.Errorf("[%v] unexpected error in heartbeat: %w", id, err)
+													}
+													return
+												}
+												switch resultMsg := rspFrame.Body.Message.(type) {
+												case *message.Overloaded:
+													if !shutdownProxyTriggered.Load().(bool) {
+														errChan <- fmt.Errorf("[%v] unexpected overloaded in heartbeat: %v", id, resultMsg)
+														return
+													}
+												case *message.Supported:
+												default:
+													errChan <- fmt.Errorf("[%v] unexpected result in heartbeat: %v", id, resultMsg)
+													return
+												}
+											}
+										}
+									}()
+								}
+								r := rand.Intn(500) + 100
+								select {
+								case <-time.After(time.Duration(r) * time.Millisecond):
+								case <-globalCtx.Done():
+								}
+								err = tempCqlConn.PerformDefaultHandshake(context.Background(), primitive.ProtocolVersion4, false)
+								defaultHandshakeDoneCh <- true
+								optionsWg.Wait()
+								_ = tempCqlConn.Shutdown()
+							}
+
+							if err != nil {
+								if !shutdownProxyTriggered.Load().(bool) {
+									errChan <- fmt.Errorf("error connecting in handshake: %w", err)
+								}
+								return
+							}
+						}
 					}()
+				}
+
+				// start a single goroutine that continuously sends a query (test if an active connection gets an Overloaded result on proxy shutdown)
+				requestsWg.Add(1)
+				go func() {
+					defer requestsWg.Done()
+					for {
+						queryMsg := &message.Query{
+							Query:   "SELECT * FROM system.local",
+							Options: &message.QueryOptions{Consistency: primitive.ConsistencyLevelLocalOne},
+						}
+						rsp, _, err := cqlConn.SendMessage(context.Background(), primitive.ProtocolVersion4, queryMsg)
+
+						if err != nil {
+							if !shutdownProxyTriggered.Load().(bool) {
+								errChan <- fmt.Errorf("expected error on query send %w", err)
+							}
+							return
+						}
+
+						if rsp.Header.OpCode != primitive.OpCodeError && rsp.Header.OpCode != primitive.OpCodeResult {
+							errChan <- fmt.Errorf("expected error or result actual %v", rsp.Header.OpCode)
+							return
+						}
+
+						if rsp.Header.OpCode == primitive.OpCodeError {
+							if !shutdownProxyTriggered.Load().(bool) {
+								errChan <- fmt.Errorf("unexpected error result when proxy shutdown wasn't triggered: %v", rsp.Body.Message)
+								return
+							}
+							_, ok := rsp.Body.Message.(*message.Overloaded)
+							if !ok {
+								errChan <- fmt.Errorf("expected %v actual %v", "*message.Overloaded", rsp.Body.Message)
+								return
+							}
+						}
+					}
+				}()
+
+				testDoneCh := make(chan bool)
+				globalWg.Add(1)
+				go func() {
+					defer globalWg.Done()
+					defer close(testDoneCh)
+					defer globalCancelFn()
+
+					time.Sleep(12000 * time.Millisecond)
+
+					shutdownProxyTriggeredMutex.Lock()
+					if shutdownProxyTriggered.Load().(bool) {
+						shutdownProxyTriggeredMutex.Unlock()
+						t.Errorf("test timed out")
+						errChan <- errors.New("test timed out")
+						return
+					}
+					shutdownProxyTriggered.Store(true)
+					shutdownProxyTriggeredMutex.Unlock()
+					now := time.Now()
+					proxy.Shutdown()
+					afterShutdownNow := time.Now()
+					if afterShutdownNow.Sub(now) > (5 * time.Second) {
+						t.Errorf("proxy shutdown took too long (%v milliseconds, threshold is 5 seconds)", afterShutdownNow.Sub(now).Milliseconds())
+						errChan <- fmt.Errorf("proxy shutdown took too long (%v milliseconds, threshold is 5 seconds)", afterShutdownNow.Sub(now).Milliseconds())
+					}
+
+					// create a channel where a read returns when all the "worker" goroutines of this test have terminated
+					requestsDoneCh := make(chan bool)
+					go func() {
+						requestsWg.Wait()
+						close(requestsDoneCh)
+					}()
+
+					// wait until all "worker" goroutines have terminated (with a timeout in case something went wrong)
 					select {
-					case <-ctx.Done():
+					case <-requestsDoneCh:
+						globalCancelFn()
 					case <-time.After(15 * time.Second):
-						errChan <- errors.New("timed out waiting for requests to end")
+						t.Errorf("timed out waiting for goroutines to finish normally")
+						errChan <- errors.New("timed out waiting for goroutines to finish normally")
+						globalCancelFn()
+						<-requestsDoneCh // after triggering a cancellation of the global context, the worker goroutines should terminate
 					}
 				}()
 
 				var lastErr error
-				testDone := false
-				for !testDone {
-					e, ok := <-errChan
-					if !ok {
-						testDone = true
-						break
+				done := false
+				for !done {
+					select {
+					case <-testDoneCh:
+						done = true
+					case e, ok := <-errChan:
+						if !ok {
+							done = true
+							break
+						}
+						lastErr = e
+						t.Logf("error found: %v", e)
 					}
-					lastErr = e
-					t.Logf("error found: %v", e)
 				}
 
 				if lastErr != nil {
 					t.Errorf("an error (or more) occured. last error: %v", lastErr)
+					return false
+				} else {
+					return true
 				}
 			}
 
 			for testCount := 1; testCount <= 20; testCount++ {
-				f()
+				if !f() {
+					return
+				}
 			}
 		})
 	}

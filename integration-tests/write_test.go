@@ -1,16 +1,16 @@
 package integration_tests
 
 import (
-	"github.com/gocql/gocql"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
 	"github.com/datastax/zdm-proxy/integration-tests/utils"
+	"github.com/gocql/gocql"
 	"github.com/stretchr/testify/require"
 	"testing"
 )
 
 func TestBothWriteTimeout(t *testing.T) {
-	testSetup, err := setup.NewSimulacronTestSetup()
+	testSetup, err := setup.NewSimulacronTestSetup(t)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
@@ -64,7 +64,7 @@ func TestBothWriteTimeout(t *testing.T) {
 }
 
 func TestOriginWriteTimeout(t *testing.T) {
-	testSetup, err := setup.NewSimulacronTestSetup()
+	testSetup, err := setup.NewSimulacronTestSetup(t)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
@@ -118,7 +118,7 @@ func TestOriginWriteTimeout(t *testing.T) {
 }
 
 func TestTargetWriteTimeout(t *testing.T) {
-	testSetup, err := setup.NewSimulacronTestSetup()
+	testSetup, err := setup.NewSimulacronTestSetup(t)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
@@ -172,7 +172,7 @@ func TestTargetWriteTimeout(t *testing.T) {
 }
 
 func TestWriteSuccessful(t *testing.T) {
-	testSetup, err := setup.NewSimulacronTestSetup()
+	testSetup, err := setup.NewSimulacronTestSetup(t)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 

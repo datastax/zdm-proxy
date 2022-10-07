@@ -9,6 +9,7 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/datastax/zdm-proxy/proxy/pkg/common"
 	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
@@ -24,14 +25,6 @@ type ClusterConnectionInfo struct {
 	endpoint          Endpoint
 	isOriginCassandra bool
 }
-
-type ClusterType string
-
-const (
-	ClusterTypeNone   = ClusterType("")
-	ClusterTypeOrigin = ClusterType("ORIGIN")
-	ClusterTypeTarget = ClusterType("TARGET")
-)
 
 type ClusterConnectorType string
 
@@ -53,8 +46,8 @@ const (
 type ClusterConnector struct {
 	conf *config.Config
 
-	connection  net.Conn
-	clusterType ClusterType
+	connection    net.Conn
+	clusterType   common.ClusterType
 	connectorType ClusterConnectorType
 
 	psCache *PreparedStatementCache
@@ -73,7 +66,7 @@ type ClusterConnector struct {
 
 	handshakeDone *atomic.Value
 
-	asyncConnector      bool
+	asyncConnector       bool
 	asyncConnectorState  ConnectorState
 	asyncPendingRequests *pendingRequests
 
@@ -106,12 +99,12 @@ func NewClusterConnector(
 	handshakeDone *atomic.Value) (*ClusterConnector, error) {
 
 	var connectorType ClusterConnectorType
-	var clusterType ClusterType
+	var clusterType common.ClusterType
 	if connInfo.isOriginCassandra {
-		clusterType = ClusterTypeOrigin
+		clusterType = common.ClusterTypeOrigin
 		connectorType = ClusterConnectorTypeOrigin
 	} else {
-		clusterType = ClusterTypeTarget
+		clusterType = common.ClusterTypeTarget
 		connectorType = ClusterConnectorTypeTarget
 	}
 
@@ -204,7 +197,7 @@ func openConnectionToCluster(connInfo *ClusterConnectionInfo, context context.Co
 	return conn, timeoutCtx, nil
 }
 
-func closeConnectionToCluster(conn net.Conn, clusterType ClusterType, connectorClusterType ClusterConnectorType, nodeMetrics *metrics.NodeMetrics) {
+func closeConnectionToCluster(conn net.Conn, clusterType common.ClusterType, connectorClusterType ClusterConnectorType, nodeMetrics *metrics.NodeMetrics) {
 	log.Infof("[%s] Closing request connection to %v (%v)", connectorClusterType, clusterType, conn.RemoteAddr())
 	err := conn.Close()
 	if err != nil {
@@ -310,7 +303,7 @@ func (cc *ClusterConnector) handleAsyncResponse(response *frame.RawFrame) *frame
 	if done {
 		typedReqCtx, ok := reqCtx.(*asyncRequestContextImpl)
 		if !ok {
-			log.Errorf("Failed to finish async request because request context conversion failed. " +
+			log.Errorf("Failed to finish async request because request context conversion failed. "+
 				"This is most likely a bug, please report. AsyncRequestContext: %v", reqCtx)
 		} else if typedReqCtx.expectedResponse {
 			response.Header.StreamId = typedReqCtx.requestStreamId
@@ -318,22 +311,24 @@ func (cc *ClusterConnector) handleAsyncResponse(response *frame.RawFrame) *frame
 		} else {
 			callDone := true
 			if errMsg != nil {
-				trackClusterErrorMetricsFromErrorMessage(errMsg, cc.connectorType, cc.nodeMetrics)
+				if reqCtx.GetRequestInfo().ShouldBeTrackedInMetrics() {
+					trackClusterErrorMetricsFromErrorMessage(errMsg, cc.connectorType, cc.nodeMetrics)
+				}
 				switch msg := errMsg.(type) {
 				case *message.Unprepared:
 					var preparedData PreparedData
 					var ok bool
-					if cc.clusterType == ClusterTypeTarget {
+					if cc.clusterType == common.ClusterTypeTarget {
 						preparedData, ok = cc.psCache.GetByTargetPreparedId(msg.Id)
 					} else {
 						preparedData, ok = cc.psCache.Get(msg.Id)
 					}
 					if !ok {
-						log.Warnf("Received UNPREPARED for async request with prepare ID %v " +
+						log.Warnf("Received UNPREPARED for async request with prepare ID %v "+
 							"but could not find prepared data.", hex.EncodeToString(msg.Id))
 					} else {
 						prepare := &message.Prepare{
-							Query: preparedData.GetPrepareRequestInfo().GetQuery(),
+							Query:    preparedData.GetPrepareRequestInfo().GetQuery(),
 							Keyspace: preparedData.GetPrepareRequestInfo().GetKeyspace(),
 						}
 						prepareFrame := frame.NewFrame(response.Header.Version, response.Header.StreamId, prepare)
@@ -342,8 +337,8 @@ func (cc *ClusterConnector) handleAsyncResponse(response *frame.RawFrame) *frame
 							log.Errorf("Could not send async PREPARE because convert raw frame failed: %v.", err.Error())
 						} else {
 							sent := cc.sendAsyncRequest(
-								prepareRawFrame, false, time.Now(),
-								time.Duration(cc.conf.RequestTimeoutMs) * time.Millisecond,
+								preparedData.GetPrepareRequestInfo(), prepareRawFrame, false, time.Now(),
+								time.Duration(cc.conf.ProxyRequestTimeoutMs)*time.Millisecond,
 								func() {
 									cc.clientHandlerRequestWg.Done()
 								})
@@ -427,6 +422,7 @@ func handleConnectionError(err error, ctx context.Context, cancelFn context.Canc
 }
 
 func (cc *ClusterConnector) sendAsyncRequest(
+	requestInfo RequestInfo,
 	asyncRequest *frame.RawFrame,
 	expectedResponse bool,
 	overallRequestStartTime time.Time,
@@ -437,14 +433,16 @@ func (cc *ClusterConnector) sendAsyncRequest(
 		return false
 	}
 
-	asyncReqCtx := NewAsyncRequestContext(asyncRequest.Header.StreamId, expectedResponse, overallRequestStartTime)
+	asyncReqCtx := NewAsyncRequestContext(requestInfo, asyncRequest.Header.StreamId, expectedResponse, overallRequestStartTime)
 	var newStreamId int16
 	newStreamId, err := cc.asyncPendingRequests.store(asyncReqCtx)
 	storedAsync := err == nil
 	if err != nil {
 		log.Warnf("Could not send async request due to an error while storing the request state: %v.", err.Error())
 	} else {
-		cc.nodeMetrics.AsyncMetrics.InFlightRequests.Add(1)
+		if requestInfo.ShouldBeTrackedInMetrics() {
+			cc.nodeMetrics.AsyncMetrics.InFlightRequests.Add(1)
+		}
 		asyncRequest.Header.StreamId = newStreamId
 		timer := time.AfterFunc(requestTimeout, func() {
 			if cc.asyncPendingRequests.timeOut(newStreamId, asyncReqCtx, asyncRequest) {

@@ -6,12 +6,12 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/integration-tests/utils"
 	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 	"github.com/datastax/zdm-proxy/proxy/pkg/httpzdmproxy"
 	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
 	"net/http"
@@ -44,22 +44,22 @@ var nodeMetrics = []metrics.Metric{
 }
 
 var proxyMetrics = []metrics.Metric{
-	metrics.FailedRequestsBothFailedOnTargetOnly,
-	metrics.FailedRequestsBothFailedOnOriginOnly,
-	metrics.FailedRequestsBoth,
-	metrics.FailedRequestsOrigin,
-	metrics.FailedRequestsTarget,
+	metrics.FailedWritesOnTarget,
+	metrics.FailedWritesOnOrigin,
+	metrics.FailedWritesOnBoth,
+	metrics.FailedReadsOrigin,
+	metrics.FailedReadsTarget,
 
 	metrics.PSCacheSize,
 	metrics.PSCacheMissCount,
 
-	metrics.ProxyRequestDurationTarget,
-	metrics.ProxyRequestDurationOrigin,
-	metrics.ProxyRequestDurationBoth,
+	metrics.ProxyReadsTargetDuration,
+	metrics.ProxyReadsOriginDuration,
+	metrics.ProxyWritesDuration,
 
-	metrics.InFlightRequestsTarget,
-	metrics.InFlightRequestsOrigin,
-	metrics.InFlightRequestsBoth,
+	metrics.InFlightReadsTarget,
+	metrics.InFlightReadsOrigin,
+	metrics.InFlightWrites,
 
 	metrics.OpenClientConnections,
 }
@@ -80,19 +80,19 @@ var selectQuery = frame.NewFrame(
 
 func testMetrics(t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback) {
 
-	tests := []struct{
+	tests := []struct {
 		name                  string
-		dualReadsEnabled      bool
+		readMode              string
 		asyncReadsOnSecondary bool
 	}{
 		{
 			name:                  "default",
-			dualReadsEnabled:      false,
+			readMode:              config.ReadModePrimaryOnly,
 			asyncReadsOnSecondary: false,
 		},
 		{
 			name:                  "dual reads, async on secondary",
-			dualReadsEnabled:      true,
+			readMode:              config.ReadModeDualAsyncOnSecondary,
 			asyncReadsOnSecondary: true,
 		},
 	}
@@ -104,20 +104,19 @@ func testMetrics(t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback)
 			originEndpoint := fmt.Sprintf("%v:9042", originHost)
 			targetEndpoint := fmt.Sprintf("%v:9042", targetHost)
 			conf := setup.NewTestConfig(originHost, targetHost)
-			conf.DualReadsEnabled = test.dualReadsEnabled
-			conf.AsyncReadsOnSecondary = test.asyncReadsOnSecondary
+			conf.ReadMode = test.readMode
 
 			expectedAsyncConnections := 0
-			if conf.AsyncReadsOnSecondary {
+			if conf.ReadMode == config.ReadModeDualAsyncOnSecondary {
 				expectedAsyncConnections = 1
 			}
 
 			asyncEndpoint := targetEndpoint
-			if conf.ForwardReadsToTarget {
+			if conf.PrimaryCluster == config.PrimaryClusterTarget {
 				asyncEndpoint = originEndpoint
 			}
 
-			testSetup, err := setup.NewCqlServerTestSetup(conf, false, false, false)
+			testSetup, err := setup.NewCqlServerTestSetup(t, conf, false, false, false)
 			require.Nil(t, err)
 			defer testSetup.Cleanup()
 			testSetup.Origin.CqlServer.RequestHandlers = []client.RequestHandler{client.RegisterHandler, client.HeartbeatHandler, client.HandshakeHandler, client.NewSystemTablesHandler("cluster1", "dc1"), handleReads, handleWrites}
@@ -137,7 +136,7 @@ func testMetrics(t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback)
 			}()
 
 			lines := gatherMetrics(t, conf, false)
-			checkMetrics(t, false, lines, conf.AsyncReadsOnSecondary, 0, 0, 0, 0, 0, 0, 0, 0, true, true, originEndpoint, targetEndpoint, asyncEndpoint)
+			checkMetrics(t, false, lines, conf.ReadMode, 0, 0, 0, 0, 0, 0, 0, 0, true, true, originEndpoint, targetEndpoint, asyncEndpoint)
 
 			err = testSetup.Client.Connect(primitive.ProtocolVersion4)
 			require.Nil(t, err)
@@ -148,7 +147,8 @@ func testMetrics(t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback)
 			// 1 on target: AUTH_RESPONSE
 			// 1 on both: STARTUP
 			// 2 on async: AUTH_RESPONSE and STARTUP
-			checkMetrics(t, true, lines, conf.AsyncReadsOnSecondary, 1, 1, 1, expectedAsyncConnections, 1, 1, 1, 2, true, true, originEndpoint, targetEndpoint, asyncEndpoint)
+			// but all of these are "system" requests so not tracked
+			checkMetrics(t, true, lines, conf.ReadMode, 1, 1, 1, expectedAsyncConnections, 0, 0, 0, 0, true, true, originEndpoint, targetEndpoint, asyncEndpoint)
 
 			_, err = clientConn.SendAndReceive(insertQuery)
 			require.Nil(t, err)
@@ -158,7 +158,8 @@ func testMetrics(t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback)
 			// 1 on target: AUTH_RESPONSE
 			// 2 on both: STARTUP and QUERY INSERT INTO
 			// 2 on async: AUTH_RESPONSE and STARTUP
-			checkMetrics(t, true, lines, conf.AsyncReadsOnSecondary, 1, 1, 1, expectedAsyncConnections, 2, 1, 1, 2, true, true, originEndpoint, targetEndpoint, asyncEndpoint)
+			// only QUERY is tracked
+			checkMetrics(t, true, lines, conf.ReadMode, 1, 1, 1, expectedAsyncConnections, 1, 0, 0, 0, true, true, originEndpoint, targetEndpoint, asyncEndpoint)
 
 			_, err = clientConn.SendAndReceive(selectQuery)
 			require.Nil(t, err)
@@ -168,17 +169,27 @@ func testMetrics(t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback)
 			// 1 on target: AUTH_RESPONSE
 			// 2 on both: STARTUP and QUERY INSERT INTO
 			// 3 on async: AUTH_RESPONSE, STARTUP AND QUERY SELECT
-			if conf.AsyncReadsOnSecondary {
+			// ONLY QUERY is tracked
+			if conf.ReadMode == config.ReadModeDualAsyncOnSecondary {
 				time.Sleep(200 * time.Millisecond)
 			}
-			checkMetrics(t, true, lines, conf.AsyncReadsOnSecondary, 1, 1, 1, expectedAsyncConnections, 2, 2, 1, 3, false, true, originEndpoint, targetEndpoint, asyncEndpoint)
+			checkMetrics(t, true, lines, conf.ReadMode, 1, 1, 1, expectedAsyncConnections, 1, 1, 0, 1, false, true, originEndpoint, targetEndpoint, asyncEndpoint)
 		})
 	}
 }
 
+func containsLine(lines []string, line string) bool {
+	for i := 0; i < len(lines); i++ {
+		if lines[i] == line {
+			return true
+		}
+	}
+	return false
+}
+
 func startMetricsHandler(
 	t *testing.T, conf *config.Config, wg *sync.WaitGroup, metricsHandler *httpzdmproxy.HandlerWithFallback) *http.Server {
-	httpAddr := fmt.Sprintf("%s:%d", conf.ProxyMetricsAddress, conf.ProxyMetricsPort)
+	httpAddr := fmt.Sprintf("%s:%d", conf.MetricsAddress, conf.MetricsPort)
 	srv := httpzdmproxy.StartHttpServer(httpAddr, wg)
 	require.NotNil(t, srv)
 	metricsHandler.SetHandler(promhttp.Handler())
@@ -186,7 +197,7 @@ func startMetricsHandler(
 }
 
 func gatherMetrics(t *testing.T, conf *config.Config, checkNodeMetrics bool) []string {
-	httpAddr := fmt.Sprintf("%s:%d", conf.ProxyMetricsAddress, conf.ProxyMetricsPort)
+	httpAddr := fmt.Sprintf("%s:%d", conf.MetricsAddress, conf.MetricsPort)
 	statusCode, rspStr, err := utils.GetMetrics(httpAddr)
 	require.Nil(t, err)
 	require.Equal(t, http.StatusOK, statusCode)
@@ -215,7 +226,7 @@ func checkMetrics(
 	t *testing.T,
 	checkNodeMetrics bool,
 	lines []string,
-	asyncEnabled bool,
+	readMode string,
 	openClientConns int,
 	openOriginConns int,
 	openTargetConns int,
@@ -230,51 +241,51 @@ func checkMetrics(
 	targetHost string,
 	asyncHost string,
 ) {
-	prefix := "cloudgate"
+	asyncEnabled := readMode == config.ReadModeDualAsyncOnSecondary
+	prefix := "zdm"
 	require.Contains(t, lines, fmt.Sprintf("%v %v", getPrometheusName(prefix, metrics.OpenClientConnections), openClientConns))
 
-	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.FailedRequestsBoth)))
-	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.FailedRequestsBothFailedOnOriginOnly)))
-	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.FailedRequestsBothFailedOnTargetOnly)))
-	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.FailedRequestsTarget)))
-	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.FailedRequestsOrigin)))
+	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.FailedWritesOnBoth)))
+	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.FailedWritesOnOrigin)))
+	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.FailedWritesOnTarget)))
+	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.FailedReadsTarget)))
+	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.FailedReadsOrigin)))
 
-
-	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.InFlightRequestsBoth)))
-	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.InFlightRequestsOrigin)))
-	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.InFlightRequestsTarget)))
+	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.InFlightWrites)))
+	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.InFlightReadsOrigin)))
+	require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusName(prefix, metrics.InFlightReadsTarget)))
 
 	if successOrigin == 0 {
-		require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithSuffix(prefix, metrics.ProxyRequestDurationOrigin, "sum")))
+		require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithSuffix(prefix, metrics.ProxyReadsOriginDuration, "sum")))
 	} else {
 		if !handshakeOnlyOrigin {
-			value, err := findMetricValue(lines, fmt.Sprintf("%v ", getPrometheusNameWithSuffix(prefix, metrics.ProxyRequestDurationOrigin, "sum")))
+			value, err := findMetricValue(lines, fmt.Sprintf("%v ", getPrometheusNameWithSuffix(prefix, metrics.ProxyReadsOriginDuration, "sum")))
 			require.Nil(t, err)
 			require.Greater(t, value, 0.0)
 		}
 	}
 
 	if successTarget == 0 {
-		require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithSuffix(prefix, metrics.ProxyRequestDurationTarget, "sum")))
+		require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithSuffix(prefix, metrics.ProxyReadsTargetDuration, "sum")))
 	} else {
 		if !handshakeOnlyTarget {
-			value, err := findMetricValue(lines, fmt.Sprintf("%v ", getPrometheusNameWithSuffix(prefix, metrics.ProxyRequestDurationTarget, "sum")))
+			value, err := findMetricValue(lines, fmt.Sprintf("%v ", getPrometheusNameWithSuffix(prefix, metrics.ProxyReadsTargetDuration, "sum")))
 			require.Nil(t, err)
 			require.Greater(t, value, 0.0)
 		}
 	}
 
 	if successBoth == 0 {
-		require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithSuffix(prefix, metrics.ProxyRequestDurationBoth, "sum")))
+		require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithSuffix(prefix, metrics.ProxyWritesDuration, "sum")))
 	} else {
-		value, err := findMetricValue(lines, fmt.Sprintf("%v ", getPrometheusNameWithSuffix(prefix, metrics.ProxyRequestDurationBoth, "sum")))
+		value, err := findMetricValue(lines, fmt.Sprintf("%v ", getPrometheusNameWithSuffix(prefix, metrics.ProxyWritesDuration, "sum")))
 		require.Nil(t, err)
 		require.Greater(t, value, 0.0)
 	}
 
-	require.Contains(t, lines, fmt.Sprintf("%v %v", getPrometheusNameWithSuffix(prefix, metrics.ProxyRequestDurationTarget, "count"), successTarget))
-	require.Contains(t, lines, fmt.Sprintf("%v %v", getPrometheusNameWithSuffix(prefix, metrics.ProxyRequestDurationOrigin, "count"), successOrigin))
-	require.Contains(t, lines, fmt.Sprintf("%v %v", getPrometheusNameWithSuffix(prefix, metrics.ProxyRequestDurationBoth, "count"), successBoth))
+	require.Contains(t, lines, fmt.Sprintf("%v %v", getPrometheusNameWithSuffix(prefix, metrics.ProxyReadsTargetDuration, "count"), successTarget))
+	require.Contains(t, lines, fmt.Sprintf("%v %v", getPrometheusNameWithSuffix(prefix, metrics.ProxyReadsOriginDuration, "count"), successOrigin))
+	require.Contains(t, lines, fmt.Sprintf("%v %v", getPrometheusNameWithSuffix(prefix, metrics.ProxyWritesDuration, "count"), successBoth))
 
 	if checkNodeMetrics {
 		if asyncEnabled {
@@ -429,7 +440,7 @@ func getPrometheusNameWithSuffixAndNodeLabel(prefix string, mn metrics.Metric, s
 		newLabels[key] = value
 	}
 	if node != "" {
-		newLabels["node"] = node		
+		newLabels["node"] = node
 	}
 	labels = newLabels
 	if labels != nil && len(labels) > 0 {

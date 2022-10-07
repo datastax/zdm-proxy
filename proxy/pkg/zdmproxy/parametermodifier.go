@@ -111,14 +111,14 @@ func (recv *ParameterModifier) addPositionalValuesForReplacedTerms(
 func (recv *ParameterModifier) addPositionalValuesForReplacedPositionalMarkers(version primitive.ProtocolVersion,
 	originalPositionalValues []*primitive.Value, replacedTerms []*term, variablesMetadata *message.VariablesMetadata,
 	replacementTimeUuids []*uuid.UUID) ([]*primitive.Value, error) {
-	newPositionalValues := make([]*primitive.Value, 0, len(originalPositionalValues) + len(replacedTerms))
+	newPositionalValues := make([]*primitive.Value, 0, len(originalPositionalValues)+len(replacedTerms))
 	start := 0
 	offset := 0
 	replacementIdx := 0
 	for _, currentTerm := range replacedTerms {
 		newValueIdx := offset + currentTerm.previousPositionalIndex + 1
 		if currentTerm.previousPositionalIndex >= len(originalPositionalValues) {
-			return nil, fmt.Errorf("current term has previous positional index %v but " +
+			return nil, fmt.Errorf("current term has previous positional index %v but "+
 				"number of positional values in the request is %v",
 				currentTerm.previousPositionalIndex, len(originalPositionalValues))
 		}
@@ -133,11 +133,11 @@ func (recv *ParameterModifier) addPositionalValuesForReplacedPositionalMarkers(v
 
 		if currentTerm.isFunctionCall() && currentTerm.functionCall.isNow() {
 			if newValueIdx >= len(variablesMetadata.Columns) {
-				return nil, fmt.Errorf("could not insert positional value (%v) because columns metadata " +
+				return nil, fmt.Errorf("could not insert positional value (%v) because columns metadata "+
 					"has unexpected length; variablesmetadata: %v", newValueIdx, variablesMetadata)
 			}
 			if replacementIdx >= len(replacementTimeUuids) {
-				return nil, fmt.Errorf("could not replace positional value (%v) with index %v because replacement timeuuids " +
+				return nil, fmt.Errorf("could not replace positional value (%v) with index %v because replacement timeuuids "+
 					"has unexpected length: %v", newValueIdx, replacementIdx, replacementTimeUuids)
 			}
 
@@ -173,9 +173,9 @@ func (recv *ParameterModifier) addPositionalValuesForReplacedNamedMarkers(versio
 		replaced := false
 		if col.Name != "" {
 			switch col.Name {
-			case cloudgateNowNamedMarker:
+			case zdmNowNamedMarker:
 				if replacementIdx >= len(replacementTimeUuids) {
-					return nil, fmt.Errorf("could not replace positional value with index %v because replacement timeuuids " +
+					return nil, fmt.Errorf("could not replace positional value with index %v because replacement timeuuids "+
 						"has unexpected length: %v", replacementIdx, replacementTimeUuids)
 				}
 				generatedTimeUuidValue, err := recv.generateTimeUuidValue(replacementTimeUuids[replacementIdx], version, col.Type)
@@ -216,18 +216,18 @@ func (recv *ParameterModifier) addNamedValuesForReplacedNamedMarkers(version pri
 			}
 
 			switch col.Name {
-			case cloudgateNowNamedMarker:
+			case zdmNowNamedMarker:
 				if replacementIdx >= len(replacementTimeUuids) {
-					return fmt.Errorf("could not replace named value (%v) with index (%v) because " +
+					return fmt.Errorf("could not replace named value (%v) with index (%v) because "+
 						"replacement timeuuids has unexpected length: %v",
-						cloudgateNowNamedMarker, replacementIdx, replacementTimeUuids)
+						zdmNowNamedMarker, replacementIdx, replacementTimeUuids)
 				}
 				generatedTimeUuidValue, err := recv.generateTimeUuidValue(replacementTimeUuids[replacementIdx], version, col.Type)
 				if err != nil {
 					return err
 				}
 				replacementIdx++
-				executeMsg.Options.NamedValues[cloudgateNowNamedMarker] = generatedTimeUuidValue
+				executeMsg.Options.NamedValues[zdmNowNamedMarker] = generatedTimeUuidValue
 			default:
 				return fmt.Errorf("could not generate value for column %v", col.Name)
 			}

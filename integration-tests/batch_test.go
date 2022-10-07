@@ -1,16 +1,16 @@
 package integration_tests
 
 import (
-	"github.com/gocql/gocql"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
 	"github.com/datastax/zdm-proxy/integration-tests/utils"
+	"github.com/gocql/gocql"
 	"github.com/stretchr/testify/require"
 	"testing"
 )
 
 func TestBatchBothWriteTimeout(t *testing.T) {
-	testSetup, err := setup.NewSimulacronTestSetup()
+	testSetup, err := setup.NewSimulacronTestSetup(t)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
@@ -50,7 +50,7 @@ func TestBatchBothWriteTimeout(t *testing.T) {
 }
 
 func TestBatchOriginWriteTimeout(t *testing.T) {
-	testSetup, err := setup.NewSimulacronTestSetup()
+	testSetup, err := setup.NewSimulacronTestSetup(t)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
@@ -89,7 +89,7 @@ func TestBatchOriginWriteTimeout(t *testing.T) {
 }
 
 func TestBatchTargetWriteTimeout(t *testing.T) {
-	testSetup, err := setup.NewSimulacronTestSetup()
+	testSetup, err := setup.NewSimulacronTestSetup(t)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
@@ -128,7 +128,7 @@ func TestBatchTargetWriteTimeout(t *testing.T) {
 }
 
 func TestBatchWriteSuccessful(t *testing.T) {
-	testSetup, err := setup.NewSimulacronTestSetup()
+	testSetup, err := setup.NewSimulacronTestSetup(t)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
