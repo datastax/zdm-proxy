@@ -1,3 +1,5 @@
+name: Native Binaries
+
 on:
   release:
     types: [created]
