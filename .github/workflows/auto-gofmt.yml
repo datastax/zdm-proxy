@@ -1,4 +1,4 @@
-name: Automted code formatting - Non Fork PRs only
+name: Automated code formatting - Non Fork PRs only
 
 on:
   pull_request:
