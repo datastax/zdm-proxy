@@ -1,4 +1,4 @@
-name: auto-gofmt
+name: Automted code formatting - Non Fork PRs only
 
 on:
   pull_request:
@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   format:
-    name: Auto format code (gofmt) - Non Fork PRs only
+    name: Run gofmt and push
     # Check if the PR is not from a fork
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
@@ -39,14 +39,3 @@ jobs:
           git remote set-url origin git@github.com:${{ github.repository }}
           git commit -am "Automated gofmt changes"
           git push
-  check:
-    name: Check code format (gofmt) - Fork PRs only
-    # Check if the PR is from a fork
-    if: github.event.pull_request.head.repo.full_name != github.repository
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-        with:
-          ref: ${{ github.head_ref }}
-      - name: Format
-        run: if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then exit 1; fi
