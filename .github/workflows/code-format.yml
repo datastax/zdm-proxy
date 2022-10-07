@@ -1,4 +1,4 @@
-name: Automated code formatting - Non Fork PRs only
+name: Code formatting
 
 on:
   pull_request:
@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   format:
-    name: Run gofmt and push
+    name: Run gofmt and push (non fork PRs)
     # Check if the PR is not from a fork
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
@@ -39,3 +39,14 @@ jobs:
           git remote set-url origin git@github.com:${{ github.repository }}
           git commit -am "Automated gofmt changes"
           git push
+  check:
+    name: Validate with gofmt (fork PRs)
+    # Check if the PR is from a fork
+    if: github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          ref: ${{ github.head_ref }}
+      - name: Format
+        run: if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then exit 1; fi
