@@ -310,7 +310,7 @@ func (c *Config) ParsePrimaryCluster() (common.ClusterType, error) {
 	case PrimaryClusterOrigin:
 		return common.ClusterTypeOrigin, nil
 	case PrimaryClusterTarget:
-		return common.ClusterTypeTarget, nil
+		   return common.ClusterTypeTarget, nil
 	default:
 		return common.ClusterTypeNone, fmt.Errorf("invalid value for ZDM_PRIMARY_CLUSTER; possible values are: %v and %v",
 			PrimaryClusterOrigin, PrimaryClusterTarget)
