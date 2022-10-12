@@ -3,15 +3,6 @@ name: Release Binaries
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
-    paths:
-      - 'proxy/**'
-      - 'antlr/**'
-      - 'Dockerfile'
-      - 'go.mod'
-      - 'go.sum'
-      - 'LICENSE'
     tags:
       - 'v*.*.*'
       - 'v*.*.*-*'
@@ -30,20 +21,20 @@ jobs:
           export CGO_ENABLED=0
           export GOOS=linux
           export GOARCH=amd64
-          go build -o proxy-${{ github.ref }} ./proxy
-          tar cvfz proxy-linux-amd64-${{ github.ref }}.tgz proxy-${{ github.ref }} LICENSE
+          go build -o proxy-${{ github.ref_name }} ./proxy
+          tar cvfz proxy-linux-amd64-${{ github.ref_name }}.tgz proxy-${{ github.ref_name }} LICENSE
       - name: Build Windows/amd64 binary
         run: |
           export GO111MODULE=on
           export CGO_ENABLED=0
           export GOOS=windows
           export GOARCH=amd64
-          go build -o proxy-${{ github.ref }}.exe ./proxy
-          zip -vr proxy-windows-amd64-${{ github.ref }}.tgz proxy-${{ github.ref }}.exe LICENSE
+          go build -o proxy-${{ github.ref_name }}.exe ./proxy
+          zip -vr proxy-windows-amd64-${{ github.ref_name }}.tgz proxy-${{ github.ref_name }}.exe LICENSE
       - name: Generate Checksums
         run: |
-          sha256sum proxy-linux-amd64-${{ github.ref }}.tgz | cut -d ' ' -f 1 > proxy-linux-amd64-${{ github.ref }}-sha256.txt
-          sha256sum proxy-windows-amd64-${{ github.ref }}.tgz | cut -d ' ' -f 1 > proxy-windows-amd64-${{ github.ref }}-sha256.txt
+          sha256sum proxy-linux-amd64-${{ github.ref_name }}.tgz | cut -d ' ' -f 1 > proxy-linux-amd64-${{ github.ref_name }}-sha256.txt
+          sha256sum proxy-windows-amd64-${{ github.ref_name }}.tgz | cut -d ' ' -f 1 > proxy-windows-amd64-${{ github.ref_name }}-sha256.txt
       - name: Create Release
         id: create_release
         uses: actions/create-release@v1
@@ -51,7 +42,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: ${{ github.ref }}
-          release_name: Release ${{ github.ref }}
+          release_name: Release ${{ github.ref_name }}
           draft: false
           prerelease: false
       - name: Upload Linux/amd64 Binary
@@ -60,8 +51,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./proxy-linux-amd64-${{ github.ref }}.tgz
-          asset_name: proxy-linux-amd64-${{ github.ref }}.tgz
+          asset_path: ./proxy-linux-amd64-${{ github.ref_name }}.tgz
+          asset_name: proxy-linux-amd64-${{ github.ref_name }}.tgz
           asset_content_type: application/gzip
       - name: Upload Windows/amd64 Binary
         uses: actions/upload-release-asset@v1
@@ -69,8 +60,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./proxy-windows-amd64-${{ github.ref }}.zip
-          asset_name: proxy-windows-amd64-${{ github.ref }}.zip
+          asset_path: ./proxy-windows-amd64-${{ github.ref_name }}.zip
+          asset_name: proxy-windows-amd64-${{ github.ref_name }}.zip
           asset_content_type: application/zip
       - name: Upload Linux/amd64 Checksum
         uses: actions/upload-release-asset@v1
@@ -78,8 +69,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./proxy-linux-amd64-${{ github.ref }}-sha256.txt
-          asset_name: proxy-linux-amd64-${{ github.ref }}-sha256.txt
+          asset_path: ./proxy-linux-amd64-${{ github.ref_name }}-sha256.txt
+          asset_name: proxy-linux-amd64-${{ github.ref_name }}-sha256.txt
           asset_content_type: text/plain
       - name: Upload Windows/amd64 Checksum
         uses: actions/upload-release-asset@v1
@@ -87,6 +78,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./proxy-linux-amd64-${{ github.ref }}-sha256.txt
-          asset_name: proxy-linux-amd64-${{ github.ref }}-sha256.txt
+          asset_path: ./proxy-linux-amd64-${{ github.ref_name }}-sha256.txt
+          asset_name: proxy-linux-amd64-${{ github.ref_name }}-sha256.txt
           asset_content_type: text/plain
