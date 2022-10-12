@@ -21,8 +21,8 @@ jobs:
           export CGO_ENABLED=0
           export GOOS=linux
           export GOARCH=amd64
-          go build -o proxy-${{ github.ref_name }} ./proxy
-          tar cvfz proxy-linux-amd64-${{ github.ref_name }}.tgz proxy-${{ github.ref_name }} LICENSE
+          go build -o zdm-proxy-${{ github.ref_name }} ./proxy
+          tar cvfz zdm-proxy-linux-amd64-${{ github.ref_name }}.tgz zdm-proxy-${{ github.ref_name }} LICENSE
       - name: Build Windows/amd64 binary
         run: |
           apt update
@@ -31,18 +31,18 @@ jobs:
           export CGO_ENABLED=0
           export GOOS=windows
           export GOARCH=amd64
-          go build -o proxy-${{ github.ref_name }}.exe ./proxy
-          zip -vr proxy-windows-amd64-${{ github.ref_name }}.zip proxy-${{ github.ref_name }}.exe LICENSE
+          go build -o zdm-proxy-${{ github.ref_name }}.exe ./proxy
+          zip -vr zdm-proxy-windows-amd64-${{ github.ref_name }}.zip zdm-proxy-${{ github.ref_name }}.exe LICENSE
       - name: Generate Checksums
         run: |
-          sha256sum proxy-linux-amd64-${{ github.ref_name }}.tgz | cut -d ' ' -f 1 > proxy-linux-amd64-${{ github.ref_name }}-sha256.txt
-          sha256sum proxy-windows-amd64-${{ github.ref_name }}.zip | cut -d ' ' -f 1 > proxy-windows-amd64-${{ github.ref_name }}-sha256.txt
+          sha256sum zdm-proxy-linux-amd64-${{ github.ref_name }}.tgz | cut -d ' ' -f 1 > zdm-proxy-linux-amd64-${{ github.ref_name }}-sha256.txt
+          sha256sum zdm-proxy-windows-amd64-${{ github.ref_name }}.zip | cut -d ' ' -f 1 > zdm-proxy-windows-amd64-${{ github.ref_name }}-sha256.txt
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
           name: ZDM Proxy ${{ github.ref_name }}
           files: |
-            proxy-linux-amd64-${{ github.ref_name }}.tgz
-            proxy-linux-amd64-${{ github.ref_name }}-sha256.txt
-            proxy-windows-amd64-${{ github.ref_name }}.zip
-            proxy-windows-amd64-${{ github.ref_name }}-sha256.txt
+            zdm-proxy-linux-amd64-${{ github.ref_name }}.tgz
+            zdm-proxy-linux-amd64-${{ github.ref_name }}-sha256.txt
+            zdm-proxy-windows-amd64-${{ github.ref_name }}.zip
+            zdm-proxy-windows-amd64-${{ github.ref_name }}-sha256.txt
