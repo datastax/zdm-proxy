@@ -19,6 +19,7 @@ on:
 jobs:
   build:
     name: Build and Upload Release Assets
+    runs-on: ubuntu-latest
     container: golang:1.19.2-bullseye
     steps:
       - name: Checkout code
