@@ -54,7 +54,6 @@ jobs:
           draft: false
           prerelease: false
       - name: Upload Linux/amd64 Binary
-        id: upload-release-asset
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -64,32 +63,29 @@ jobs:
           asset_name: proxy-linux-amd64-${{ github.ref }}.tgz
           asset_content_type: application/gzip
       - name: Upload Windows/amd64 Binary
-          id: upload-release-asset
-          uses: actions/upload-release-asset@v1
-          env:
-            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          with:
-            upload_url: ${{ steps.create_release.outputs.upload_url }}
-            asset_path: ./proxy-windows-amd64-${{ github.ref }}.zip
-            asset_name: proxy-windows-amd64-${{ github.ref }}.zip
-            asset_content_type: application/zip
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./proxy-windows-amd64-${{ github.ref }}.zip
+          asset_name: proxy-windows-amd64-${{ github.ref }}.zip
+          asset_content_type: application/zip
       - name: Upload Linux/amd64 Checksum
-          id: upload-release-asset
-          uses: actions/upload-release-asset@v1
-          env:
-            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          with:
-            upload_url: ${{ steps.create_release.outputs.upload_url }}
-            asset_path: ./proxy-linux-amd64-${{ github.ref }}-sha256.txt
-            asset_name: proxy-linux-amd64-${{ github.ref }}-sha256.txt
-            asset_content_type: text/plain
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./proxy-linux-amd64-${{ github.ref }}-sha256.txt
+          asset_name: proxy-linux-amd64-${{ github.ref }}-sha256.txt
+          asset_content_type: text/plain
       - name: Upload Windows/amd64 Checksum
-          id: upload-release-asset
-          uses: actions/upload-release-asset@v1
-          env:
-            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          with:
-            upload_url: ${{ steps.create_release.outputs.upload_url }}
-            asset_path: ./proxy-linux-amd64-${{ github.ref }}-sha256.txt
-            asset_name: proxy-linux-amd64-${{ github.ref }}-sha256.txt
-            asset_content_type: text/plain
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./proxy-linux-amd64-${{ github.ref }}-sha256.txt
+          asset_name: proxy-linux-amd64-${{ github.ref }}-sha256.txt
+          asset_content_type: text/plain
