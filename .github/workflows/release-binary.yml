@@ -38,48 +38,11 @@ jobs:
           sha256sum proxy-linux-amd64-${{ github.ref_name }}.tgz | cut -d ' ' -f 1 > proxy-linux-amd64-${{ github.ref_name }}-sha256.txt
           sha256sum proxy-windows-amd64-${{ github.ref_name }}.zip | cut -d ' ' -f 1 > proxy-windows-amd64-${{ github.ref_name }}-sha256.txt
       - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ github.ref }}
-          release_name: Release ${{ github.ref_name }}
-          draft: false
-          prerelease: false
-      - name: Upload Linux/amd64 Binary
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./proxy-linux-amd64-${{ github.ref_name }}.tgz
-          asset_name: proxy-linux-amd64-${{ github.ref_name }}.tgz
-          asset_content_type: application/gzip
-      - name: Upload Windows/amd64 Binary
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./proxy-windows-amd64-${{ github.ref_name }}.zip
-          asset_name: proxy-windows-amd64-${{ github.ref_name }}.zip
-          asset_content_type: application/zip
-      - name: Upload Linux/amd64 Checksum
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./proxy-linux-amd64-${{ github.ref_name }}-sha256.txt
-          asset_name: proxy-linux-amd64-${{ github.ref_name }}-sha256.txt
-          asset_content_type: text/plain
-      - name: Upload Windows/amd64 Checksum
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./proxy-linux-amd64-${{ github.ref_name }}-sha256.txt
-          asset_name: proxy-linux-amd64-${{ github.ref_name }}-sha256.txt
-          asset_content_type: text/plain
+          name: ZDM Proxy {{ github.ref_name }}
+          files: |
+            proxy-linux-amd64-${{ github.ref_name }}.tgz
+            proxy-linux-amd64-${{ github.ref_name }}-sha256.txt
+            proxy-windows-amd64-${{ github.ref_name }}.zip
+            proxy-windows-amd64-${{ github.ref_name }}-sha256.txt
