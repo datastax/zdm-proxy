@@ -32,11 +32,11 @@ jobs:
           export GOOS=windows
           export GOARCH=amd64
           go build -o proxy-${{ github.ref_name }}.exe ./proxy
-          zip -vr proxy-windows-amd64-${{ github.ref_name }}.tgz proxy-${{ github.ref_name }}.exe LICENSE
+          zip -vr proxy-windows-amd64-${{ github.ref_name }}.zip proxy-${{ github.ref_name }}.exe LICENSE
       - name: Generate Checksums
         run: |
           sha256sum proxy-linux-amd64-${{ github.ref_name }}.tgz | cut -d ' ' -f 1 > proxy-linux-amd64-${{ github.ref_name }}-sha256.txt
-          sha256sum proxy-windows-amd64-${{ github.ref_name }}.tgz | cut -d ' ' -f 1 > proxy-windows-amd64-${{ github.ref_name }}-sha256.txt
+          sha256sum proxy-windows-amd64-${{ github.ref_name }}.zip | cut -d ' ' -f 1 > proxy-windows-amd64-${{ github.ref_name }}-sha256.txt
       - name: Create Release
         id: create_release
         uses: actions/create-release@v1
