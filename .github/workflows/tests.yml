@@ -1,5 +1,8 @@
 name: ZDM Tests
 on: push
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
   # Runs a NoSQLBench job in docker-compose with 3 proxy nodes
   # Verifies the written data matches in both ORIGIN and TARGET clusters
