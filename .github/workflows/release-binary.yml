@@ -25,8 +25,8 @@ jobs:
           tar cvfz proxy-linux-amd64-${{ github.ref_name }}.tgz proxy-${{ github.ref_name }} LICENSE
       - name: Build Windows/amd64 binary
         run: |
-          sudo apt update
-          sudo apt -y install zip
+          apt update
+          apt -y install zip
           export GO111MODULE=on
           export CGO_ENABLED=0
           export GOOS=windows
