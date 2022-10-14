@@ -25,14 +25,14 @@ few sections.
 ## Code Contributions
 
 ---
-**Note:** If you're considering to submit a patch to the project, make sure you agree with the
-Contribution License Agreement (CLA) available at https://cla.datastax.com/. You'll be required
-to sign it with your GitHub account before we can accept your code changes.
+**Note:** If you'll contribute code or examples via a Pull Request (PR) to this ZDM Proxy project, be sure to first read 
+the Contribution License Agreement (CLA) at https://cla.datastax.com/. You'll be required to sign it with your GitHub
+account before we can consider accepting your PR changes.
 ---
 
-Before you start working on a feature or major change, we ask you to discuss your idea with the members
+**Before you start working on a feature or major change, we ask you to discuss your idea with the members
 of the community by opening an issue in GitHub, this way we can discuss design considerations and
-feasibility before you invest your time on the effort.
+feasibility before you invest your time on the effort.**
 
 When  you're ready to code, follow these steps:
 
