@@ -2,283 +2,108 @@
 
 ## Overview
 
-This is a simple proxy component to enable users to migrate without downtime from a Cassandra cluster to another (which may be an Astra cluster) without requiring code changes in the application client.
+The ZDM Proxy is client-server component written in Go that enables users to migrate with zero downtime from an Apache
+Cassandra&reg; cluster to another (which may be an [Astra](https://astra.datastax.com/) cluster) and not requiring code
+changes in the application client.
 
-The only change to the client is pointing it to the proxy rather than directly to the original cluster. In turn, the proxy connects to both origin and target clusters.
+The only change to the client is pointing it to the proxy rather than directly to the original cluster (Origin). In turn,
+the proxy connects to both Origin and Target clusters.
 
-The proxy will forward read requests only to the origin cluster, while writes will be sent to both clusters concurrently.
+By default, the proxy will forward read requests only to the Origin cluster, though you can optionally configure it to
+forward reads to both clusters asynchronously, while writes will always be sent to both clusters concurrently.
 
-An overview of the proxy architecture and logical flow will be added here soon.
+An overview of the proxy architecture and logical flow can be viewed [here](#).
 
-## Frequently Asked Questions
+## Quick Start
 
-For frequently asked questions, please refer to our separate [faq](faq.md) page.
-
-## Environment Variables
-
-```shell
-PROXY_INDEX=0
-PROXY_ADDRESSES=127.0.0.1
-ORIGIN_ENABLE_HOST_ASSIGNMENT=true
-TARGET_ENABLE_HOST_ASSIGNMENT=true
-ORIGIN_CASSANDRA_CONTACT_POINTS=127.0.0.1 #required
-ORIGIN_CASSANDRA_USERNAME=cassandra       #required
-ORIGIN_CASSANDRA_PASSWORD=cassandra       #required
-ORIGIN_CASSANDRA_PORT=9042
-TARGET_CASSANDRA_CONTACT_POINTS=127.0.0.1 #required
-TARGET_CASSANDRA_USERNAME=cassandra       #required
-TARGET_CASSANDRA_PASSWORD=cassandra       #required
-TARGET_CASSANDRA_PORT=9043
-PROXY_METRICS_ADDRESS=127.0.0.1
-PROXY_METRICS_PORT=14001
-PROXY_QUERY_PORT=14002
-PROXY_QUERY_ADDRESS=127.0.0.1
-CLUSTER_CONNECTION_TIMEOUT_MS=30000
-HEARTBEAT_INTERVAL_MS=30000
-ENABLE_METRICS=true
-MAX_CLIENTS_THRESHOLD=500
-FORWARD_READS_TO_TARGET=false
-FORWARD_SYSTEM_QUERIES_TO_TARGET=true
-REQUEST_TIMEOUT_MS=10000
-LOG_LEVEL=INFO
-```
-
-These environment variables must be set and exported for the proxy to work. They are read and processed into a `Config` struct, which is passed into the Proxy Service.
-
-## Running and testing the proxy locally
-
-Launch two Cassandra single-node clusters as docker containers, one listening on port `9042` and the other on `9043`:
+In order to run the proxy, you'll need to set some environment variables to configure it properly.
+Below you'll find a list with the most important variables along with their default values.
+The required ones are marked with a comment.
 
 ```shell
-docker run --name cassandra-source --env CASSANDRA_BROADCAST_ADDRESS=127.0.0.1 -p 9042:9042 -d cassandra
-docker run --name cassandra-dest --env CASSANDRA_BROADCAST_ADDRESS=127.0.0.1 -p 9043:9042 -d cassandra
+ZDM_PROXY_TOPOLOGY_INDEX=0
+ZDM_PROXY_TOPOLOGY_ADDRESSES=127.0.0.1
+ZDM_ORIGIN_ENABLE_HOST_ASSIGNMENT=true
+ZDM_TARGET_ENABLE_HOST_ASSIGNMENT=true
+ZDM_ORIGIN_CONTACT_POINTS=127.0.0.1 #required
+ZDM_ORIGIN_USERNAME=cassandra       #required
+ZDM_ORIGIN_PASSWORD=cassandra       #required
+ZDM_ORIGIN_PORT=9042
+ZDM_TARGET_CONTACT_POINTS=127.0.0.1 #required
+ZDM_TARGET_USERNAME=cassandra       #required
+ZDM_TARGET_PASSWORD=cassandra       #required
+ZDM_TARGET_PORT=9043
+ZDM_METRICS_ADDRESS=127.0.0.1
+ZDM_METRICS_PORT=14001
+ZDM_PROXY_LISTEN_PORT=14002
+ZDM_PROXY_LISTEN_ADDRESS=127.0.0.1
+ZDM_ORIGIN_CONNECTION_TIMEOUT_MS=30000
+ZDM_TARGET_CONNECTION_TIMEOUT_MS=30000
+ZDM_HEARTBEAT_INTERVAL_MS=30000
+ZDM_METRICS_ENABLED=true
+ZDM_PROXY_MAX_CLIENT_CONNECTIONS=1000
+ZDM_PRIMARY_CLUSTER=ORIGIN
+ZDM_READ_MODE=PRIMARY_ONLY
+ZDM_PROXY_REQUEST_TIMEOUT_MS=10000
+ZDM_LOG_LEVEL=INFO
 ```
 
-Open cqlsh directly on each of these clusters:
+The environment variables must be set and exported for the proxy to work.
+
+In order to get started quickly, in your local environment, grab a copy of the binary distribution in the
+[Releases](https://github.com/datastax/zdm-proxy/releases) page. For the recommended installation in a production
+environment, check the [Production Setup](#production-setup) section below. 
+
+Now, suppose you have two clusters running at `10.0.0.1` and `10.0.0.2` with `cassandra/cassandra` credentials
+and the same key-value [schema](nb-tests/schema.cql). You can start the proxy and connect it to these clusters like this:
 
 ```shell
-docker exec -it cassandra-source cqlsh
+$ export ZDM_ORIGIN_CONTACT_POINTS=10.0.0.1 \ 
+export ZDM_TARGET_CONTACT_POINTS=10.0.0.2 \
+export ZDM_ORIGIN_USERNAME=cassandra \
+export ZDM_ORIGIN_PASSWORD=cassandra \
+export ZDM_TARGET_USERNAME=cassandra \
+export ZDM_TARGET_PASSWORD=cassandra \
+./zdm-proxy-v2.0.0 # run the ZDM proxy executable
 ```
+
+At this point, you should be able to connect some client such as [CQLSH](https://downloads.datastax.com/#cqlsh) to the proxy
+and write data to it and the proxy will take care of forwarding the requests to both clusters concurrently.
 
 ```shell
-docker exec -it cassandra-dest cqlsh
+$ cqlsh <proxy-ip-address> 14002 # this is the proxy's default listen port
 ```
 
-Create a keyspace + table directly on each cluster, for example:
+From the CQLSH prompt:
 
 ```cql
-CREATE KEYSPACE test WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1};
-CREATE TABLE test.keyvalue (key int PRIMARY KEY, value text);
+cqlsh> INSERT INTO test.keyvalue (key, value) VALUES (1, 'ABC');
+cqlsh> INSERT INTO test.keyvalue (key, value) VALUES (2, 'DEF');
+cqlsh> SELECT * FROM test.keyvalue;
+cqlsh> UPDATE test.keyvalue SET value='GYEKJF' WHERE key = 1;
+cqlsh> DELETE FROM test.keyvalue WHERE key = 2;
 ```
+You can confirm that the data is stored in both clusters by querying them directly in other cqlsh sessions.
 
-You can also use ccm instead of docker:
+Note: For the moment, the keyspace must be specified when accessing a table, even after using `USE <keyspace>`.
 
-```shell
-ccm create -v 3.11.7 origin
-ccm add -s --binary-itf="127.0.0.1:9042" --storage-itf="127.0.0.1:7000" --thrift-itf="127.0.0.1:9160" -r 5005 -j 9000 node1
-ccm start --wait-for-binary-proto
+If you don't have test clusters readily available to try with, check the [alternative](./CONTRIBUTING.md#running-on-localhost-with-docker-compose) method with docker-compose in the
+[Contributor's guide](./CONTRIBUTING.md), which will set up all the dependencies, including two test clusters and a proxy instance, in a
+containerized sandbox environment.
 
-ccm create -v 3.11.7 target
-ccm add -s --binary-itf="127.0.0.1:9043" --storage-itf="127.0.0.1:7001" --thrift-itf="127.0.0.1:9161" -r 5006 -j 9001 node1
-ccm start --wait-for-binary-proto
+## Production Setup
 
-# use cqlsh on origin
-ccm switch origin
-ccm node1 cqlsh
+The setup we described above is only for testing in a local environment. It is **NOT** recommended for a production
+installation where the minimum number of proxy instances is 3.
 
-# use cqlsh on target
-ccm switch target
-ccm node1 cqlsh
-```
+For a comprehensive guide with the recommended production setup check the documentation available at
 
-Clone this project into the following directory, using the exact same path specified here: `~/go/src/github.com/riptano`
-  
-In the configuration, use this environment variable list: `ORIGIN_CASSANDRA_CONTACT_POINTS=127.0.0.1;ORIGIN_CASSANDRA_USERNAME=cassandra;ORIGIN_CASSANDRA_PASSWORD=cassandra;ORIGIN_CASSANDRA_PORT=9042;TARGET_CASSANDRA_CONTACT_POINTS=127.0.0.10;TARGET_CASSANDRA_USERNAME=cassandra;TARGET_CASSANDRA_PASSWORD=cassandra;TARGET_CASSANDRA_PORT=9042;DEBUG=true;PROXY_METRICS_PORT=14001;PROXY_QUERY_PORT=14002`
-
-Start the proxy with the newly created run configuration.
-
-Install a cqlsh standalone client ([download here](https://downloads.datastax.com/#cqlsh)) and connect to the proxy: `./cqlsh localhost 14002`.
-
-Note that:
-
-- If you are debugging you may want to increase the timeouts to have more time to step through the code. The options are: ` --connect-timeout="XXX" --request-timeout="YYY" `
-- For the moment, the keyspace must be specified when accessing a table, even after using `USE <keyspace>`.
-
-Once connected, experiment sending some requests through the proxy. For example:
-
-```cql
-INSERT INTO test.keyvalue (key, value) VALUES (1, 'ABC');
-INSERT INTO test.keyvalue (key, value) VALUES (2, 'DEF');
-SELECT * FROM test.keyvalue;
-UPDATE test.keyvalue SET value='GYEKJF' WHERE key = 1;
-DELETE FROM test.keyvalue WHERE key = 2;
-```
-
-And verify that the data is in both clusters by querying them directly through their own cqlsh.
-
-To test prepared statements, there is a simple noSQLBench activity under nb-tests that can be launched like this:
-
-`java -jar nb.jar run driver=cql workload=~/go/src/github.com/datastax/zdm-proxy/nb-tests/cql-nb-activity.yaml tags=phase:'rampup' cycles=20..30 host=localhost port=14002 cbopts=".withProtocolVersion(ProtocolVersion.V3)"`
-
-## Running the proxy with docker
-
-From the root of the repository, run the following and take note of the id of the generated image.
-
-```shell
-docker build .
-```
-
-To make it easier to provide all of the necessary environment variables, create a simple `test.env` file with the following content:
-
-```shell
-ORIGIN_CASSANDRA_CONTACT_POINTS=localhost
-ORIGIN_CASSANDRA_USERNAME=cassandra
-ORIGIN_CASSANDRA_PASSWORD=cassandra
-ORIGIN_CASSANDRA_PORT=9042
-TARGET_CASSANDRA_CONTACT_POINTS=localhost
-TARGET_CASSANDRA_USERNAME=cassandra
-TARGET_CASSANDRA_PASSWORD=cassandra
-TARGET_CASSANDRA_PORT=9043
-LOG_LEVEL=DEBUG
-PROXY_METRICS_ADDRESS=0.0.0.0
-PROXY_METRICS_PORT=14001
-PROXY_QUERY_PORT=14002
-PROXY_QUERY_ADDRESS=0.0.0.0
-```
-
-On Windows you need to replace both `_HOSTNAME` variables with `host.docker.internal`.
-
-Finally, run:
-
-```shell
-docker run --env-file ./test.env IMAGE_ID
-```
-
-Here `IMAGE_ID` is the id of the image that was generated by the previous `docker build` step.
-
-## Building docker image and publishing it
-
-First login with your dockerhub creds.
-
-```shell
-export DOCKER_USER=<YOUR_DOCKER_USERNAME>
-export DOCKER_PASS=<YOUR_DOCKER_PASSWORD_OR_TOKEN>
-make login
-```
-
-Then build and push the image. This will tag the image with the current git commit hash.
-
-```shell
-make build push
-```
-
-This doesn't tag the image with `latest` or any version tag like `1.x`. To do that you need to copy the image tag that was printed to the console by `make push` or run `make get_current_tag` to get the tag based on the current git commit hash. Then you run `docker tag <NAME:GIT_COMMIT_HASH_TAG> <NAME:NEW_TAG>` followed by `docker push <NAME:NEW_TAG>`. 
-
-For example, if you want to tag and push the image tagged by the current git commit hash with `1.x`, `1.0.1` and `latest`:
-
-```shell
-> make get_current_tag
-datastax/zdm-proxy:d046148f606b65b536bb0cc2bd63daf1d556e778
-> docker tag datastax/zdm-proxy:d046148f606b65b536bb0cc2bd63daf1d556e778 datastax/zdm-proxy:1.x
-> docker tag datastax/zdm-proxy:d046148f606b65b536bb0cc2bd63daf1d556e778 datastax/zdm-proxy:1.0.1
-> docker tag datastax/zdm-proxy:d046148f606b65b536bb0cc2bd63daf1d556e778 datastax/zdm-proxy:latest
-> docker push datastax/zdm-proxy:1.x
-> docker push datastax/zdm-proxy:1.0.1
-> docker push datastax/zdm-proxy:latest
-```
-
-
-
-## Integration tests
-
-The `integration-tests` module contains integration tests that use `CCM` and `Simulacron`.
-
-### Tools setup
-
-`Simulacron` is required but `CCM` is optional. By default only `Simulacron` tests run.
-
-#### Simulacron
-
-To run the default suite of integration tests you need [simulacron][simulacronrepo]:
-
-1. Download the latest jar file [here][simulacronreleases].
-2. Set `SIMULACRON_PATH` environment variable to the path of the jar file you downloaded in the previous step.
-
-Simulacron relies on loopback aliases to simulate multiple nodes. On Linux or Windows, you shouldn't have anything to do. On MacOS, run this script:
-
-```bash
-#!/bin/bash
-for sub in {0..4}; do
-    echo "Opening for 127.0.$sub"
-    for i in {0..255}; do sudo ifconfig lo0 alias 127.0.$sub.$i up; done
-done
-```
-
-Note that this is known to cause temporary increased CPU usage in OS X initially while mDNSResponder acclimates itself to the presence of added IP addresses. This lasts several minutes. Also, this does not survive reboots.
-
-#### CCM
-
-The optional integration tests require [ccm][ccmrepo] on your machine so make sure the ccm commands are accessible from the command line. You should be able to run `> cmd.exe /c ccm help` using command line on Windows or `$ /usr/local/bin/ccm help` on Linux / macOS.
-
-Installing CCM on **linux/macOS** it should be as simple as cloning the [ccm][ccmrepo] and running `sudo ./setup.py install`
-
-On **Windows**, however, there are a couple of dependencies and environment variables that you need to set up. This [blog post][ccm-windows-blog] should help you set up those dependencies and environment variables.
-
-### Running the tests
-
-By default only `Simulacron` based tests will run:
-
-```shell
-# from the root of the repository
-go test -v ./integration-tests
-```
-
-To include `CCM` based tests run:
-
-```shell
-# from the root of the repository
-go test -v ./integration-tests -RUN_CCMTESTS=true
-```
-
-If using IntelliJ Goland or the go plugin for IntelliJ Idea Ultimate, you can create a run configuration as shown here (you can remove the `Program arguments` to exclude `CCM` tests):
-
-![Run configuration](img/integration_tests_run_config.png)
-
-### Advanced
-
-If you want to specify which C*/DSE version is used for `CCM` and `Simulacron`, you can specify the `CASSANDRA_VERSION` and `DSE_VERSION` flags:
-
-```shell
-# from the root of the repository
-go test -v ./integration-tests -RUN_CCMTESTS=true -CASSANDRA_VERSION=3.11.8
-```
-
-Also note that any of the test flags can also be provided via environment variables instead. If both are present then the test flag is used instead of the environment variable.
-
-[ccmrepo]: https://github.com/riptano/ccm
-[simulacronrepo]: https://github.com/datastax/simulacron
-[simulacronreleases]: https://github.com/datastax/simulacron/releases
-[ccm-windows-blog]: https://www.datastax.com/blog/2015/01/ccm-20-and-windows
-
-### Building the proxy with CPU and memory profiling support 
-
-To add built-in support for CPU and memory profiling (strictly for development only), build the proxy as follows:
-
-```shell
-go build -tags profiling
-```
-
-This will add two flags that can be optionally specified at proxy startup to enable CPU and / or memory profiling:
-
-```shell
-./proxy -cpu_profile cpu.prof -mem_profile heap.prof 
-```
-
-Where `cpu.prof` and `heap.prof` are the names of the files in which the profiling data will be stored.
-Note that these files will be created when the proxy is stopped.
-
-These files can then be accessed using `go tool pprof` (see [here](https://go.dev/blog/pprof)).
+There you'll find information about an Ansible-based tool that automates most of the process.
 
 ## Project Dependencies
 
 For information on the packaged dependencies of the Zero Downtime Migration (ZDM) Proxy and their licenses, check out our [open source report](https://app.fossa.com/reports/910065e9-5620-4ed7-befb-b69c45ebce6e).
+
+## Frequently Asked Questions
+
+For frequently asked questions, please refer to our separate [FAQ](faq.md) page.
