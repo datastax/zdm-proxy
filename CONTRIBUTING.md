@@ -49,7 +49,7 @@ If there's an associated issue open, include its number as a prefix, *#issue-nam
 updated code to the remote branch in your fork.
 
 
-4. Finally, when you're happy with your patch, open a Pull Request through the GitHub UI.
+4. Finally, when you're happy with your edits, open a Pull Request through the GitHub UI.
 
 
 5. The automated tests in GitHub Actions will kick in and in a few minutes you should
