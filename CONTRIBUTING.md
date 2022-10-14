@@ -42,7 +42,7 @@ you can open a Pull Request for your branch when you're ready.
 
 
 2. From your fork, create a new local branch where you'll make changes. Give it a short, descriptive, name.
-If there's an associated issue open, include its number as a prefix, *zdm-#issue-name*, for example: zdm-10-fix-bug-xyz.
+If there's an associated issue open, include its number as a prefix, *#issue-name*, for example: 10-fix-bug-xyz.
 
 
 3. Make the changes you want locally and validate them with the [test tools](#running-unit-tests) provided. Push the
