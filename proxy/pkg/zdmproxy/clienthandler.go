@@ -592,8 +592,10 @@ func (ch *ClientHandler) responseLoop() {
 				holder := getOrCreateRequestContextHolder(contextHoldersMap, streamId)
 				reqCtx := holder.Get()
 				if reqCtx == nil {
-					log.Warnf("Could not find request context for stream id %d received from %v. "+
-						"It either timed out or a protocol error occurred.", streamId, response.connectorType)
+					if ch.clientHandlerContext.Err() == nil {
+						log.Warnf("Could not find request context for stream id %d received from %v. "+
+							"It either timed out or a protocol error occurred.", streamId, response.connectorType)
+					}
 					return
 				}
 
