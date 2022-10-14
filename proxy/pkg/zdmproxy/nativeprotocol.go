@@ -507,7 +507,7 @@ func getFilteredSystemValues(
 			if err == nil {
 				err = addSystemColumnValue(
 					false, first, &row, columns, i, resultColumns[i], unaliasedColumnName,
-					peerColumnNames, systemLocalColumnData,	virtualHost, proxyPort, rowCount)
+					peerColumnNames, systemLocalColumnData, virtualHost, proxyPort, rowCount)
 			}
 
 			if err != nil {

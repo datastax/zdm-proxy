@@ -1503,7 +1503,7 @@ func (ch *ClientHandler) handleInterceptedRequest(
 		}
 		interceptedQueryResponse, err = NewSystemPeersResult(prepareRequestInfo, currentKeyspace,
 			typeCodec, f.Header.Version, controlConn.GetSystemPeersColumnNames(), controlConn.GetSystemLocalColumnData(),
-			parsedSelectClause,	virtualHosts, controlConn.GetLocalVirtualHostIndex(), ch.conf.ProxyListenPort)
+			parsedSelectClause, virtualHosts, controlConn.GetLocalVirtualHostIndex(), ch.conf.ProxyListenPort)
 	case local:
 		parsedSelectClause := interceptedRequestInfo.GetParsedSelectClause()
 		if parsedSelectClause == nil {
