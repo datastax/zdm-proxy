@@ -1502,8 +1502,8 @@ func (ch *ClientHandler) handleInterceptedRequest(
 			return nil, fmt.Errorf("unable to intercept system.peers query (prepared=%v) because parsed select clause is nil", prepared)
 		}
 		interceptedQueryResponse, err = NewSystemPeersResult(prepareRequestInfo, currentKeyspace,
-			typeCodec, f.Header.Version, controlConn.GetSystemLocalColumnData(), parsedSelectClause,
-			virtualHosts, controlConn.GetLocalVirtualHostIndex(), ch.conf.ProxyListenPort)
+			typeCodec, f.Header.Version, controlConn.GetSystemPeersColumnNames(), controlConn.GetSystemLocalColumnData(),
+			parsedSelectClause,	virtualHosts, controlConn.GetLocalVirtualHostIndex(), ch.conf.ProxyListenPort)
 	case local:
 		parsedSelectClause := interceptedRequestInfo.GetParsedSelectClause()
 		if parsedSelectClause == nil {

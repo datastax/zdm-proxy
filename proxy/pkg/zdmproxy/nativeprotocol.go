@@ -389,50 +389,70 @@ func unaliasedColumnNameFromSelector(parsedSelector selector) (string, error) {
 }
 
 func addSystemColumnValue(
-	isStarSelector bool, first bool, row *[]interface{}, columns *[]*message.ColumnMetadata, addedColumns *[]string, columnIndex int,
-	col *message.ColumnMetadata, unaliasedColumnName string, systemColumnData map[string]*optionalColumn, virtualHost *VirtualHost, proxyPort int, rowCount int) error {
+	isStarSelector bool, first bool, row *[]interface{}, columns *[]*message.ColumnMetadata, columnIndex int,
+	col *message.ColumnMetadata, unaliasedColumnName string, peersColumns map[string]bool,
+	systemLocalColumnData map[string]*optionalColumn, virtualHost *VirtualHost,
+	proxyPort int, rowCount int) error {
 	switch unaliasedColumnName {
 	case peerColumn.Name, broadcastAddressColumn.Name, listenAddressColumn.Name, rpcAddressColumn.Name, preferredIpPeersColumn.Name:
-		return addColumn(isStarSelector, first, row, columns, addedColumns, columnIndex, col, virtualHost.Addr)
+		return addColumn(isStarSelector, first, row, columns, columnIndex, col, virtualHost.Addr)
 	case datacenterColumn.Name:
-		return addColumn(isStarSelector, first, row, columns, addedColumns, columnIndex, col, virtualHost.Host.Datacenter)
+		return addColumn(isStarSelector, first, row, columns, columnIndex, col, virtualHost.Host.Datacenter)
 	case hostIdColumn.Name:
-		return addColumn(isStarSelector, first, row, columns, addedColumns, columnIndex, col, virtualHost.HostId)
+		return addColumn(isStarSelector, first, row, columns, columnIndex, col, virtualHost.HostId)
 	case rackColumn.Name:
-		return addColumn(isStarSelector, first, row, columns, addedColumns, columnIndex, col, virtualHost.Rack)
+		return addColumn(isStarSelector, first, row, columns, columnIndex, col, virtualHost.Rack)
 	case tokensColumn.Name:
-		return addColumn(isStarSelector, first, row, columns, addedColumns, columnIndex, col, virtualHost.Tokens)
+		return addColumn(isStarSelector, first, row, columns, columnIndex, col, virtualHost.Tokens)
 	case truncatedAtColumn.Name:
-		return addColumn(isStarSelector, first, row, columns, addedColumns, columnIndex, col, nil)
+		return addColumn(isStarSelector, first, row, columns, columnIndex, col, nil)
 	case partitionerColumn.Name:
-		return addColumn(isStarSelector, first, row, columns, addedColumns, columnIndex, col, virtualHost.Partitioner)
+		return addColumn(isStarSelector, first, row, columns, columnIndex, col, virtualHost.Partitioner)
 	case schemaVersionColumn.Name:
 		if virtualHost.Host.SchemaVersion == nil {
-			return addColumn(isStarSelector, first, row, columns, addedColumns, columnIndex, col, nil)
+			return addColumn(isStarSelector, first, row, columns, columnIndex, col, nil)
 		} else {
 			schemaId := primitive.UUID(*virtualHost.Host.SchemaVersion)
-			return addColumn(isStarSelector, first, row, columns, addedColumns, columnIndex, col, &schemaId)
+			return addColumn(isStarSelector, first, row, columns, columnIndex, col, &schemaId)
 		}
 	}
 
-	if optionalCol, ok := virtualHost.Host.ColumnData[unaliasedColumnName]; ok {
+	if strings.ToLower(unaliasedColumnName) == "count" {
+		return addColumn(isStarSelector, first, row, columns, columnIndex, col, rowCount)
+	}
+
+	optionalCol, ok := virtualHost.Host.ColumnData[unaliasedColumnName]
+	if ok {
+		if peersColumns != nil {
+			_, peersColumnExists := peersColumns[unaliasedColumnName]
+			if !peersColumnExists {
+				if isStarSelector {
+					return nil
+				} else {
+					return fmt.Errorf("no peer column value for %s", unaliasedColumnName)
+				}
+			}
+		}
+
 		switch unaliasedColumnName {
 		case nativeTransportAddressColumn.Name:
-			return overrideColumnIfExists(isStarSelector, first, row, columns, addedColumns, columnIndex, col, optionalCol, virtualHost.Addr)
+			return overrideColumnIfExists(isStarSelector, first, row, columns, columnIndex, col, optionalCol, virtualHost.Addr)
 		case nativeTransportPortColumn.Name:
-			return overrideColumnIfExists(isStarSelector, first, row, columns, addedColumns, columnIndex, col, optionalCol, proxyPort)
+			return overrideColumnIfExists(isStarSelector, first, row, columns, columnIndex, col, optionalCol, proxyPort)
 		case nativeTransportPortSslColumn.Name:
-			return overrideColumnIfExists(isStarSelector, first, row, columns, addedColumns, columnIndex, col, optionalCol, proxyPort)
+			return overrideColumnIfExists(isStarSelector, first, row, columns, columnIndex, col, optionalCol, proxyPort)
 		default:
-			return addColumnIfExists(isStarSelector, first, row, columns, addedColumns, columnIndex, col, optionalCol)
+			return addColumnIfExists(isStarSelector, first, row, columns, columnIndex, col, optionalCol)
 		}
-	} else if optionalCol, ok = systemColumnData[unaliasedColumnName]; ok {
-		return addColumnIfExists(isStarSelector, first, row, columns, addedColumns, columnIndex, col, optionalCol)
-	} else if strings.ToLower(unaliasedColumnName) == "count" {
-		return addColumn(isStarSelector, first, row, columns, addedColumns, columnIndex, col, rowCount)
-	} else {
-		return fmt.Errorf("no column value for %s", unaliasedColumnName)
 	}
+
+	if peersColumns == nil {
+		if optionalCol, ok = systemLocalColumnData[unaliasedColumnName]; ok {
+			return addColumnIfExists(isStarSelector, first, row, columns, columnIndex, col, optionalCol)
+		}
+	}
+
+	return fmt.Errorf("no column value for %s", unaliasedColumnName)
 }
 
 func filterSystemColumns(
@@ -461,16 +481,17 @@ func filterSystemColumns(
 }
 
 func getFilteredSystemValues(
-	table string, parsedSelectClause *selectClause, first bool, columns *[]*message.ColumnMetadata, addedColumns *[]string,
-	resultColumns []*message.ColumnMetadata, systemLocalColumnData map[string]*optionalColumn, virtualHost *VirtualHost,
+	table string, parsedSelectClause *selectClause, first bool, columns *[]*message.ColumnMetadata,
+	resultColumns []*message.ColumnMetadata, peerColumnNames map[string]bool,
+	systemLocalColumnData map[string]*optionalColumn, virtualHost *VirtualHost,
 	proxyPort int, rowCount int) ([]interface{}, error) {
 
 	row := make([]interface{}, 0, len(resultColumns))
 	if parsedSelectClause.IsStarSelectClause() {
 		for i, col := range resultColumns {
 			err := addSystemColumnValue(
-				true, first, &row, columns, addedColumns, i, col, col.Name, systemLocalColumnData,
-				virtualHost, proxyPort, rowCount)
+				true, first, &row, columns, i, col, col.Name, peerColumnNames,
+				systemLocalColumnData, virtualHost, proxyPort, rowCount)
 
 			if err != nil {
 				return nil, fmt.Errorf("errors adding columns for system %v result: %w", table, err)
@@ -485,8 +506,8 @@ func getFilteredSystemValues(
 			unaliasedColumnName, err := unaliasedColumnNameFromSelector(col)
 			if err == nil {
 				err = addSystemColumnValue(
-					false, first, &row, columns, addedColumns, i, resultColumns[i], unaliasedColumnName, systemLocalColumnData,
-					virtualHost, proxyPort, rowCount)
+					false, first, &row, columns, i, resultColumns[i], unaliasedColumnName,
+					peerColumnNames, systemLocalColumnData,	virtualHost, proxyPort, rowCount)
 			}
 
 			if err != nil {
@@ -510,11 +531,10 @@ func NewSystemLocalResult(
 	}
 	rowCount := 1
 
-	addedColumns := make([]string, 0, len(resultCols))
 	columns := make([]*message.ColumnMetadata, 0, len(resultCols))
 	row, err := getFilteredSystemValues(
-		"local", parsedSelectClause, true, &columns, &addedColumns, resultCols,
-		systemLocalColumnData, virtualHost, proxyPort, rowCount)
+		"local", parsedSelectClause, true, &columns, resultCols,
+		nil, systemLocalColumnData, virtualHost, proxyPort, rowCount)
 	if err != nil {
 		return nil, fmt.Errorf("errors adding columns for system local result (prepare=%v): %w", prepareRequestInfo != nil, err)
 	}
@@ -617,15 +637,14 @@ var systemPeersColumns = []*message.ColumnMetadata{
 // RowsResult if prepareRequestInfo is nil.
 func NewSystemPeersResult(
 	prepareRequestInfo *PrepareRequestInfo, connectionKeyspace string, genericTypeCodec *GenericTypeCodec,
-	version primitive.ProtocolVersion, systemLocalColumnData map[string]*optionalColumn, parsedSelectClause *selectClause,
-	virtualHosts []*VirtualHost, localVirtualHostIndex int, proxyPort int) (message.Result, error) {
+	version primitive.ProtocolVersion, peerColumnNames map[string]bool, systemLocalColumnData map[string]*optionalColumn,
+	parsedSelectClause *selectClause, virtualHosts []*VirtualHost, localVirtualHostIndex int, proxyPort int) (message.Result, error) {
 
-	resultCols, hasCountSelector, err := filterSystemColumns(parsedSelectClause, systemPeersColumns, systemPeersTableName)
+	resultColumns, hasCountSelector, err := filterSystemColumns(parsedSelectClause, systemPeersColumns, systemPeersTableName)
 	if err != nil {
 		return nil, err
 	}
-	columns := make([]*message.ColumnMetadata, 0, len(resultCols))
-	addedColumns := make([]string, 0, len(resultCols))
+	columns := make([]*message.ColumnMetadata, 0, len(resultColumns))
 	rows := make([][]interface{}, 0, len(virtualHosts)-1)
 	isFirstRow := true
 
@@ -643,8 +662,8 @@ func NewSystemPeersResult(
 		virtualHost := virtualHosts[i]
 
 		row, err := getFilteredSystemValues(
-			systemPeersTableName, parsedSelectClause, isFirstRow, &columns, &addedColumns, resultCols,
-			systemLocalColumnData, virtualHost, proxyPort, len(virtualHosts)-1)
+			systemPeersTableName, parsedSelectClause, isFirstRow, &columns, resultColumns,
+			peerColumnNames, systemLocalColumnData, virtualHost, proxyPort, len(virtualHosts)-1)
 		if err != nil {
 			return nil, fmt.Errorf("errors adding columns for system peers result: %w", err)
 		}
@@ -655,7 +674,10 @@ func NewSystemPeersResult(
 		}
 
 		rows = append(rows, row)
-		isFirstRow = false
+		if isFirstRow {
+			isFirstRow = false
+			resultColumns = columns // final column list is set (relevant for star selector where result columns are not static)
+		}
 		if hasCountSelector {
 			break
 		}
@@ -689,26 +711,24 @@ func NewSystemPeersResult(
 
 func addColumnHelper(
 	isStarSelector bool, first bool, row *[]interface{}, columns *[]*message.ColumnMetadata,
-	columnIndex int, processedColumns *[]string, columnMetadata *message.ColumnMetadata,
+	columnIndex int, columnMetadata *message.ColumnMetadata,
 	colExists bool, val interface{}) error {
 	if first {
 		if colExists {
 			*columns = append(*columns, columnMetadata)
 			*row = append(*row, convertNullableToValue(val))
-			*processedColumns = append(*processedColumns, columnMetadata.Name)
 		} else if !isStarSelector {
 			return fmt.Errorf("could not find value for column %s", columnMetadata.Name)
-		} else {
-			*processedColumns = append(*processedColumns, columnMetadata.Name)
 		}
 	} else {
-		if len(*processedColumns) <= columnIndex {
+		idx := len(*row)
+		if len(*columns) <= idx {
 			return fmt.Errorf("column length mismatch between hosts: "+
-				"processedColumns.len=%v columnIndex=%v name=%v", len(*processedColumns), columnIndex, columnMetadata.Name)
+				"processedColumns.len=%v columnIndex=%v name=%v", len(*columns), idx, columnMetadata.Name)
 		}
 
-		processedColumn := (*processedColumns)[columnIndex]
-		if processedColumn != columnMetadata.Name {
+		processedColumn := (*columns)[idx]
+		if processedColumn.Name != columnMetadata.Name {
 			return fmt.Errorf("columns mismatch between hosts: "+
 				"processedColumn=%v columnToBeAdded=%v", processedColumn, columnMetadata.Name)
 		}
@@ -723,18 +743,18 @@ func addColumnHelper(
 }
 
 func addColumnIfExists(isStarSelector bool, first bool, row *[]interface{}, columns *[]*message.ColumnMetadata,
-	addedColumns *[]string, columnIndex int, columnMetadata *message.ColumnMetadata, col *optionalColumn) error {
-	return addColumnHelper(isStarSelector, first, row, columns, columnIndex, addedColumns, columnMetadata, col.exists, col.column)
+	columnIndex int, columnMetadata *message.ColumnMetadata, col *optionalColumn) error {
+	return addColumnHelper(isStarSelector, first, row, columns, columnIndex, columnMetadata, col.exists, col.column)
 }
 
 func overrideColumnIfExists(isStarSelector bool, first bool, row *[]interface{}, columns *[]*message.ColumnMetadata,
-	addedColumns *[]string, columnIndex int, columnMetadata *message.ColumnMetadata, col *optionalColumn, val interface{}) error {
-	return addColumnHelper(isStarSelector, first, row, columns, columnIndex, addedColumns, columnMetadata, col.exists, val)
+	columnIndex int, columnMetadata *message.ColumnMetadata, col *optionalColumn, val interface{}) error {
+	return addColumnHelper(isStarSelector, first, row, columns, columnIndex, columnMetadata, col.exists, val)
 }
 
 func addColumn(isStarSelector bool, first bool, row *[]interface{}, columns *[]*message.ColumnMetadata,
-	addedColumns *[]string, columnIndex int, columnMetadata *message.ColumnMetadata, val interface{}) error {
-	return addColumnHelper(isStarSelector, first, row, columns, columnIndex, addedColumns, columnMetadata, true, val)
+	columnIndex int, columnMetadata *message.ColumnMetadata, val interface{}) error {
+	return addColumnHelper(isStarSelector, first, row, columns, columnIndex, columnMetadata, true, val)
 }
 
 func convertNullableToValue(val interface{}) interface{} {
