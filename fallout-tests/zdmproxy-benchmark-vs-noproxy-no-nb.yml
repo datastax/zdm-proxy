@@ -1,0 +1,271 @@
+origin_server_product: dse
+origin_server_install_type: tarball
+origin_server_version: 6.8.26
+
+target_server_product: dse
+target_server_install_type: tarball
+target_server_version: 6.8.26
+
+instance_type: m5.large
+
+ttl: 2h
+reuse: false
+
+# PROXY APP SETTINGS
+
+proxy_branch: main
+forward_reads_to_target: false
+enable_metrics: true
+replace_cql_functions: false
+enable_profiling: false
+
+# BENCHMARK APP SETTINGS
+
+concurrent-tasks: 128
+num_connections: 8
+batch-size: 20
+batch-prepared-ratio: 1 # only applicable to mixed-batch-now workload
+parameter-count: 50 # only applicable to large-batch workload
+iterations: 1000000
+warmup-iterations: -1 # defaults to 1/10 of iterations
+workload: large-batch # mixed-batch-now or large-batch
+
+benchmark_branch: main
+
+---
+
+ensemble:
+  servers:
+    - name: origin
+      node.count: 1
+      provisioner:
+        name: ctool
+        properties:
+          cloud.provider: ec2
+          cloud.instance.type: {{instance_type}}
+          mark_for_reuse: {{reuse}}
+          cluster_ttl: {{ttl}}
+      configuration_manager:
+        - name: ctool
+          properties:
+            product.type: {{origin_server_product}}
+            product.install.type: {{origin_server_install_type}}
+            product.version: {{origin_server_version}}
+            enable.graph: false
+            datacenters:
+              dc_origin:
+                size: 1
+                workload: cassandra
+    - name: target
+      node.count: 1
+      provisioner:
+        name: ctool
+        properties:
+          cloud.provider: ec2
+          cloud.instance.type: {{instance_type}}
+          mark_for_reuse: {{reuse}}
+          cluster_ttl: {{ttl}}
+      configuration_manager:
+        - name: ctool
+          properties:
+            product.type: {{target_server_product}}
+            product.install.type: {{target_server_install_type}}
+            product.version: {{target_server_version}}
+            enable.graph: false
+            datacenters:
+              dc_target:
+                size: 1
+                workload: cassandra
+    - name: zdmproxy
+      node.count: 1
+      provisioner:
+        name: ctool
+        properties:
+          cloud.provider: ec2
+          cloud.instance.type: {{instance_type}}
+          mark_for_reuse: {{reuse}}
+          cluster_ttl: {{ttl}}
+  client:
+    node.count: 1
+    provisioner:
+      name: ctool
+      properties:
+        cloud.provider: ec2
+        cloud.instance.type: {{instance_type}}
+        kill_cluster_after_test: false
+        mark_for_reuse: {{reuse}}
+        cluster_ttl: {{ttl}}
+    configuration_manager:
+      - name: ctool
+        properties:
+          java.version: "oracle8"
+          install.maven: true
+workload:
+  phases:
+    - install_deps_proxy:
+        module: bash
+        properties: &install_deps-properties
+          target.group: zdmproxy
+          timeout: 10m
+          script: |
+            cd $FALLOUT_SCRATCH_DIR
+            set -x
+
+            sudo apt-get install -y jq
+
+            lsb_release -a
+
+            curl -fsSL https://get.docker.com -o get-docker.sh
+            sudo sh get-docker.sh
+            sudo groupadd docker
+            sudo gpasswd -a $USER docker
+      install_deps_clients:
+        module: bash
+        properties:
+          <<: *install_deps-properties
+          target.group: client
+    - setup_keyspaces_origin:
+        module: cqlsh
+        properties:
+          server_group: origin
+          command: |
+            CREATE KEYSPACE benchmark2_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'dc_origin' : 1};
+            CREATE KEYSPACE benchmark1_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'dc_origin' : 1};
+    - setup_keyspaces_target:
+        module: cqlsh
+        properties:
+          server_group: target
+          command: |
+            CREATE KEYSPACE benchmark2_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'dc_target' : 1};
+            CREATE KEYSPACE benchmark1_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'dc_target' : 1};
+    - setup_proxy:
+        module: bash
+        properties:
+          target.group: zdmproxy
+          target.ordinals: 0
+          timeout: 1h
+          export_output: true
+          script: |
+            cd $FALLOUT_SCRATCH_DIR
+            ls
+            git clone git@github.com:datastax/zdm-proxy.git
+            cd zdm-proxy
+            git checkout {{proxy_branch}}
+
+            cat << EOF > ./proxyenv.env
+            ZDM_ORIGIN_CONTACT_POINTS=$FALLOUT_ORIGIN_PRODUCT_CONTACT_POINT
+            ZDM_ORIGIN_USERNAME=cassandra
+            ZDM_ORIGIN_PASSWORD=cassandra
+            ZDM_ORIGIN_PORT=9042
+            ZDM_TARGET_CONTACT_POINTS=$FALLOUT_TARGET_PRODUCT_CONTACT_POINT
+            ZDM_TARGET_USERNAME=cassandra
+            ZDM_TARGET_PASSWORD=cassandra
+            ZDM_TARGET_PORT=9042
+            ZDM_PROXY_LISTEN_ADDRESS=0.0.0.0
+            ZDM_PROXY_LISTEN_PORT=9045
+            ZDM_METRICS_PORT=14001
+            ZDM_METRICS_ENABLE={{enable_metrics}}
+            ZDM_REPLACE_CQL_FUNCTIONS={{replace_cql_functions}}
+            EOF
+
+            cat ./proxyenv.env
+
+            /usr/bin/newgrp docker <<EONG
+              set -x
+              sudo docker build -f ./Dockerfile --network host -t localproxyimg .
+              if [ "{{enable_profiling}}" == "true" ]; then
+                sudo docker run -d --network host --name "${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_ZDMPROXY_NODE0_NODE_INFO_PRIVATENETWORKADDRESS}" --env-file ./proxyenv.env -p 9045:9045 -p 14001:14001 localproxyimg -cpuprofile ./cpu_profile.prof -memprofile ./heap_profile.prof
+              else
+                sudo docker run -d --network host --name "${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_ZDMPROXY_NODE0_NODE_INFO_PRIVATENETWORKADDRESS}" --env-file ./proxyenv.env -p 9045:9045 -p 14001:14001 localproxyimg
+              fi
+              sudo docker logs "${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_ZDMPROXY_NODE0_NODE_INFO_PRIVATENETWORKADDRESS}"
+            EONG
+
+            wget https://github.com/prometheus/node_exporter/releases/download/v1.0.1/node_exporter-1.0.1.linux-amd64.tar.gz
+            tar xvfz node_exporter-1.0.1.linux-amd64.tar.gz
+            cd node_exporter-1.0.1.linux-amd64
+            nohup ./node_exporter > foo.out 2> foo.err < /dev/null &
+
+            /usr/bin/newgrp docker <<EONG
+              set -x
+              sudo docker run \
+                --volume=/:/rootfs:ro \
+                --volume=/var/run:/var/run:ro \
+                --volume=/sys:/sys:ro \
+                --volume=/var/lib/docker/:/var/lib/docker:ro \
+                --volume=/dev/disk/:/dev/disk:ro \
+                --publish=8080:8080 \
+                --detach=true \
+                --name=cadvisor \
+                --privileged \
+                --device=/dev/kmsg \
+                gcr.io/cadvisor/cadvisor:v0.37.0
+            EONG
+
+    - benchmark-proxy:
+        module: bash
+        properties:
+          target.group: client
+          timeout: 1000m
+          script: |
+            cd $FALLOUT_SCRATCH_DIR
+            ls
+            git clone git@github.com:riptano/cloudgate-benchmark.git
+            cd cloudgate-benchmark
+            git checkout {{benchmark_branch}}
+            mvn package
+            java -Ddatastax-java-driver.advanced.connection.pool.local.size={{num_connections}} -Ddatastax-java-driver.basic.load-balancing-policy.local-datacenter=dc_origin -Ddatastax-java-driver.basic.contact-points.0=${FALLOUT_ZDMPROXY_NODE0_NODE_INFO_PRIVATENETWORKADDRESS}:9045 -Dbenchmark.iterations={{iterations}} -Dbenchmark.warmup-iterations={{warmup-iterations}} -Dbenchmark.histogram-file=histogram.hdr -Dbenchmark.replication-factor=1 -Dbenchmark.concurrent-tasks={{concurrent-tasks}} -Dbenchmark.batch-size={{batch-size}} -Dbenchmark.batch-prepared-ratio={{batch-prepared-ratio}} -Dbenchmark.workload={{workload}} -Dbenchmark.parameter-count={{parameter-count}} -jar ./target/benchmark-1.0-SNAPSHOT.jar
+            cp histogram.hdr $FALLOUT_ARTIFACT_DIR
+    - stop_proxy:
+        module: bash
+        properties:
+          target.group: zdmproxy
+          target.ordinals: 0
+          timeout: 1h
+          export_output: true
+          script: |
+            echo "Stopping container " ${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_ZDMPROXY_NODE0_NODE_INFO_PRIVATENETWORKADDRESS}
+            sudo docker container stop ${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_ZDMPROXY_NODE0_NODE_INFO_PRIVATENETWORKADDRESS}
+    - capture_profiling_files:
+        module: bash
+        properties:
+          target.group: zdmproxy
+          target.ordinals: 0
+          timeout: 1h
+          export_output: true
+          script: |
+            cd $FALLOUT_SCRATCH_DIR
+            if [ "{{enable_profiling}}" == "true" ]; then
+              sudo docker cp ${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_ZDMPROXY_NODE0_NODE_INFO_PRIVATENETWORKADDRESS}:/cpu_profile.prof $FALLOUT_ARTIFACT_DIR
+              sudo docker cp ${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_ZDMPROXY_NODE0_NODE_INFO_PRIVATENETWORKADDRESS}:/heap_profile.prof $FALLOUT_ARTIFACT_DIR
+            fi
+    - capture_proxy_logs:
+        module: bash
+        properties:
+          target.group: zdmproxy
+          target.ordinals: 0
+          timeout: 1h
+          export_output: true
+          script: |
+            /usr/bin/newgrp docker <<EONG
+              sudo docker logs ${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_ZDMPROXY_NODE0_NODE_INFO_PRIVATENETWORKADDRESS}
+              sudo docker logs ${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_ZDMPROXY_NODE0_NODE_INFO_PRIVATENETWORKADDRESS} >& myFile.log
+
+            EONG
+    - benchmark-noproxy:
+        module: bash
+        properties:
+          target.group: client
+          timeout: 1000m
+          script: |
+            cd $FALLOUT_SCRATCH_DIR
+            ls
+            cd cloudgate-benchmark
+            java -Ddatastax-java-driver.advanced.connection.pool.local.size={{num_connections}} -Ddatastax-java-driver.basic.load-balancing-policy.local-datacenter=dc_origin -Ddatastax-java-driver.basic.contact-points.0=${FALLOUT_ORIGIN_PRODUCT_CONTACT_POINT}:9042 -Dbenchmark.iterations={{iterations}} -Dbenchmark.warmup-iterations={{warmup-iterations}} -Dbenchmark.histogram-file=histogram-noproxy.hdr -Dbenchmark.replication-factor=1 -Dbenchmark.concurrent-tasks={{concurrent-tasks}} -Dbenchmark.batch-size={{batch-size}} -Dbenchmark.batch-prepared-ratio={{batch-prepared-ratio}} -Dbenchmark.workload={{workload}} -Dbenchmark.parameter-count={{parameter-count}} -jar ./target/benchmark-1.0-SNAPSHOT.jar
+            cp histogram-noproxy.hdr $FALLOUT_ARTIFACT_DIR
+  checkers:
+    verify_success:
+      checker: nofail
+  artifact_checkers:
+    process_hdr:
+      artifact_checker: hdrtool
