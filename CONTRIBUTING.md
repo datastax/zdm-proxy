@@ -16,8 +16,11 @@ few sections.
   - [Running Integration Tests](#running-integration-tests)
     - [Simulacron](#simulacron)
     - [CCM](#ccm)
+  - [Running on Localhost with Docker Compose](#running-on-localhost-with-docker-compose)     
   - [Debugging](#debugging)
+  - [CPU and Memory Profiling](#cpu-and-memory-profiling)
   - [Pull Request Checks](#pull-request-checks)
+    - [Code Formatting](#code-formatting)
 
 ## Code Contributions
 
@@ -33,13 +36,13 @@ feasibility before you invest your time on the effort.
 
 When  you're ready to code, follow these steps:
 
-1. If you haven't done so yet, go ahead now and fork the ZDM Proxy repository into your own Github account.
-That's how you'll be able to make contributions, you cannot push directly to the main repository, but
+1. If you haven't done so yet, go ahead now and fork the ZDM Proxy repository into your own Github account and clone it
+on your machine. That's how you'll be able to make contributions, you cannot push directly to the main repository, but
 you can open a Pull Request for your branch when you're ready.
 
 
-2. From your fork create a new local branch where you'll make your changes. Give it a short, descriptive, name.
-If there's an associated issue open, include it as a prefix, *zdm-#issue-name*, for example: zdm-10-fix-bug-xyz.
+2. From your fork, create a new local branch where you'll make changes. Give it a short, descriptive, name.
+If there's an associated issue open, include its number as a prefix, *zdm-#issue-name*, for example: zdm-10-fix-bug-xyz.
 
 
 3. Make the changes you want locally and validate them with the [test tools](#running-unit-tests) provided. Push the
@@ -50,8 +53,8 @@ updated code to the remote branch in your fork.
 
 
 5. The automated tests in GitHub Actions will kick in and in a few minutes you should
-have some results. If any of the checks fail, take a look at the [logs](#pull-request-checks) to understand what happened.
-You can push more commits to the PR until the problem is solved, the checks will run again.
+have some results. If any of the checks fail, take a look at the workflow [logs](#pull-request-checks) to understand
+what happened. You can push more commits to the PR until the problem is resolved, the checks will run again.
 
 
 6. Once all checks are passing, your PR is ready for review and the members of the ZDM Proxy community will
@@ -125,26 +128,77 @@ only with:
 
 > $ go test -v ./integration-tests -RUN_CCMTESTS=true -RUN_MOCKTESTS=false
 
-### Running Docker Compose
+In order to specify a specific Cassandra or DSE version, use the `CASSANDRA_VERSION` or `DSE_VERSION` flags, for example:
 
-If you simply want to try things out and play with the proxy locally, in order to do any meaningful interaction with it
-you'll need to connect it to two database clusters (ORIGIN and TARGET). To simplify that process we provide a
-docker-compose definition that handles the setup for you.
+> $ go test -v ./integration-tests -RUN_CCMTESTS=true -CASSANDRA_VERSION=3.11.8
 
-The definition will start two Cassandra clusters, one ZDM proxy instance and then finally run a NoSQLBench workload to
+### Running on Localhost with Docker Compose
+
+Sometimes you may want to run the proxy on localhost to do some manual validation, but in order to do anything meaningful
+with it, you'll need to connect it to two database clusters (ORIGIN and TARGET). To simplify the process we provide a
+[docker-compose](https://docs.docker.com/compose/) definition that handles the setup for you.
+
+The definition will start two Cassandra clusters, one ZDM proxy instance and automatically run a NoSQLBench workload to
 verify the setup.
 
-Start the services with the following command (this assumes you have docker-compose installed):
+Start the services with the following command (this assumes you have docker-compose [installed](https://docs.docker.com/compose/install/)):
 
 > $ docker-compose -f docker-compose-tests.yml up
 
-That will keep the containers running in case you want to do any further manual inspection. To stop the services, hit
-CTRL+C and delete the containers with:
+After it completes, it will still keep the containers running in case you want to do any further inspection.
+To stop the services, hit CTRL+C and delete the containers with:
 
 > $ docker-compose -f docker-compose-tests.yml down
 
 ### Debugging
 
+Similarly, there's a docker-compose setup for debugging the proxy while connected to running clusters. The provided
+setup uses [Delve](https://github.com/go-delve/delve) to enable remote debugging so you can connect to the proxy from
+your IDE.
 
+First, start docker-compose with the debug definition:
+
+> $ docker-compose -f docker-compose-debug.yml up
+
+Wait until you this message `API server listening at: [::]:2345`, then you'll know the debugger is ready.
+
+Now attach your IDE to the debugger at `localhost:2345`. If you're using IntelliJ, check
+[this](https://www.jetbrains.com/help/go/attach-to-running-go-processes-with-debugger.html#step-4-start-the-debugging-process-on-the-client-computer)
+guide to learn how.
+
+At this point the proxy is ready to receive requests, so enter some breakpoints in the IDE and connect some CQL client
+to the proxy at `localhost:9042`.
+
+### CPU and Memory Profiling
+
+During development, you may want to enable CPU and Memory profiling on the proxy to investigate some performance degradation.
+To do that, you'll have to build the proxy with profiling enabled first:
+
+> $ go build -tags profiling
+
+And then when you start the proxy, specify where to save the profile data:
+
+> $ ./proxy -cpu_profile cpu.prof -mem_profile heap.prof
+
+Note that these files will be created at the moment the proxy is stopped. These files can then be opened using the
+Go tool [pprof](https://go.dev/blog/pprof).
 
 ### Pull Request Checks
+
+All the tests we described above are also executed in an automated fashion by a GitHub Workflow when you
+open a Pull Request.
+
+Below you see an example of a PR that had some successful tests but a couple that failed.
+
+![ZDM-PR-checks](docs/assets/ZDM-PR-checks.png)
+
+To investigate the failures, click the `Details` link next to the job you're interested in and that will take you to
+execution logs. You can download the full log file by going to `Gear icon > Download log archive`:
+
+![ZDM-PR-logs](docs/assets/ZDM-PR-logs.png)
+
+In case you just want to see an overview of the test results, click the `Summary` link on the top left-hand side of the
+page, which will show you only the relevant pieces of the log for the failed tests.
+
+![ZDM-PR-summary](docs/assets/ZDM-PR-summary.png)
+![ZDM-PR-summary-details](docs/assets/ZDM-PR-summary-details.png)
