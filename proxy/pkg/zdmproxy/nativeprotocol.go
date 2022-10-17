@@ -395,30 +395,30 @@ func addSystemColumnValue(
 	proxyPort int, rowCount int) error {
 	switch unaliasedColumnName {
 	case peerColumn.Name, broadcastAddressColumn.Name, listenAddressColumn.Name, rpcAddressColumn.Name, preferredIpPeersColumn.Name:
-		return addColumn(isStarSelector, first, row, columns, columnIndex, col, virtualHost.Addr)
+		return addColumn(isStarSelector, first, row, columns, col, virtualHost.Addr)
 	case datacenterColumn.Name:
-		return addColumn(isStarSelector, first, row, columns, columnIndex, col, virtualHost.Host.Datacenter)
+		return addColumn(isStarSelector, first, row, columns, col, virtualHost.Host.Datacenter)
 	case hostIdColumn.Name:
-		return addColumn(isStarSelector, first, row, columns, columnIndex, col, virtualHost.HostId)
+		return addColumn(isStarSelector, first, row, columns, col, virtualHost.HostId)
 	case rackColumn.Name:
-		return addColumn(isStarSelector, first, row, columns, columnIndex, col, virtualHost.Rack)
+		return addColumn(isStarSelector, first, row, columns, col, virtualHost.Rack)
 	case tokensColumn.Name:
-		return addColumn(isStarSelector, first, row, columns, columnIndex, col, virtualHost.Tokens)
+		return addColumn(isStarSelector, first, row, columns, col, virtualHost.Tokens)
 	case truncatedAtColumn.Name:
-		return addColumn(isStarSelector, first, row, columns, columnIndex, col, nil)
+		return addColumn(isStarSelector, first, row, columns, col, nil)
 	case partitionerColumn.Name:
-		return addColumn(isStarSelector, first, row, columns, columnIndex, col, virtualHost.Partitioner)
+		return addColumn(isStarSelector, first, row, columns,  col, virtualHost.Partitioner)
 	case schemaVersionColumn.Name:
 		if virtualHost.Host.SchemaVersion == nil {
-			return addColumn(isStarSelector, first, row, columns, columnIndex, col, nil)
+			return addColumn(isStarSelector, first, row, columns, col, nil)
 		} else {
 			schemaId := primitive.UUID(*virtualHost.Host.SchemaVersion)
-			return addColumn(isStarSelector, first, row, columns, columnIndex, col, &schemaId)
+			return addColumn(isStarSelector, first, row, columns, col, &schemaId)
 		}
 	}
 
 	if strings.ToLower(unaliasedColumnName) == "count" {
-		return addColumn(isStarSelector, first, row, columns, columnIndex, col, rowCount)
+		return addColumn(isStarSelector, first, row, columns, col, rowCount)
 	}
 
 	optionalCol, ok := virtualHost.Host.ColumnData[unaliasedColumnName]
@@ -436,19 +436,19 @@ func addSystemColumnValue(
 
 		switch unaliasedColumnName {
 		case nativeTransportAddressColumn.Name:
-			return overrideColumnIfExists(isStarSelector, first, row, columns, columnIndex, col, optionalCol, virtualHost.Addr)
+			return overrideColumnIfExists(isStarSelector, first, row, columns, col, optionalCol, virtualHost.Addr)
 		case nativeTransportPortColumn.Name:
-			return overrideColumnIfExists(isStarSelector, first, row, columns, columnIndex, col, optionalCol, proxyPort)
+			return overrideColumnIfExists(isStarSelector, first, row, columns, col, optionalCol, proxyPort)
 		case nativeTransportPortSslColumn.Name:
-			return overrideColumnIfExists(isStarSelector, first, row, columns, columnIndex, col, optionalCol, proxyPort)
+			return overrideColumnIfExists(isStarSelector, first, row, columns, col, optionalCol, proxyPort)
 		default:
-			return addColumnIfExists(isStarSelector, first, row, columns, columnIndex, col, optionalCol)
+			return addColumnIfExists(isStarSelector, first, row, columns, col, optionalCol)
 		}
 	}
 
 	if peersColumns == nil {
 		if optionalCol, ok = systemLocalColumnData[unaliasedColumnName]; ok {
-			return addColumnIfExists(isStarSelector, first, row, columns, columnIndex, col, optionalCol)
+			return addColumnIfExists(isStarSelector, first, row, columns, col, optionalCol)
 		}
 	}
 
@@ -711,7 +711,7 @@ func NewSystemPeersResult(
 
 func addColumnHelper(
 	isStarSelector bool, first bool, row *[]interface{}, columns *[]*message.ColumnMetadata,
-	columnIndex int, columnMetadata *message.ColumnMetadata,
+	columnMetadata *message.ColumnMetadata,
 	colExists bool, val interface{}) error {
 	if first {
 		if colExists {
@@ -743,18 +743,18 @@ func addColumnHelper(
 }
 
 func addColumnIfExists(isStarSelector bool, first bool, row *[]interface{}, columns *[]*message.ColumnMetadata,
-	columnIndex int, columnMetadata *message.ColumnMetadata, col *optionalColumn) error {
-	return addColumnHelper(isStarSelector, first, row, columns, columnIndex, columnMetadata, col.exists, col.column)
+	columnMetadata *message.ColumnMetadata, col *optionalColumn) error {
+	return addColumnHelper(isStarSelector, first, row, columns, columnMetadata, col.exists, col.column)
 }
 
 func overrideColumnIfExists(isStarSelector bool, first bool, row *[]interface{}, columns *[]*message.ColumnMetadata,
-	columnIndex int, columnMetadata *message.ColumnMetadata, col *optionalColumn, val interface{}) error {
-	return addColumnHelper(isStarSelector, first, row, columns, columnIndex, columnMetadata, col.exists, val)
+	columnMetadata *message.ColumnMetadata, col *optionalColumn, val interface{}) error {
+	return addColumnHelper(isStarSelector, first, row, columns, columnMetadata, col.exists, val)
 }
 
 func addColumn(isStarSelector bool, first bool, row *[]interface{}, columns *[]*message.ColumnMetadata,
-	columnIndex int, columnMetadata *message.ColumnMetadata, val interface{}) error {
-	return addColumnHelper(isStarSelector, first, row, columns, columnIndex, columnMetadata, true, val)
+	columnMetadata *message.ColumnMetadata, val interface{}) error {
+	return addColumnHelper(isStarSelector, first, row, columns, columnMetadata, true, val)
 }
 
 func convertNullableToValue(val interface{}) interface{} {
