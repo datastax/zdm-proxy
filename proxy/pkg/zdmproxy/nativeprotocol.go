@@ -407,7 +407,7 @@ func addSystemColumnValue(
 	case truncatedAtColumn.Name:
 		return addColumn(isStarSelector, first, row, columns, col, nil)
 	case partitionerColumn.Name:
-		return addColumn(isStarSelector, first, row, columns,  col, virtualHost.Partitioner)
+		return addColumn(isStarSelector, first, row, columns, col, virtualHost.Partitioner)
 	case schemaVersionColumn.Name:
 		if virtualHost.Host.SchemaVersion == nil {
 			return addColumn(isStarSelector, first, row, columns, col, nil)
