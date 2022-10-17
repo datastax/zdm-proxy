@@ -6,7 +6,7 @@ When cutting a new release, update the `unreleased` heading to the tag being gen
 
 ## Unreleased
 
-## v.2.0.0 - 2022-10-17
+## v2.0.0 - 2022-10-17
 
 ### New Features
 
