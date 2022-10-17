@@ -710,33 +710,32 @@ func NewSystemPeersResult(
 }
 
 func addColumnHelper(
-	isStarSelector bool, first bool, row *[]interface{}, columns *[]*message.ColumnMetadata,
-	columnMetadata *message.ColumnMetadata,
-	colExists bool, val interface{}) error {
+	isStarSelector bool, first bool, newRow *[]interface{}, resultColumnMetadata *[]*message.ColumnMetadata,
+	newColumnMetadata *message.ColumnMetadata, colExists bool, newColumnValue interface{}) error {
 	if first {
 		if colExists {
-			*columns = append(*columns, columnMetadata)
-			*row = append(*row, convertNullableToValue(val))
+			*resultColumnMetadata = append(*resultColumnMetadata, newColumnMetadata)
+			*newRow = append(*newRow, convertNullableToValue(newColumnValue))
 		} else if !isStarSelector {
-			return fmt.Errorf("could not find value for column %s", columnMetadata.Name)
+			return fmt.Errorf("could not find value for column %s", newColumnMetadata.Name)
 		}
 	} else {
-		idx := len(*row)
-		if len(*columns) <= idx {
+		newColumnValueIndex := len(*newRow)
+		if newColumnValueIndex >= len(*resultColumnMetadata) {
 			return fmt.Errorf("column length mismatch between hosts: "+
-				"processedColumns.len=%v columnIndex=%v name=%v", len(*columns), idx, columnMetadata.Name)
+				"resultColumnMetadata.len=%v newColumnValueIndex=%v name=%v", len(*resultColumnMetadata), newColumnValueIndex, newColumnMetadata.Name)
 		}
 
-		processedColumn := (*columns)[idx]
-		if processedColumn.Name != columnMetadata.Name {
-			return fmt.Errorf("columns mismatch between hosts: "+
-				"processedColumn=%v columnToBeAdded=%v", processedColumn, columnMetadata.Name)
+		columnInResultMetadata := (*resultColumnMetadata)[newColumnValueIndex]
+		if columnInResultMetadata.Name != newColumnMetadata.Name {
+			return fmt.Errorf("column metadata mismatch between hosts: "+
+				"columnInResultMetadata=%v newColumnMetadata=%v", columnInResultMetadata, newColumnMetadata.Name)
 		}
 
 		if colExists {
-			*row = append(*row, convertNullableToValue(val))
+			*newRow = append(*newRow, convertNullableToValue(newColumnValue))
 		} else if !isStarSelector {
-			return fmt.Errorf("could not find value for column %s", columnMetadata.Name)
+			return fmt.Errorf("could not find value for column %s", newColumnMetadata.Name)
 		}
 	}
 	return nil
