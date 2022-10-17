@@ -118,17 +118,14 @@ func TestTopologyStatusEvents(t *testing.T) {
 	tests := []struct {
 		name                    string
 		clusterToChangeTopology *ccm.Cluster
-		expectedEvents          bool
 	}{
 		{
 			name:                    "origin should not forward events",
 			clusterToChangeTopology: tempCcmSetup.Origin,
-			expectedEvents:          false,
 		},
 		{
-			name:                    "target should forward events",
+			name:                    "target should not forward events",
 			clusterToChangeTopology: tempCcmSetup.Target,
-			expectedEvents:          true,
 		},
 	}
 
@@ -178,34 +175,8 @@ func TestTopologyStatusEvents(t *testing.T) {
 			err = clusterToAddNode.StopNode(nodeIndex)
 			require.True(t, err == nil, "failed to stop node: %v", err)
 
-			if tt.expectedEvents {
-				response, err = testClientForEvents.GetEventMessage(5 * time.Second)
-				require.True(t, err == nil, "could not get event message: %v", err)
-
-				topologyChangeEvent, ok := response.Body.Message.(*message.TopologyChangeEvent)
-				require.True(t, ok, "expected topology change event but was %v", response.Body.Message)
-				require.Equal(t, primitive.TopologyChangeTypeNewNode, topologyChangeEvent.ChangeType)
-
-				response, err = testClientForEvents.GetEventMessage(5 * time.Second)
-				require.True(t, err == nil, "could not get second event message: %v", err)
-
-				statusChangeEvent, ok := response.Body.Message.(*message.StatusChangeEvent)
-				require.True(t, ok, "expected status change event but was %v", response.Body.Message)
-				require.Equal(t, primitive.StatusChangeTypeUp, statusChangeEvent.ChangeType)
-
-				response, err = testClientForEvents.GetEventMessage(30 * time.Second)
-				require.True(t, err == nil, "could not get third event message: %v", err)
-
-				statusChangeEvent, ok = response.Body.Message.(*message.StatusChangeEvent)
-				require.True(t, ok, "expected status change event but was %v", response.Body.Message)
-				require.Equal(t, primitive.StatusChangeTypeDown, statusChangeEvent.ChangeType)
-
-				response, err = testClientForEvents.GetEventMessage(200 * time.Millisecond)
-				require.True(t, err != nil, "did not expect to receive a fourth event message: %v", response)
-			} else {
-				response, err = testClientForEvents.GetEventMessage(5000 * time.Millisecond)
-				require.True(t, err != nil, "did not expect to receive an event message: %v", response)
-			}
+			response, err = testClientForEvents.GetEventMessage(5000 * time.Millisecond)
+			require.True(t, err != nil, "did not expect to receive an event message: %v", response)
 		})
 	}
 }
