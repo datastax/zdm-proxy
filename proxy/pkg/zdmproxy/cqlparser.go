@@ -197,8 +197,8 @@ func getRequestInfoFromQueryInfo(
 			}
 		}
 
-		sendAlsoToAsync = true
 		if isSystemQuery(queryInfo) {
+			sendAlsoToAsync = false
 			log.Debugf("Detected system query: %v with stream id: %v", queryInfo.getQuery(), f.Header.StreamId)
 			if forwardSystemQueriesToTarget {
 				forwardDecision = forwardToTarget
@@ -206,6 +206,7 @@ func getRequestInfoFromQueryInfo(
 				forwardDecision = forwardToOrigin
 			}
 		} else {
+			sendAlsoToAsync = true
 			if primaryCluster == common.ClusterTypeTarget {
 				forwardDecision = forwardToTarget
 			} else {

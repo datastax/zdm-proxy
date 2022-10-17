@@ -46,6 +46,7 @@ type ControlConn struct {
 	currentAssignment        int64
 	refreshHostsDebouncer    chan CqlConnection
 	systemLocalColumnData    map[string]*optionalColumn
+	systemPeersColumnNames   map[string]bool
 	virtualHosts             []*VirtualHost
 	proxyRand                *rand.Rand
 	reconnectCh              chan bool
@@ -91,6 +92,7 @@ func NewControlConn(ctx context.Context, defaultPort int, connConfig ConnectionC
 		currentAssignment:        0,
 		refreshHostsDebouncer:    make(chan CqlConnection, 1),
 		systemLocalColumnData:    nil,
+		systemPeersColumnNames:   nil,
 		virtualHosts:             nil,
 		proxyRand:                proxyRand,
 		reconnectCh:              make(chan bool, 1),
@@ -411,6 +413,21 @@ func (cc *ControlConn) RefreshHosts(conn CqlConnection, ctx context.Context) ([]
 
 	hostsById := ParseSystemPeersResult(peersQuery, cc.defaultPort, false)
 
+	var peersColumns map[string]bool // nil if no peers
+	if len(hostsById) > 0 {
+		peersColumns = map[string]bool{}
+		var peerHostExample *Host
+		for _, h := range hostsById {
+			peerHostExample = h
+			break
+		}
+		for name, optionalCol := range peerHostExample.ColumnData {
+			if optionalCol.exists {
+				peersColumns[name] = true
+			}
+		}
+	}
+
 	oldLocalhost, localHostExists := hostsById[localHost.HostId]
 	if localHostExists {
 		log.Warnf("Local host is also on the peers list: %v vs %v, ignoring the former one.", oldLocalhost, localHost)
@@ -463,6 +480,7 @@ func (cc *ControlConn) RefreshHosts(conn CqlConnection, ctx context.Context) ([]
 	cc.hostsInLocalDcById = hostsById
 	cc.assignedHosts = assignedHosts
 	cc.systemLocalColumnData = localInfo
+	cc.systemPeersColumnNames = peersColumns
 	cc.virtualHosts = virtualHosts
 
 	if oldHosts != nil && len(oldHosts) > 0 {
@@ -570,6 +588,13 @@ func (cc *ControlConn) GetSystemLocalColumnData() map[string]*optionalColumn {
 	defer cc.topologyLock.RUnlock()
 
 	return cc.systemLocalColumnData
+}
+
+func (cc *ControlConn) GetSystemPeersColumnNames() map[string]bool {
+	cc.topologyLock.RLock()
+	defer cc.topologyLock.RUnlock()
+
+	return cc.systemPeersColumnNames
 }
 
 func (cc *ControlConn) GetCurrentContactPoint() Endpoint {
