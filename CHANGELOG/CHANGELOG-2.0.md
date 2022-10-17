@@ -6,6 +6,8 @@ When cutting a new release, update the `unreleased` heading to the tag being gen
 
 ## Unreleased
 
+## v.2.0.0 - 2022-10-17
+
 ### New Features
 
 * [#31](https://github.com/datastax/zdm-proxy/issues/31) Always enable proxy topology system.peers
