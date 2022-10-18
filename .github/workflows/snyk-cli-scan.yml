@@ -13,6 +13,7 @@ env:
 jobs:
   snyk-cli-scan:
     runs-on: ubuntu-latest
+    if: ${{ false }} # temporarily disabled
     steps:
       - name: Git checkout
         uses: actions/checkout@v2
