@@ -86,6 +86,8 @@ func (recv *writeCoalescer) RunWriteQueueLoop() {
 
 		draining := false
 		bufferedWriter := bytes.NewBuffer(make([]byte, 0, initialBufferSize))
+		wg := &sync.WaitGroup{}
+		defer wg.Wait()
 
 		for {
 			var resultOk bool
@@ -99,7 +101,9 @@ func (recv *writeCoalescer) RunWriteQueueLoop() {
 			resultChannel := make(chan *coalescerIterationResult, 1)
 			tempDraining := draining
 			tempBuffer := bufferedWriter
+			wg.Add(1)
 			recv.scheduler.Schedule(func() {
+				defer wg.Done()
 				firstFrameRead := false
 				for {
 					var f *frame.RawFrame

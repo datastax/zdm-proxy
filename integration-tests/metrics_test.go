@@ -135,6 +135,8 @@ func testMetrics(t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback)
 				}
 			}()
 
+			ensureMetricsServerListening(t, conf)
+
 			lines := gatherMetrics(t, conf, false)
 			checkMetrics(t, false, lines, conf.ReadMode, 0, 0, 0, 0, 0, 0, 0, 0, true, true, originEndpoint, targetEndpoint, asyncEndpoint)
 
@@ -171,7 +173,7 @@ func testMetrics(t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback)
 			// 3 on async: AUTH_RESPONSE, STARTUP AND QUERY SELECT
 			// ONLY QUERY is tracked
 			if conf.ReadMode == config.ReadModeDualAsyncOnSecondary {
-				time.Sleep(200 * time.Millisecond)
+				time.Sleep(1000 * time.Millisecond)
 			}
 			checkMetrics(t, true, lines, conf.ReadMode, 1, 1, 1, expectedAsyncConnections, 1, 1, 0, 1, false, true, originEndpoint, targetEndpoint, asyncEndpoint)
 		})
@@ -194,6 +196,20 @@ func startMetricsHandler(
 	require.NotNil(t, srv)
 	metricsHandler.SetHandler(promhttp.Handler())
 	return srv
+}
+
+func ensureMetricsServerListening(t *testing.T, conf *config.Config) {
+	var err error
+	for tries := 0; tries < 5; tries++ {
+		if tries > 0 {
+			time.Sleep(100 * time.Millisecond)
+		}
+		_, _, err = utils.GetMetrics(fmt.Sprintf("%s:%d", conf.MetricsAddress, conf.MetricsPort))
+		if err == nil {
+			break
+		}
+	}
+	require.Nil(t, err)
 }
 
 func gatherMetrics(t *testing.T, conf *config.Config, checkNodeMetrics bool) []string {

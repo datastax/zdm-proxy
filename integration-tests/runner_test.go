@@ -346,5 +346,5 @@ func modifyConfForHealthTests(config *config.Config, failureThreshold int) {
 	config.HeartbeatIntervalMs = 500
 	config.OriginConnectionTimeoutMs = 2000
 	config.TargetConnectionTimeoutMs = 2000
-	config.HeartbeatFailureThreshold = 2
+	config.HeartbeatFailureThreshold = failureThreshold
 }
