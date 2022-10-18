@@ -135,6 +135,8 @@ func testMetrics(t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback)
 				}
 			}()
 
+			ensureMetricsServerListening(t, conf)
+
 			lines := gatherMetrics(t, conf, false)
 			checkMetrics(t, false, lines, conf.ReadMode, 0, 0, 0, 0, 0, 0, 0, 0, true, true, originEndpoint, targetEndpoint, asyncEndpoint)
 
@@ -194,6 +196,20 @@ func startMetricsHandler(
 	require.NotNil(t, srv)
 	metricsHandler.SetHandler(promhttp.Handler())
 	return srv
+}
+
+func ensureMetricsServerListening(t *testing.T, conf *config.Config) {
+	var err error
+	for tries := 0; tries < 5; tries++ {
+		if tries > 0 {
+			time.Sleep(100 * time.Millisecond)
+		}
+		_, _, err = utils.GetMetrics(fmt.Sprintf("%s:%d", conf.MetricsAddress, conf.MetricsPort))
+		if err == nil {
+			break
+		}
+	}
+	require.NotNil(t, err)
 }
 
 func gatherMetrics(t *testing.T, conf *config.Config, checkNodeMetrics bool) []string {
