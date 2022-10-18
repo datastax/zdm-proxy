@@ -209,7 +209,7 @@ func ensureMetricsServerListening(t *testing.T, conf *config.Config) {
 			break
 		}
 	}
-	require.NotNil(t, err)
+	require.Nil(t, err)
 }
 
 func gatherMetrics(t *testing.T, conf *config.Config, checkNodeMetrics bool) []string {
