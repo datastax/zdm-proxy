@@ -1,0 +1,342 @@
+origin_server_product: dse
+origin_server_install_type: tarball
+origin_server_version: 5.1.33
+origin_server_linux_distro: bionic
+origin_node_count: 1
+
+target_astra_service_account: prod_wei
+
+proxy_branch: main
+proxy_node_count: 3
+instance_type: m5.large
+
+read_mode: PRIMARY_ONLY
+primary_cluster: ORIGIN
+replace_cql_functions: false
+enable_profiling: false
+
+rampup_cycles: 1000000
+main_cycles: 10000000
+num_threads: 128
+num_connections: 8
+
+enable_metrics: true
+
+activity_repo: riptano/data-model-archive
+activity_repo_branch: master
+activity_path: astra/baselines-astra/activities
+activity_file: cql-keyvalue-astra.yaml
+
+ttl: 2h
+reuse: false
+
+---
+ensemble:
+  servers:
+    - name: origin
+      node.count: {{origin_node_count}}
+      provisioner:
+        name: ctool
+        properties:
+          cloud.provider: ec2
+          cloud.instance.type: {{instance_type}}
+          cloud.instance.platform: {{origin_server_linux_distro}}
+          mark_for_reuse: {{reuse}}
+          cluster_ttl: {{ttl}}
+      configuration_manager:
+        - name: ctool
+          properties:
+            product.type: {{origin_server_product}}
+            product.install.type: {{origin_server_install_type}}
+            product.version: {{origin_server_version}}
+            enable.graph: false
+            datacenters:
+              dc_origin:
+                size: {{origin_node_count}}
+                workload: cassandra
+    - name: target
+      node.count: 1
+      provisioner:
+        name: astra
+        properties:
+          service_account: {{target_astra_service_account}}
+          cloud.provider: aws
+          cloud.region: us-west-2
+          keyspace: benchmark2_ks
+    - name: zdmproxy
+      node.count: {{proxy_node_count}}
+      provisioner:
+        name: ctool
+        properties:
+          cloud.provider: ec2
+          cloud.instance.type: {{instance_type}}
+          mark_for_reuse: {{reuse}}
+          cluster_ttl: {{ttl}}
+  client:
+    node.count: 1
+    provisioner:
+      name: ctool
+      properties:
+        cloud.provider: ec2
+        cloud.instance.type: {{instance_type}}
+        mark_for_reuse: {{reuse}}
+        cluster_ttl: {{ttl}}
+    configuration_manager:
+      - name: nosqlbench_ssh
+  observer: none
+workload:
+  phases:
+    - upload-creds-client:
+        module: astra_creds_upload
+        properties:
+          server_group: target
+          client_group: client
+    - upload-creds-zdmproxy:
+        module: astra_creds_upload
+        properties:
+          server_group: target
+          client_group: zdmproxy
+    - install_deps_proxy:
+        module: bash
+        properties: &install_deps-properties
+          target.group: zdmproxy
+          timeout: 10m
+          script: |
+            cd $FALLOUT_SCRATCH_DIR
+            set -x
+
+            sudo apt-get install -y jq
+
+            lsb_release -a
+
+            curl -fsSL https://get.docker.com -o get-docker.sh
+            sudo sh get-docker.sh
+            sudo groupadd docker
+            sudo gpasswd -a $USER docker
+      install_deps_clients:
+        module: bash
+        properties:
+          <<: *install_deps-properties
+          target.group: client
+    - setup_keyspaces_origin:
+        module: cqlsh
+        properties:
+          server_group: origin
+          command: |
+            CREATE KEYSPACE benchmark2_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'dc_origin' : 1};
+            CREATE KEYSPACE benchmark1_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'dc_origin' : 1};
+    - setup_proxy:
+        module: bash
+        properties:
+          target.group: zdmproxy
+          timeout: 1h
+          export_output: true
+          script: |
+            cd $FALLOUT_SCRATCH_DIR
+            ls
+            git clone git@github.com:datastax/zdm-proxy.git
+            cd zdm-proxy
+            git checkout {{proxy_branch}}
+
+            cat << EOF > ./proxyenv.env
+            ZDM_ORIGIN_CONTACT_POINTS=$FALLOUT_ORIGIN_PRODUCT_CONTACT_POINT
+            ZDM_ORIGIN_USERNAME=cassandra
+            ZDM_ORIGIN_PASSWORD=cassandra
+            ZDM_ORIGIN_PORT=9042
+            ZDM_TARGET_SECURE_CONNECT_BUNDLE_PATH=/$FALLOUT_TARGET_ASTRA_CREDS_SCB_FILENAME
+            ZDM_TARGET_USERNAME=$FALLOUT_TARGET_ASTRA_CREDS_USERNAME
+            ZDM_TARGET_PASSWORD=$FALLOUT_TARGET_ASTRA_CREDS_PASSWORD
+            ZDM_PROXY_LISTEN_ADDRESS=0.0.0.0
+            ZDM_PROXY_LISTEN_PORT=9045
+            ZDM_METRICS_PORT=14001
+            ZDM_METRICS_ENABLE={{enable_metrics}}
+            ZDM_REPLACE_CQL_FUNCTIONS={{replace_cql_functions}}
+            ZDM_READ_MODE={{read_mode}}
+            ZDM_PRIMARY_CLUSTER={{primary_cluster}}
+            ZDM_PROXY_TOPOLOGY_ADDRESSES=$FALLOUT_ZDMPROXY_PRIVATE_IPS
+            ZDM_PROXY_TOPOLOGY_INDEX=$FALLOUT_NODE_ORDINAL
+            EOF
+
+            cat ./proxyenv.env
+
+            /usr/bin/newgrp docker <<EONG
+              set -x
+              sudo docker build -f ./Dockerfile --network host -t localproxyimg .
+              if [ "{{enable_profiling}}" == "true" ]; then
+                sudo docker run -d --network host --name "${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_NODE_PRIVATE_IP}" --env-file ./proxyenv.env -p 9045:9045 -p 14001:14001 localproxyimg -cpuprofile ./cpu_profile.prof -memprofile ./heap_profile.prof
+              else
+                sudo docker run -d --network host --name "${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_NODE_PRIVATE_IP}" --env-file ./proxyenv.env -p 9045:9045 -p 14001:14001 localproxyimg
+              fi
+              sudo docker cp $FALLOUT_SCRATCH_DIR/$FALLOUT_TARGET_ASTRA_CREDS_SCB_FILENAME "${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_NODE_PRIVATE_IP}":/$FALLOUT_TARGET_ASTRA_CREDS_SCB_FILENAME
+              sudo docker logs "${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_NODE_PRIVATE_IP}"
+            EONG
+
+            wget https://github.com/prometheus/node_exporter/releases/download/v1.0.1/node_exporter-1.0.1.linux-amd64.tar.gz
+            tar xvfz node_exporter-1.0.1.linux-amd64.tar.gz
+            cd node_exporter-1.0.1.linux-amd64
+            nohup ./node_exporter > foo.out 2> foo.err < /dev/null &
+
+            /usr/bin/newgrp docker <<EONG
+              set -x
+              sudo docker run \
+                --volume=/:/rootfs:ro \
+                --volume=/var/run:/var/run:ro \
+                --volume=/sys:/sys:ro \
+                --volume=/var/lib/docker/:/var/lib/docker:ro \
+                --volume=/dev/disk/:/dev/disk:ro \
+                --publish=8080:8080 \
+                --detach=true \
+                --name=cadvisor \
+                --privileged \
+                --device=/dev/kmsg \
+                gcr.io/cadvisor/cadvisor:v0.37.0
+            EONG
+
+    - pull_nb_binary:
+        module: bash
+        properties:
+          target.group: client
+          timeout: 1000m
+          script: |
+            cd $FALLOUT_SCRATCH_DIR
+
+            set -x
+
+            sudo docker ps
+
+            git clone git@github.com:{{activity_repo}}.git activity_repo
+            cd activity_repo
+            git checkout {{activity_repo_branch}}
+            mv {{activity_path}}/{{activity_file}} ..
+            cd ..
+
+            ln "$FALLOUT_LIBRARY_DIR"/nb ./nb
+
+            pwd
+            ls
+
+    - setschema-origin:
+        module: bash
+        properties:
+          target.group: client
+          timeout: 1000m
+          script: |
+            cd $FALLOUT_SCRATCH_DIR
+            set -x
+            sudo docker ps
+            /usr/bin/newgrp docker <<EONG
+              set -x
+              ./nb run driver=cql workload={{activity_file}} keyspace=benchmark1_ks hosts=$FALLOUT_ORIGIN_PRODUCT_CONTACT_POINT tags=phase:schema -v
+              ./nb run driver=cql workload={{activity_file}} keyspace=benchmark2_ks hosts=$FALLOUT_ORIGIN_PRODUCT_CONTACT_POINT tags=phase:schema -v
+
+            EONG
+    - setschema-target:
+        module: bash
+        properties:
+          target.group: client
+          timeout: 1000m
+          script: |
+            cd $FALLOUT_SCRATCH_DIR
+            set -x
+            sudo docker ps
+            /usr/bin/newgrp docker <<EONG
+              set -x
+              ./nb run driver=cql workload={{activity_file}} \
+              secureconnectbundle="$FALLOUT_SCRATCH_DIR/${FALLOUT_TARGET_ASTRA_CREDS_SCB_FILENAME}" \
+              username=${FALLOUT_TARGET_ASTRA_CREDS_USERNAME} \
+              password=${FALLOUT_TARGET_ASTRA_CREDS_PASSWORD} \
+              keyspace=${FALLOUT_TARGET_ASTRA_CREDS_KEYSPACE} tags=phase:schema -v
+
+            EONG
+    - benchmark-proxy:
+        module: bash
+        properties:
+          target.group: client
+          timeout: 1000m
+          script: |
+            cd $FALLOUT_SCRATCH_DIR
+            set -x
+            sudo docker ps
+            /usr/bin/newgrp docker <<EONG
+              set -x
+              ./nb run driver=cql workload={{activity_file}} \
+              username=${FALLOUT_TARGET_ASTRA_CREDS_USERNAME} \
+              password=${FALLOUT_TARGET_ASTRA_CREDS_PASSWORD} \
+              rate=9000 \
+              keyspace=${FALLOUT_TARGET_ASTRA_CREDS_KEYSPACE} hosts=$FALLOUT_ZDMPROXY_NODE0_NODE_INFO_PRIVATENETWORKADDRESS port=9045 tags=phase:rampup -v pooling={{num_connections}}:{{num_connections}}:2048 cycles={{rampup_cycles}} threads={{num_threads}}
+              ./nb run driver=cql workload={{activity_file}} \
+              username=${FALLOUT_TARGET_ASTRA_CREDS_USERNAME} \
+              password=${FALLOUT_TARGET_ASTRA_CREDS_PASSWORD} \
+              rate=9000 \
+              keyspace=${FALLOUT_TARGET_ASTRA_CREDS_KEYSPACE} hosts=$FALLOUT_ZDMPROXY_NODE0_NODE_INFO_PRIVATENETWORKADDRESS port=9045 tags=phase:main --log-histograms $FALLOUT_ARTIFACT_DIR/nb_bench_proxy.hdr pooling={{num_connections}}:{{num_connections}}:2048 cycles={{main_cycles}} threads={{num_threads}} --log-histostats $FALLOUT_ARTIFACT_DIR/nb_bench_proxy.csv -v
+
+            EONG
+    - stop_proxy:
+        module: bash
+        properties:
+          target.group: zdmproxy
+          timeout: 1h
+          export_output: true
+          script: |
+            echo "Stopping container " ${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_NODE_PRIVATE_IP}
+            sudo docker container stop ${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_NODE_PRIVATE_IP}
+    - capture_profiling_files:
+        module: bash
+        properties:
+          target.group: zdmproxy
+          timeout: 1h
+          export_output: true
+          script: |
+            cd $FALLOUT_SCRATCH_DIR
+            if [ "{{enable_profiling}}" == "true" ]; then
+              sudo docker cp ${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_NODE_PRIVATE_IP}:/cpu_profile.prof $FALLOUT_ARTIFACT_DIR/${FALLOUT_NODE_PRIVATE_IP}-cpu_profile.prof
+              sudo docker cp ${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_NODE_PRIVATE_IP}:/heap_profile.prof $FALLOUT_ARTIFACT_DIR/${FALLOUT_NODE_PRIVATE_IP}-heap_profile.prof
+            fi
+    - capture_proxy_logs:
+        module: bash
+        properties:
+          target.group: zdmproxy
+          timeout: 1h
+          export_output: true
+          script: |
+            /usr/bin/newgrp docker <<EONG
+              sudo docker logs ${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_NODE_PRIVATE_IP}
+              sudo docker logs ${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_NODE_PRIVATE_IP} >& myFile.log
+
+            EONG
+    - workaround_jvmoptions_failure:
+        module: bash
+        properties:
+          target.group: origin
+          timeout: 1h
+          export_output: true
+          script: |
+            sudo touch ${CASSANDRA_CONFIG_HOME}/jvm-8.options
+    - truncate-origin:
+        module: cqlsh
+        properties:
+          server_group: origin
+          command: |
+            TRUNCATE benchmark1_ks.keyvalue;
+            TRUNCATE benchmark1_ks.keyvalue;
+    - benchmark-origin:
+        module: bash
+        properties:
+          target.group: client
+          timeout: 1000m
+          script: |
+            cd $FALLOUT_SCRATCH_DIR
+            set -x
+            sudo docker ps
+            /usr/bin/newgrp docker <<EONG
+              set -x
+              ./nb run driver=cql workload={{activity_file}} keyspace=benchmark1_ks hosts=$FALLOUT_ORIGIN_PRODUCT_CONTACT_POINT tags=phase:rampup -v pooling={{num_connections}}:{{num_connections}}:2048 cycles={{rampup_cycles}} threads={{num_threads}}
+              ./nb run driver=cql workload={{activity_file}} keyspace=benchmark1_ks hosts=$FALLOUT_ORIGIN_PRODUCT_CONTACT_POINT tags=phase:main --log-histograms $FALLOUT_ARTIFACT_DIR/nb_bench.hdr pooling={{num_connections}}:{{num_connections}}:2048 cycles={{main_cycles}} threads={{num_threads}} --log-histostats $FALLOUT_ARTIFACT_DIR/nb_bench.csv -v
+
+            EONG
+  checkers:
+    verify_success:
+      checker: nofail
+  artifact_checkers:
+    process_hdr:
+      artifact_checker: hdrtool
