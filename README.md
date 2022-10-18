@@ -91,6 +91,7 @@ protocol version v5 can be migrated using the ZDM Proxy (as long as it does not 
 :warning: **Thrift is not supported by ZDM Proxy.** If you are using a very old driver or cluster version that only supports Thrift
 then you need to change your client application to use CQL and potentially upgrade your cluster before starting the 
 migration process.
+
 ---
 
 In practice this means that ZDM Proxy supports the following cluster versions (as Origin and / or Target):
