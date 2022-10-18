@@ -449,7 +449,7 @@ func TestPreparedIdReplacement(t *testing.T) {
 					return fmt.Errorf("expectedTargetBatches %v != %v", expectedTargetBatches, len(targetBatchMessages)), false
 				}
 				return nil, false
-			}, 10, 200 * time.Millisecond)
+			}, 10, 200*time.Millisecond)
 
 			utils.RequireWithRetries(t, func() (err error, fatal bool) {
 				originLock.Lock()
@@ -464,7 +464,7 @@ func TestPreparedIdReplacement(t *testing.T) {
 					return fmt.Errorf("expectedOriginBatches %v != %v", expectedOriginBatches, len(originBatchMessages)), false
 				}
 				return nil, false
-			}, 10, 200 * time.Millisecond)
+			}, 10, 200*time.Millisecond)
 
 			originLock.Lock()
 			defer originLock.Unlock()
@@ -798,7 +798,7 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 					return fmt.Errorf("expectedTargetBatches %v != %v", expectedTargetBatches, len(targetBatchMessages)), false
 				}
 				return nil, false
-			}, 10, 200 * time.Millisecond)
+			}, 10, 200*time.Millisecond)
 
 			utils.RequireWithRetries(t, func() (err error, fatal bool) {
 				originLock.Lock()
@@ -813,7 +813,7 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 					return fmt.Errorf("expectedOriginBatches %v != %v", expectedOriginBatches, len(originBatchMessages)), false
 				}
 				return nil, false
-			}, 10, 200 * time.Millisecond)
+			}, 10, 200*time.Millisecond)
 
 			originLock.Lock()
 			defer originLock.Unlock()
@@ -865,63 +865,63 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 				require.Equal(t, batchMsg, originBatchMessages[1])
 			}
 
-			require.Equal(t, 2, originCtx["EXECUTE_" + string(originPreparedId)])
+			require.Equal(t, 2, originCtx["EXECUTE_"+string(originPreparedId)])
 			if test.originUnprepared {
-				require.Equal(t, 1, originCtx["UNPREPARED_" + string(originPreparedId)])
-				require.Equal(t, 1, originCtx["ROWS_" + string(originPreparedId)])
+				require.Equal(t, 1, originCtx["UNPREPARED_"+string(originPreparedId)])
+				require.Equal(t, 1, originCtx["ROWS_"+string(originPreparedId)])
 				if test.batchQuery != "" {
-					require.Equal(t, 1, originCtx["UNPREPARED_" + string(originBatchPreparedId)])
-					require.Equal(t, 1, originCtx["VOID_" + string(originBatchPreparedId)])
+					require.Equal(t, 1, originCtx["UNPREPARED_"+string(originBatchPreparedId)])
+					require.Equal(t, 1, originCtx["VOID_"+string(originBatchPreparedId)])
 				}
 			} else {
-				require.Equal(t, nil, originCtx["UNPREPARED_" + string(originPreparedId)])
-				require.Equal(t, 2, originCtx["ROWS_" + string(originPreparedId)])
+				require.Equal(t, nil, originCtx["UNPREPARED_"+string(originPreparedId)])
+				require.Equal(t, 2, originCtx["ROWS_"+string(originPreparedId)])
 				if test.batchQuery != "" {
-					require.Equal(t, nil, originCtx["UNPREPARED_" + string(originBatchPreparedId)])
-					require.Equal(t, 2, originCtx["VOID_" + string(originBatchPreparedId)])
+					require.Equal(t, nil, originCtx["UNPREPARED_"+string(originBatchPreparedId)])
+					require.Equal(t, 2, originCtx["VOID_"+string(originBatchPreparedId)])
 				}
 			}
 
-			require.Equal(t, nil, originCtx["EXECUTE_" + string(targetPreparedId)])
-			require.Equal(t, nil, originCtx["ROWS_" + string(targetPreparedId)])
-			require.Equal(t, nil, originCtx["UNPREPARED_" + string(targetPreparedId)])
-			require.Equal(t, nil, originCtx["BATCH_" + string(targetBatchPreparedId)])
-			require.Equal(t, nil, originCtx["VOID_" + string(targetBatchPreparedId)])
-			require.Equal(t, nil, originCtx["UNPREPARED_" + string(targetBatchPreparedId)])
+			require.Equal(t, nil, originCtx["EXECUTE_"+string(targetPreparedId)])
+			require.Equal(t, nil, originCtx["ROWS_"+string(targetPreparedId)])
+			require.Equal(t, nil, originCtx["UNPREPARED_"+string(targetPreparedId)])
+			require.Equal(t, nil, originCtx["BATCH_"+string(targetBatchPreparedId)])
+			require.Equal(t, nil, originCtx["VOID_"+string(targetBatchPreparedId)])
+			require.Equal(t, nil, originCtx["UNPREPARED_"+string(targetBatchPreparedId)])
 
 			if !test.read || dualReadsEnabled {
-				require.Equal(t, 2, targetCtx["EXECUTE_" + string(targetPreparedId)])
+				require.Equal(t, 2, targetCtx["EXECUTE_"+string(targetPreparedId)])
 				if test.targetUnprepared {
-					require.Equal(t, 1, targetCtx["UNPREPARED_" + string(targetPreparedId)])
-					require.Equal(t, 1, targetCtx["ROWS_" + string(targetPreparedId)])
+					require.Equal(t, 1, targetCtx["UNPREPARED_"+string(targetPreparedId)])
+					require.Equal(t, 1, targetCtx["ROWS_"+string(targetPreparedId)])
 				} else {
-					require.Equal(t, nil, targetCtx["UNPREPARED_" + string(targetPreparedId)])
-					require.Equal(t, 2, targetCtx["ROWS_" + string(targetPreparedId)])
+					require.Equal(t, nil, targetCtx["UNPREPARED_"+string(targetPreparedId)])
+					require.Equal(t, 2, targetCtx["ROWS_"+string(targetPreparedId)])
 				}
 				if test.batchQuery != "" {
-					require.Equal(t, 2, targetCtx["BATCH_" + string(targetBatchPreparedId)])
+					require.Equal(t, 2, targetCtx["BATCH_"+string(targetBatchPreparedId)])
 					if test.targetUnprepared {
-						require.Equal(t, 1, targetCtx["UNPREPARED_" + string(targetBatchPreparedId)])
-						require.Equal(t, 1, targetCtx["VOID_" + string(targetBatchPreparedId)])
+						require.Equal(t, 1, targetCtx["UNPREPARED_"+string(targetBatchPreparedId)])
+						require.Equal(t, 1, targetCtx["VOID_"+string(targetBatchPreparedId)])
 					} else {
-						require.Equal(t, nil, targetCtx["UNPREPARED_" + string(targetBatchPreparedId)])
-						require.Equal(t, 2, targetCtx["VOID_" + string(targetBatchPreparedId)])
+						require.Equal(t, nil, targetCtx["UNPREPARED_"+string(targetBatchPreparedId)])
+						require.Equal(t, 2, targetCtx["VOID_"+string(targetBatchPreparedId)])
 					}
 				}
 			} else {
-				require.Equal(t, nil, targetCtx["EXECUTE_" + string(targetPreparedId)])
-				require.Equal(t, nil, targetCtx["ROWS_" + string(targetPreparedId)])
-				require.Equal(t, nil, targetCtx["BATCH_" + string(targetBatchPreparedId)])
-				require.Equal(t, nil, targetCtx["VOID_" + string(targetBatchPreparedId)])
+				require.Equal(t, nil, targetCtx["EXECUTE_"+string(targetPreparedId)])
+				require.Equal(t, nil, targetCtx["ROWS_"+string(targetPreparedId)])
+				require.Equal(t, nil, targetCtx["BATCH_"+string(targetBatchPreparedId)])
+				require.Equal(t, nil, targetCtx["VOID_"+string(targetBatchPreparedId)])
 			}
 
-			require.Equal(t, nil, targetCtx["EXECUTE_" + string(originPreparedId)])
-			require.Equal(t, nil, targetCtx["ROWS_" + string(originPreparedId)])
-			require.Equal(t, nil, targetCtx["UNPREPARED_" + string(originPreparedId)])
+			require.Equal(t, nil, targetCtx["EXECUTE_"+string(originPreparedId)])
+			require.Equal(t, nil, targetCtx["ROWS_"+string(originPreparedId)])
+			require.Equal(t, nil, targetCtx["UNPREPARED_"+string(originPreparedId)])
 			if test.batchQuery != "" {
-				require.Equal(t, nil, targetCtx["BATCH_" + string(originBatchPreparedId)])
-				require.Equal(t, nil, targetCtx["VOID_" + string(originBatchPreparedId)])
-				require.Equal(t, nil, targetCtx["UNPREPARED_" + string(originBatchPreparedId)])
+				require.Equal(t, nil, targetCtx["BATCH_"+string(originBatchPreparedId)])
+				require.Equal(t, nil, targetCtx["VOID_"+string(originBatchPreparedId)])
+				require.Equal(t, nil, targetCtx["UNPREPARED_"+string(originBatchPreparedId)])
 			}
 		})
 	}
