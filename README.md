@@ -112,8 +112,9 @@ There you'll find information about an Ansible-based tool that automates most of
 
 ## Project Dependencies
 
-For information on the packaged dependencies of the Zero Downtime Migration (ZDM) Proxy and their licenses, check out our [open source report](https://app.fossa.com/reports/910065e9-5620-4ed7-befb-b69c45ebce6e).
+For information on the packaged dependencies of the Zero Downtime Migration (ZDM) Proxy and their licenses, check out our [open source report](https://app.fossa.com/reports/ccfe72e5-68ea-4c02-ad48-d92061e6d0b0).
 
 ## Frequently Asked Questions
 
 For frequently asked questions, please refer to our separate [FAQ](https://docs.datastax.com/en/astra-serverless/docs/migrate/faqs.html) page.
+
