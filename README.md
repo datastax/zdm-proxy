@@ -79,6 +79,27 @@ If you don't have test clusters readily available to try with, check the [altern
 [Contributor's guide](./CONTRIBUTING.md), which will set up all the dependencies, including two test clusters and a proxy instance, in a
 containerized sandbox environment.
 
+## Supported Protocol Versions
+
+**ZDM Proxy supports protocol versions v3, v4, DSE_V1 and DSE_V2.**
+
+It technically doesn't support v5, but handles protocol negotiation so that the client application properly downgrades
+the protocol version to v4 if v5 is requested. This means that any client application using a recent driver that supports
+protocol version v5 can be migrated using the ZDM Proxy (as long as it does not use v5-specific functionality).
+
+---
+**Thrift is not supported by ZDM Proxy.** If you are using a very old driver or cluster version that only supports Thrift 
+then you need to change your client application to use CQL and potentially upgrade your cluster before starting the 
+migration process.
+---
+
+In practice this means that ZDM Proxy supports the following cluster versions (as Origin and / or Target):
+
+- Apache Cassandra from 2.1+ up to (and including) Apache Cassandra 4.x. Apache Cassandra 2.0 support will be introduced 
+when protocol version v2 is supported.
+- DataStax Enterprise 4.8+. DataStax Enterprise 4.6 and 4.7 support will be introduced when protocol version v2 is supported.
+- DataStax Astra DB (both Serverless and Classic)
+
 ## Production Setup
 
 The setup we described above is only for testing in a local environment. It is **NOT** recommended for a production
