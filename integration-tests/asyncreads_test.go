@@ -299,13 +299,12 @@ func TestAsyncReadsRequestTypes(t *testing.T) {
 		require.Nil(t, err)
 		defer proxy.Shutdown()
 
-		client := client.NewCqlClient("127.0.0.1:14002", nil)
-		cqlClientConn, err := client.ConnectAndInit(context.Background(), primitive.ProtocolVersion4, 0)
-		require.Nil(t, err)
-		defer cqlClientConn.Close()
-
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
+				client := client.NewCqlClient("127.0.0.1:14002", nil)
+				cqlClientConn, err := client.ConnectAndInit(context.Background(), primitive.ProtocolVersion4, 0)
+				require.Nil(t, err)
+				defer cqlClientConn.Close()
 				err = testSetup.Origin.DeleteLogs()
 				require.Nil(t, err)
 				err = testSetup.Target.DeleteLogs()
