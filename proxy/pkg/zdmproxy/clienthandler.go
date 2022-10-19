@@ -643,7 +643,6 @@ func (ch *ClientHandler) tryProcessProtocolError(response *Response, protocolErr
 					errMsg, response.connectorType)
 			}
 			ch.clientConnector.sendResponseToClient(response.responseFrame)
-			ch.clientHandlerShutdownRequestCancelFn()
 		}
 		return true
 	}

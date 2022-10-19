@@ -165,6 +165,7 @@ func (cc *ClientConnector) listenForRequests() {
 		bufferedReader := bufio.NewReaderSize(cc.connection, cc.conf.RequestWriteBufferSizeBytes)
 		connectionAddr := cc.connection.RemoteAddr().String()
 		protocolErrOccurred := false
+		var alreadySentProtocolErr *frame.RawFrame
 		for cc.clientHandlerContext.Err() == nil {
 			f, err := readRawFrame(bufferedReader, connectionAddr, cc.clientHandlerContext)
 
@@ -174,14 +175,15 @@ func (cc *ClientConnector) listenForRequests() {
 					err, cc.clientHandlerContext, cc.clientHandlerCancelFunc, ClientConnectorLogPrefix, "reading", connectionAddr)
 				break
 			} else if protocolErrResponseFrame != nil {
-				f = protocolErrResponseFrame
-				if !protocolErrOccurred {
-					protocolErrOccurred = true
-					cc.sendResponseToClient(protocolErrResponseFrame)
-					cc.clientHandlerShutdownRequestCancelFn()
-					setDrainModeNowFunc()
-					continue
-				}
+				alreadySentProtocolErr = protocolErrResponseFrame
+				protocolErrOccurred = true
+				cc.sendResponseToClient(protocolErrResponseFrame)
+				continue
+			} else if alreadySentProtocolErr != nil {
+				clonedProtocolErr := alreadySentProtocolErr.Clone()
+				clonedProtocolErr.Header.StreamId = f.Header.StreamId
+				cc.sendResponseToClient(clonedProtocolErr)
+				continue
 			}
 
 			wg.Add(1)
