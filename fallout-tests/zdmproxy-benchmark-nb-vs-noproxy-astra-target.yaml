@@ -2,7 +2,7 @@ origin_server_product: dse
 origin_server_install_type: tarball
 origin_server_version: 5.1.33
 origin_server_linux_distro: bionic
-origin_node_count: 1
+origin_node_count: 3
 
 target_astra_service_account: prod_wei
 
@@ -122,6 +122,7 @@ workload:
         module: cqlsh
         properties:
           server_group: origin
+          target.ordinals: 0
           command: |
             CREATE KEYSPACE benchmark2_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'dc_origin' : 1};
             CREATE KEYSPACE benchmark1_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'dc_origin' : 1};
@@ -316,6 +317,7 @@ workload:
         module: cqlsh
         properties:
           server_group: origin
+          target.ordinals: 0
           command: |
             TRUNCATE benchmark1_ks.keyvalue;
             TRUNCATE benchmark1_ks.keyvalue;
