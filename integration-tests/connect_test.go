@@ -11,6 +11,8 @@ import (
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/integration-tests/utils"
 	"github.com/datastax/zdm-proxy/proxy/pkg/config"
+	"github.com/rs/zerolog"
+	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
 	"sync/atomic"
 	"testing"
@@ -62,19 +64,20 @@ func TestMaxClientsThreshold(t *testing.T) {
 		// Connect to proxy as a "client"
 		cluster := utils.NewCluster("127.0.0.1", "", "", 14002)
 		cluster.NumConns = goCqlConnectionsPerHost
+		cluster.ProtoVersion = 4 // prevent temporary connection for proto version discovery
 		session, err := cluster.CreateSession()
 
 		if err != nil {
 			if i == maxSessions {
 				return
 			}
-			t.Log("Unable to connect to proxy.")
-			t.Fatal(err)
+			require.FailNow(t, "Unable to connect to proxy: %v.", err)
 		}
+		//goland:noinspection GoDeferInLoop
 		defer session.Close()
 	}
 
-	t.Fatal("Expected failure in last session connection but it was successful.")
+	require.FailNow(t, "Expected failure in last session connection but it was successful.")
 }
 
 func TestRequestedProtocolVersionUnsupportedByProxy(t *testing.T) {
@@ -100,7 +103,16 @@ func TestRequestedProtocolVersionUnsupportedByProxy(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+
+			oldLevel := log.GetLevel()
+			oldZeroLogLevel := zerolog.GlobalLevel()
+			log.SetLevel(log.WarnLevel)
+			defer log.SetLevel(oldLevel)
+			zerolog.SetGlobalLevel(zerolog.WarnLevel)
+			defer zerolog.SetGlobalLevel(oldZeroLogLevel)
+
 			cfg := setup.NewTestConfig("127.0.1.1", "127.0.1.2")
+			cfg.LogLevel = "TRACE" // saw 1 test failure here once but logs didn't show enough info
 			testSetup, err := setup.NewCqlServerTestSetup(t, cfg, false, false, false)
 			require.Nil(t, err)
 			defer testSetup.Cleanup()
