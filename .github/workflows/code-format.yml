@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   format:
-    name: Run gofmt
+    name: gofmt validation
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
