@@ -400,7 +400,7 @@ func TestTls_OneWayOrigin_MutualTarget(t *testing.T) {
 			serverName:          "",
 			errExpected:         true,
 			errWarningsExpected: []string{"tls: first record does not look like a TLS handshake"},
-			errMsgExpected:      "remote error: tls: bad certificate",
+			errMsgExpected:      "",
 		},
 		{
 			name:                "Proxy: One-Way TLS on Client, Mutual TLS on Listener, One-way TLS on Origin, mutual TLS on Target",
@@ -411,7 +411,7 @@ func TestTls_OneWayOrigin_MutualTarget(t *testing.T) {
 			serverName:          "",
 			errExpected:         true,
 			errWarningsExpected: []string{"tls: client didn't provide a certificate"},
-			errMsgExpected:      "",
+			errMsgExpected:      "remote error: tls: bad certificate",
 		},
 		{
 			name:                "Proxy: Mutual TLS and SNI on Client, Mutual TLS on Listener, One-way TLS on Origin, mutual TLS on Target",
@@ -1066,7 +1066,8 @@ func testProxyClientTls(t *testing.T, ccmSetup *setup.CcmTestSetup,
 	if proxyTlsConfig.errExpected {
 		require.NotNil(t, err, "Did not get expected error %s", proxyTlsConfig.errMsgExpected)
 		if proxyTlsConfig.errMsgExpected != "" {
-			require.True(t, strings.Contains(err.Error(), proxyTlsConfig.errMsgExpected), err.Error())
+			require.True(t, strings.Contains(err.Error(), proxyTlsConfig.errMsgExpected),
+				"%v not found in %v", proxyTlsConfig.errMsgExpected, err.Error())
 		}
 	} else {
 		require.Nil(t, err, "testClient setup failed: %v", err)
