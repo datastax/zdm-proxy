@@ -12,7 +12,7 @@ the proxy connects to both Origin and Target clusters.
 By default, the proxy will forward read requests only to the Origin cluster, though you can optionally configure it to
 forward reads to both clusters asynchronously, while writes will always be sent to both clusters concurrently.
 
-An overview of the proxy architecture and logical flow can be viewed [here](#).
+An overview of the proxy architecture and logical flow can be viewed [here](https://docs.datastax.com/en/astra-serverless/docs/migrate/introduction.html#migration-workflow).
 
 ## Quick Start
 
@@ -88,9 +88,10 @@ the protocol version to v4 if v5 is requested. This means that any client applic
 protocol version v5 can be migrated using the ZDM Proxy (as long as it does not use v5-specific functionality).
 
 ---
-**Thrift is not supported by ZDM Proxy.** If you are using a very old driver or cluster version that only supports Thrift 
+:warning: **Thrift is not supported by ZDM Proxy.** If you are using a very old driver or cluster version that only supports Thrift
 then you need to change your client application to use CQL and potentially upgrade your cluster before starting the 
 migration process.
+
 ---
 
 In practice this means that ZDM Proxy supports the following cluster versions (as Origin and / or Target):
@@ -106,13 +107,15 @@ The setup we described above is only for testing in a local environment. It is *
 installation where the minimum number of proxy instances is 3.
 
 For a comprehensive guide with the recommended production setup check the documentation available at
+[Datastax Migration](https://docs.datastax.com/en/astra-serverless/docs/migrate/introduction.html).
 
 There you'll find information about an Ansible-based tool that automates most of the process.
 
 ## Project Dependencies
 
-For information on the packaged dependencies of the Zero Downtime Migration (ZDM) Proxy and their licenses, check out our [open source report](https://app.fossa.com/reports/910065e9-5620-4ed7-befb-b69c45ebce6e).
+For information on the packaged dependencies of the Zero Downtime Migration (ZDM) Proxy and their licenses, check out our [open source report](https://app.fossa.com/reports/ccfe72e5-68ea-4c02-ad48-d92061e6d0b0).
 
 ## Frequently Asked Questions
 
-For frequently asked questions, please refer to our separate [FAQ](faq.md) page.
+For frequently asked questions, please refer to our separate [FAQ](https://docs.datastax.com/en/astra-serverless/docs/migrate/faqs.html) page.
+

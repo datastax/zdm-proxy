@@ -13,15 +13,15 @@ concurrency:
 
 jobs:
   format:
-    name: Run gofmt and push (non fork PRs)
-    # Check if the PR is not from a fork
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    name: gofmt validation
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
         with:
-          ref: ${{ github.head_ref }}
+          ref: ${{ github.event.pull_request.head.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
       - name: Install SSH Key
+        if: github.event.pull_request.head.repo.full_name == github.repository
         uses: shimataro/ssh-key-action@v2
         with:
           key: ${{ secrets.SSH_PRIVATE_KEY }} 
@@ -31,22 +31,16 @@ jobs:
       - name: Check for modified files
         id: git-check
         run: echo ::set-output name=modified::$(if git diff-index --quiet HEAD --; then echo "false"; else echo "true"; fi)
-      - name: Push changes
-        if: steps.git-check.outputs.modified == 'true'
+      - name: Push changes (non Fork PRs)
+        if: github.event.pull_request.head.repo.full_name == github.repository && steps.git-check.outputs.modified == 'true'
         run: |
           git config --global user.name 'Auto Gofmt'
           git config --global user.email 'auto-gofmt@users.noreply.github.com'
           git remote set-url origin git@github.com:${{ github.repository }}
           git commit -am "Automated gofmt changes"
           git push
-  check:
-    name: Validate with gofmt (fork PRs)
-    # Check if the PR is from a fork
-    if: github.event.pull_request.head.repo.full_name != github.repository
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-        with:
-          ref: ${{ github.head_ref }}
-      - name: Format
-        run: if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then exit 1; fi
+      - name: Validate (Fork PRs)
+        if: github.event.pull_request.head.repo.full_name != github.repository && steps.git-check.outputs.modified == 'true'
+        run: |
+          echo "Gofmt code validation failed, please run gofmt on your branch to correctly format your code changes."
+          exit 1

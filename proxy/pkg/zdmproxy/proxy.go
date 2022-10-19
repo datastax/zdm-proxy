@@ -445,9 +445,11 @@ func (p *ZdmProxy) acceptConnectionsFromClients(address string, port int, server
 			defer p.listenerLock.Unlock()
 			if !p.listenerClosed {
 				p.listenerClosed = true
-				l.Close()
+				_ = l.Close()
 			}
 		}()
+		wg := &sync.WaitGroup{}
+		defer wg.Wait()
 		for {
 			conn, err := l.Accept()
 			if err != nil {
@@ -479,7 +481,9 @@ func (p *ZdmProxy) acceptConnectionsFromClients(address string, port int, server
 			atomic.AddInt32(&p.activeClients, 1)
 			log.Infof("Accepted connection from %v", conn.RemoteAddr())
 
+			wg.Add(1)
 			p.listenerScheduler.Schedule(func() {
+				defer wg.Done()
 				p.handleNewConnection(conn)
 			})
 		}
