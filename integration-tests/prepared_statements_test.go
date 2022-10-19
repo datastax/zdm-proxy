@@ -990,34 +990,34 @@ func NewPreparedTestHandler(
 			}
 			*executeMessages = append(*executeMessages, executeMsg)
 
-			counterInterface := context["EXECUTE_"+string(preparedId)]
-			if counterInterface == nil {
-				counterInterface = 0
+			executeCounterInterface := context["EXECUTE_"+string(preparedId)]
+			if executeCounterInterface == nil {
+				executeCounterInterface = 0
 			}
-			counter := counterInterface.(int)
-			context["EXECUTE_"+string(preparedId)] = counter + 1
+			executeCounter := executeCounterInterface.(int)
+			context["EXECUTE_"+string(preparedId)] = executeCounter + 1
 
-			counterInterface = context["PREPARE_"+string(preparedId)]
-			if counterInterface == nil {
-				counterInterface = 0
+			prepareCounterInterface := context["PREPARE_"+string(preparedId)]
+			if prepareCounterInterface == nil {
+				prepareCounterInterface = 0
 			}
-			counter = counterInterface.(int)
+			prepareCounter := prepareCounterInterface.(int)
 			lock.Unlock()
 
-			threshold := 1
+			prepareThreshold := 1
 			if dualReads {
-				threshold += 1
+				prepareThreshold += 1
 			}
 			if unpreparedTest {
-				threshold += 1
+				prepareThreshold += 1
 				if dualReads {
-					threshold += 1
+					prepareThreshold += 1
 				}
 			}
 
 			prefix := "UNPREPARED_"
 			var msg message.Message
-			if counter < threshold || !bytes.Equal(executeMsg.QueryId, preparedId) {
+			if prepareCounter < prepareThreshold || !bytes.Equal(executeMsg.QueryId, preparedId) {
 				msg = &message.Unprepared{
 					ErrorMessage: "UNPREPARED",
 					Id:           executeMsg.QueryId,
@@ -1030,11 +1030,11 @@ func NewPreparedTestHandler(
 				}
 			}
 			lock.Lock()
-			counterInterface = context[prefix+string(executeMsg.QueryId)]
+			counterInterface := context[prefix+string(executeMsg.QueryId)]
 			if counterInterface == nil {
 				counterInterface = 0
 			}
-			counter = counterInterface.(int)
+			counter := counterInterface.(int)
 			context[prefix+string(executeMsg.QueryId)] = counter + 1
 			lock.Unlock()
 			return frame.NewFrame(request.Header.Version, request.Header.StreamId, msg)
