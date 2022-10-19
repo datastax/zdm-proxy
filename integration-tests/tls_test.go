@@ -12,6 +12,7 @@ import (
 	"github.com/datastax/zdm-proxy/integration-tests/env"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/proxy/pkg/config"
+	zerologger "github.com/rs/zerolog/log"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
 	"io/ioutil"
@@ -1340,6 +1341,14 @@ func getClientSideVerifyConnectionCallback(rootCAs *x509.CertPool) func(cs tls.C
 			}
 		}
 		_, err := cs.PeerCertificates[0].Verify(opts)
+		if err != nil {
+			// use zerolog to avoid interacting with proxy's log messages that are used for assertions in the test
+			zerologger.Warn().
+				Interface("cs", cs).
+				Interface("verifyopts", opts).
+				Interface("peercertificates", cs.PeerCertificates).
+				Msgf("client side verify callback error: %v", err)
+		}
 		return err
 	}
 }
