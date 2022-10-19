@@ -65,7 +65,7 @@ func TestMaxClientsThreshold(t *testing.T) {
 		session, err := cluster.CreateSession()
 
 		if err != nil {
-			if i == maxSessions {
+			if i == maxSessions{
 				return
 			}
 			t.Log("Unable to connect to proxy.")
