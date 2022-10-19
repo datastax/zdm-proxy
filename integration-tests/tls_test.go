@@ -400,7 +400,7 @@ func TestTls_OneWayOrigin_MutualTarget(t *testing.T) {
 			serverName:          "",
 			errExpected:         true,
 			errWarningsExpected: []string{"tls: first record does not look like a TLS handshake"},
-			errMsgExpected:      "",
+			errMsgExpected:      "remote error: tls: bad certificate",
 		},
 		{
 			name:                "Proxy: One-Way TLS on Client, Mutual TLS on Listener, One-way TLS on Origin, mutual TLS on Target",
@@ -1057,8 +1057,10 @@ func testProxyClientTls(t *testing.T, ccmSetup *setup.CcmTestSetup,
 
 	logMessages := buffer.String()
 
-	for _, errWarnExpected := range proxyTlsConfig.errWarningsExpected {
-		require.True(t, strings.Contains(logMessages, errWarnExpected), "%v not found", errWarnExpected)
+	if !proxyTlsConfig.errExpected || proxyTlsConfig.errMsgExpected == "" { // if we have an errmsg to check, ignore warnings
+		for _, errWarnExpected := range proxyTlsConfig.errWarningsExpected {
+			require.True(t, strings.Contains(logMessages, errWarnExpected), "%v not found", errWarnExpected)
+		}
 	}
 
 	if proxyTlsConfig.errExpected {
