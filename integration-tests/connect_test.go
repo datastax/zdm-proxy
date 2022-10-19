@@ -64,19 +64,20 @@ func TestMaxClientsThreshold(t *testing.T) {
 		// Connect to proxy as a "client"
 		cluster := utils.NewCluster("127.0.0.1", "", "", 14002)
 		cluster.NumConns = goCqlConnectionsPerHost
+		cluster.ProtoVersion = 4 // prevent temporary connection for proto version discovery
 		session, err := cluster.CreateSession()
 
 		if err != nil {
 			if i == maxSessions {
 				return
 			}
-			t.Log("Unable to connect to proxy.")
-			t.Fatal(err)
+			require.FailNow(t, "Unable to connect to proxy: %v.", err)
 		}
+		//goland:noinspection GoDeferInLoop
 		defer session.Close()
 	}
 
-	t.Fatal("Expected failure in last session connection but it was successful.")
+	require.FailNow(t, "Expected failure in last session connection but it was successful.")
 }
 
 func TestRequestedProtocolVersionUnsupportedByProxy(t *testing.T) {
