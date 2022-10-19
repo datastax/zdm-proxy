@@ -15,7 +15,7 @@ func TestBatchBothWriteTimeout(t *testing.T) {
 	defer testSetup.Cleanup()
 
 	// Connect to proxy as a "client"
-	proxy, err := utils.ConnectToCluster("127.0.0.1", "", "", 14002)
+	proxy, err := utils.ConnectToCluster("127.0.0.1","", "", 14002)
 
 	if err != nil {
 		t.Log("Unable to connect to proxy session.")
@@ -127,7 +127,7 @@ func TestBatchTargetWriteTimeout(t *testing.T) {
 	require.Equal(t, gocql.One, errTimeOut.Consistency, "errTimeOut.Consistency: expected ONE, got ", errTimeOut.Consistency)
 }
 
-func TestBatchWriteSuccessful(t *testing.T) {
+func TestBatchWriteSuccessful(t *testing.T){
 	testSetup, err := setup.NewSimulacronTestSetup(t)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
