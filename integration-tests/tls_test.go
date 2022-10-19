@@ -1057,19 +1057,36 @@ func testProxyClientTls(t *testing.T, ccmSetup *setup.CcmTestSetup,
 
 	logMessages := buffer.String()
 
-	if !proxyTlsConfig.errExpected || proxyTlsConfig.errMsgExpected == "" { // if we have an errmsg to check, ignore warnings
-		for _, errWarnExpected := range proxyTlsConfig.errWarningsExpected {
-			require.True(t, strings.Contains(logMessages, errWarnExpected), "%v not found", errWarnExpected)
+	warnCheckFail := false
+	warnCheckDone := false
+	for _, errWarnExpected := range proxyTlsConfig.errWarningsExpected {
+		warnCheckDone = true
+		if !strings.Contains(logMessages, errWarnExpected) {
+			t.Logf("%v not found in %v", errWarnExpected, logMessages)
+			warnCheckFail = true
 		}
 	}
 
 	if proxyTlsConfig.errExpected {
 		require.NotNil(t, err, "Did not get expected error %s", proxyTlsConfig.errMsgExpected)
+		errCheckFail := false
+		errCheckDone := false
 		if proxyTlsConfig.errMsgExpected != "" {
-			require.True(t, strings.Contains(err.Error(), proxyTlsConfig.errMsgExpected),
-				"%v not found in %v", proxyTlsConfig.errMsgExpected, err.Error())
+			errCheckDone = true
+			if !strings.Contains(err.Error(), proxyTlsConfig.errMsgExpected) {
+				errCheckFail = true
+				t.Logf("%v not found in %v", err.Error(), proxyTlsConfig.errMsgExpected)
+			}
+		}
+		if errCheckDone && warnCheckDone {
+			require.True(t, !errCheckFail || !warnCheckFail) // only 1 check needs to pass in this scenario
+		} else if errCheckDone {
+			require.False(t, errCheckFail)
+		} else if warnCheckDone {
+			require.False(t, warnCheckFail)
 		}
 	} else {
+		require.False(t, warnCheckFail)
 		require.Nil(t, err, "testClient setup failed: %v", err)
 		// create schema on clusters through the proxy
 		sendRequest(cqlConn, "CREATE KEYSPACE IF NOT EXISTS testks "+
