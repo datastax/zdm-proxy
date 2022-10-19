@@ -6,6 +6,10 @@ When cutting a new release, update the `unreleased` heading to the tag being gen
 
 ## Unreleased
 
+### Bug Fixes
+
+* [#48](https://github.com/datastax/zdm-proxy/issues/48) Fix scheduler shutdown race condition
+
 ## v2.0.0 - 2022-10-17
 
 ### New Features
