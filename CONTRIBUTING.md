@@ -28,6 +28,7 @@ few sections.
 **Note:** If you'll contribute code or examples via a Pull Request (PR) to this ZDM Proxy project, be sure to first read 
 the Contribution License Agreement (CLA) at https://cla.datastax.com/. You'll be required to sign it with your GitHub
 account before we can consider accepting your PR changes.
+
 ---
 
 **Before you start working on a feature or major change, we ask you to discuss your idea with the members
