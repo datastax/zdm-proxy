@@ -114,7 +114,9 @@ type ClientHandler struct {
 	parameterModifier *ParameterModifier
 	timeUuidGenerator TimeUuidGenerator
 
+	// not used atm but should be used when a protocol error occurs after #68 has been addressed
 	clientHandlerShutdownRequestCancelFn context.CancelFunc
+
 	clientHandlerShutdownRequestContext  context.Context
 }
 

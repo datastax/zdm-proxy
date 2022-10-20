@@ -37,6 +37,7 @@ type ClientConnector struct {
 	clientHandlerContext    context.Context
 	clientHandlerCancelFunc context.CancelFunc
 
+	// not used atm but should be used when a protocol error occurs after #68 has been addressed
 	clientHandlerShutdownRequestCancelFn context.CancelFunc
 
 	writeCoalescer *writeCoalescer
