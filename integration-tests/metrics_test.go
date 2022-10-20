@@ -316,7 +316,7 @@ func checkMetrics(
 
 	if checkNodeMetrics {
 		if asyncEnabled {
-			requireEventuallyContainsLine(t, lines, fmt.Sprintf("%v %v",	getPrometheusNameWithNodeLabel(prefix, metrics.InFlightRequestsAsync, asyncHost), 0))
+			requireEventuallyContainsLine(t, lines, fmt.Sprintf("%v %v", getPrometheusNameWithNodeLabel(prefix, metrics.InFlightRequestsAsync, asyncHost), 0))
 		} else {
 			require.NotContains(t, lines, fmt.Sprintf("%v", getPrometheusName(prefix, metrics.InFlightRequestsAsync)))
 		}
