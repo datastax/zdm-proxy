@@ -85,6 +85,9 @@ ensemble:
         mark_for_reuse: {{reuse}}
         cluster_ttl: {{ttl}}
     configuration_manager:
+      - name: ctool
+        properties:
+          java.version: openjdk8
       - name: nosqlbench_ssh
       - name: cqlsh
   observer: none
