@@ -188,7 +188,7 @@ func requireEventuallyContainsLine(t *testing.T, lines []string, line string) {
 			}
 			return fmt.Errorf("%v does not contain %v", lines, line), false
 		},
-		25, 200)
+		25, 200*time.Millisecond)
 }
 
 func containsLine(lines []string, line string) bool {
@@ -406,7 +406,7 @@ func checkMetrics(
 				}
 
 				return nil, false
-			}, 25, 200)
+			}, 25, 200*time.Millisecond)
 		}
 
 		require.Contains(t, lines, fmt.Sprintf("%v{node=\"%v\"} %v", getPrometheusNameWithSuffix(prefix, metrics.TargetRequestDuration, "count"), targetHost, successTarget+successBoth))
