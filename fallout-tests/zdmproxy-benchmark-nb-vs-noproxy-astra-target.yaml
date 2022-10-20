@@ -4,7 +4,6 @@ origin_server_version: 5.1.33
 origin_server_linux_distro: bionic
 origin_node_count: 3
 
-target_astra_service_account: prod_wei
 target_astra_write_rate: 9000
 
 proxy_branch: main
@@ -60,7 +59,6 @@ ensemble:
       provisioner:
         name: astra
         properties:
-          service_account: {{target_astra_service_account}}
           cloud.provider: aws
           cloud.region: us-west-2
           keyspace: benchmark2_ks
