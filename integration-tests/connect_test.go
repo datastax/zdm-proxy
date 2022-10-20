@@ -106,9 +106,9 @@ func TestRequestedProtocolVersionUnsupportedByProxy(t *testing.T) {
 
 			oldLevel := log.GetLevel()
 			oldZeroLogLevel := zerolog.GlobalLevel()
-			log.SetLevel(log.WarnLevel)
+			log.SetLevel(log.TraceLevel)
 			defer log.SetLevel(oldLevel)
-			zerolog.SetGlobalLevel(zerolog.WarnLevel)
+			zerolog.SetGlobalLevel(zerolog.TraceLevel)
 			defer zerolog.SetGlobalLevel(oldZeroLogLevel)
 
 			cfg := setup.NewTestConfig("127.0.1.1", "127.0.1.2")
