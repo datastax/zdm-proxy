@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestUnavailableNode tests if the proxy closes the client connection correctly when either cluster node connection is closed
@@ -62,7 +63,7 @@ func TestUnavailableNode(t *testing.T) {
 					}
 				}
 				return nil, false
-			}, 25, 200)
+			}, 25, 200 * time.Millisecond)
 
 			response := *responsePtr
 			err = *errPtr
