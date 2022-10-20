@@ -33,10 +33,37 @@ jobs:
           export GOARCH=amd64
           go build -o zdm-proxy-${{ github.ref_name }}.exe ./proxy
           zip -vr zdm-proxy-windows-amd64-${{ github.ref_name }}.zip zdm-proxy-${{ github.ref_name }}.exe LICENSE
+      - name: Build Darwin/amd64 binary
+        run: |
+          export GO111MODULE=on
+          export CGO_ENABLED=0
+          export GOOS=darwin
+          export GOARCH=amd64
+          go build -o zdm-proxy-${{ github.ref_name }} ./proxy
+          tar cvfz zdm-proxy-darwin-amd64-${{ github.ref_name }}.tgz zdm-proxy-${{ github.ref_name }} LICENSE
+      - name: Build Darwin/arm64 binary
+        run: |
+          export GO111MODULE=on
+          export CGO_ENABLED=0
+          export GOOS=darwin
+          export GOARCH=arm64
+          go build -o zdm-proxy-${{ github.ref_name }} ./proxy
+          tar cvfz zdm-proxy-darwin-arm64-${{ github.ref_name }}.tgz zdm-proxy-${{ github.ref_name }} LICENSE
+      - name: Build Linux/arm64 binary
+        run: |
+          export GO111MODULE=on
+          export CGO_ENABLED=0
+          export GOOS=linux
+          export GOARCH=arm64
+          go build -o zdm-proxy-${{ github.ref_name }} ./proxy
+          tar cvfz zdm-proxy-linux-arm64-${{ github.ref_name }}.tgz zdm-proxy-${{ github.ref_name }} LICENSE
       - name: Generate Checksums
         run: |
           sha256sum zdm-proxy-linux-amd64-${{ github.ref_name }}.tgz | cut -d ' ' -f 1 > zdm-proxy-linux-amd64-${{ github.ref_name }}-sha256.txt
           sha256sum zdm-proxy-windows-amd64-${{ github.ref_name }}.zip | cut -d ' ' -f 1 > zdm-proxy-windows-amd64-${{ github.ref_name }}-sha256.txt
+          sha256sum zdm-proxy-darwin-amd64-${{ github.ref_name }}.tgz | cut -d ' ' -f 1 > zdm-proxy-darwin-amd64-${{ github.ref_name }}-sha256.txt
+          sha256sum zdm-proxy-darwin-arm64-${{ github.ref_name }}.tgz | cut -d ' ' -f 1 > zdm-proxy-darwin-arm64-${{ github.ref_name }}-sha256.txt
+          sha256sum zdm-proxy-linux-arm64-${{ github.ref_name }}.tgz | cut -d ' ' -f 1 > zdm-proxy-linux-arm64-${{ github.ref_name }}-sha256.txt
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
@@ -46,3 +73,9 @@ jobs:
             zdm-proxy-linux-amd64-${{ github.ref_name }}-sha256.txt
             zdm-proxy-windows-amd64-${{ github.ref_name }}.zip
             zdm-proxy-windows-amd64-${{ github.ref_name }}-sha256.txt
+            zdm-proxy-darwin-amd64-${{ github.ref_name }}.tgz
+            zdm-proxy-darwin-amd64-${{ github.ref_name }}-sha256.txt
+            zdm-proxy-darwin-arm64-${{ github.ref_name }}.tgz
+            zdm-proxy-darwin-arm64-${{ github.ref_name }}-sha256.txt
+            zdm-proxy-linux-arm64-${{ github.ref_name }}.tgz
+            zdm-proxy-linux-arm64-${{ github.ref_name }}-sha256.txt
