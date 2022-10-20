@@ -12,6 +12,7 @@ import (
 	"github.com/datastax/zdm-proxy/integration-tests/env"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/proxy/pkg/config"
+	zerologger "github.com/rs/zerolog/log"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
 	"io/ioutil"
@@ -410,7 +411,7 @@ func TestTls_OneWayOrigin_MutualTarget(t *testing.T) {
 			serverName:          "",
 			errExpected:         true,
 			errWarningsExpected: []string{"tls: client didn't provide a certificate"},
-			errMsgExpected:      "",
+			errMsgExpected:      "remote error: tls: bad certificate",
 		},
 		{
 			name:                "Proxy: Mutual TLS and SNI on Client, Mutual TLS on Listener, One-way TLS on Origin, mutual TLS on Target",
@@ -1056,16 +1057,36 @@ func testProxyClientTls(t *testing.T, ccmSetup *setup.CcmTestSetup,
 
 	logMessages := buffer.String()
 
-	for _, errWarnExpected := range proxyTlsConfig.errWarningsExpected {
-		require.True(t, strings.Contains(logMessages, errWarnExpected), "%v not found", errWarnExpected)
+	warningAssertionFailed := false
+	warningExpected := false
+	for _, expectedWarningMsg := range proxyTlsConfig.errWarningsExpected {
+		warningExpected = true
+		if !strings.Contains(logMessages, expectedWarningMsg) {
+			t.Logf("%v not found in %v", expectedWarningMsg, logMessages)
+			warningAssertionFailed = true
+		}
 	}
 
 	if proxyTlsConfig.errExpected {
 		require.NotNil(t, err, "Did not get expected error %s", proxyTlsConfig.errMsgExpected)
+		errorAssertionFailed := false
+		errorExpected := false
 		if proxyTlsConfig.errMsgExpected != "" {
-			require.True(t, strings.Contains(err.Error(), proxyTlsConfig.errMsgExpected), err.Error())
+			errorExpected = true
+			if !strings.Contains(err.Error(), proxyTlsConfig.errMsgExpected) {
+				errorAssertionFailed = true
+				t.Logf("%v not found in %v", err.Error(), proxyTlsConfig.errMsgExpected)
+			}
+		}
+		if errorExpected && warningExpected {
+			require.False(t, errorAssertionFailed && warningAssertionFailed) // only 1 check needs to pass in this scenario
+		} else if errorExpected {
+			require.False(t, errorAssertionFailed)
+		} else if warningExpected {
+			require.False(t, warningAssertionFailed)
 		}
 	} else {
+		require.False(t, warningAssertionFailed)
 		require.Nil(t, err, "testClient setup failed: %v", err)
 		// create schema on clusters through the proxy
 		sendRequest(cqlConn, "CREATE KEYSPACE IF NOT EXISTS testks "+
@@ -1340,6 +1361,14 @@ func getClientSideVerifyConnectionCallback(rootCAs *x509.CertPool) func(cs tls.C
 			}
 		}
 		_, err := cs.PeerCertificates[0].Verify(opts)
+		if err != nil {
+			// use zerolog to avoid interacting with proxy's log messages that are used for assertions in the test
+			zerologger.Warn().
+				Interface("cs", cs).
+				Interface("verifyopts", opts).
+				Interface("peercertificates", cs.PeerCertificates).
+				Msgf("client side verify callback error: %v", err)
+		}
 		return err
 	}
 }

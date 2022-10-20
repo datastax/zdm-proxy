@@ -9,6 +9,7 @@ When cutting a new release, update the `unreleased` heading to the tag being gen
 ### Bug Fixes
 
 * [#48](https://github.com/datastax/zdm-proxy/issues/48) Fix scheduler shutdown race condition
+* [#69](https://github.com/datastax/zdm-proxy/issues/69) Client connection can be closed before proxy returns protocol error
 
 ## v2.0.0 - 2022-10-17
 
