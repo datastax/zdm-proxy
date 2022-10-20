@@ -1,12 +1,13 @@
-origin_server_product: dse
+origin_server_product: cassandra
 origin_server_install_type: tarball
-origin_server_version: 4.8.0
+origin_server_version: 2.1.6
 origin_server_linux_distro: bionic
-origin_node_count: 1
+origin_node_count: 3
 
 target_astra_service_account: prod_wei
+target_astra_write_rate: 9000
 
-proxy_branch: pre-4.8-fix
+proxy_branch: main
 proxy_node_count: 3
 instance_type: m5.large
 
@@ -15,8 +16,8 @@ primary_cluster: ORIGIN
 replace_cql_functions: false
 enable_profiling: false
 
-rampup_cycles: 1000
-main_cycles: 10000
+rampup_cycles: 10000
+main_cycles: 100000
 num_threads: 128
 num_connections: 8
 
@@ -268,12 +269,12 @@ workload:
               ./nb run driver=cql workload={{activity_file}} \
               username=${FALLOUT_TARGET_ASTRA_CREDS_USERNAME} \
               password=${FALLOUT_TARGET_ASTRA_CREDS_PASSWORD} \
-              rate=9000 \
+              rate={{target_astra_write_rate}} \
               keyspace=${FALLOUT_TARGET_ASTRA_CREDS_KEYSPACE} hosts=$FALLOUT_ZDMPROXY_NODE0_NODE_INFO_PRIVATENETWORKADDRESS port=9045 tags=phase:rampup -v pooling={{num_connections}}:{{num_connections}}:2048 cycles={{rampup_cycles}} threads={{num_threads}}
               ./nb run driver=cql workload={{activity_file}} \
               username=${FALLOUT_TARGET_ASTRA_CREDS_USERNAME} \
               password=${FALLOUT_TARGET_ASTRA_CREDS_PASSWORD} \
-              rate=9000 \
+              rate={{target_astra_write_rate}} \
               keyspace=${FALLOUT_TARGET_ASTRA_CREDS_KEYSPACE} hosts=$FALLOUT_ZDMPROXY_NODE0_NODE_INFO_PRIVATENETWORKADDRESS port=9045 tags=phase:main --log-histograms $FALLOUT_ARTIFACT_DIR/nb_bench_proxy.hdr pooling={{num_connections}}:{{num_connections}}:2048 cycles={{main_cycles}} threads={{num_threads}} --log-histostats $FALLOUT_ARTIFACT_DIR/nb_bench_proxy.csv -v
 
             EONG

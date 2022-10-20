@@ -5,6 +5,7 @@ origin_server_linux_distro: bionic
 origin_node_count: 3
 
 target_astra_service_account: prod_wei
+target_astra_write_rate: 9000
 
 proxy_branch: main
 proxy_node_count: 3
@@ -263,12 +264,12 @@ workload:
               ./nb run driver=cql workload={{activity_file}} \
               username=${FALLOUT_TARGET_ASTRA_CREDS_USERNAME} \
               password=${FALLOUT_TARGET_ASTRA_CREDS_PASSWORD} \
-              rate=9000 \
+              rate={{target_astra_write_rate}} \
               keyspace=${FALLOUT_TARGET_ASTRA_CREDS_KEYSPACE} hosts=$FALLOUT_ZDMPROXY_NODE0_NODE_INFO_PRIVATENETWORKADDRESS port=9045 tags=phase:rampup -v pooling={{num_connections}}:{{num_connections}}:2048 cycles={{rampup_cycles}} threads={{num_threads}}
               ./nb run driver=cql workload={{activity_file}} \
               username=${FALLOUT_TARGET_ASTRA_CREDS_USERNAME} \
               password=${FALLOUT_TARGET_ASTRA_CREDS_PASSWORD} \
-              rate=9000 \
+              rate={{target_astra_write_rate}} \
               keyspace=${FALLOUT_TARGET_ASTRA_CREDS_KEYSPACE} hosts=$FALLOUT_ZDMPROXY_NODE0_NODE_INFO_PRIVATENETWORKADDRESS port=9045 tags=phase:main --log-histograms $FALLOUT_ARTIFACT_DIR/nb_bench_proxy.hdr pooling={{num_connections}}:{{num_connections}}:2048 cycles={{main_cycles}} threads={{num_threads}} --log-histostats $FALLOUT_ARTIFACT_DIR/nb_bench_proxy.csv -v
 
             EONG
