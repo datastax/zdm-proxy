@@ -1,44 +1,36 @@
 origin_server_product: dse
 origin_server_install_type: tarball
-origin_server_version: 6.8.26
+origin_server_version: 5.1.33
 origin_server_linux_distro: bionic
 origin_node_count: 3
 
-target_server_product: dse
-target_server_install_type: tarball
-target_server_version: 6.8.26
-target_server_linux_distro: bionic
-target_node_count: 3
+target_astra_write_rate: 9000
 
+proxy_branch: main
+proxy_node_count: 3
 instance_type: m5.large
+
+read_mode: PRIMARY_ONLY
+primary_cluster: ORIGIN
+replace_cql_functions: false
+enable_profiling: false
+
+rampup_cycles: 1000000
+main_cycles: 10000000
+num_threads: 128
+num_connections: 8
+
+enable_metrics: true
+
+activity_repo: riptano/data-model-archive
+activity_repo_branch: master
+activity_path: astra/baselines-astra/activities
+activity_file: cql-keyvalue-astra.yaml
 
 ttl: 2h
 reuse: false
 
-# PROXY APP SETTINGS
-
-proxy_branch: main
-proxy_node_count: 3
-forward_reads_to_target: false
-enable_metrics: true
-replace_cql_functions: false
-enable_profiling: false
-
-# BENCHMARK APP SETTINGS
-
-concurrent-tasks: 128
-num_connections: 8
-batch-size: 20
-batch-prepared-ratio: 1 # only applicable to mixed-batch-now workload
-parameter-count: 50 # only applicable to large-batch workload
-iterations: 1000000
-warmup-iterations: -1 # defaults to 1/10 of iterations
-workload: large-batch # mixed-batch-now or large-batch
-
-benchmark_branch: main
-
 ---
-
 ensemble:
   servers:
     - name: origin
@@ -63,26 +55,13 @@ ensemble:
                 size: {{origin_node_count}}
                 workload: cassandra
     - name: target
-      node.count: {{target_node_count}}
+      node.count: 1
       provisioner:
-        name: ctool
+        name: astra
         properties:
-          cloud.provider: ec2
-          cloud.instance.type: {{instance_type}}
-          cloud.instance.platform: {{target_server_linux_distro}}
-          mark_for_reuse: {{reuse}}
-          cluster_ttl: {{ttl}}
-      configuration_manager:
-        - name: ctool
-          properties:
-            product.type: {{target_server_product}}
-            product.install.type: {{target_server_install_type}}
-            product.version: {{target_server_version}}
-            enable.graph: false
-            datacenters:
-              dc_target:
-                size: {{target_node_count}}
-                workload: cassandra
+          cloud.provider: aws
+          cloud.region: us-west-2
+          keyspace: benchmark2_ks
     - name: zdmproxy
       node.count: {{proxy_node_count}}
       provisioner:
@@ -99,16 +78,26 @@ ensemble:
       properties:
         cloud.provider: ec2
         cloud.instance.type: {{instance_type}}
-        kill_cluster_after_test: false
         mark_for_reuse: {{reuse}}
         cluster_ttl: {{ttl}}
     configuration_manager:
       - name: ctool
         properties:
-          java.version: "openjdk8"
-          install.maven: true
+          java.version: openjdk8
+      - name: nosqlbench_ssh
+  observer: none
 workload:
   phases:
+    - upload-creds-client:
+        module: astra_creds_upload
+        properties:
+          server_group: target
+          client_group: client
+    - upload-creds-zdmproxy:
+        module: astra_creds_upload
+        properties:
+          server_group: target
+          client_group: zdmproxy
     - install_deps_proxy:
         module: bash
         properties: &install_deps-properties
@@ -139,14 +128,6 @@ workload:
           command: |
             CREATE KEYSPACE benchmark2_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'dc_origin' : 1};
             CREATE KEYSPACE benchmark1_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'dc_origin' : 1};
-    - setup_keyspaces_target:
-        module: cqlsh
-        properties:
-          server_group: target
-          target.ordinals: 0
-          command: |
-            CREATE KEYSPACE benchmark2_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'dc_target' : 1};
-            CREATE KEYSPACE benchmark1_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'dc_target' : 1};
     - setup_proxy:
         module: bash
         properties:
@@ -165,15 +146,16 @@ workload:
             ZDM_ORIGIN_USERNAME=cassandra
             ZDM_ORIGIN_PASSWORD=cassandra
             ZDM_ORIGIN_PORT=9042
-            ZDM_TARGET_CONTACT_POINTS=$FALLOUT_TARGET_PRODUCT_CONTACT_POINT
-            ZDM_TARGET_USERNAME=cassandra
-            ZDM_TARGET_PASSWORD=cassandra
-            ZDM_TARGET_PORT=9042
+            ZDM_TARGET_SECURE_CONNECT_BUNDLE_PATH=/$FALLOUT_TARGET_ASTRA_CREDS_SCB_FILENAME
+            ZDM_TARGET_USERNAME=$FALLOUT_TARGET_ASTRA_CREDS_USERNAME
+            ZDM_TARGET_PASSWORD=$FALLOUT_TARGET_ASTRA_CREDS_PASSWORD
             ZDM_PROXY_LISTEN_ADDRESS=0.0.0.0
             ZDM_PROXY_LISTEN_PORT=9045
             ZDM_METRICS_PORT=14001
             ZDM_METRICS_ENABLE={{enable_metrics}}
             ZDM_REPLACE_CQL_FUNCTIONS={{replace_cql_functions}}
+            ZDM_READ_MODE={{read_mode}}
+            ZDM_PRIMARY_CLUSTER={{primary_cluster}}
             ZDM_PROXY_TOPOLOGY_ADDRESSES=$FALLOUT_ZDMPROXY_PRIVATE_IPS
             ZDM_PROXY_TOPOLOGY_INDEX=$FALLOUT_NODE_ORDINAL
             EOF
@@ -188,6 +170,7 @@ workload:
               else
                 sudo docker run -d --network host --name "${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_NODE_PRIVATE_IP}" --env-file ./proxyenv.env -p 9045:9045 -p 14001:14001 localproxyimg
               fi
+              sudo docker cp $FALLOUT_SCRATCH_DIR/$FALLOUT_TARGET_ASTRA_CREDS_SCB_FILENAME "${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_NODE_PRIVATE_IP}":/$FALLOUT_TARGET_ASTRA_CREDS_SCB_FILENAME
               sudo docker logs "${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_NODE_PRIVATE_IP}"
             EONG
 
@@ -212,6 +195,62 @@ workload:
                 gcr.io/cadvisor/cadvisor:v0.37.0
             EONG
 
+    - pull_nb_binary:
+        module: bash
+        properties:
+          target.group: client
+          timeout: 1000m
+          script: |
+            cd $FALLOUT_SCRATCH_DIR
+
+            set -x
+
+            sudo docker ps
+
+            git clone git@github.com:{{activity_repo}}.git activity_repo
+            cd activity_repo
+            git checkout {{activity_repo_branch}}
+            mv {{activity_path}}/{{activity_file}} ..
+            cd ..
+
+            ln "$FALLOUT_LIBRARY_DIR"/nb ./nb
+
+            pwd
+            ls
+
+    - setschema-origin:
+        module: bash
+        properties:
+          target.group: client
+          timeout: 1000m
+          script: |
+            cd $FALLOUT_SCRATCH_DIR
+            set -x
+            sudo docker ps
+            /usr/bin/newgrp docker <<EONG
+              set -x
+              ./nb run driver=cql workload={{activity_file}} keyspace=benchmark1_ks hosts=$FALLOUT_ORIGIN_PRODUCT_CONTACT_POINT tags=phase:schema -v
+              ./nb run driver=cql workload={{activity_file}} keyspace=benchmark2_ks hosts=$FALLOUT_ORIGIN_PRODUCT_CONTACT_POINT tags=phase:schema -v
+
+            EONG
+    - setschema-target:
+        module: bash
+        properties:
+          target.group: client
+          timeout: 1000m
+          script: |
+            cd $FALLOUT_SCRATCH_DIR
+            set -x
+            sudo docker ps
+            /usr/bin/newgrp docker <<EONG
+              set -x
+              ./nb run driver=cql workload={{activity_file}} \
+              secureconnectbundle="$FALLOUT_SCRATCH_DIR/${FALLOUT_TARGET_ASTRA_CREDS_SCB_FILENAME}" \
+              username=${FALLOUT_TARGET_ASTRA_CREDS_USERNAME} \
+              password=${FALLOUT_TARGET_ASTRA_CREDS_PASSWORD} \
+              keyspace=${FALLOUT_TARGET_ASTRA_CREDS_KEYSPACE} tags=phase:schema -v
+
+            EONG
     - benchmark-proxy:
         module: bash
         properties:
@@ -219,13 +258,22 @@ workload:
           timeout: 1000m
           script: |
             cd $FALLOUT_SCRATCH_DIR
-            ls
-            git clone git@github.com:riptano/cloudgate-benchmark.git
-            cd cloudgate-benchmark
-            git checkout {{benchmark_branch}}
-            mvn package
-            java -Ddatastax-java-driver.advanced.connection.pool.local.size={{num_connections}} -Ddatastax-java-driver.basic.load-balancing-policy.local-datacenter=dc_origin -Ddatastax-java-driver.basic.contact-points.0=${FALLOUT_ZDMPROXY_NODE0_NODE_INFO_PRIVATENETWORKADDRESS}:9045 -Dbenchmark.iterations={{iterations}} -Dbenchmark.warmup-iterations={{warmup-iterations}} -Dbenchmark.histogram-file=histogram.hdr -Dbenchmark.replication-factor=1 -Dbenchmark.concurrent-tasks={{concurrent-tasks}} -Dbenchmark.batch-size={{batch-size}} -Dbenchmark.batch-prepared-ratio={{batch-prepared-ratio}} -Dbenchmark.workload={{workload}} -Dbenchmark.parameter-count={{parameter-count}} -jar ./target/benchmark-1.0-SNAPSHOT.jar
-            cp histogram.hdr $FALLOUT_ARTIFACT_DIR
+            set -x
+            sudo docker ps
+            /usr/bin/newgrp docker <<EONG
+              set -x
+              ./nb run driver=cql workload={{activity_file}} \
+              username=${FALLOUT_TARGET_ASTRA_CREDS_USERNAME} \
+              password=${FALLOUT_TARGET_ASTRA_CREDS_PASSWORD} \
+              rate={{target_astra_write_rate}} \
+              keyspace=${FALLOUT_TARGET_ASTRA_CREDS_KEYSPACE} hosts=$FALLOUT_ZDMPROXY_NODE0_NODE_INFO_PRIVATENETWORKADDRESS port=9045 tags=phase:rampup -v pooling={{num_connections}}:{{num_connections}}:2048 cycles={{rampup_cycles}} threads={{num_threads}}
+              ./nb run driver=cql workload={{activity_file}} \
+              username=${FALLOUT_TARGET_ASTRA_CREDS_USERNAME} \
+              password=${FALLOUT_TARGET_ASTRA_CREDS_PASSWORD} \
+              rate={{target_astra_write_rate}} \
+              keyspace=${FALLOUT_TARGET_ASTRA_CREDS_KEYSPACE} hosts=$FALLOUT_ZDMPROXY_NODE0_NODE_INFO_PRIVATENETWORKADDRESS port=9045 tags=phase:main --log-histograms $FALLOUT_ARTIFACT_DIR/nb_bench_proxy.hdr pooling={{num_connections}}:{{num_connections}}:2048 cycles={{main_cycles}} threads={{num_threads}} --log-histostats $FALLOUT_ARTIFACT_DIR/nb_bench_proxy.csv -v
+
+            EONG
     - stop_proxy:
         module: bash
         properties:
@@ -257,6 +305,37 @@ workload:
             /usr/bin/newgrp docker <<EONG
               sudo docker logs ${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_NODE_PRIVATE_IP}
               sudo docker logs ${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_NODE_PRIVATE_IP} >& myFile.log
+
+            EONG
+    - workaround_jvmoptions_failure:
+        module: bash
+        properties:
+          target.group: origin
+          timeout: 1h
+          export_output: true
+          script: |
+            sudo touch ${CASSANDRA_CONFIG_HOME}/jvm-8.options
+    - truncate-origin:
+        module: cqlsh
+        properties:
+          server_group: origin
+          target.ordinals: 0
+          command: |
+            TRUNCATE benchmark1_ks.keyvalue;
+            TRUNCATE benchmark1_ks.keyvalue;
+    - benchmark-origin:
+        module: bash
+        properties:
+          target.group: client
+          timeout: 1000m
+          script: |
+            cd $FALLOUT_SCRATCH_DIR
+            set -x
+            sudo docker ps
+            /usr/bin/newgrp docker <<EONG
+              set -x
+              ./nb run driver=cql workload={{activity_file}} keyspace=benchmark1_ks hosts=$FALLOUT_ORIGIN_PRODUCT_CONTACT_POINT tags=phase:rampup -v pooling={{num_connections}}:{{num_connections}}:2048 cycles={{rampup_cycles}} threads={{num_threads}}
+              ./nb run driver=cql workload={{activity_file}} keyspace=benchmark1_ks hosts=$FALLOUT_ORIGIN_PRODUCT_CONTACT_POINT tags=phase:main --log-histograms $FALLOUT_ARTIFACT_DIR/nb_bench.hdr pooling={{num_connections}}:{{num_connections}}:2048 cycles={{main_cycles}} threads={{num_threads}} --log-histostats $FALLOUT_ARTIFACT_DIR/nb_bench.csv -v
 
             EONG
   checkers:

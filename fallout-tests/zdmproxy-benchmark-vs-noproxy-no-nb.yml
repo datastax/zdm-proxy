@@ -1,10 +1,14 @@
 origin_server_product: dse
 origin_server_install_type: tarball
 origin_server_version: 6.8.26
+origin_server_linux_distro: bionic
+origin_node_count: 3
 
 target_server_product: dse
 target_server_install_type: tarball
 target_server_version: 6.8.26
+target_server_linux_distro: bionic
+target_node_count: 3
 
 instance_type: m5.large
 
@@ -14,6 +18,7 @@ reuse: false
 # PROXY APP SETTINGS
 
 proxy_branch: main
+proxy_node_count: 3
 forward_reads_to_target: false
 enable_metrics: true
 replace_cql_functions: false
@@ -37,12 +42,13 @@ benchmark_branch: main
 ensemble:
   servers:
     - name: origin
-      node.count: 1
+      node.count: {{origin_node_count}}
       provisioner:
         name: ctool
         properties:
           cloud.provider: ec2
           cloud.instance.type: {{instance_type}}
+          cloud.instance.platform: {{origin_server_linux_distro}}
           mark_for_reuse: {{reuse}}
           cluster_ttl: {{ttl}}
       configuration_manager:
@@ -54,15 +60,16 @@ ensemble:
             enable.graph: false
             datacenters:
               dc_origin:
-                size: 1
+                size: {{origin_node_count}}
                 workload: cassandra
     - name: target
-      node.count: 1
+      node.count: {{target_node_count}}
       provisioner:
         name: ctool
         properties:
           cloud.provider: ec2
           cloud.instance.type: {{instance_type}}
+          cloud.instance.platform: {{target_server_linux_distro}}
           mark_for_reuse: {{reuse}}
           cluster_ttl: {{ttl}}
       configuration_manager:
@@ -74,10 +81,10 @@ ensemble:
             enable.graph: false
             datacenters:
               dc_target:
-                size: 1
+                size: {{target_node_count}}
                 workload: cassandra
     - name: zdmproxy
-      node.count: 1
+      node.count: {{proxy_node_count}}
       provisioner:
         name: ctool
         properties:
@@ -98,7 +105,7 @@ ensemble:
     configuration_manager:
       - name: ctool
         properties:
-          java.version: "oracle8"
+          java.version: "openjdk8"
           install.maven: true
 workload:
   phases:
@@ -128,6 +135,7 @@ workload:
         module: cqlsh
         properties:
           server_group: origin
+          target.ordinals: 0
           command: |
             CREATE KEYSPACE benchmark2_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'dc_origin' : 1};
             CREATE KEYSPACE benchmark1_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'dc_origin' : 1};
@@ -135,6 +143,7 @@ workload:
         module: cqlsh
         properties:
           server_group: target
+          target.ordinals: 0
           command: |
             CREATE KEYSPACE benchmark2_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'dc_target' : 1};
             CREATE KEYSPACE benchmark1_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'dc_target' : 1};
@@ -142,7 +151,6 @@ workload:
         module: bash
         properties:
           target.group: zdmproxy
-          target.ordinals: 0
           timeout: 1h
           export_output: true
           script: |
@@ -166,6 +174,8 @@ workload:
             ZDM_METRICS_PORT=14001
             ZDM_METRICS_ENABLE={{enable_metrics}}
             ZDM_REPLACE_CQL_FUNCTIONS={{replace_cql_functions}}
+            ZDM_PROXY_TOPOLOGY_ADDRESSES=$FALLOUT_ZDMPROXY_PRIVATE_IPS
+            ZDM_PROXY_TOPOLOGY_INDEX=$FALLOUT_NODE_ORDINAL
             EOF
 
             cat ./proxyenv.env
@@ -174,11 +184,11 @@ workload:
               set -x
               sudo docker build -f ./Dockerfile --network host -t localproxyimg .
               if [ "{{enable_profiling}}" == "true" ]; then
-                sudo docker run -d --network host --name "${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_ZDMPROXY_NODE0_NODE_INFO_PRIVATENETWORKADDRESS}" --env-file ./proxyenv.env -p 9045:9045 -p 14001:14001 localproxyimg -cpuprofile ./cpu_profile.prof -memprofile ./heap_profile.prof
+                sudo docker run -d --network host --name "${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_NODE_PRIVATE_IP}" --env-file ./proxyenv.env -p 9045:9045 -p 14001:14001 localproxyimg -cpuprofile ./cpu_profile.prof -memprofile ./heap_profile.prof
               else
-                sudo docker run -d --network host --name "${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_ZDMPROXY_NODE0_NODE_INFO_PRIVATENETWORKADDRESS}" --env-file ./proxyenv.env -p 9045:9045 -p 14001:14001 localproxyimg
+                sudo docker run -d --network host --name "${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_NODE_PRIVATE_IP}" --env-file ./proxyenv.env -p 9045:9045 -p 14001:14001 localproxyimg
               fi
-              sudo docker logs "${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_ZDMPROXY_NODE0_NODE_INFO_PRIVATENETWORKADDRESS}"
+              sudo docker logs "${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_NODE_PRIVATE_IP}"
             EONG
 
             wget https://github.com/prometheus/node_exporter/releases/download/v1.0.1/node_exporter-1.0.1.linux-amd64.tar.gz
@@ -220,36 +230,33 @@ workload:
         module: bash
         properties:
           target.group: zdmproxy
-          target.ordinals: 0
           timeout: 1h
           export_output: true
           script: |
-            echo "Stopping container " ${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_ZDMPROXY_NODE0_NODE_INFO_PRIVATENETWORKADDRESS}
-            sudo docker container stop ${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_ZDMPROXY_NODE0_NODE_INFO_PRIVATENETWORKADDRESS}
+            echo "Stopping container " ${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_NODE_PRIVATE_IP}
+            sudo docker container stop ${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_NODE_PRIVATE_IP}
     - capture_profiling_files:
         module: bash
         properties:
           target.group: zdmproxy
-          target.ordinals: 0
           timeout: 1h
           export_output: true
           script: |
             cd $FALLOUT_SCRATCH_DIR
             if [ "{{enable_profiling}}" == "true" ]; then
-              sudo docker cp ${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_ZDMPROXY_NODE0_NODE_INFO_PRIVATENETWORKADDRESS}:/cpu_profile.prof $FALLOUT_ARTIFACT_DIR
-              sudo docker cp ${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_ZDMPROXY_NODE0_NODE_INFO_PRIVATENETWORKADDRESS}:/heap_profile.prof $FALLOUT_ARTIFACT_DIR
+              sudo docker cp ${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_NODE_PRIVATE_IP}:/cpu_profile.prof $FALLOUT_ARTIFACT_DIR/${FALLOUT_NODE_PRIVATE_IP}-cpu_profile.prof
+              sudo docker cp ${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_NODE_PRIVATE_IP}:/heap_profile.prof $FALLOUT_ARTIFACT_DIR/${FALLOUT_NODE_PRIVATE_IP}-heap_profile.prof
             fi
     - capture_proxy_logs:
         module: bash
         properties:
           target.group: zdmproxy
-          target.ordinals: 0
           timeout: 1h
           export_output: true
           script: |
             /usr/bin/newgrp docker <<EONG
-              sudo docker logs ${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_ZDMPROXY_NODE0_NODE_INFO_PRIVATENETWORKADDRESS}
-              sudo docker logs ${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_ZDMPROXY_NODE0_NODE_INFO_PRIVATENETWORKADDRESS} >& myFile.log
+              sudo docker logs ${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_NODE_PRIVATE_IP}
+              sudo docker logs ${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_NODE_PRIVATE_IP} >& myFile.log
 
             EONG
     - benchmark-noproxy:

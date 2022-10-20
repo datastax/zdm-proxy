@@ -1,26 +1,23 @@
 origin_server_product: dse
 origin_server_install_type: tarball
-origin_server_version: 6.8.26
+origin_server_version: 4.7.9
+origin_server_tar_download_link: https://downloads.datastax.com/enterprise/dse-4.7.9-bin.tar.gz
 origin_server_linux_distro: bionic
 origin_node_count: 3
 
-target_server_product: dse
-target_server_install_type: tarball
-target_server_version: 6.8.26
-target_server_linux_distro: bionic
-target_node_count: 3
+target_astra_write_rate: 9000
 
 proxy_branch: main
-instance_type: m5.large
 proxy_node_count: 3
+instance_type: m5.large
 
 read_mode: PRIMARY_ONLY
 primary_cluster: ORIGIN
 replace_cql_functions: false
 enable_profiling: false
 
-rampup_cycles: 1000000
-main_cycles: 10000000
+rampup_cycles: 10000
+main_cycles: 100000
 num_threads: 128
 num_connections: 8
 
@@ -53,32 +50,20 @@ ensemble:
             product.type: {{origin_server_product}}
             product.install.type: {{origin_server_install_type}}
             product.version: {{origin_server_version}}
+            product.tar.url: {{origin_server_tar_download_link}}
             enable.graph: false
             datacenters:
               dc_origin:
                 size: {{origin_node_count}}
                 workload: cassandra
     - name: target
-      node.count: {{target_node_count}}
+      node.count: 1
       provisioner:
-        name: ctool
+        name: astra
         properties:
-          cloud.provider: ec2
-          cloud.instance.type: {{instance_type}}
-          cloud.instance.platform: {{target_server_linux_distro}}
-          mark_for_reuse: {{reuse}}
-          cluster_ttl: {{ttl}}
-      configuration_manager:
-        - name: ctool
-          properties:
-            product.type: {{target_server_product}}
-            product.install.type: {{target_server_install_type}}
-            product.version: {{target_server_version}}
-            enable.graph: false
-            datacenters:
-              dc_target:
-                size: {{target_node_count}}
-                workload: cassandra
+          cloud.provider: aws
+          cloud.region: us-west-2
+          keyspace: benchmark2_ks
     - name: zdmproxy
       node.count: {{proxy_node_count}}
       provisioner:
@@ -102,9 +87,20 @@ ensemble:
         properties:
           java.version: openjdk8
       - name: nosqlbench_ssh
+      - name: cqlsh
   observer: none
 workload:
   phases:
+    - upload-creds-client:
+        module: astra_creds_upload
+        properties:
+          server_group: target
+          client_group: client
+    - upload-creds-zdmproxy:
+        module: astra_creds_upload
+        properties:
+          server_group: target
+          client_group: zdmproxy
     - install_deps_proxy:
         module: bash
         properties: &install_deps-properties
@@ -128,21 +124,14 @@ workload:
           <<: *install_deps-properties
           target.group: client
     - setup_keyspaces_origin:
-        module: cqlsh
+        module: bash
         properties:
-          server_group: origin
+          target.group: client
           target.ordinals: 0
-          command: |
-            CREATE KEYSPACE benchmark2_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'dc_origin' : 1};
-            CREATE KEYSPACE benchmark1_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'dc_origin' : 1};
-    - setup_keyspaces_target:
-        module: cqlsh
-        properties:
-          server_group: target
-          target.ordinals: 0
-          command: |
-            CREATE KEYSPACE benchmark2_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'dc_target' : 1};
-            CREATE KEYSPACE benchmark1_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'dc_target' : 1};
+          timeout: 10m
+          script: |
+            echo "CREATE KEYSPACE benchmark2_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'dc_origin' : 1};" | "$FALLOUT_LIBRARY_DIR"/cqlsh/cqlsh-astra/bin/cqlsh $FALLOUT_ORIGIN_PRODUCT_CONTACT_POINT
+            echo "CREATE KEYSPACE benchmark1_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'dc_origin' : 1};" | "$FALLOUT_LIBRARY_DIR"/cqlsh/cqlsh-astra/bin/cqlsh $FALLOUT_ORIGIN_PRODUCT_CONTACT_POINT
     - setup_proxy:
         module: bash
         properties:
@@ -161,10 +150,9 @@ workload:
             ZDM_ORIGIN_USERNAME=cassandra
             ZDM_ORIGIN_PASSWORD=cassandra
             ZDM_ORIGIN_PORT=9042
-            ZDM_TARGET_CONTACT_POINTS=$FALLOUT_TARGET_PRODUCT_CONTACT_POINT
-            ZDM_TARGET_USERNAME=cassandra
-            ZDM_TARGET_PASSWORD=cassandra
-            ZDM_TARGET_PORT=9042
+            ZDM_TARGET_SECURE_CONNECT_BUNDLE_PATH=/$FALLOUT_TARGET_ASTRA_CREDS_SCB_FILENAME
+            ZDM_TARGET_USERNAME=$FALLOUT_TARGET_ASTRA_CREDS_USERNAME
+            ZDM_TARGET_PASSWORD=$FALLOUT_TARGET_ASTRA_CREDS_PASSWORD
             ZDM_PROXY_LISTEN_ADDRESS=0.0.0.0
             ZDM_PROXY_LISTEN_PORT=9045
             ZDM_METRICS_PORT=14001
@@ -186,6 +174,7 @@ workload:
               else
                 sudo docker run -d --network host --name "${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_NODE_PRIVATE_IP}" --env-file ./proxyenv.env -p 9045:9045 -p 14001:14001 localproxyimg
               fi
+              sudo docker cp $FALLOUT_SCRATCH_DIR/$FALLOUT_TARGET_ASTRA_CREDS_SCB_FILENAME "${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_NODE_PRIVATE_IP}":/$FALLOUT_TARGET_ASTRA_CREDS_SCB_FILENAME
               sudo docker logs "${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_NODE_PRIVATE_IP}"
             EONG
 
@@ -259,8 +248,11 @@ workload:
             sudo docker ps
             /usr/bin/newgrp docker <<EONG
               set -x
-              ./nb run driver=cql workload={{activity_file}} keyspace=benchmark1_ks hosts=$FALLOUT_TARGET_PRODUCT_CONTACT_POINT tags=phase:schema -v
-              ./nb run driver=cql workload={{activity_file}} keyspace=benchmark2_ks hosts=$FALLOUT_TARGET_PRODUCT_CONTACT_POINT tags=phase:schema -v
+              ./nb run driver=cql workload={{activity_file}} \
+              secureconnectbundle="$FALLOUT_SCRATCH_DIR/${FALLOUT_TARGET_ASTRA_CREDS_SCB_FILENAME}" \
+              username=${FALLOUT_TARGET_ASTRA_CREDS_USERNAME} \
+              password=${FALLOUT_TARGET_ASTRA_CREDS_PASSWORD} \
+              keyspace=${FALLOUT_TARGET_ASTRA_CREDS_KEYSPACE} tags=phase:schema -v
 
             EONG
     - benchmark-proxy:
@@ -274,8 +266,16 @@ workload:
             sudo docker ps
             /usr/bin/newgrp docker <<EONG
               set -x
-              ./nb run driver=cql workload={{activity_file}} keyspace=benchmark2_ks hosts=$FALLOUT_ZDMPROXY_NODE0_NODE_INFO_PRIVATENETWORKADDRESS port=9045 tags=phase:rampup -v pooling={{num_connections}}:{{num_connections}}:2048 cycles={{rampup_cycles}} threads={{num_threads}}
-              ./nb run driver=cql workload={{activity_file}} keyspace=benchmark2_ks hosts=$FALLOUT_ZDMPROXY_NODE0_NODE_INFO_PRIVATENETWORKADDRESS port=9045 tags=phase:main --log-histograms $FALLOUT_ARTIFACT_DIR/nb_bench_proxy.hdr pooling={{num_connections}}:{{num_connections}}:2048 cycles={{main_cycles}} threads={{num_threads}} --log-histostats $FALLOUT_ARTIFACT_DIR/nb_bench_proxy.csv -v
+              ./nb run driver=cql workload={{activity_file}} \
+              username=${FALLOUT_TARGET_ASTRA_CREDS_USERNAME} \
+              password=${FALLOUT_TARGET_ASTRA_CREDS_PASSWORD} \
+              rate={{target_astra_write_rate}} \
+              keyspace=${FALLOUT_TARGET_ASTRA_CREDS_KEYSPACE} hosts=$FALLOUT_ZDMPROXY_NODE0_NODE_INFO_PRIVATENETWORKADDRESS port=9045 tags=phase:rampup -v pooling={{num_connections}}:{{num_connections}}:2048 cycles={{rampup_cycles}} threads={{num_threads}}
+              ./nb run driver=cql workload={{activity_file}} \
+              username=${FALLOUT_TARGET_ASTRA_CREDS_USERNAME} \
+              password=${FALLOUT_TARGET_ASTRA_CREDS_PASSWORD} \
+              rate={{target_astra_write_rate}} \
+              keyspace=${FALLOUT_TARGET_ASTRA_CREDS_KEYSPACE} hosts=$FALLOUT_ZDMPROXY_NODE0_NODE_INFO_PRIVATENETWORKADDRESS port=9045 tags=phase:main --log-histograms $FALLOUT_ARTIFACT_DIR/nb_bench_proxy.hdr pooling={{num_connections}}:{{num_connections}}:2048 cycles={{main_cycles}} threads={{num_threads}} --log-histostats $FALLOUT_ARTIFACT_DIR/nb_bench_proxy.csv -v
 
             EONG
     - stop_proxy:
@@ -311,14 +311,23 @@ workload:
               sudo docker logs ${FALLOUT_SYSTEM_TESTRUN_ID}_${FALLOUT_NODE_PRIVATE_IP} >& myFile.log
 
             EONG
-    - truncate-origin:
-        module: cqlsh
+    - workaround_jvmoptions_failure:
+        module: bash
         properties:
-          server_group: origin
+          target.group: origin
+          timeout: 1h
+          export_output: true
+          script: |
+            sudo touch ${CASSANDRA_CONFIG_HOME}/jvm-8.options
+    - truncate-origin:
+        module: bash
+        properties:
+          target.group: client
           target.ordinals: 0
-          command: |
-            TRUNCATE benchmark1_ks.keyvalue;
-            TRUNCATE benchmark1_ks.keyvalue;
+          timeout: 10m
+          script: |
+            echo "TRUNCATE benchmark1_ks.keyvalue;" | "$FALLOUT_LIBRARY_DIR"/cqlsh/cqlsh-astra/bin/cqlsh $FALLOUT_ORIGIN_PRODUCT_CONTACT_POINT
+            echo "TRUNCATE benchmark1_ks.keyvalue;" | "$FALLOUT_LIBRARY_DIR"/cqlsh/cqlsh-astra/bin/cqlsh $FALLOUT_ORIGIN_PRODUCT_CONTACT_POINT
     - benchmark-origin:
         module: bash
         properties:
