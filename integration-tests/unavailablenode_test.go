@@ -63,7 +63,7 @@ func TestUnavailableNode(t *testing.T) {
 					}
 				}
 				return nil, false
-			}, 25, 200 * time.Millisecond)
+			}, 25, 200*time.Millisecond)
 
 			response := *responsePtr
 			err = *errPtr
