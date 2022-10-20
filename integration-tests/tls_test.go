@@ -1057,36 +1057,36 @@ func testProxyClientTls(t *testing.T, ccmSetup *setup.CcmTestSetup,
 
 	logMessages := buffer.String()
 
-	warnCheckFail := false
-	warnCheckDone := false
-	for _, errWarnExpected := range proxyTlsConfig.errWarningsExpected {
-		warnCheckDone = true
-		if !strings.Contains(logMessages, errWarnExpected) {
-			t.Logf("%v not found in %v", errWarnExpected, logMessages)
-			warnCheckFail = true
+	warningAssertionFailed := false
+	warningExpected := false
+	for _, expectedWarningMsg := range proxyTlsConfig.errWarningsExpected {
+		warningExpected = true
+		if !strings.Contains(logMessages, expectedWarningMsg) {
+			t.Logf("%v not found in %v", expectedWarningMsg, logMessages)
+			warningAssertionFailed = true
 		}
 	}
 
 	if proxyTlsConfig.errExpected {
 		require.NotNil(t, err, "Did not get expected error %s", proxyTlsConfig.errMsgExpected)
-		errCheckFail := false
-		errCheckDone := false
+		errorAssertionFailed := false
+		errorExpected := false
 		if proxyTlsConfig.errMsgExpected != "" {
-			errCheckDone = true
+			errorExpected = true
 			if !strings.Contains(err.Error(), proxyTlsConfig.errMsgExpected) {
-				errCheckFail = true
+				errorAssertionFailed = true
 				t.Logf("%v not found in %v", err.Error(), proxyTlsConfig.errMsgExpected)
 			}
 		}
-		if errCheckDone && warnCheckDone {
-			require.True(t, !errCheckFail || !warnCheckFail) // only 1 check needs to pass in this scenario
-		} else if errCheckDone {
-			require.False(t, errCheckFail)
-		} else if warnCheckDone {
-			require.False(t, warnCheckFail)
+		if errorExpected && warningExpected {
+			require.False(t, errorAssertionFailed && warningAssertionFailed) // only 1 check needs to pass in this scenario
+		} else if errorExpected {
+			require.False(t, errorAssertionFailed)
+		} else if warningExpected {
+			require.False(t, warningAssertionFailed)
 		}
 	} else {
-		require.False(t, warnCheckFail)
+		require.False(t, warningAssertionFailed)
 		require.Nil(t, err, "testClient setup failed: %v", err)
 		// create schema on clusters through the proxy
 		sendRequest(cqlConn, "CREATE KEYSPACE IF NOT EXISTS testks "+
