@@ -102,6 +102,7 @@ ensemble:
         properties:
           java.version: openjdk8
       - name: nosqlbench_ssh
+      - name: cqlsh
   observer: none
 workload:
   phases:
