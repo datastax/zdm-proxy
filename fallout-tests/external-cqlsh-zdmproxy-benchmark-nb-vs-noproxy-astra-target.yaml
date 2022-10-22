@@ -1,3 +1,4 @@
+aws_region: us-east-1
 origin_server_product: cassandra
 origin_server_install_type: tarball
 origin_server_version: 2.1.6
@@ -39,6 +40,7 @@ ensemble:
         name: ctool
         properties:
           cloud.provider: ec2
+          cloud.region: {{aws_region}}
           cloud.instance.type: {{instance_type}}
           cloud.instance.platform: {{origin_server_linux_distro}}
           mark_for_reuse: {{reuse}}
@@ -60,7 +62,7 @@ ensemble:
         name: astra
         properties:
           cloud.provider: aws
-          cloud.region: us-west-2
+          cloud.region: {{aws_region}}
           keyspace: benchmark2_ks
     - name: zdmproxy
       node.count: {{proxy_node_count}}
@@ -68,6 +70,7 @@ ensemble:
         name: ctool
         properties:
           cloud.provider: ec2
+          cloud.region: {{aws_region}}
           cloud.instance.type: {{instance_type}}
           mark_for_reuse: {{reuse}}
           cluster_ttl: {{ttl}}
@@ -77,6 +80,7 @@ ensemble:
       name: ctool
       properties:
         cloud.provider: ec2
+        cloud.region: {{aws_region}}
         cloud.instance.type: {{instance_type}}
         mark_for_reuse: {{reuse}}
         cluster_ttl: {{ttl}}
