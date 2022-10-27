@@ -472,3 +472,14 @@ func (cc *ClusterConnector) sendAsyncRequest(
 
 	return err == nil
 }
+
+func (cc *ClusterConnector) sendHeartbeat() error {
+	optionsMsg := &message.Options{}
+	heartBeatFrame := frame.NewFrame(ccProtocolVersion, -1, optionsMsg)
+	rawFrame, err := defaultCodec.ConvertToRawFrame(heartBeatFrame)
+	if err != nil {
+		log.Tracef("Cannot convert heartbeat frame to raw frame")
+	}
+	cc.sendRequestToCluster(rawFrame)
+	return nil
+}

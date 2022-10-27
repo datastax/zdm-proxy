@@ -1434,10 +1434,14 @@ func (ch *ClientHandler) executeRequest(
 		log.Tracef("Forwarding request with opcode %v for stream %v to %v",
 			f.Header.OpCode, f.Header.StreamId, common.ClusterTypeOrigin)
 		ch.originCassandraConnector.sendRequestToCluster(originRequest)
+		log.Info("Sending heartbeat to target")
+		ch.targetCassandraConnector.sendHeartbeat()
 	case forwardToTarget:
 		log.Tracef("Forwarding request with opcode %v for stream %v to %v",
 			f.Header.OpCode, f.Header.StreamId, common.ClusterTypeTarget)
 		ch.targetCassandraConnector.sendRequestToCluster(targetRequest)
+		log.Info("Sending heartbeat to origin")
+		ch.originCassandraConnector.sendHeartbeat()
 	case forwardToAsyncOnly:
 	default:
 		return fmt.Errorf("unknown forward decision %v, stream: %d", fwdDecision, f.Header.StreamId)
