@@ -34,12 +34,12 @@ func TestSimultaneousConnections(t *testing.T) {
 
 	cfg := setup.NewTestConfig("127.0.0.20", "127.0.0.30")
 	cfg.MaxClientsThreshold = 4000
-	parallelSessionGoroutines := 10
-	numberOfSessionsPerGoroutine := 10
+	parallelSessionGoroutines := 20
+	numberOfSessionsPerGoroutine := 1
 	cfg.RequestTimeoutMs = 15000
-	//cfg.ReadMaxWorkers = 1
-	//cfg.WriteMaxWorkers = 1
-	//cfg.RequestResponseMaxWorkers = 1 // set schedulers to 1 to force a deadlock if such deadlock is possible
+	cfg.ReadMaxWorkers = 1
+	cfg.WriteMaxWorkers = 1
+	cfg.RequestResponseMaxWorkers = 1 // set schedulers to 1 to force a deadlock if such deadlock is possible
 	testProxy, err := setup.NewProxyInstanceWithConfig(cfg)
 	require.Nil(t, err)
 	shutdown := int32(0)
@@ -66,7 +66,7 @@ func TestSimultaneousConnections(t *testing.T) {
 	oldZeroLogLevel := zerolog.GlobalLevel()
 	log.SetLevel(log.InfoLevel)
 	defer log.SetLevel(oldLevel)
-	zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	zerolog.SetGlobalLevel(zerolog.WarnLevel)
 	defer zerolog.SetGlobalLevel(oldZeroLogLevel)
 
 	fatalErr := errors.New("fatal err")
