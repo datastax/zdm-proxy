@@ -1027,6 +1027,12 @@ type handshakeRequestResult struct {
 	customResponseChan chan *customResponse
 }
 
+type startHandshakeResult struct {
+	secondaryHandshakeCh chan error
+	asyncHandshakeCh     chan error
+	err                  error
+}
+
 // Handles requests while the handshake has not been finalized.
 //
 // Forwards certain requests that are part of the handshake to Origin only.
@@ -1137,15 +1143,15 @@ func (ch *ClientHandler) handleHandshakeRequest(request *frame.RawFrame, wg *syn
 		}
 	}
 
-	scheduledTaskChannel = make(chan *handshakeRequestResult, 1)
+	startHandshakeCh := make(chan *startHandshakeResult, 1)
 	wg.Add(1)
 	ch.requestResponseScheduler.Schedule(func() {
 		defer wg.Done()
-		defer close(scheduledTaskChannel)
-		tempResult := &handshakeRequestResult{
-			authSuccess:        false,
-			err:                nil,
-			customResponseChan: nil,
+		defer close(startHandshakeCh)
+		tempResult := &startHandshakeResult{
+			secondaryHandshakeCh: nil,
+			asyncHandshakeCh:     nil,
+			err:                  nil,
 		}
 		if aggregatedResponse.Header.OpCode == primitive.OpCodeReady || aggregatedResponse.Header.OpCode == primitive.OpCodeAuthSuccess {
 			// target handshake must happen within a single client request lifetime
@@ -1154,15 +1160,10 @@ func (ch *ClientHandler) handleHandshakeRequest(request *frame.RawFrame, wg *syn
 
 			// if we add stream id mapping logic in the future, then
 			// we can start the secondary handshake earlier and wait for it to end here
-
-			secondaryClusterType := common.ClusterTypeTarget
-			if ch.forwardAuthToTarget {
-				secondaryClusterType = common.ClusterTypeOrigin
-			}
 			secondaryHandshakeChannel, err := ch.startSecondaryHandshake(false)
 			if err != nil {
 				tempResult.err = err
-				scheduledTaskChannel <- tempResult
+				startHandshakeCh <- tempResult
 				return
 			}
 			var asyncConnectorHandshakeChannel chan error
@@ -1175,32 +1176,65 @@ func (ch *ClientHandler) handleHandshakeRequest(request *frame.RawFrame, wg *syn
 					asyncConnectorHandshakeChannel = nil
 				}
 			}
-			var errAsync error
-			for asyncConnectorHandshakeChannel != nil || secondaryHandshakeChannel != nil {
-				select {
-				case errAsync, _ = <-asyncConnectorHandshakeChannel:
-					asyncConnectorHandshakeChannel = nil
-				case err, _ = <-secondaryHandshakeChannel:
-					secondaryHandshakeChannel = nil
-				}
-			}
+			tempResult.secondaryHandshakeCh = secondaryHandshakeChannel
+			tempResult.asyncHandshakeCh = asyncConnectorHandshakeChannel
+			startHandshakeCh <- tempResult
+		}
+	})
 
+	var errAsync error
+	var errSecondary error
+	handshakeInitiated := false
+	secondaryHandshakeResult, ok := <-startHandshakeCh
+	if ok {
+		handshakeInitiated = true
+		if secondaryHandshakeResult.err != nil {
+			return false, secondaryHandshakeResult.err
+		}
+		asyncConnectorHandshakeChannel := secondaryHandshakeResult.asyncHandshakeCh
+		secondaryHandshakeChannel := secondaryHandshakeResult.secondaryHandshakeCh
+		for asyncConnectorHandshakeChannel != nil || secondaryHandshakeChannel != nil {
+			select {
+			case errAsync, _ = <-asyncConnectorHandshakeChannel:
+				asyncConnectorHandshakeChannel = nil
+			case errSecondary, _ = <-secondaryHandshakeChannel:
+				secondaryHandshakeChannel = nil
+			}
+		}
+	}
+
+	scheduledTaskChannel = make(chan *handshakeRequestResult, 1)
+	wg.Add(1)
+	ch.requestResponseScheduler.Schedule(func() {
+		defer wg.Done()
+		defer close(scheduledTaskChannel)
+		tempResult := &handshakeRequestResult{
+			authSuccess:        false,
+			err:                nil,
+			customResponseChan: nil,
+		}
+		secondaryClusterType := common.ClusterTypeTarget
+		if ch.forwardAuthToTarget {
+			secondaryClusterType = common.ClusterTypeOrigin
+		}
+		if handshakeInitiated {
 			if errAsync != nil {
 				log.Errorf("Async connector (%v) handshake failed, async requests will not be forwarded: %s",
 					ch.asyncConnector.clusterType, errAsync.Error())
 				ch.asyncConnector.Shutdown()
 			}
 
-			if err != nil {
+			if errSecondary != nil {
 				var authError *AuthError
-				if errors.As(err, &authError) {
+				if errors.As(errSecondary, &authError) {
 					ch.authErrorMessage = authError.errMsg
 					tempResult.err = ch.sendAuthErrorToClient(request, secondaryClusterType)
 					scheduledTaskChannel <- tempResult
 					return
 				}
 
-				log.Errorf("secondary (%v) handshake failed, shutting down the client handler and connectors: %s", secondaryClusterType, err.Error())
+				log.Errorf("Secondary (%v) handshake failed (client: %v), shutting down the client handler and connectors: %s",
+					secondaryClusterType, ch.clientConnector.connection.RemoteAddr().String(), errSecondary.Error())
 				ch.clientHandlerCancelFunc()
 				tempResult.err = fmt.Errorf("handshake failed: %w", ShutdownErr)
 				scheduledTaskChannel <- tempResult
