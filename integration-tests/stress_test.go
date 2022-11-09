@@ -21,18 +21,18 @@ func TestSimultaneousConnections(t *testing.T) {
 	if !env.UseCcm {
 		t.Skip("Test requires CCM, set USE_CCM env variable to TRUE")
 	}
-	//ccmSetup, err := setup.NewTemporaryCcmTestSetup(false, false)
-	//require.Nil(t, err)
-	////defer ccmSetup.Cleanup()
-	//err = ccmSetup.Origin.UpdateConf("authenticator: PasswordAuthenticator")
-	//require.Nil(t, err)
-	//err = ccmSetup.Target.UpdateConf("authenticator: PasswordAuthenticator")
-	//require.Nil(t, err)
-	//
-	//err = ccmSetup.Start(nil, "-Dcassandra.superuser_setup_delay_ms=0")
-	//require.Nil(t, err)
+	ccmSetup, err := setup.NewTemporaryCcmTestSetup(false, false)
+	require.Nil(t, err)
+	defer ccmSetup.Cleanup()
+	err = ccmSetup.Origin.UpdateConf("authenticator: PasswordAuthenticator")
+	require.Nil(t, err)
+	err = ccmSetup.Target.UpdateConf("authenticator: PasswordAuthenticator")
+	require.Nil(t, err)
 
-	cfg := setup.NewTestConfig("127.0.0.20", "127.0.0.30")
+	err = ccmSetup.Start(nil, "-Dcassandra.superuser_setup_delay_ms=0")
+	require.Nil(t, err)
+
+	cfg := setup.NewTestConfig(ccmSetup.Origin.GetInitialContactPoint(), ccmSetup.Target.GetInitialContactPoint())
 	cfg.MaxClientsThreshold = 4000
 	parallelSessionGoroutines := 20
 	numberOfSessionsPerGoroutine := 1
