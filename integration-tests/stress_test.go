@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"github.com/gocql/gocql"
-	"github.com/riptano/cloud-gate/integration-tests/env"
-	"github.com/riptano/cloud-gate/integration-tests/setup"
+	"github.com/datastax/zdm-proxy/integration-tests/env"
+	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/rs/zerolog"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -18,7 +18,7 @@ import (
 )
 
 func TestSimultaneousConnections(t *testing.T) {
-	if !env.UseCcm {
+	if !env.RunCcmTests {
 		t.Skip("Test requires CCM, set USE_CCM env variable to TRUE")
 	}
 	ccmSetup, err := setup.NewTemporaryCcmTestSetup(false, false)
@@ -33,10 +33,10 @@ func TestSimultaneousConnections(t *testing.T) {
 	require.Nil(t, err)
 
 	cfg := setup.NewTestConfig(ccmSetup.Origin.GetInitialContactPoint(), ccmSetup.Target.GetInitialContactPoint())
-	cfg.MaxClientsThreshold = 4000
+	cfg.ProxyMaxClientConnections = 4000
 	parallelSessionGoroutines := 20
 	numberOfSessionsPerGoroutine := 1
-	cfg.RequestTimeoutMs = 15000
+	cfg.ProxyRequestTimeoutMs = 15000
 	cfg.ReadMaxWorkers = 1
 	cfg.WriteMaxWorkers = 1
 	cfg.RequestResponseMaxWorkers = 1 // set schedulers to 1 to force a deadlock if such deadlock is possible
