@@ -201,12 +201,12 @@ func closeConnectionToCluster(conn net.Conn, clusterType common.ClusterType, con
 	log.Infof("[%s] Closing request connection to %v (%v)", connectorClusterType, clusterType, conn.RemoteAddr())
 	err := conn.Close()
 	if err != nil {
-		log.Warnf("[%s] Error closing connection to %v (%v)", connectorClusterType, clusterType, conn.RemoteAddr())
+		log.Warnf("[%s] Error closing connection to %v (%v): %v.", connectorClusterType, clusterType, conn.RemoteAddr(), err.Error())
 	}
 
 	nodeMetricsInstance, err := GetNodeMetricsByClusterConnector(nodeMetrics, connectorClusterType)
 	if err != nil {
-		log.Errorf("Failed to subtract open connection metrics for conn %v: %v.", conn.RemoteAddr().String(), err)
+		log.Errorf("Failed to subtract open connection metrics for conn %v: %v.", conn.RemoteAddr().String(), err.Error())
 	} else {
 		nodeMetricsInstance.OpenConnections.Subtract(1)
 	}
