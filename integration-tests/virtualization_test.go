@@ -852,9 +852,9 @@ func TestVirtualizationPartitioner(t *testing.T) {
 
 		var buffer *utils.ThreadsafeBuffer
 		if proxyShouldStartUp {
-			buffer = createLogHooks(log.InfoLevel)
+			buffer = utils.CreateLogHooks(log.InfoLevel)
 		} else {
-			buffer = createLogHooks(log.WarnLevel)
+			buffer = utils.CreateLogHooks(log.WarnLevel)
 		}
 		defer log.StandardLogger().ReplaceHooks(make(log.LevelHooks))
 
