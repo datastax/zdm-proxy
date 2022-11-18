@@ -18,7 +18,7 @@ func CreateLogHooks(logLevels ...log.Level) *ThreadsafeBuffer {
 	return buffer
 }
 
-type InMemoryHook struct{
+type InMemoryHook struct {
 	levels []zerolog.Level
 	buffer *ThreadsafeBuffer
 }
