@@ -18,27 +18,9 @@ func CreateLogHooks(logLevels ...log.Level) *ThreadsafeBuffer {
 	return buffer
 }
 
-type InMemoryHook struct {
-	levels []zerolog.Level
-	buffer *ThreadsafeBuffer
-}
-
-func (h *InMemoryHook) Run(_ *zerolog.Event, level zerolog.Level, msg string) {
-	for _, l := range h.levels {
-		if level == l {
-			h.buffer.Write([]byte("level=" + level.String() + " " + msg))
-			return
-		}
-	}
-}
-
-func CreateZeroLogHooks(logLevels ...zerolog.Level) *ThreadsafeBuffer {
+func CreateZeroLogHooks(logLevel zerolog.Level) *ThreadsafeBuffer {
 	buffer := NewThreadsafeBuffer()
-	newLogger := zerolog.New(os.Stderr).With().Timestamp().Logger()
-	zerologger.Logger = newLogger.Hook(&InMemoryHook{
-		levels: logLevels,
-		buffer: buffer,
-	})
+	zerologger.Logger = zerolog.New(zerolog.MultiLevelWriter(os.Stderr, &LevelWriter{Writer: buffer, Level: logLevel})).With().Timestamp().Logger()
 	return buffer
 }
 

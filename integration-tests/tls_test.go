@@ -1049,7 +1049,7 @@ func testProxyClientTls(t *testing.T, ccmSetup *setup.CcmTestSetup,
 
 	buffer := utils.CreateLogHooks(log.WarnLevel, log.ErrorLevel)
 	defer log.StandardLogger().ReplaceHooks(make(log.LevelHooks))
-	zeroLogBuffer := utils.CreateZeroLogHooks(zerolog.WarnLevel, zerolog.ErrorLevel)
+	zeroLogBuffer := utils.CreateZeroLogHooks(zerolog.WarnLevel)
 	defer utils.ResetZeroLog()
 
 	cqlConn, err := createTestClientConnection("127.0.0.1:14002", tlsCfg)
