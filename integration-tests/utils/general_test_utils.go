@@ -35,11 +35,10 @@ func (h *InMemoryHook) Run(_ *zerolog.Event, level zerolog.Level, msg string) {
 func CreateZeroLogHooks(logLevels ...zerolog.Level) *ThreadsafeBuffer {
 	buffer := NewThreadsafeBuffer()
 	newLogger := zerolog.New(os.Stderr).With().Timestamp().Logger()
-	newLogger.Hook(&InMemoryHook{
+	zerologger.Logger = newLogger.Hook(&InMemoryHook{
 		levels: logLevels,
 		buffer: buffer,
 	})
-	zerologger.Logger = newLogger
 	return buffer
 }
 
