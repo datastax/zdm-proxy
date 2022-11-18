@@ -188,7 +188,7 @@ func requireEventuallyContainsLine(t *testing.T, lines []string, line string) {
 			}
 			return fmt.Errorf("%v does not contain %v", lines, line), false
 		},
-		25, 200*time.Millisecond)
+		60, 200*time.Millisecond)
 }
 
 func containsLine(lines []string, line string) bool {
