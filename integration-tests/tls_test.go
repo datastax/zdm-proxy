@@ -1080,7 +1080,7 @@ func testProxyClientTls(t *testing.T, ccmSetup *setup.CcmTestSetup,
 			errorExpected = true
 			if !strings.Contains(err.Error(), proxyTlsConfig.errMsgExpected) && !strings.Contains(zeroLogMessages, proxyTlsConfig.errMsgExpected) {
 				errorAssertionFailed = true
-				t.Logf("%v not found in %v or ", proxyTlsConfig.errMsgExpected, err.Error(), zeroLogMessages)
+				t.Logf("%v not found in %v or %v", proxyTlsConfig.errMsgExpected, err.Error(), zeroLogMessages)
 			}
 		}
 		if errorExpected && warningExpected {
