@@ -39,6 +39,7 @@ func CreateZeroLogHooks(logLevels ...zerolog.Level) *ThreadsafeBuffer {
 		levels: logLevels,
 		buffer: buffer,
 	})
+	zerologger.Logger = newLogger
 	return buffer
 }
 
