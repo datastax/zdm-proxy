@@ -25,12 +25,12 @@ func BenchmarkStreamIdMapper(b *testing.B) {
 
 func TestConcurrentStreamIdMapper(t *testing.T) {
 	var mapper = NewStreamIdMapper()
-	var requestCount = 1<<20
+	var requestCount = 1 << 20
 	var concurrency = 20
 	var wg = sync.WaitGroup{}
 	wg.Add(concurrency)
 	for i := 0; i < concurrency; i++ {
-		getAndReleaseIds(t, mapper,  int16(i), requestCount, &wg)
+		getAndReleaseIds(t, mapper, int16(i), requestCount, &wg)
 	}
 	wg.Wait()
 }

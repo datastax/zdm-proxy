@@ -118,7 +118,6 @@ type ClientHandler struct {
 	clientHandlerShutdownRequestCancelFn context.CancelFunc
 
 	clientHandlerShutdownRequestContext context.Context
-
 }
 
 func NewClientHandler(
@@ -186,7 +185,7 @@ func NewClientHandler(
 	originConnector, err := NewClusterConnector(
 		originCassandraConnInfo, conf, psCache, nodeMetrics, localClientHandlerWg, clientHandlerRequestWg,
 		clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler, requestsDoneCtx,
-		NewStreamIdProcessor("origin"),false, nil, handshakeDone)
+		NewStreamIdProcessor("origin"), false, nil, handshakeDone)
 	if err != nil {
 		clientHandlerCancelFunc()
 		return nil, err
@@ -195,7 +194,7 @@ func NewClientHandler(
 	targetConnector, err := NewClusterConnector(
 		targetCassandraConnInfo, conf, psCache, nodeMetrics, localClientHandlerWg, clientHandlerRequestWg,
 		clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler, requestsDoneCtx,
-		NewStreamIdProcessor("target"),false, nil, handshakeDone)
+		NewStreamIdProcessor("target"), false, nil, handshakeDone)
 	if err != nil {
 		clientHandlerCancelFunc()
 		return nil, err
@@ -214,7 +213,7 @@ func NewClientHandler(
 		asyncConnector, err = NewClusterConnector(
 			asyncConnInfo, conf, psCache, nodeMetrics, localClientHandlerWg, clientHandlerRequestWg,
 			clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler, requestsDoneCtx,
-			asyncFrameProcessor,true, asyncPendingRequests, handshakeDone)
+			asyncFrameProcessor, true, asyncPendingRequests, handshakeDone)
 		if err != nil {
 			log.Errorf("Could not create async cluster connector to %s, async requests will not be forwarded: %s", asyncConnInfo.connConfig.GetClusterType(), err.Error())
 			asyncConnector = nil

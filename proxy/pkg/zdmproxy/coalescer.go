@@ -74,7 +74,7 @@ func NewWriteCoalescer(
 		waitGroup:              &sync.WaitGroup{},
 		writeBufferSizeBytes:   writeBufferSizeBytes,
 		scheduler:              scheduler,
-		frameProcessor: 		frameProcessor,
+		frameProcessor:         frameProcessor,
 	}
 }
 

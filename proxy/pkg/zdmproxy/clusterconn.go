@@ -63,7 +63,7 @@ type ClusterConnector struct {
 	responseReadBufferSizeBytes int
 	writeCoalescer              *writeCoalescer
 	doneChan                    chan bool
-	frameProcessor FrameProcessor
+	frameProcessor              FrameProcessor
 
 	handshakeDone *atomic.Value
 
@@ -166,7 +166,7 @@ func NewClusterConnector(
 			writeScheduler,
 			frameProcessor),
 		responseChan:                responseChan,
-		frameProcessor: frameProcessor,
+		frameProcessor:              frameProcessor,
 		responseReadBufferSizeBytes: conf.ResponseReadBufferSizeBytes,
 		doneChan:                    make(chan bool),
 		readScheduler:               readScheduler,
@@ -481,7 +481,7 @@ func (cc *ClusterConnector) sendAsyncRequest(
 var heartBeatTime = time.Now()
 
 func (cc *ClusterConnector) sendHeartbeat() {
-	if time.Since(heartBeatTime) < 1 * time.Minute {
+	if time.Since(heartBeatTime) < 1*time.Minute {
 		return
 	}
 	heartBeatTime = time.Now()

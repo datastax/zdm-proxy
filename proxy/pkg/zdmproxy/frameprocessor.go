@@ -24,26 +24,25 @@ type InternalCqlFrameProcessor interface {
 // from the client and requests generated internally by the proxy, such as the heartbeat requests.
 type streamIdProcessor struct {
 	mapper StreamIdMapper
-	name string
+	name   string
 }
 
 type internalCqlStreamIdProcessor struct {
 	mapper InternalCqlStreamIdMapper
-	name string
+	name   string
 }
 
 func NewInternalCqlStreamIdProcessor(name string) InternalCqlFrameProcessor {
 	return &internalCqlStreamIdProcessor{
 		mapper: NewCqlStreamIdMapper(),
-		name: name,
+		name:   name,
 	}
 }
-
 
 func NewStreamIdProcessor(name string) FrameProcessor {
 	return &streamIdProcessor{
 		mapper: NewStreamIdMapper(),
-		name: name,
+		name:   name,
 	}
 }
 

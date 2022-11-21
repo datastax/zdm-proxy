@@ -12,15 +12,15 @@ import (
 
 type pendingRequests struct {
 	frameProcessor FrameProcessor
-	pending     *sync.Map
-	nodeMetrics *metrics.NodeMetrics
+	pending        *sync.Map
+	nodeMetrics    *metrics.NodeMetrics
 }
 
 func newPendingRequests(frameProcessor FrameProcessor, nodeMetrics *metrics.NodeMetrics) *pendingRequests {
 	return &pendingRequests{
 		frameProcessor: frameProcessor,
-		pending:     &sync.Map{},
-		nodeMetrics: nodeMetrics,
+		pending:        &sync.Map{},
+		nodeMetrics:    nodeMetrics,
 	}
 }
 
@@ -37,6 +37,7 @@ func (p *pendingRequests) getOrCreateRequestContextHolder(streamId int16) *reque
 }
 
 func (p *pendingRequests) store(reqCtx RequestContext, frame *frame.RawFrame) (int16, error) {
+	p.frameProcessor.AssignUniqueId(frame)
 	streamId := frame.Header.StreamId
 	holder := getOrCreateRequestContextHolder(p.pending, streamId)
 	var err = holder.SetIfEmpty(reqCtx)

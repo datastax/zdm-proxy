@@ -53,7 +53,7 @@ func (icsim *cqlStreamIdMapper) ReleaseId(syntheticId int16) {
 
 type streamIdMapper struct {
 	sync.Mutex
-	idMapper map[int16]int16
+	idMapper   map[int16]int16
 	synMapper  map[int16]int16
 	clusterIds chan int16
 }
@@ -79,7 +79,7 @@ func (sim *streamIdMapper) GetNewIdFor(streamId int16) (int16, error) {
 	if contains {
 		return syntheticId, nil
 	}
-	syntheticId = <- sim.clusterIds
+	syntheticId = <-sim.clusterIds
 	sim.idMapper[streamId] = syntheticId
 	sim.synMapper[syntheticId] = streamId
 	return syntheticId, nil
@@ -105,5 +105,3 @@ func (sim *streamIdMapper) ReleaseId(syntheticId int16) (int16, error) {
 	sim.clusterIds <- syntheticId
 	return originalId, nil
 }
-
-

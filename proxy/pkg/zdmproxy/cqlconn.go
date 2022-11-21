@@ -58,7 +58,7 @@ type cqlConn struct {
 	eventHandler          func(f *frame.Frame, conn CqlConnection)
 	eventHandlerLock      *sync.Mutex
 	authEnabled           bool
-	frameProcessor		  InternalCqlFrameProcessor
+	frameProcessor        InternalCqlFrameProcessor
 }
 
 var (
@@ -94,7 +94,7 @@ func NewCqlConnection(
 		closed:                false,
 		eventHandlerLock:      &sync.Mutex{},
 		authEnabled:           true,
-		frameProcessor: 	   NewInternalCqlStreamIdProcessor("cqlconn"),
+		frameProcessor:        NewInternalCqlStreamIdProcessor("cqlconn"),
 	}
 	cqlConn.StartRequestLoop()
 	cqlConn.StartResponseLoop()
