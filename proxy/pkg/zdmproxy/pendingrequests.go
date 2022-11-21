@@ -11,12 +11,14 @@ import (
 )
 
 type pendingRequests struct {
+	frameProcessor FrameProcessor
 	pending     *sync.Map
 	nodeMetrics *metrics.NodeMetrics
 }
 
-func newPendingRequests(nodeMetrics *metrics.NodeMetrics) *pendingRequests {
+func newPendingRequests(frameProcessor FrameProcessor, nodeMetrics *metrics.NodeMetrics) *pendingRequests {
 	return &pendingRequests{
+		frameProcessor: frameProcessor,
 		pending:     &sync.Map{},
 		nodeMetrics: nodeMetrics,
 	}
@@ -75,7 +77,7 @@ func (p *pendingRequests) markAsDone(
 	if reqCtx.SetResponse(p.nodeMetrics, f, cluster, connectorType) {
 		var err error
 		if clearPendingRequestState(streamId, holder, reqCtx) {
-			//err = p.releaseStreamId(streamId)
+			p.frameProcessor.ReleaseId(f)
 		} else {
 			err = errors.New("could not clear pending request state")
 		}

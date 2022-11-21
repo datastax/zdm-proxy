@@ -201,7 +201,8 @@ func NewClientHandler(
 		return nil, err
 	}
 
-	asyncPendingRequests := newPendingRequests(nodeMetrics)
+	var asyncFrameProcessor = NewStreamIdProcessor("async")
+	asyncPendingRequests := newPendingRequests(asyncFrameProcessor, nodeMetrics)
 	var asyncConnector *ClusterConnector
 	if readMode == common.ReadModeDualAsyncOnSecondary {
 		var asyncConnInfo *ClusterConnectionInfo
@@ -213,7 +214,7 @@ func NewClientHandler(
 		asyncConnector, err = NewClusterConnector(
 			asyncConnInfo, conf, psCache, nodeMetrics, localClientHandlerWg, clientHandlerRequestWg,
 			clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler, requestsDoneCtx,
-			NewStreamIdProcessor("async"),true, asyncPendingRequests, handshakeDone)
+			asyncFrameProcessor,true, asyncPendingRequests, handshakeDone)
 		if err != nil {
 			log.Errorf("Could not create async cluster connector to %s, async requests will not be forwarded: %s", asyncConnInfo.connConfig.GetClusterType(), err.Error())
 			asyncConnector = nil

@@ -2,16 +2,20 @@ package zdmproxy
 
 import "github.com/datastax/go-cassandra-native-protocol/frame"
 
-// FrameProcessor defines how a frame should be processed before the frame is sent over the wire and how it's
-// transformed back after receiving the response. This is useful for replacing stream ids with synthetic ids.
+// FrameProcessor manages the mapping of incoming stream ids to the actual ids that are sent over to the clusters.
+// This is important to prevent overlapping ids of client-side requests and proxy internal requests (such as heartbeats)
+// that are written through the same connection to the cluster.
 type FrameProcessor interface {
-	Before(frame *frame.RawFrame) error
-	After(frame *frame.RawFrame) error
+	AssignUniqueId(frame *frame.RawFrame) error
+	RestoreId(frame *frame.RawFrame) error
+	ReleaseId(frame *frame.RawFrame)
 }
 
+// InternalCqlFrameProcessor manages the stream ids of requests generated internally by the proxy. This is meant
+// for requests that are created manually and have no initial stream id.
 type InternalCqlFrameProcessor interface {
-	Before(frame *frame.Frame) error
-	After(frame *frame.Frame)
+	AssignUniqueId(frame *frame.Frame) error
+	ReleaseId(frame *frame.Frame)
 }
 
 // StreamIdProcessor replaces the incoming stream/request ids by internal, synthetic, ids before sending the
@@ -43,7 +47,7 @@ func NewStreamIdProcessor(name string) FrameProcessor {
 	}
 }
 
-func (sip *streamIdProcessor) Before(frame *frame.RawFrame) error {
+func (sip *streamIdProcessor) AssignUniqueId(frame *frame.RawFrame) error {
 	if frame == nil {
 		return nil
 	}
@@ -55,7 +59,7 @@ func (sip *streamIdProcessor) Before(frame *frame.RawFrame) error {
 	return nil
 }
 
-func (sip *streamIdProcessor) After(frame *frame.RawFrame) error {
+func (sip *streamIdProcessor) RestoreId(frame *frame.RawFrame) error {
 	if frame == nil {
 		return nil
 	}
@@ -67,7 +71,14 @@ func (sip *streamIdProcessor) After(frame *frame.RawFrame) error {
 	return nil
 }
 
-func (sip *internalCqlStreamIdProcessor) Before(frame *frame.Frame) error {
+func (sip *streamIdProcessor) ReleaseId(frame *frame.RawFrame) {
+	if frame == nil {
+		return
+	}
+	sip.mapper.ReleaseId(frame.Header.StreamId)
+}
+
+func (sip *internalCqlStreamIdProcessor) AssignUniqueId(frame *frame.Frame) error {
 	if frame == nil {
 		return nil
 	}
@@ -79,7 +90,7 @@ func (sip *internalCqlStreamIdProcessor) Before(frame *frame.Frame) error {
 	return nil
 }
 
-func (sip *internalCqlStreamIdProcessor) After(frame *frame.Frame) {
+func (sip *internalCqlStreamIdProcessor) ReleaseId(frame *frame.Frame) {
 	if frame == nil {
 		return
 	}

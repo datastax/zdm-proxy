@@ -290,7 +290,7 @@ func (c *cqlConn) sendContext(request *frame.Frame, ctx context.Context) (chan *
 }
 
 func (c *cqlConn) SendAndReceive(request *frame.Frame, ctx context.Context) (*frame.Frame, error) {
-	c.frameProcessor.Before(request)
+	c.frameProcessor.AssignUniqueId(request)
 	respChan, err := c.sendContext(request, ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request frame: %w", err)

@@ -144,7 +144,7 @@ func (recv *writeCoalescer) RunWriteQueueLoop() {
 					var newf = f
 					if recv.frameProcessor != nil {
 						newf = f.Clone()
-						recv.frameProcessor.Before(newf)
+						recv.frameProcessor.AssignUniqueId(newf)
 					}
 					err := writeRawFrame(tempBuffer, connectionAddr, recv.shutdownContext, newf)
 					if err != nil {
