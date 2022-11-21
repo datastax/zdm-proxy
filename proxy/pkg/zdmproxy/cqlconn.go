@@ -50,7 +50,6 @@ type cqlConn struct {
 	ctx                   context.Context
 	wg                    *sync.WaitGroup
 	outgoingCh            chan *frame.Frame
-	streamIdQueue         chan int16
 	eventsQueue           chan *frame.Frame
 	pendingOperations     map[int16]chan *frame.Frame
 	pendingOperationsLock *sync.RWMutex
@@ -59,6 +58,7 @@ type cqlConn struct {
 	eventHandler          func(f *frame.Frame, conn CqlConnection)
 	eventHandlerLock      *sync.Mutex
 	authEnabled           bool
+	frameProcessor		  InternalCqlFrameProcessor
 }
 
 var (
@@ -74,10 +74,6 @@ func NewCqlConnection(
 	username string, password string,
 	readTimeout time.Duration, writeTimeout time.Duration) CqlConnection {
 	ctx, cFn := context.WithCancel(context.Background())
-	streamIdsQueue := make(chan int16, numberOfStreamIds)
-	for i := int16(0); i < numberOfStreamIds; i++ {
-		streamIdsQueue <- i
-	}
 	cqlConn := &cqlConn{
 		readTimeout:  readTimeout,
 		writeTimeout: writeTimeout,
@@ -91,7 +87,6 @@ func NewCqlConnection(
 		cancelFn:              cFn,
 		wg:                    &sync.WaitGroup{},
 		outgoingCh:            make(chan *frame.Frame, maxOutgoingPending),
-		streamIdQueue:         streamIdsQueue,
 		eventsQueue:           make(chan *frame.Frame, eventQueueLength),
 		pendingOperations:     make(map[int16]chan *frame.Frame),
 		pendingOperationsLock: &sync.RWMutex{},
@@ -99,6 +94,7 @@ func NewCqlConnection(
 		closed:                false,
 		eventHandlerLock:      &sync.Mutex{},
 		authEnabled:           true,
+		frameProcessor: 	   NewInternalCqlStreamIdProcessor("cqlconn"),
 	}
 	cqlConn.StartRequestLoop()
 	cqlConn.StartResponseLoop()
@@ -164,7 +160,6 @@ func (c *cqlConn) StartResponseLoop() {
 			}
 
 			delete(c.pendingOperations, f.Header.StreamId)
-			c.streamIdQueue <- f.Header.StreamId
 			c.pendingOperationsLock.Unlock()
 
 			respChan <- f
@@ -174,7 +169,6 @@ func (c *cqlConn) StartResponseLoop() {
 		for streamId, respChan := range c.pendingOperations {
 			close(respChan)
 			delete(c.pendingOperations, streamId)
-			c.streamIdQueue <- streamId
 		}
 		c.pendingOperationsLock.Unlock()
 	}()
@@ -263,24 +257,16 @@ func (c *cqlConn) sendContext(request *frame.Frame, ctx context.Context) (chan *
 
 	timeoutCtx, _ := context.WithTimeout(ctx, c.writeTimeout)
 
-	var respChan chan *frame.Frame
-	var streamId int16
-	select {
-	case streamId = <-c.streamIdQueue:
-		respChan = make(chan *frame.Frame, 1)
-	default:
-		return nil, fmt.Errorf("no available stream ids for request")
-	}
+	var respChan = make(chan *frame.Frame, 1)
+
 	c.pendingOperationsLock.Lock()
 	if c.closed {
 		c.pendingOperationsLock.Unlock()
 		return nil, errors.New("response channel closed")
 	}
 
-	c.pendingOperations[streamId] = respChan
+	c.pendingOperations[request.Header.StreamId] = respChan
 	c.pendingOperationsLock.Unlock()
-
-	request.Header.StreamId = streamId
 
 	var err error
 	select {
@@ -297,14 +283,14 @@ func (c *cqlConn) sendContext(request *frame.Frame, ctx context.Context) (chan *
 		c.pendingOperationsLock.Unlock()
 		return nil, err
 	}
-	close(c.pendingOperations[streamId])
-	delete(c.pendingOperations, streamId)
-	c.streamIdQueue <- streamId
+	close(c.pendingOperations[request.Header.StreamId])
+	delete(c.pendingOperations, request.Header.StreamId)
 	c.pendingOperationsLock.Unlock()
 	return nil, err
 }
 
 func (c *cqlConn) SendAndReceive(request *frame.Frame, ctx context.Context) (*frame.Frame, error) {
+	c.frameProcessor.Before(request)
 	respChan, err := c.sendContext(request, ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request frame: %w", err)

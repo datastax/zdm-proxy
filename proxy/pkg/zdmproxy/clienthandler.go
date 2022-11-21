@@ -118,6 +118,7 @@ type ClientHandler struct {
 	clientHandlerShutdownRequestCancelFn context.CancelFunc
 
 	clientHandlerShutdownRequestContext context.Context
+
 }
 
 func NewClientHandler(
@@ -185,7 +186,7 @@ func NewClientHandler(
 	originConnector, err := NewClusterConnector(
 		originCassandraConnInfo, conf, psCache, nodeMetrics, localClientHandlerWg, clientHandlerRequestWg,
 		clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler, requestsDoneCtx,
-		false, nil, handshakeDone)
+		NewStreamIdProcessor("origin"),false, nil, handshakeDone)
 	if err != nil {
 		clientHandlerCancelFunc()
 		return nil, err
@@ -194,13 +195,13 @@ func NewClientHandler(
 	targetConnector, err := NewClusterConnector(
 		targetCassandraConnInfo, conf, psCache, nodeMetrics, localClientHandlerWg, clientHandlerRequestWg,
 		clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler, requestsDoneCtx,
-		false, nil, handshakeDone)
+		NewStreamIdProcessor("target"),false, nil, handshakeDone)
 	if err != nil {
 		clientHandlerCancelFunc()
 		return nil, err
 	}
 
-	asyncPendingRequests := newPendingRequests(MaxStreams, nodeMetrics)
+	asyncPendingRequests := newPendingRequests(nodeMetrics)
 	var asyncConnector *ClusterConnector
 	if readMode == common.ReadModeDualAsyncOnSecondary {
 		var asyncConnInfo *ClusterConnectionInfo
@@ -212,7 +213,7 @@ func NewClientHandler(
 		asyncConnector, err = NewClusterConnector(
 			asyncConnInfo, conf, psCache, nodeMetrics, localClientHandlerWg, clientHandlerRequestWg,
 			clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler, requestsDoneCtx,
-			true, asyncPendingRequests, handshakeDone)
+			NewStreamIdProcessor("async"),true, asyncPendingRequests, handshakeDone)
 		if err != nil {
 			log.Errorf("Could not create async cluster connector to %s, async requests will not be forwarded: %s", asyncConnInfo.connConfig.GetClusterType(), err.Error())
 			asyncConnector = nil
@@ -1434,13 +1435,11 @@ func (ch *ClientHandler) executeRequest(
 		log.Tracef("Forwarding request with opcode %v for stream %v to %v",
 			f.Header.OpCode, f.Header.StreamId, common.ClusterTypeOrigin)
 		ch.originCassandraConnector.sendRequestToCluster(originRequest)
-		log.Info("Sending heartbeat to target")
 		ch.targetCassandraConnector.sendHeartbeat()
 	case forwardToTarget:
 		log.Tracef("Forwarding request with opcode %v for stream %v to %v",
 			f.Header.OpCode, f.Header.StreamId, common.ClusterTypeTarget)
 		ch.targetCassandraConnector.sendRequestToCluster(targetRequest)
-		log.Info("Sending heartbeat to origin")
 		ch.originCassandraConnector.sendHeartbeat()
 	case forwardToAsyncOnly:
 	default:

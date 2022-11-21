@@ -51,6 +51,8 @@ type ClientConnector struct {
 	readScheduler *Scheduler
 
 	shutdownRequestCtx context.Context
+
+	frameProcessor FrameProcessor
 }
 
 func NewClientConnector(
@@ -67,6 +69,7 @@ func NewClientConnector(
 	writeScheduler *Scheduler,
 	shutdownRequestCtx context.Context,
 	clientHandlerShutdownRequestCancelFn context.CancelFunc) *ClientConnector {
+
 	return &ClientConnector{
 		connection:              connection,
 		conf:                    conf,
@@ -83,7 +86,8 @@ func NewClientConnector(
 			ClientConnectorLogPrefix,
 			false,
 			false,
-			writeScheduler),
+			writeScheduler,
+			nil),
 		responsesDoneChan:                    responsesDoneChan,
 		requestsDoneCtx:                      requestsDoneCtx,
 		eventsDoneChan:                       eventsDoneChan,

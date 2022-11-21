@@ -63,6 +63,7 @@ type ClusterConnector struct {
 	responseReadBufferSizeBytes int
 	writeCoalescer              *writeCoalescer
 	doneChan                    chan bool
+	frameProcessor FrameProcessor
 
 	handshakeDone *atomic.Value
 
@@ -94,6 +95,7 @@ func NewClusterConnector(
 	readScheduler *Scheduler,
 	writeScheduler *Scheduler,
 	requestsDoneCtx context.Context,
+	frameProcessor FrameProcessor,
 	asyncConnector bool,
 	asyncPendingRequests *pendingRequests,
 	handshakeDone *atomic.Value) (*ClusterConnector, error) {
@@ -161,8 +163,10 @@ func NewClusterConnector(
 			string(connectorType),
 			true,
 			asyncConnector,
-			writeScheduler),
+			writeScheduler,
+			frameProcessor),
 		responseChan:                responseChan,
+		frameProcessor: frameProcessor,
 		responseReadBufferSizeBytes: conf.ResponseReadBufferSizeBytes,
 		doneChan:                    make(chan bool),
 		readScheduler:               readScheduler,
@@ -236,6 +240,7 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 		protocolErrOccurred := false
 		for {
 			response, err := readRawFrame(bufferedReader, connectionAddr, cc.clusterConnContext)
+			cc.frameProcessor.After(response)
 
 			protocolErrResponseFrame, err := checkProtocolError(response, err, protocolErrOccurred, string(cc.connectorType))
 			if err != nil {
@@ -435,7 +440,7 @@ func (cc *ClusterConnector) sendAsyncRequest(
 
 	asyncReqCtx := NewAsyncRequestContext(requestInfo, asyncRequest.Header.StreamId, expectedResponse, overallRequestStartTime)
 	var newStreamId int16
-	newStreamId, err := cc.asyncPendingRequests.store(asyncReqCtx)
+	newStreamId, err := cc.asyncPendingRequests.store(asyncReqCtx, asyncRequest)
 	storedAsync := err == nil
 	if err != nil {
 		log.Warnf("Could not send async request due to an error while storing the request state: %v.", err.Error())
@@ -473,13 +478,19 @@ func (cc *ClusterConnector) sendAsyncRequest(
 	return err == nil
 }
 
-func (cc *ClusterConnector) sendHeartbeat() error {
+var heartBeatTime = time.Now()
+
+func (cc *ClusterConnector) sendHeartbeat() {
+	if time.Since(heartBeatTime) < 1 * time.Minute {
+		return
+	}
+	heartBeatTime = time.Now()
 	optionsMsg := &message.Options{}
 	heartBeatFrame := frame.NewFrame(ccProtocolVersion, -1, optionsMsg)
 	rawFrame, err := defaultCodec.ConvertToRawFrame(heartBeatFrame)
 	if err != nil {
 		log.Tracef("Cannot convert heartbeat frame to raw frame")
 	}
+	log.Infof("Sending heartbeat to cluster %v", cc.clusterType)
 	cc.sendRequestToCluster(rawFrame)
-	return nil
 }

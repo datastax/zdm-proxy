@@ -32,6 +32,8 @@ type writeCoalescer struct {
 	writeBufferSizeBytes int
 
 	scheduler *Scheduler
+
+	frameProcessor FrameProcessor
 }
 
 func NewWriteCoalescer(
@@ -43,7 +45,8 @@ func NewWriteCoalescer(
 	logPrefix string,
 	isRequest bool,
 	isAsync bool,
-	scheduler *Scheduler) *writeCoalescer {
+	scheduler *Scheduler,
+	frameProcessor FrameProcessor) *writeCoalescer {
 
 	writeQueueSizeFrames := conf.RequestWriteQueueSizeFrames
 	if !isRequest {
@@ -71,6 +74,7 @@ func NewWriteCoalescer(
 		waitGroup:              &sync.WaitGroup{},
 		writeBufferSizeBytes:   writeBufferSizeBytes,
 		scheduler:              scheduler,
+		frameProcessor: 		frameProcessor,
 	}
 }
 
@@ -137,7 +141,12 @@ func (recv *writeCoalescer) RunWriteQueueLoop() {
 					}
 
 					log.Tracef("[%v] Writing %v on %v", recv.logPrefix, f.Header, connectionAddr)
-					err := writeRawFrame(tempBuffer, connectionAddr, recv.shutdownContext, f)
+					var newf = f
+					if recv.frameProcessor != nil {
+						newf = f.Clone()
+						recv.frameProcessor.Before(newf)
+					}
+					err := writeRawFrame(tempBuffer, connectionAddr, recv.shutdownContext, newf)
 					if err != nil {
 						tempDraining = true
 						handleConnectionError(err, recv.shutdownContext, recv.cancelFunc, recv.logPrefix, "writing", connectionAddr)
