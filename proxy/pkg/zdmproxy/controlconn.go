@@ -323,7 +323,7 @@ func (cc *ControlConn) openInternal(endpoints []Endpoint, ctx context.Context) (
 			continue
 		}
 
-		newConn := NewCqlConnection(tcpConn, cc.username, cc.password, ccReadTimeout, ccWriteTimeout)
+		newConn := NewCqlConnection(tcpConn, cc.username, cc.password, ccReadTimeout, ccWriteTimeout, cc.conf)
 		err = newConn.InitializeContext(ccProtocolVersion, ctx)
 		if err == nil {
 			newConn.SetEventHandler(func(f *frame.Frame, c CqlConnection) {

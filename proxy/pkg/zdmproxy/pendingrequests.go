@@ -40,7 +40,7 @@ func (p *pendingRequests) store(reqCtx RequestContext, frame *frame.RawFrame) (i
 	p.frameProcessor.AssignUniqueId(frame)
 	streamId := frame.Header.StreamId
 	holder := getOrCreateRequestContextHolder(p.pending, streamId)
-	var err = holder.SetIfEmpty(reqCtx)
+	err := holder.SetIfEmpty(reqCtx)
 	if err != nil {
 		return -1, fmt.Errorf("stream id collision (%d)", streamId)
 	}

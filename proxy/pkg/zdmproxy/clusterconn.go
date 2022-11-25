@@ -72,6 +72,8 @@ type ClusterConnector struct {
 	asyncPendingRequests *pendingRequests
 
 	readScheduler *Scheduler
+
+	lastHeartbeatTime time.Time
 }
 
 func NewClusterConnectionInfo(connConfig ConnectionConfig, endpointConfig Endpoint, isOriginCassandra bool) *ClusterConnectionInfo {
@@ -174,6 +176,7 @@ func NewClusterConnector(
 		asyncConnectorState:         ConnectorStateHandshake,
 		asyncPendingRequests:        asyncPendingRequests,
 		handshakeDone:               handshakeDone,
+		lastHeartbeatTime:           time.Now(),
 	}, nil
 }
 
@@ -478,15 +481,13 @@ func (cc *ClusterConnector) sendAsyncRequest(
 	return err == nil
 }
 
-var heartBeatTime = time.Now()
-
-func (cc *ClusterConnector) sendHeartbeat() {
-	if time.Since(heartBeatTime) < 1*time.Minute {
+func (cc *ClusterConnector) sendHeartbeat(version primitive.ProtocolVersion, heartbeatIntervalMs int) {
+	if time.Since(cc.lastHeartbeatTime) < time.Duration(heartbeatIntervalMs)*time.Millisecond {
 		return
 	}
-	heartBeatTime = time.Now()
+	cc.lastHeartbeatTime = time.Now()
 	optionsMsg := &message.Options{}
-	heartBeatFrame := frame.NewFrame(ccProtocolVersion, -1, optionsMsg)
+	heartBeatFrame := frame.NewFrame(version, -1, optionsMsg)
 	rawFrame, err := defaultCodec.ConvertToRawFrame(heartBeatFrame)
 	if err != nil {
 		log.Tracef("Cannot convert heartbeat frame to raw frame")

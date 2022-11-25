@@ -32,16 +32,16 @@ type internalCqlStreamIdProcessor struct {
 	name   string
 }
 
-func NewInternalCqlStreamIdProcessor(name string) InternalCqlFrameProcessor {
+func NewInternalCqlStreamIdProcessor(name string, maxStreamIds int) InternalCqlFrameProcessor {
 	return &internalCqlStreamIdProcessor{
-		mapper: NewCqlStreamIdMapper(),
+		mapper: NewCqlStreamIdMapper(maxStreamIds),
 		name:   name,
 	}
 }
 
-func NewStreamIdProcessor(name string) FrameProcessor {
+func NewStreamIdProcessor(name string, maxStreamIds int) FrameProcessor {
 	return &streamIdProcessor{
-		mapper: NewStreamIdMapper(),
+		mapper: NewStreamIdMapper(maxStreamIds),
 		name:   name,
 	}
 }

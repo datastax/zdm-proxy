@@ -29,9 +29,9 @@ type cqlStreamIdMapper struct {
 	ids chan int16
 }
 
-func NewCqlStreamIdMapper() InternalCqlStreamIdMapper {
+func NewCqlStreamIdMapper(maxStreamIds int) InternalCqlStreamIdMapper {
 	var ids = make(chan int16, maxStreamIds)
-	for i := int16(0); i < maxStreamIds; i++ {
+	for i := int16(0); i < int16(maxStreamIds); i++ {
 		ids <- i
 	}
 	return &cqlStreamIdMapper{
@@ -58,11 +58,11 @@ type streamIdMapper struct {
 	clusterIds chan int16
 }
 
-func NewStreamIdMapper() StreamIdMapper {
+func NewStreamIdMapper(maxStreamIds int) StreamIdMapper {
 	idMapper := make(map[int16]int16)
 	synMapper := make(map[int16]int16)
 	streamIdsQueue := make(chan int16, maxStreamIds)
-	for i := int16(0); i < maxStreamIds; i++ {
+	for i := int16(0); i < int16(maxStreamIds); i++ {
 		streamIdsQueue <- i
 	}
 	return &streamIdMapper{
@@ -88,9 +88,9 @@ func (sim *streamIdMapper) GetNewIdFor(streamId int16) (int16, error) {
 func (sim *streamIdMapper) RestoreId(syntheticId int16) (int16, error) {
 	sim.Lock()
 	defer sim.Unlock()
-	syntheticId, contains := sim.synMapper[syntheticId]
+	originalId, contains := sim.synMapper[syntheticId]
 	if contains {
-		return syntheticId, nil
+		return originalId, nil
 	}
 	return -1, fmt.Errorf("no matching id found for synthetic id %v", syntheticId)
 }

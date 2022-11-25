@@ -185,7 +185,7 @@ func NewClientHandler(
 	originConnector, err := NewClusterConnector(
 		originCassandraConnInfo, conf, psCache, nodeMetrics, localClientHandlerWg, clientHandlerRequestWg,
 		clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler, requestsDoneCtx,
-		NewStreamIdProcessor("origin"), false, nil, handshakeDone)
+		NewStreamIdProcessor("origin", conf.ProxyMaxStreamIds), false, nil, handshakeDone)
 	if err != nil {
 		clientHandlerCancelFunc()
 		return nil, err
@@ -194,13 +194,13 @@ func NewClientHandler(
 	targetConnector, err := NewClusterConnector(
 		targetCassandraConnInfo, conf, psCache, nodeMetrics, localClientHandlerWg, clientHandlerRequestWg,
 		clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler, requestsDoneCtx,
-		NewStreamIdProcessor("target"), false, nil, handshakeDone)
+		NewStreamIdProcessor("target", conf.ProxyMaxStreamIds), false, nil, handshakeDone)
 	if err != nil {
 		clientHandlerCancelFunc()
 		return nil, err
 	}
 
-	var asyncFrameProcessor = NewStreamIdProcessor("async")
+	var asyncFrameProcessor = NewStreamIdProcessor("async", conf.ProxyMaxStreamIds)
 	asyncPendingRequests := newPendingRequests(asyncFrameProcessor, nodeMetrics)
 	var asyncConnector *ClusterConnector
 	if readMode == common.ReadModeDualAsyncOnSecondary {
@@ -1435,12 +1435,12 @@ func (ch *ClientHandler) executeRequest(
 		log.Tracef("Forwarding request with opcode %v for stream %v to %v",
 			f.Header.OpCode, f.Header.StreamId, common.ClusterTypeOrigin)
 		ch.originCassandraConnector.sendRequestToCluster(originRequest)
-		ch.targetCassandraConnector.sendHeartbeat()
+		ch.targetCassandraConnector.sendHeartbeat(ch.startupRequest.Header.Version, ch.conf.HeartbeatIntervalMs)
 	case forwardToTarget:
 		log.Tracef("Forwarding request with opcode %v for stream %v to %v",
 			f.Header.OpCode, f.Header.StreamId, common.ClusterTypeTarget)
 		ch.targetCassandraConnector.sendRequestToCluster(targetRequest)
-		ch.originCassandraConnector.sendHeartbeat()
+		ch.originCassandraConnector.sendHeartbeat(ch.startupRequest.Header.Version, ch.conf.HeartbeatIntervalMs)
 	case forwardToAsyncOnly:
 	default:
 		return fmt.Errorf("unknown forward decision %v, stream: %d", fwdDecision, f.Header.StreamId)
