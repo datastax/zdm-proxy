@@ -7,14 +7,14 @@ import (
 )
 
 func TestStreamIdMapper(t *testing.T) {
-	var mapper = NewStreamIdMapper()
+	var mapper = NewStreamIdMapper(2048)
 	var syntheticId, _ = mapper.GetNewIdFor(1000)
 	var originalId, _ = mapper.RestoreId(syntheticId)
 	require.Equal(t, int16(1000), originalId)
 }
 
 func BenchmarkStreamIdMapper(b *testing.B) {
-	var mapper = NewStreamIdMapper()
+	var mapper = NewStreamIdMapper(2048)
 	for i := 0; i < b.N; i++ {
 		var originalId = int16(i)
 		var syntheticId, _ = mapper.GetNewIdFor(originalId)
@@ -24,7 +24,7 @@ func BenchmarkStreamIdMapper(b *testing.B) {
 }
 
 func TestConcurrentStreamIdMapper(t *testing.T) {
-	var mapper = NewStreamIdMapper()
+	var mapper = NewStreamIdMapper(2048)
 	var requestCount = 1 << 20
 	var concurrency = 20
 	var wg = sync.WaitGroup{}
