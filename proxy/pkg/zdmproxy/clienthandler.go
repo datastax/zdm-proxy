@@ -185,7 +185,7 @@ func NewClientHandler(
 	originConnector, err := NewClusterConnector(
 		originCassandraConnInfo, conf, psCache, nodeMetrics, localClientHandlerWg, clientHandlerRequestWg,
 		clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler, requestsDoneCtx,
-		NewStreamIdProcessor("origin", conf.ProxyMaxStreamIds), false, nil, handshakeDone)
+		NewStreamIdProcessor(ClusterConnectorTypeOrigin, conf.ProxyMaxStreamIds, metricHandler.GetProxyMetrics().ProxyUsedStreamIdsOrigin), false, nil, handshakeDone)
 	if err != nil {
 		clientHandlerCancelFunc()
 		return nil, err
@@ -194,13 +194,13 @@ func NewClientHandler(
 	targetConnector, err := NewClusterConnector(
 		targetCassandraConnInfo, conf, psCache, nodeMetrics, localClientHandlerWg, clientHandlerRequestWg,
 		clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler, requestsDoneCtx,
-		NewStreamIdProcessor("target", conf.ProxyMaxStreamIds), false, nil, handshakeDone)
+		NewStreamIdProcessor(ClusterConnectorTypeTarget, conf.ProxyMaxStreamIds, metricHandler.GetProxyMetrics().ProxyUsedStreamIdsTarget), false, nil, handshakeDone)
 	if err != nil {
 		clientHandlerCancelFunc()
 		return nil, err
 	}
 
-	var asyncFrameProcessor = NewStreamIdProcessor("async", conf.ProxyMaxStreamIds)
+	var asyncFrameProcessor = NewStreamIdProcessor(ClusterConnectorTypeAsync, conf.ProxyMaxStreamIds, metricHandler.GetProxyMetrics().ProxyUsedStreamIdsAsync)
 	asyncPendingRequests := newPendingRequests(asyncFrameProcessor, nodeMetrics)
 	var asyncConnector *ClusterConnector
 	if readMode == common.ReadModeDualAsyncOnSecondary {

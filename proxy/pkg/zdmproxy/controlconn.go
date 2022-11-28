@@ -8,6 +8,7 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
 	"github.com/datastax/zdm-proxy/proxy/pkg/common"
 	"github.com/datastax/zdm-proxy/proxy/pkg/config"
+	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
 	"github.com/google/uuid"
 	"github.com/jpillora/backoff"
 	log "github.com/sirupsen/logrus"
@@ -52,6 +53,7 @@ type ControlConn struct {
 	reconnectCh              chan bool
 	protocolEventSubscribers map[ProtocolEventObserver]interface{}
 	authEnabled              *atomic.Value
+	metricsHandler           *metrics.MetricHandler
 }
 
 const ProxyVirtualRack = "rack0"
@@ -61,7 +63,8 @@ const ccWriteTimeout = 5 * time.Second
 const ccReadTimeout = 10 * time.Second
 
 func NewControlConn(ctx context.Context, defaultPort int, connConfig ConnectionConfig,
-	username string, password string, conf *config.Config, topologyConfig *common.TopologyConfig, proxyRand *rand.Rand) *ControlConn {
+	username string, password string, conf *config.Config, topologyConfig *common.TopologyConfig, proxyRand *rand.Rand,
+	metricsHandler *metrics.MetricHandler) *ControlConn {
 	authEnabled := &atomic.Value{}
 	authEnabled.Store(true)
 	return &ControlConn{
@@ -98,6 +101,7 @@ func NewControlConn(ctx context.Context, defaultPort int, connConfig ConnectionC
 		reconnectCh:              make(chan bool, 1),
 		protocolEventSubscribers: map[ProtocolEventObserver]interface{}{},
 		authEnabled:              authEnabled,
+		metricsHandler:           metricsHandler,
 	}
 }
 
@@ -323,7 +327,7 @@ func (cc *ControlConn) openInternal(endpoints []Endpoint, ctx context.Context) (
 			continue
 		}
 
-		newConn := NewCqlConnection(tcpConn, cc.username, cc.password, ccReadTimeout, ccWriteTimeout, cc.conf)
+		newConn := NewCqlConnection(tcpConn, cc.username, cc.password, ccReadTimeout, ccWriteTimeout, cc.conf, cc.metricsHandler)
 		err = newConn.InitializeContext(ccProtocolVersion, ctx)
 		if err == nil {
 			newConn.SetEventHandler(func(f *frame.Frame, c CqlConnection) {

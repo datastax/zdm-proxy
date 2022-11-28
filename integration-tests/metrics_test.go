@@ -62,6 +62,10 @@ var proxyMetrics = []metrics.Metric{
 	metrics.InFlightWrites,
 
 	metrics.OpenClientConnections,
+
+	metrics.UsedStreamIdsOrigin,
+	metrics.UsedStreamIdsTarget,
+	metrics.UsedStreamIdsAsync,
 }
 
 var allMetrics = append(proxyMetrics, nodeMetrics...)

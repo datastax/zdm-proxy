@@ -1,6 +1,9 @@
 package zdmproxy
 
-import "github.com/datastax/go-cassandra-native-protocol/frame"
+import (
+	"github.com/datastax/go-cassandra-native-protocol/frame"
+	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
+)
 
 // FrameProcessor manages the mapping of incoming stream ids to the actual ids that are sent over to the clusters.
 // This is important to prevent overlapping ids of client-side requests and proxy internal requests (such as heartbeats)
@@ -23,26 +26,30 @@ type InternalCqlFrameProcessor interface {
 // This way we guarantee that, through the same connection, we have non-overlapping ids with requests coming
 // from the client and requests generated internally by the proxy, such as the heartbeat requests.
 type streamIdProcessor struct {
-	mapper StreamIdMapper
-	name   string
+	mapper   StreamIdMapper
+	connType ClusterConnectorType
+	metrics  metrics.Gauge
 }
 
 type internalCqlStreamIdProcessor struct {
-	mapper InternalCqlStreamIdMapper
-	name   string
+	mapper   StreamIdMapper
+	connType ClusterConnectorType
+	metrics  metrics.Gauge
 }
 
-func NewInternalCqlStreamIdProcessor(name string, maxStreamIds int) InternalCqlFrameProcessor {
+func NewInternalCqlStreamIdProcessor(connType ClusterConnectorType, maxStreamIds int, metrics metrics.Gauge) InternalCqlFrameProcessor {
 	return &internalCqlStreamIdProcessor{
-		mapper: NewCqlStreamIdMapper(maxStreamIds),
-		name:   name,
+		mapper:   NewCqlStreamIdMapper(maxStreamIds),
+		connType: connType,
+		metrics:  metrics,
 	}
 }
 
-func NewStreamIdProcessor(name string, maxStreamIds int) FrameProcessor {
+func NewStreamIdProcessor(connType ClusterConnectorType, maxStreamIds int, metrics metrics.Gauge) FrameProcessor {
 	return &streamIdProcessor{
-		mapper: NewStreamIdMapper(maxStreamIds),
-		name:   name,
+		mapper:   NewStreamIdMapper(maxStreamIds),
+		connType: connType,
+		metrics:  metrics,
 	}
 }
 
@@ -55,6 +62,7 @@ func (sip *streamIdProcessor) AssignUniqueId(frame *frame.RawFrame) error {
 		return err
 	}
 	frame.Header.StreamId = newId
+	sip.metrics.Add(1)
 	return nil
 }
 
@@ -75,17 +83,19 @@ func (sip *streamIdProcessor) ReleaseId(frame *frame.RawFrame) {
 		return
 	}
 	sip.mapper.ReleaseId(frame.Header.StreamId)
+	sip.metrics.Subtract(1)
 }
 
 func (sip *internalCqlStreamIdProcessor) AssignUniqueId(frame *frame.Frame) error {
 	if frame == nil {
 		return nil
 	}
-	var newId, err = sip.mapper.GetNewId()
+	var newId, err = sip.mapper.GetNewIdFor(frame.Header.StreamId)
 	if err != nil {
 		return err
 	}
 	frame.Header.StreamId = newId
+	sip.metrics.Add(1)
 	return nil
 }
 
@@ -94,4 +104,5 @@ func (sip *internalCqlStreamIdProcessor) ReleaseId(frame *frame.Frame) {
 		return
 	}
 	sip.mapper.ReleaseId(frame.Header.StreamId)
+	sip.metrics.Subtract(1)
 }

@@ -29,10 +29,11 @@ type ClusterConnectionInfo struct {
 type ClusterConnectorType string
 
 const (
-	ClusterConnectorTypeNone   = ClusterConnectorType("")
-	ClusterConnectorTypeOrigin = ClusterConnectorType("ORIGIN-CONNECTOR")
-	ClusterConnectorTypeTarget = ClusterConnectorType("TARGET-CONNECTOR")
-	ClusterConnectorTypeAsync  = ClusterConnectorType("ASYNC-CONNECTOR")
+	ClusterConnectorTypeNone    = ClusterConnectorType("")
+	ClusterConnectorTypeOrigin  = ClusterConnectorType("ORIGIN-CONNECTOR")
+	ClusterConnectorTypeTarget  = ClusterConnectorType("TARGET-CONNECTOR")
+	ClusterConnectorTypeAsync   = ClusterConnectorType("ASYNC-CONNECTOR")
+	ClusterConnectorTypeControl = ClusterConnectorType("CONTROL-CONNECTOR")
 )
 
 type ConnectorState = int32

@@ -4,6 +4,7 @@ const (
 	typeReadsOrigin = "reads_origin"
 	typeReadsTarget = "reads_target"
 	typeWrites      = "writes"
+	typeCount       = "count"
 
 	failedRequestsClusterOrigin = "origin"
 	failedRequestsClusterTarget = "target"
@@ -24,6 +25,20 @@ const (
 	inFlightRequestsName        = "proxy_inflight_requests_total"
 	inFlightRequestsTypeLabel   = "type"
 	inFlightRequestsDescription = "Number of requests currently in flight in the proxy"
+
+	usedStreamIdsOriginName        = "proxy_used_stream_ids_origin"
+	usedStreamIdsOriginDescription = "Number of used stream ids for ORIGIN connector"
+
+	usedStreamIdsTargetName        = "proxy_used_stream_ids_target"
+	usedStreamIdsTargetDescription = "Number of used stream ids for TARGET connector"
+
+	usedStreamIdsAsyncName        = "proxy_used_stream_ids_async"
+	usedStreamIdsAsyncDescription = "Number of used stream ids for ASYNC connector"
+
+	usedStreamIdsControlName        = "proxy_used_stream_ids_control"
+	usedStreamIdsControlDescription = "Number of used stream ids for CONTROL connector"
+
+	usedStreamIdsTypeLabel = "type"
 )
 
 var (
@@ -120,6 +135,35 @@ var (
 		"client_connections_total",
 		"Number of client connections currently open",
 	)
+
+	UsedStreamIdsOrigin = NewMetricWithLabels(
+		usedStreamIdsOriginName,
+		usedStreamIdsOriginDescription,
+		map[string]string{
+			usedStreamIdsTypeLabel: typeCount,
+		},
+	)
+	UsedStreamIdsTarget = NewMetricWithLabels(
+		usedStreamIdsTargetName,
+		usedStreamIdsTargetDescription,
+		map[string]string{
+			usedStreamIdsTypeLabel: typeCount,
+		},
+	)
+	UsedStreamIdsAsync = NewMetricWithLabels(
+		usedStreamIdsAsyncName,
+		usedStreamIdsAsyncDescription,
+		map[string]string{
+			usedStreamIdsTypeLabel: typeCount,
+		},
+	)
+	UsedStreamIdsControl = NewMetricWithLabels(
+		usedStreamIdsControlName,
+		usedStreamIdsControlDescription,
+		map[string]string{
+			usedStreamIdsTypeLabel: typeCount,
+		},
+	)
 )
 
 type ProxyMetrics struct {
@@ -141,4 +185,9 @@ type ProxyMetrics struct {
 	InFlightWrites      Gauge
 
 	OpenClientConnections GaugeFunc
+
+	ProxyUsedStreamIdsOrigin  Gauge
+	ProxyUsedStreamIdsTarget  Gauge
+	ProxyUsedStreamIdsAsync   Gauge
+	ProxyUsedStreamIdsControl Gauge
 }
