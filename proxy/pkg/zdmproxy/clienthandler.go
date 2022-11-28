@@ -57,7 +57,7 @@ type ClientHandler struct {
 
 	authErrorMessage *message.AuthenticationError
 
-	startupRequest           *frame.RawFrame
+	startupRequest           *atomic.Value
 	secondaryStartupResponse *frame.RawFrame
 	secondaryHandshakeCreds  *AuthCredentials
 	asyncHandshakeCreds      *AuthCredentials
@@ -264,7 +264,7 @@ func NewClientHandler(
 		currentKeyspaceName:                  &atomic.Value{},
 		handshakeDone:                        handshakeDone,
 		authErrorMessage:                     nil,
-		startupRequest:                       nil,
+		startupRequest:                       &atomic.Value{},
 		targetUsername:                       targetUsername,
 		targetPassword:                       targetPassword,
 		originUsername:                       originUsername,
@@ -1130,7 +1130,7 @@ func (ch *ClientHandler) handleHandshakeRequest(request *frame.RawFrame, wg *syn
 		}
 
 		ch.secondaryStartupResponse = secondaryResponse
-		ch.startupRequest = request
+		ch.startupRequest.Store(request)
 
 		err := validateSecondaryStartupResponse(secondaryResponse, secondaryCluster)
 		if err != nil {
@@ -1259,10 +1259,11 @@ func (ch *ClientHandler) buildAuthErrorResponse(
 //
 // The handshake was successful if the returned channel contains a "nil" value.
 func (ch *ClientHandler) startSecondaryHandshake(asyncConnector bool) (chan error, error) {
-	startupFrame := ch.startupRequest
-	if startupFrame == nil {
+	startupFrameInterface := ch.startupRequest.Load()
+	if startupFrameInterface == nil {
 		return nil, errors.New("can not start secondary handshake before a Startup request was received")
 	}
+	startupFrame := startupFrameInterface.(*frame.RawFrame)
 	startupResponse := ch.secondaryStartupResponse
 	if startupResponse == nil {
 		return nil, errors.New("can not start secondary handshake before a Startup response was received")
@@ -1424,6 +1425,12 @@ func (ch *ClientHandler) executeRequest(
 		reqCtx.SetTimer(timer)
 	}
 
+	startupFrameInterface := ch.startupRequest.Load()
+	var startupFrameVersion primitive.ProtocolVersion
+	if startupFrameInterface != nil {
+		startupFrameVersion = startupFrameInterface.(*frame.RawFrame).Header.Version
+	}
+
 	sendAlsoToAsync := requestInfo.ShouldAlsoBeSentAsync() && ch.asyncConnector != nil
 	switch fwdDecision {
 	case forwardToBoth:
@@ -1435,12 +1442,12 @@ func (ch *ClientHandler) executeRequest(
 		log.Tracef("Forwarding request with opcode %v for stream %v to %v",
 			f.Header.OpCode, f.Header.StreamId, common.ClusterTypeOrigin)
 		ch.originCassandraConnector.sendRequestToCluster(originRequest)
-		ch.targetCassandraConnector.sendHeartbeat(ch.startupRequest.Header.Version, ch.conf.HeartbeatIntervalMs)
+		ch.targetCassandraConnector.sendHeartbeat(startupFrameVersion, ch.conf.HeartbeatIntervalMs)
 	case forwardToTarget:
 		log.Tracef("Forwarding request with opcode %v for stream %v to %v",
 			f.Header.OpCode, f.Header.StreamId, common.ClusterTypeTarget)
 		ch.targetCassandraConnector.sendRequestToCluster(targetRequest)
-		ch.originCassandraConnector.sendHeartbeat(ch.startupRequest.Header.Version, ch.conf.HeartbeatIntervalMs)
+		ch.originCassandraConnector.sendHeartbeat(startupFrameVersion, ch.conf.HeartbeatIntervalMs)
 	case forwardToAsyncOnly:
 	default:
 		return fmt.Errorf("unknown forward decision %v, stream: %d", fwdDecision, f.Header.StreamId)
