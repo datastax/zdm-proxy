@@ -2,6 +2,7 @@ package zdmproxy
 
 import (
 	"fmt"
+	log "github.com/sirupsen/logrus"
 	"sync"
 )
 
@@ -34,7 +35,16 @@ func NewCqlStreamIdMapper(maxStreamIds int) StreamIdMapper {
 func (icsim *cqlStreamIdMapper) GetNewIdFor(_ int16) (int16, error) {
 	icsim.Lock()
 	defer icsim.Unlock()
-	return <-icsim.ids, nil
+	select {
+	case id, ok := <-icsim.ids:
+		if ok {
+			return id, nil
+		} else {
+			return -1, fmt.Errorf("stream id channel closed")
+		}
+	default:
+		return -1, fmt.Errorf("no stream id available")
+	}
 }
 
 func (icsim *cqlStreamIdMapper) RestoreId(_ int16) (int16, error) {
@@ -44,7 +54,11 @@ func (icsim *cqlStreamIdMapper) RestoreId(_ int16) (int16, error) {
 func (icsim *cqlStreamIdMapper) ReleaseId(syntheticId int16) (int16, error) {
 	icsim.Lock()
 	defer icsim.Unlock()
-	icsim.ids <- syntheticId
+	select {
+	case icsim.ids <- syntheticId:
+	default:
+		log.Errorf("stream ids channel full, ignoring id %v", syntheticId)
+	}
 	return -1, nil
 }
 
@@ -76,7 +90,16 @@ func (sim *streamIdMapper) GetNewIdFor(streamId int16) (int16, error) {
 	if contains {
 		return syntheticId, nil
 	}
-	syntheticId = <-sim.clusterIds
+	select {
+	case id, ok := <-sim.clusterIds:
+		if ok {
+			syntheticId = id
+		} else {
+			return -1, fmt.Errorf("stream id channel closed")
+		}
+	default:
+		return -1, fmt.Errorf("no stream id available")
+	}
 	sim.idMapper[streamId] = syntheticId
 	sim.synMapper[syntheticId] = streamId
 	return syntheticId, nil
@@ -98,7 +121,10 @@ func (sim *streamIdMapper) ReleaseId(syntheticId int16) (int16, error) {
 	var originalId = sim.synMapper[syntheticId]
 	delete(sim.idMapper, originalId)
 	delete(sim.synMapper, syntheticId)
-
-	sim.clusterIds <- syntheticId
+	select {
+	case sim.clusterIds <- syntheticId:
+	default:
+		log.Errorf("stream ids channel full, ignoring id %v", syntheticId)
+	}
 	return originalId, nil
 }
