@@ -144,7 +144,7 @@ func (recv *writeCoalescer) RunWriteQueueLoop() {
 					if recv.frameProcessor != nil {
 						f = &frame.RawFrame{
 							Header: f.Header,
-							Body: f.Body,
+							Body:   f.Body,
 						}
 						recv.frameProcessor.AssignUniqueId(f)
 					}

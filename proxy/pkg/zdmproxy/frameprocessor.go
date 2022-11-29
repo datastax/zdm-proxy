@@ -110,7 +110,6 @@ func (sip *internalCqlStreamIdProcessor) ReleaseId(frame *frame.Frame) {
 	sip.metrics.Subtract(1)
 }
 
-
 func setFrameStreamId(f *frame.RawFrame, id int16) {
 	newHeader := f.Header.Clone()
 	newHeader.StreamId = id
