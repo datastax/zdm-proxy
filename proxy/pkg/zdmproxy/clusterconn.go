@@ -74,7 +74,8 @@ type ClusterConnector struct {
 
 	readScheduler *Scheduler
 
-	lastHeartbeatTime time.Time
+	lastHeartbeatTime *atomic.Value
+	lastHeartbeatLock sync.Mutex
 }
 
 func NewClusterConnectionInfo(connConfig ConnectionConfig, endpointConfig Endpoint, isOriginCassandra bool) *ClusterConnectionInfo {
@@ -145,6 +146,10 @@ func NewClusterConnector(
 		clusterConnEventsChan = make(chan *frame.RawFrame, conf.EventQueueSizeFrames)
 	}
 
+	// Initialize heartbeat time
+	lastHeartbeatTime := &atomic.Value{}
+	lastHeartbeatTime.Store(time.Now())
+
 	return &ClusterConnector{
 		conf:                   conf,
 		connection:             conn,
@@ -177,7 +182,7 @@ func NewClusterConnector(
 		asyncConnectorState:         ConnectorStateHandshake,
 		asyncPendingRequests:        asyncPendingRequests,
 		handshakeDone:               handshakeDone,
-		lastHeartbeatTime:           time.Now(),
+		lastHeartbeatTime:           lastHeartbeatTime,
 	}, nil
 }
 
@@ -483,10 +488,15 @@ func (cc *ClusterConnector) sendAsyncRequest(
 }
 
 func (cc *ClusterConnector) sendHeartbeat(version primitive.ProtocolVersion, heartbeatIntervalMs int) {
-	if time.Since(cc.lastHeartbeatTime) < time.Duration(heartbeatIntervalMs)*time.Millisecond {
+	if !cc.shouldSendHeartbeat(heartbeatIntervalMs) {
 		return
 	}
-	cc.lastHeartbeatTime = time.Now()
+	cc.lastHeartbeatLock.Lock()
+	defer cc.lastHeartbeatLock.Unlock()
+	if !cc.shouldSendHeartbeat(heartbeatIntervalMs) {
+		return
+	}
+	cc.lastHeartbeatTime.Store(time.Now())
 	optionsMsg := &message.Options{}
 	heartBeatFrame := frame.NewFrame(version, -1, optionsMsg)
 	rawFrame, err := defaultCodec.ConvertToRawFrame(heartBeatFrame)
@@ -495,4 +505,11 @@ func (cc *ClusterConnector) sendHeartbeat(version primitive.ProtocolVersion, hea
 	}
 	log.Infof("Sending heartbeat to cluster %v", cc.clusterType)
 	cc.sendRequestToCluster(rawFrame)
+}
+
+// shouldSendHeartbeat looks up the value of the last heartbeat time in the atomic value
+// and returns true if more time has passed than the configured interval, otherwise returns false.
+func (cc *ClusterConnector) shouldSendHeartbeat(heartbeatIntervalMs int) bool {
+	lastHeartbeatTime := cc.lastHeartbeatTime.Load().(time.Time)
+	return time.Since(lastHeartbeatTime) > time.Duration(heartbeatIntervalMs)*time.Millisecond
 }
