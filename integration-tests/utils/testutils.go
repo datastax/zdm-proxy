@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"github.com/datastax/zdm-proxy/proxy/pkg/health"
 	"github.com/gocql/gocql"
+	"github.com/rs/zerolog"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -164,4 +166,16 @@ func (b *ThreadsafeBuffer) String() string {
 	b.m.Lock()
 	defer b.m.Unlock()
 	return b.b.String()
+}
+
+type LevelWriter struct {
+	io.Writer
+	Level zerolog.Level
+}
+
+func (lw *LevelWriter) WriteLevel(level zerolog.Level, p []byte) (n int, err error) {
+	if level >= lw.Level {
+		return lw.Writer.Write(p)
+	}
+	return len(p), nil
 }

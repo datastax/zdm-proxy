@@ -11,7 +11,9 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
 	"github.com/datastax/zdm-proxy/integration-tests/env"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
+	"github.com/datastax/zdm-proxy/integration-tests/utils"
 	"github.com/datastax/zdm-proxy/proxy/pkg/config"
+	"github.com/rs/zerolog"
 	zerologger "github.com/rs/zerolog/log"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
@@ -990,7 +992,7 @@ func testProxyClusterTlsInvalidCertificate(t *testing.T, ccmSetup *setup.CcmTest
 	proxyConfig = applyProxyTlsConfiguration(
 		proxyTlsConfig.expiredTargetCa, proxyTlsConfig.incorrectTargetCa, true, false, proxyConfig, t)
 
-	buffer := createLogHooks(log.WarnLevel)
+	buffer := utils.CreateLogHooks(log.WarnLevel)
 	defer log.StandardLogger().ReplaceHooks(make(log.LevelHooks))
 
 	proxy, err := setup.NewProxyInstanceWithConfig(proxyConfig)
@@ -1045,8 +1047,10 @@ func testProxyClientTls(t *testing.T, ccmSetup *setup.CcmTestSetup,
 	require.Nil(t, err, "Error while instantiating the proxy with the required configuration", err)
 	require.NotNil(t, proxy)
 
-	buffer := createLogHooks(log.WarnLevel, log.ErrorLevel)
+	buffer := utils.CreateLogHooks(log.WarnLevel, log.ErrorLevel)
 	defer log.StandardLogger().ReplaceHooks(make(log.LevelHooks))
+	zeroLogBuffer := utils.CreateZeroLogHooks(zerolog.WarnLevel)
+	defer utils.ResetZeroLog()
 
 	cqlConn, err := createTestClientConnection("127.0.0.1:14002", tlsCfg)
 	defer func() {
@@ -1056,6 +1060,7 @@ func testProxyClientTls(t *testing.T, ccmSetup *setup.CcmTestSetup,
 	}()
 
 	logMessages := buffer.String()
+	zeroLogMessages := zeroLogBuffer.String()
 
 	warningAssertionFailed := false
 	warningExpected := false
@@ -1073,9 +1078,9 @@ func testProxyClientTls(t *testing.T, ccmSetup *setup.CcmTestSetup,
 		errorExpected := false
 		if proxyTlsConfig.errMsgExpected != "" {
 			errorExpected = true
-			if !strings.Contains(err.Error(), proxyTlsConfig.errMsgExpected) {
+			if !strings.Contains(err.Error(), proxyTlsConfig.errMsgExpected) && !strings.Contains(zeroLogMessages, proxyTlsConfig.errMsgExpected) {
 				errorAssertionFailed = true
-				t.Logf("%v not found in %v", err.Error(), proxyTlsConfig.errMsgExpected)
+				t.Logf("%v not found in %v or %v", proxyTlsConfig.errMsgExpected, err.Error(), zeroLogMessages)
 			}
 		}
 		if errorExpected && warningExpected {
