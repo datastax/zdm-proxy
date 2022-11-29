@@ -141,12 +141,14 @@ func (recv *writeCoalescer) RunWriteQueueLoop() {
 					}
 
 					log.Tracef("[%v] Writing %v on %v", recv.logPrefix, f.Header, connectionAddr)
-					var newf = f
 					if recv.frameProcessor != nil {
-						newf = f.Clone()
-						recv.frameProcessor.AssignUniqueId(newf)
+						f = &frame.RawFrame{
+							Header: f.Header,
+							Body: f.Body,
+						}
+						recv.frameProcessor.AssignUniqueId(f)
 					}
-					err := writeRawFrame(tempBuffer, connectionAddr, recv.shutdownContext, newf)
+					err := writeRawFrame(tempBuffer, connectionAddr, recv.shutdownContext, f)
 					if err != nil {
 						tempDraining = true
 						handleConnectionError(err, recv.shutdownContext, recv.cancelFunc, recv.logPrefix, "writing", connectionAddr)

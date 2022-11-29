@@ -3,6 +3,7 @@ package zdmproxy
 import (
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
+	log "github.com/sirupsen/logrus"
 )
 
 // FrameProcessor manages the mapping of incoming stream ids to the actual ids that are sent over to the clusters.
@@ -61,7 +62,7 @@ func (sip *streamIdProcessor) AssignUniqueId(frame *frame.RawFrame) error {
 	if err != nil {
 		return err
 	}
-	frame.Header.StreamId = newId
+	setFrameStreamId(frame, newId)
 	sip.metrics.Add(1)
 	return nil
 }
@@ -72,9 +73,10 @@ func (sip *streamIdProcessor) RestoreId(frame *frame.RawFrame) error {
 	}
 	var originalId, err = sip.mapper.RestoreId(frame.Header.StreamId)
 	if err != nil {
+		log.Error(err)
 		return err
 	}
-	frame.Header.StreamId = originalId
+	setFrameStreamId(frame, originalId)
 	return nil
 }
 
@@ -92,9 +94,10 @@ func (sip *internalCqlStreamIdProcessor) AssignUniqueId(frame *frame.Frame) erro
 	}
 	var newId, err = sip.mapper.GetNewIdFor(frame.Header.StreamId)
 	if err != nil {
+		log.Error(err)
 		return err
 	}
-	frame.Header.StreamId = newId
+	setRawFrameStreamId(frame, newId)
 	sip.metrics.Add(1)
 	return nil
 }
@@ -105,4 +108,17 @@ func (sip *internalCqlStreamIdProcessor) ReleaseId(frame *frame.Frame) {
 	}
 	sip.mapper.ReleaseId(frame.Header.StreamId)
 	sip.metrics.Subtract(1)
+}
+
+
+func setFrameStreamId(f *frame.RawFrame, id int16) {
+	newHeader := f.Header.Clone()
+	newHeader.StreamId = id
+	f.Header = newHeader
+}
+
+func setRawFrameStreamId(f *frame.Frame, id int16) {
+	newHeader := f.Header.Clone()
+	newHeader.StreamId = id
+	f.Header = newHeader
 }
