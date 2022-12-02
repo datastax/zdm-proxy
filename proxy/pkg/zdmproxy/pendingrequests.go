@@ -77,9 +77,7 @@ func (p *pendingRequests) markAsDone(
 	}
 	if reqCtx.SetResponse(p.nodeMetrics, f, cluster, connectorType) {
 		var err error
-		if clearPendingRequestState(streamId, holder, reqCtx) {
-			p.frameProcessor.ReleaseId(f)
-		} else {
+		if !clearPendingRequestState(streamId, holder, reqCtx) {
 			err = errors.New("could not clear pending request state")
 		}
 		if err != nil {

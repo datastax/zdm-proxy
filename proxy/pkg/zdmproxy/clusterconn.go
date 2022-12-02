@@ -249,7 +249,7 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 		protocolErrOccurred := false
 		for {
 			response, err := readRawFrame(bufferedReader, connectionAddr, cc.clusterConnContext)
-			cc.frameProcessor.RestoreId(response)
+			cc.frameProcessor.ReleaseId(response)
 
 			protocolErrResponseFrame, err := checkProtocolError(response, err, protocolErrOccurred, string(cc.connectorType))
 			if err != nil {

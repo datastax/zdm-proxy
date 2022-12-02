@@ -19,7 +19,6 @@ import (
 )
 
 const (
-	numberOfStreamIds = int16(2048)
 	eventQueueLength  = 2048
 
 	maxIncomingPending = 2048
@@ -60,7 +59,7 @@ type cqlConn struct {
 	eventHandler          func(f *frame.Frame, conn CqlConnection)
 	eventHandlerLock      *sync.Mutex
 	authEnabled           bool
-	frameProcessor        InternalCqlFrameProcessor
+	frameProcessor        FrameProcessor
 }
 
 var (
@@ -98,7 +97,7 @@ func NewCqlConnection(
 		closed:                false,
 		eventHandlerLock:      &sync.Mutex{},
 		authEnabled:           true,
-		frameProcessor: NewInternalCqlStreamIdProcessor(ClusterConnectorTypeControl,
+		frameProcessor: NewStreamIdProcessor(ClusterConnectorTypeControl,
 			conf.ProxyMaxStreamIds,
 			metricsHandler.GetProxyMetrics().ProxyUsedStreamIdsControl),
 	}
@@ -296,7 +295,7 @@ func (c *cqlConn) sendContext(request *frame.Frame, ctx context.Context) (chan *
 }
 
 func (c *cqlConn) SendAndReceive(request *frame.Frame, ctx context.Context) (*frame.Frame, error) {
-	c.frameProcessor.AssignUniqueId(request)
+	c.frameProcessor.AssignUniqueIdFrame(request)
 	respChan, err := c.sendContext(request, ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request frame: %w", err)
