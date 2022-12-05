@@ -66,7 +66,7 @@ func (sip *streamIdProcessor) ReleaseId(frame *frame.RawFrame) error {
 	}
 	var originalId, err = sip.mapper.ReleaseId(frame.Header.StreamId)
 	if err != nil {
-		log.Error(err)
+		log.Trace(err)
 		return err
 	}
 	setRawFrameStreamId(frame, originalId)
@@ -80,7 +80,7 @@ func (sip *streamIdProcessor) ReleaseIdFrame(frame *frame.Frame) error {
 	}
 	var _, err = sip.mapper.ReleaseId(frame.Header.StreamId)
 	if err != nil {
-		log.Error(err)
+		log.Trace(err)
 		return err
 	}
 	sip.metrics.Subtract(1)

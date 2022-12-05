@@ -56,7 +56,7 @@ func (sim *streamIdMapper) ReleaseId(syntheticId int16) (int16, error) {
 	select {
 	case sim.clusterIds <- syntheticId:
 	default:
-		log.Errorf("stream ids channel full, ignoring id %v", syntheticId)
+		log.Tracef("stream ids channel full, ignoring id %v", syntheticId)
 	}
 	return originalId, nil
 }
