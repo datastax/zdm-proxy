@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	eventQueueLength  = 2048
+	eventQueueLength = 2048
 
 	maxIncomingPending = 2048
 	maxOutgoingPending = 2048
