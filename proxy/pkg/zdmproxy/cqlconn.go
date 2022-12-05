@@ -304,6 +304,7 @@ func (c *cqlConn) SendAndReceive(request *frame.Frame, ctx context.Context) (*fr
 	readTimeoutCtx, _ := context.WithTimeout(ctx, c.readTimeout)
 	select {
 	case response, ok := <-respChan:
+		c.frameProcessor.ReleaseIdFrame(response)
 		if !ok {
 			return nil, fmt.Errorf("failed to receive response frame")
 		}

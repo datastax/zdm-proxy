@@ -17,13 +17,11 @@ type StreamIdMapper interface {
 type streamIdMapper struct {
 	sync.Mutex
 	idMapper   map[int16]int16
-	synMapper  map[int16]int16
 	clusterIds chan int16
 }
 
 func NewStreamIdMapper(maxStreamIds int) StreamIdMapper {
 	idMapper := make(map[int16]int16)
-	synMapper := make(map[int16]int16)
 	streamIdsQueue := make(chan int16, maxStreamIds)
 	for i := int16(0); i < int16(maxStreamIds); i++ {
 		streamIdsQueue <- i
@@ -31,38 +29,30 @@ func NewStreamIdMapper(maxStreamIds int) StreamIdMapper {
 	return &streamIdMapper{
 		idMapper:   idMapper,
 		clusterIds: streamIdsQueue,
-		synMapper:  synMapper,
 	}
 }
 
 func (sim *streamIdMapper) GetNewIdFor(streamId int16) (int16, error) {
 	sim.Lock()
 	defer sim.Unlock()
-	syntheticId, contains := sim.idMapper[streamId]
-	if contains {
-		return syntheticId, nil
-	}
 	select {
 	case id, ok := <-sim.clusterIds:
 		if ok {
-			syntheticId = id
+			sim.idMapper[id] = streamId
+			return id, nil
 		} else {
 			return -1, fmt.Errorf("stream id channel closed")
 		}
 	default:
 		return -1, fmt.Errorf("no stream id available")
 	}
-	sim.idMapper[streamId] = syntheticId
-	sim.synMapper[syntheticId] = streamId
-	return syntheticId, nil
 }
 
 func (sim *streamIdMapper) ReleaseId(syntheticId int16) (int16, error) {
 	sim.Lock()
 	defer sim.Unlock()
-	var originalId = sim.synMapper[syntheticId]
-	delete(sim.idMapper, originalId)
-	delete(sim.synMapper, syntheticId)
+	var originalId = sim.idMapper[syntheticId]
+	delete(sim.idMapper, syntheticId)
 	select {
 	case sim.clusterIds <- syntheticId:
 	default:

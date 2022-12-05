@@ -13,6 +13,7 @@ type FrameProcessor interface {
 	AssignUniqueId(frame *frame.RawFrame) error
 	AssignUniqueIdFrame(frame *frame.Frame) error
 	ReleaseId(frame *frame.RawFrame) error
+	ReleaseIdFrame(frame *frame.Frame) error
 }
 
 // StreamIdProcessor replaces the incoming stream/request ids by internal, synthetic, ids before sending the
@@ -69,6 +70,19 @@ func (sip *streamIdProcessor) ReleaseId(frame *frame.RawFrame) error {
 		return err
 	}
 	setRawFrameStreamId(frame, originalId)
+	sip.metrics.Subtract(1)
+	return nil
+}
+
+func (sip *streamIdProcessor) ReleaseIdFrame(frame *frame.Frame) error {
+	if frame == nil {
+		return nil
+	}
+	var _, err = sip.mapper.ReleaseId(frame.Header.StreamId)
+	if err != nil {
+		log.Error(err)
+		return err
+	}
 	sip.metrics.Subtract(1)
 	return nil
 }
