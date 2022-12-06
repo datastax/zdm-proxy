@@ -29,11 +29,10 @@ type ClusterConnectionInfo struct {
 type ClusterConnectorType string
 
 const (
-	ClusterConnectorTypeNone    = ClusterConnectorType("")
-	ClusterConnectorTypeOrigin  = ClusterConnectorType("ORIGIN-CONNECTOR")
-	ClusterConnectorTypeTarget  = ClusterConnectorType("TARGET-CONNECTOR")
-	ClusterConnectorTypeAsync   = ClusterConnectorType("ASYNC-CONNECTOR")
-	ClusterConnectorTypeControl = ClusterConnectorType("CONTROL-CONNECTOR")
+	ClusterConnectorTypeNone   = ClusterConnectorType("")
+	ClusterConnectorTypeOrigin = ClusterConnectorType("ORIGIN-CONNECTOR")
+	ClusterConnectorTypeTarget = ClusterConnectorType("TARGET-CONNECTOR")
+	ClusterConnectorTypeAsync  = ClusterConnectorType("ASYNC-CONNECTOR")
 )
 
 type ConnectorState = int32
@@ -91,6 +90,7 @@ func NewClusterConnector(
 	conf *config.Config,
 	psCache *PreparedStatementCache,
 	nodeMetrics *metrics.NodeMetrics,
+	proxyMetrics *metrics.ProxyMetrics,
 	clientHandlerWg *sync.WaitGroup,
 	clientHandlerRequestWg *sync.WaitGroup,
 	clientHandlerContext context.Context,
@@ -99,7 +99,6 @@ func NewClusterConnector(
 	readScheduler *Scheduler,
 	writeScheduler *Scheduler,
 	requestsDoneCtx context.Context,
-	frameProcessor FrameProcessor,
 	asyncConnector bool,
 	asyncPendingRequests *pendingRequests,
 	handshakeDone *atomic.Value) (*ClusterConnector, error) {
@@ -149,6 +148,13 @@ func NewClusterConnector(
 	// Initialize heartbeat time
 	lastHeartbeatTime := &atomic.Value{}
 	lastHeartbeatTime.Store(time.Now())
+
+	// Initialize stream id processor to manage the ids sent to the clusters
+	metrics, err := GetStreamIdsMetricsByClusterConnector(proxyMetrics, connectorType)
+	if err != nil {
+		log.Error(err)
+	}
+	frameProcessor := NewStreamIdProcessor(conf.ProxyMaxStreamIds, connectorType, metrics)
 
 	return &ClusterConnector{
 		conf:                   conf,
@@ -446,9 +452,9 @@ func (cc *ClusterConnector) sendAsyncRequest(
 	if !cc.validateAsyncStateForRequest(asyncRequest) {
 		return false
 	}
-
 	asyncReqCtx := NewAsyncRequestContext(requestInfo, asyncRequest.Header.StreamId, expectedResponse, overallRequestStartTime)
 	var newStreamId int16
+	cc.frameProcessor.AssignUniqueId(asyncRequest)
 	newStreamId, err := cc.asyncPendingRequests.store(asyncReqCtx, asyncRequest)
 	storedAsync := err == nil
 	if err != nil {

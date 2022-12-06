@@ -26,7 +26,7 @@ type streamIdProcessor struct {
 	metrics  metrics.Gauge
 }
 
-func NewStreamIdProcessor(connType ClusterConnectorType, maxStreamIds int, metrics metrics.Gauge) FrameProcessor {
+func NewStreamIdProcessor(maxStreamIds int, connType ClusterConnectorType, metrics metrics.Gauge) FrameProcessor {
 	return &streamIdProcessor{
 		mapper:   NewStreamIdMapper(maxStreamIds),
 		connType: connType,
@@ -56,7 +56,9 @@ func (sip *streamIdProcessor) AssignUniqueIdFrame(frame *frame.Frame) error {
 		return err
 	}
 	setFrameStreamId(frame, newId)
-	sip.metrics.Add(1)
+	if sip.metrics != nil {
+		sip.metrics.Add(1)
+	}
 	return nil
 }
 
@@ -70,7 +72,9 @@ func (sip *streamIdProcessor) ReleaseId(frame *frame.RawFrame) error {
 		return err
 	}
 	setRawFrameStreamId(frame, originalId)
-	sip.metrics.Subtract(1)
+	if sip.metrics != nil {
+		sip.metrics.Subtract(1)
+	}
 	return nil
 }
 
@@ -83,7 +87,9 @@ func (sip *streamIdProcessor) ReleaseIdFrame(frame *frame.Frame) error {
 		log.Trace(err)
 		return err
 	}
-	sip.metrics.Subtract(1)
+	if sip.metrics != nil {
+		sip.metrics.Subtract(1)
+	}
 	return nil
 }
 

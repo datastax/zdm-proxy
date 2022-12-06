@@ -8,7 +8,6 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
 	"github.com/datastax/zdm-proxy/proxy/pkg/config"
-	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
 	"io"
 	"net"
@@ -74,8 +73,7 @@ func NewCqlConnection(
 	conn net.Conn,
 	username string, password string,
 	readTimeout time.Duration, writeTimeout time.Duration,
-	conf *config.Config,
-	metricsHandler *metrics.MetricHandler) CqlConnection {
+	conf *config.Config) CqlConnection {
 	ctx, cFn := context.WithCancel(context.Background())
 	cqlConn := &cqlConn{
 		readTimeout:  readTimeout,
@@ -97,9 +95,7 @@ func NewCqlConnection(
 		closed:                false,
 		eventHandlerLock:      &sync.Mutex{},
 		authEnabled:           true,
-		frameProcessor: NewStreamIdProcessor(ClusterConnectorTypeControl,
-			conf.ProxyMaxStreamIds,
-			metricsHandler.GetProxyMetrics().ProxyUsedStreamIdsControl),
+		frameProcessor:        NewStreamIdProcessor(conf.ProxyMaxStreamIds, ClusterConnectorTypeNone, nil),
 	}
 	cqlConn.StartRequestLoop()
 	cqlConn.StartResponseLoop()

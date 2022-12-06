@@ -5,6 +5,9 @@ const (
 	typeReadsTarget = "reads_target"
 	typeWrites      = "writes"
 	typeCount       = "count"
+	typeIdsOrigin   = "ids_origin"
+	typeIdsTarget   = "ids_target"
+	typeIdsAsync    = "ids_async"
 
 	failedRequestsClusterOrigin = "origin"
 	failedRequestsClusterTarget = "target"
@@ -26,19 +29,9 @@ const (
 	inFlightRequestsTypeLabel   = "type"
 	inFlightRequestsDescription = "Number of requests currently in flight in the proxy"
 
-	usedStreamIdsOriginName        = "proxy_used_stream_ids_origin"
-	usedStreamIdsOriginDescription = "Number of used stream ids for ORIGIN connector"
-
-	usedStreamIdsTargetName        = "proxy_used_stream_ids_target"
-	usedStreamIdsTargetDescription = "Number of used stream ids for TARGET connector"
-
-	usedStreamIdsAsyncName        = "proxy_used_stream_ids_async"
-	usedStreamIdsAsyncDescription = "Number of used stream ids for ASYNC connector"
-
-	usedStreamIdsControlName        = "proxy_used_stream_ids_control"
-	usedStreamIdsControlDescription = "Number of used stream ids for CONTROL connector"
-
-	usedStreamIdsTypeLabel = "type"
+	streamIdsName        = "proxy_stream_ids"
+	streamIdsDescription = "Number of stream ids for the connector"
+	streamIdsTypeLabel   = "connector"
 )
 
 var (
@@ -136,32 +129,27 @@ var (
 		"Number of client connections currently open",
 	)
 
-	UsedStreamIdsOrigin = NewMetricWithLabels(
-		usedStreamIdsOriginName,
-		usedStreamIdsOriginDescription,
+	StreamIdsOrigin = NewMetricWithLabels(
+		streamIdsName,
+		streamIdsDescription,
 		map[string]string{
-			usedStreamIdsTypeLabel: typeCount,
+			streamIdsTypeLabel: typeIdsOrigin,
 		},
 	)
-	UsedStreamIdsTarget = NewMetricWithLabels(
-		usedStreamIdsTargetName,
-		usedStreamIdsTargetDescription,
+
+	StreamIdsTarget = NewMetricWithLabels(
+		streamIdsName,
+		streamIdsDescription,
 		map[string]string{
-			usedStreamIdsTypeLabel: typeCount,
+			streamIdsTypeLabel: typeIdsTarget,
 		},
 	)
-	UsedStreamIdsAsync = NewMetricWithLabels(
-		usedStreamIdsAsyncName,
-		usedStreamIdsAsyncDescription,
+
+	StreamIdsAsync = NewMetricWithLabels(
+		streamIdsName,
+		streamIdsDescription,
 		map[string]string{
-			usedStreamIdsTypeLabel: typeCount,
-		},
-	)
-	UsedStreamIdsControl = NewMetricWithLabels(
-		usedStreamIdsControlName,
-		usedStreamIdsControlDescription,
-		map[string]string{
-			usedStreamIdsTypeLabel: typeCount,
+			streamIdsTypeLabel: typeIdsAsync,
 		},
 	)
 )
@@ -186,8 +174,7 @@ type ProxyMetrics struct {
 
 	OpenClientConnections GaugeFunc
 
-	ProxyUsedStreamIdsOrigin  Gauge
-	ProxyUsedStreamIdsTarget  Gauge
-	ProxyUsedStreamIdsAsync   Gauge
-	ProxyUsedStreamIdsControl Gauge
+	StreamIdsOrigin Gauge
+	StreamIdsTarget Gauge
+	StreamIdsAsync  Gauge
 }

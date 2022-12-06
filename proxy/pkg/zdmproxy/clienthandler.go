@@ -183,25 +183,24 @@ func NewClientHandler(
 	handshakeDone := &atomic.Value{}
 
 	originConnector, err := NewClusterConnector(
-		originCassandraConnInfo, conf, psCache, nodeMetrics, localClientHandlerWg, clientHandlerRequestWg,
+		originCassandraConnInfo, conf, psCache, nodeMetrics, metricHandler.GetProxyMetrics(), localClientHandlerWg, clientHandlerRequestWg,
 		clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler, requestsDoneCtx,
-		NewStreamIdProcessor(ClusterConnectorTypeOrigin, conf.ProxyMaxStreamIds, metricHandler.GetProxyMetrics().ProxyUsedStreamIdsOrigin), false, nil, handshakeDone)
+		false, nil, handshakeDone)
 	if err != nil {
 		clientHandlerCancelFunc()
 		return nil, err
 	}
 
 	targetConnector, err := NewClusterConnector(
-		targetCassandraConnInfo, conf, psCache, nodeMetrics, localClientHandlerWg, clientHandlerRequestWg,
+		targetCassandraConnInfo, conf, psCache, nodeMetrics, metricHandler.GetProxyMetrics(), localClientHandlerWg, clientHandlerRequestWg,
 		clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler, requestsDoneCtx,
-		NewStreamIdProcessor(ClusterConnectorTypeTarget, conf.ProxyMaxStreamIds, metricHandler.GetProxyMetrics().ProxyUsedStreamIdsTarget), false, nil, handshakeDone)
+		false, nil, handshakeDone)
 	if err != nil {
 		clientHandlerCancelFunc()
 		return nil, err
 	}
 
-	var asyncFrameProcessor = NewStreamIdProcessor(ClusterConnectorTypeAsync, conf.ProxyMaxStreamIds, metricHandler.GetProxyMetrics().ProxyUsedStreamIdsAsync)
-	asyncPendingRequests := newPendingRequests(asyncFrameProcessor, nodeMetrics)
+	asyncPendingRequests := newPendingRequests(nodeMetrics)
 	var asyncConnector *ClusterConnector
 	if readMode == common.ReadModeDualAsyncOnSecondary {
 		var asyncConnInfo *ClusterConnectionInfo
@@ -211,9 +210,9 @@ func NewClientHandler(
 			asyncConnInfo = targetCassandraConnInfo
 		}
 		asyncConnector, err = NewClusterConnector(
-			asyncConnInfo, conf, psCache, nodeMetrics, localClientHandlerWg, clientHandlerRequestWg,
+			asyncConnInfo, conf, psCache, nodeMetrics, metricHandler.GetProxyMetrics(), localClientHandlerWg, clientHandlerRequestWg,
 			clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler, requestsDoneCtx,
-			asyncFrameProcessor, true, asyncPendingRequests, handshakeDone)
+			true, asyncPendingRequests, handshakeDone)
 		if err != nil {
 			log.Errorf("Could not create async cluster connector to %s, async requests will not be forwarded: %s", asyncConnInfo.connConfig.GetClusterType(), err.Error())
 			asyncConnector = nil
@@ -2181,5 +2180,18 @@ func GetNodeMetricsByClusterConnector(nodeMetrics *metrics.NodeMetrics, connecto
 		return nodeMetrics.AsyncMetrics, nil
 	default:
 		return nil, fmt.Errorf("unexpected connectorType %v, unable to retrieve node metrics", connectorType)
+	}
+}
+
+func GetStreamIdsMetricsByClusterConnector(proxyMetrics *metrics.ProxyMetrics, connectorType ClusterConnectorType) (metrics.Gauge, error) {
+	switch connectorType {
+	case ClusterConnectorTypeOrigin:
+		return proxyMetrics.StreamIdsOrigin, nil
+	case ClusterConnectorTypeTarget:
+		return proxyMetrics.StreamIdsTarget, nil
+	case ClusterConnectorTypeAsync:
+		return proxyMetrics.StreamIdsAsync, nil
+	default:
+		return nil, fmt.Errorf("unexpected connectorType %v, unable to retrieve stream ids metrics", connectorType)
 	}
 }

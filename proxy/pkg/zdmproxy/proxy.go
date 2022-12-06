@@ -759,42 +759,37 @@ func (p *ZdmProxy) CreateProxyMetrics(metricFactory metrics.MetricFactory) (*met
 		return nil, err
 	}
 
-	usedStreamIdsOrigin, err := metricFactory.GetOrCreateGauge(metrics.UsedStreamIdsOrigin)
+	streamIdsOrigin, err := metricFactory.GetOrCreateGauge(metrics.StreamIdsOrigin)
 	if err != nil {
 		return nil, err
 	}
-	usedStreamIdsTarget, err := metricFactory.GetOrCreateGauge(metrics.UsedStreamIdsTarget)
+	streamIdsTarget, err := metricFactory.GetOrCreateGauge(metrics.StreamIdsTarget)
 	if err != nil {
 		return nil, err
 	}
-	usedStreamIdsAsync, err := metricFactory.GetOrCreateGauge(metrics.UsedStreamIdsAsync)
-	if err != nil {
-		return nil, err
-	}
-	usedStreamIdsControl, err := metricFactory.GetOrCreateGauge(metrics.UsedStreamIdsControl)
+	streamIdsAsync, err := metricFactory.GetOrCreateGauge(metrics.StreamIdsAsync)
 	if err != nil {
 		return nil, err
 	}
 
 	proxyMetrics := &metrics.ProxyMetrics{
-		FailedReadsOrigin:         failedReadsOrigin,
-		FailedReadsTarget:         failedReadsTarget,
-		FailedWritesOnOrigin:      failedWritesOnOrigin,
-		FailedWritesOnTarget:      failedWritesOnTarget,
-		FailedWritesOnBoth:        failedWritesOnBoth,
-		PSCacheSize:               psCacheSize,
-		PSCacheMissCount:          psCacheMissCount,
-		ProxyReadsOriginDuration:  proxyReadsOriginDuration,
-		ProxyReadsTargetDuration:  proxyReadsTargetDuration,
-		ProxyWritesDuration:       proxyWritesDuration,
-		InFlightReadsOrigin:       inFlightReadsOrigin,
-		InFlightReadsTarget:       inFlightReadsTarget,
-		InFlightWrites:            inFlightWrites,
-		OpenClientConnections:     openClientConnections,
-		ProxyUsedStreamIdsOrigin:  usedStreamIdsOrigin,
-		ProxyUsedStreamIdsTarget:  usedStreamIdsTarget,
-		ProxyUsedStreamIdsAsync:   usedStreamIdsAsync,
-		ProxyUsedStreamIdsControl: usedStreamIdsControl,
+		FailedReadsOrigin:        failedReadsOrigin,
+		FailedReadsTarget:        failedReadsTarget,
+		FailedWritesOnOrigin:     failedWritesOnOrigin,
+		FailedWritesOnTarget:     failedWritesOnTarget,
+		FailedWritesOnBoth:       failedWritesOnBoth,
+		PSCacheSize:              psCacheSize,
+		PSCacheMissCount:         psCacheMissCount,
+		ProxyReadsOriginDuration: proxyReadsOriginDuration,
+		ProxyReadsTargetDuration: proxyReadsTargetDuration,
+		ProxyWritesDuration:      proxyWritesDuration,
+		InFlightReadsOrigin:      inFlightReadsOrigin,
+		InFlightReadsTarget:      inFlightReadsTarget,
+		InFlightWrites:           inFlightWrites,
+		OpenClientConnections:    openClientConnections,
+		StreamIdsOrigin:          streamIdsOrigin,
+		StreamIdsTarget:          streamIdsTarget,
+		StreamIdsAsync:           streamIdsAsync,
 	}
 
 	return proxyMetrics, nil
