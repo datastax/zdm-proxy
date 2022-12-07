@@ -3,20 +3,19 @@ package zdmproxy
 import (
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
-	log "github.com/sirupsen/logrus"
 )
 
 // FrameProcessor manages the mapping of incoming stream ids to the actual ids that are sent over to the clusters.
 // This is important to prevent overlapping ids of client-side requests and proxy internal requests (such as heartbeats)
 // that are written through the same connection to the cluster.
 type FrameProcessor interface {
-	AssignUniqueId(frame *frame.RawFrame) error
-	AssignUniqueIdFrame(frame *frame.Frame) error
-	ReleaseId(frame *frame.RawFrame) error
-	ReleaseIdFrame(frame *frame.Frame) error
+	AssignUniqueId(rawFrame *frame.RawFrame) (*frame.RawFrame, error)
+	AssignUniqueIdFrame(frame *frame.Frame) (*frame.Frame, error)
+	ReleaseId(rawFrame *frame.RawFrame) (*frame.RawFrame, error)
+	ReleaseIdFrame(frame *frame.Frame) (*frame.Frame, error)
 }
 
-// StreamIdProcessor replaces the incoming stream/request ids by internal, synthetic, ids before sending the
+// streamIdProcessor replaces the incoming stream/request ids by internal, synthetic, ids before sending the
 // frames over the wire. When the proxy receives a response, it changes the ids back to its original number.
 // This way we guarantee that, through the same connection, we have non-overlapping ids with requests coming
 // from the client and requests generated internally by the proxy, such as the heartbeat requests.
@@ -34,73 +33,60 @@ func NewStreamIdProcessor(maxStreamIds int, connType ClusterConnectorType, metri
 	}
 }
 
-func (sip *streamIdProcessor) AssignUniqueId(frame *frame.RawFrame) error {
-	if frame == nil {
-		return nil
+func (sip *streamIdProcessor) AssignUniqueId(rawFrame *frame.RawFrame) (*frame.RawFrame, error) {
+	if rawFrame == nil {
+		return rawFrame, nil
 	}
-	var newId, err = sip.mapper.GetNewIdFor(frame.Header.StreamId)
+	var newId, err = sip.mapper.GetNewIdFor(rawFrame.Header.StreamId)
 	if err != nil {
-		return err
+		return rawFrame, err
 	}
-	setRawFrameStreamId(frame, newId)
 	sip.metrics.Add(1)
-	return nil
+	return setRawFrameStreamId(rawFrame, newId), nil
 }
 
-func (sip *streamIdProcessor) AssignUniqueIdFrame(frame *frame.Frame) error {
+func (sip *streamIdProcessor) AssignUniqueIdFrame(frame *frame.Frame) (*frame.Frame, error) {
 	if frame == nil {
-		return nil
+		return frame, nil
 	}
 	var newId, err = sip.mapper.GetNewIdFor(frame.Header.StreamId)
 	if err != nil {
-		return err
+		return frame, err
 	}
-	setFrameStreamId(frame, newId)
 	if sip.metrics != nil {
 		sip.metrics.Add(1)
 	}
-	return nil
+	frame.Header.StreamId = newId
+	return frame, nil
 }
 
-func (sip *streamIdProcessor) ReleaseId(frame *frame.RawFrame) error {
-	if frame == nil {
-		return nil
+func (sip *streamIdProcessor) ReleaseId(rawFrame *frame.RawFrame) (*frame.RawFrame, error) {
+	if rawFrame == nil {
+		return rawFrame, nil
 	}
-	var originalId, err = sip.mapper.ReleaseId(frame.Header.StreamId)
-	if err != nil {
-		log.Trace(err)
-		return err
-	}
-	setRawFrameStreamId(frame, originalId)
-	if sip.metrics != nil {
+	var originalId, err = sip.mapper.ReleaseId(rawFrame.Header.StreamId)
+	if sip.metrics != nil && err != nil {
 		sip.metrics.Subtract(1)
 	}
-	return nil
+	return setRawFrameStreamId(rawFrame, originalId), err
 }
 
-func (sip *streamIdProcessor) ReleaseIdFrame(frame *frame.Frame) error {
+func (sip *streamIdProcessor) ReleaseIdFrame(frame *frame.Frame) (*frame.Frame, error) {
 	if frame == nil {
-		return nil
+		return frame, nil
 	}
 	var _, err = sip.mapper.ReleaseId(frame.Header.StreamId)
-	if err != nil {
-		log.Trace(err)
-		return err
-	}
-	if sip.metrics != nil {
+	if sip.metrics != nil && err != nil {
 		sip.metrics.Subtract(1)
 	}
-	return nil
+	return frame, err
 }
 
-func setRawFrameStreamId(f *frame.RawFrame, id int16) {
+func setRawFrameStreamId(f *frame.RawFrame, id int16) *frame.RawFrame {
 	newHeader := f.Header.Clone()
 	newHeader.StreamId = id
-	f.Header = newHeader
-}
-
-func setFrameStreamId(f *frame.Frame, id int16) {
-	newHeader := f.Header.Clone()
-	newHeader.StreamId = id
-	f.Header = newHeader
+	return &frame.RawFrame{
+		Header: newHeader,
+		Body:   f.Body,
+	}
 }

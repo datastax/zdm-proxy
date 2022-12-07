@@ -2,7 +2,6 @@ package zdmproxy
 
 import (
 	"fmt"
-	log "github.com/sirupsen/logrus"
 	"sync"
 )
 
@@ -38,6 +37,9 @@ func (sim *streamIdMapper) GetNewIdFor(streamId int16) (int16, error) {
 	select {
 	case id, ok := <-sim.clusterIds:
 		if ok {
+			if _, contains := sim.idMapper[id]; contains {
+				return -1, fmt.Errorf("stream id collision, mapper already contains id %v", id)
+			}
 			sim.idMapper[id] = streamId
 			return id, nil
 		} else {
@@ -56,7 +58,7 @@ func (sim *streamIdMapper) ReleaseId(syntheticId int16) (int16, error) {
 	select {
 	case sim.clusterIds <- syntheticId:
 	default:
-		log.Tracef("stream ids channel full, ignoring id %v", syntheticId)
+		return originalId, fmt.Errorf("stream ids channel full, ignoring id %v", syntheticId)
 	}
 	return originalId, nil
 }

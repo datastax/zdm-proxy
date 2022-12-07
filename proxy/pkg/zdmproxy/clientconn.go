@@ -52,7 +52,6 @@ type ClientConnector struct {
 
 	shutdownRequestCtx context.Context
 
-	frameProcessor FrameProcessor
 }
 
 func NewClientConnector(

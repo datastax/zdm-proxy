@@ -19,7 +19,6 @@ func BenchmarkStreamIdMapper(b *testing.B) {
 		var originalId = int16(i)
 		var syntheticId, _ = mapper.GetNewIdFor(originalId)
 		mapper.ReleaseId(syntheticId)
-		mapper.ReleaseId(syntheticId)
 	}
 }
 

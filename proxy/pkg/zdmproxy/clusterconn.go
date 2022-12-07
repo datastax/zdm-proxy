@@ -255,7 +255,10 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 		protocolErrOccurred := false
 		for {
 			response, err := readRawFrame(bufferedReader, connectionAddr, cc.clusterConnContext)
-			cc.frameProcessor.ReleaseId(response)
+			response, releaseErr := cc.frameProcessor.ReleaseId(response)
+			if releaseErr != nil {
+				log.Error(releaseErr)
+			}
 
 			protocolErrResponseFrame, err := checkProtocolError(response, err, protocolErrOccurred, string(cc.connectorType))
 			if err != nil {
@@ -454,8 +457,11 @@ func (cc *ClusterConnector) sendAsyncRequest(
 	}
 	asyncReqCtx := NewAsyncRequestContext(requestInfo, asyncRequest.Header.StreamId, expectedResponse, overallRequestStartTime)
 	var newStreamId int16
-	cc.frameProcessor.AssignUniqueId(asyncRequest)
-	newStreamId, err := cc.asyncPendingRequests.store(asyncReqCtx, asyncRequest)
+	var err error = nil
+	asyncRequest, err = cc.frameProcessor.AssignUniqueId(asyncRequest)
+	if err == nil {
+		newStreamId, err = cc.asyncPendingRequests.store(asyncReqCtx, asyncRequest)
+	}
 	storedAsync := err == nil
 	if err != nil {
 		log.Warnf("Could not send async request due to an error while storing the request state: %v.", err.Error())
@@ -494,7 +500,7 @@ func (cc *ClusterConnector) sendAsyncRequest(
 }
 
 func (cc *ClusterConnector) sendHeartbeat(version primitive.ProtocolVersion, heartbeatIntervalMs int) {
-	if !cc.shouldSendHeartbeat(heartbeatIntervalMs) {
+	if version == 0 || !cc.shouldSendHeartbeat(heartbeatIntervalMs) {
 		return
 	}
 	cc.lastHeartbeatLock.Lock()
@@ -507,9 +513,9 @@ func (cc *ClusterConnector) sendHeartbeat(version primitive.ProtocolVersion, hea
 	heartBeatFrame := frame.NewFrame(version, -1, optionsMsg)
 	rawFrame, err := defaultCodec.ConvertToRawFrame(heartBeatFrame)
 	if err != nil {
-		log.Tracef("Cannot convert heartbeat frame to raw frame")
+		log.Error("Cannot convert heartbeat frame to raw frame")
 	}
-	log.Infof("Sending heartbeat to cluster %v", cc.clusterType)
+	log.Debugf("Sending heartbeat to cluster %v", cc.clusterType)
 	cc.sendRequestToCluster(rawFrame)
 }
 

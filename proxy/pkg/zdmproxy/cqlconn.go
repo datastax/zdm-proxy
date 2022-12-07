@@ -161,6 +161,10 @@ func (c *cqlConn) StartResponseLoop() {
 			}
 
 			delete(c.pendingOperations, f.Header.StreamId)
+			f, err = c.frameProcessor.ReleaseIdFrame(f)
+			if err != nil {
+				log.Error(err)
+			}
 			c.pendingOperationsLock.Unlock()
 
 			respChan <- f
@@ -261,6 +265,12 @@ func (c *cqlConn) sendContext(request *frame.Frame, ctx context.Context) (chan *
 	var respChan = make(chan *frame.Frame, 1)
 
 	c.pendingOperationsLock.Lock()
+	var err error
+	request, err = c.frameProcessor.AssignUniqueIdFrame(request)
+	if err != nil {
+		c.pendingOperationsLock.Unlock()
+		return nil, err
+	}
 	if c.closed {
 		c.pendingOperationsLock.Unlock()
 		return nil, errors.New("response channel closed")
@@ -269,7 +279,6 @@ func (c *cqlConn) sendContext(request *frame.Frame, ctx context.Context) (chan *
 	c.pendingOperations[request.Header.StreamId] = respChan
 	c.pendingOperationsLock.Unlock()
 
-	var err error
 	select {
 	case c.outgoingCh <- request:
 		return respChan, nil
@@ -291,7 +300,6 @@ func (c *cqlConn) sendContext(request *frame.Frame, ctx context.Context) (chan *
 }
 
 func (c *cqlConn) SendAndReceive(request *frame.Frame, ctx context.Context) (*frame.Frame, error) {
-	c.frameProcessor.AssignUniqueIdFrame(request)
 	respChan, err := c.sendContext(request, ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request frame: %w", err)
@@ -300,7 +308,6 @@ func (c *cqlConn) SendAndReceive(request *frame.Frame, ctx context.Context) (*fr
 	readTimeoutCtx, _ := context.WithTimeout(ctx, c.readTimeout)
 	select {
 	case response, ok := <-respChan:
-		c.frameProcessor.ReleaseIdFrame(response)
 		if !ok {
 			return nil, fmt.Errorf("failed to receive response frame")
 		}
