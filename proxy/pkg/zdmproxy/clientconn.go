@@ -51,7 +51,6 @@ type ClientConnector struct {
 	readScheduler *Scheduler
 
 	shutdownRequestCtx context.Context
-
 }
 
 func NewClientConnector(
