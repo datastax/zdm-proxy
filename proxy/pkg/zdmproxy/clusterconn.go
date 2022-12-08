@@ -154,7 +154,7 @@ func NewClusterConnector(
 	if err != nil {
 		log.Error(err)
 	}
-	frameProcessor := NewStreamIdProcessor(conf.ProxyMaxStreamIds, connectorType, metrics)
+	frameProcessor := NewStreamIdProcessor(NewStreamIdMapper(conf.ProxyMaxStreamIds), connectorType, metrics)
 
 	return &ClusterConnector{
 		conf:                   conf,

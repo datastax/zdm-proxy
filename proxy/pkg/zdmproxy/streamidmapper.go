@@ -19,6 +19,45 @@ type streamIdMapper struct {
 	clusterIds chan int16
 }
 
+type cqlStreamIdMapper struct {
+	clusterIds chan int16
+}
+
+func NewCqlStreamIdMapper(maxStreamIds int) StreamIdMapper {
+	streamIdsQueue := make(chan int16, maxStreamIds)
+	for i := int16(0); i < int16(maxStreamIds); i++ {
+		streamIdsQueue <- i
+	}
+	return &cqlStreamIdMapper{
+		clusterIds: streamIdsQueue,
+	}
+}
+
+func (csid *cqlStreamIdMapper) GetNewIdFor(streamId int16) (int16, error) {
+	if streamId != -1 {
+		return -1, fmt.Errorf("expected initial stream id of -1 for internal cql frames, got %v", streamId)
+	}
+	select {
+	case id, ok := <-csid.clusterIds:
+		if ok {
+			return id, nil
+		} else {
+			return -1, fmt.Errorf("stream id channel closed")
+		}
+	default:
+		return -1, fmt.Errorf("no stream id available")
+	}
+}
+
+func (csid *cqlStreamIdMapper) ReleaseId(syntheticId int16) (int16, error) {
+	select {
+	case csid.clusterIds <- syntheticId:
+	default:
+		return syntheticId, fmt.Errorf("stream ids channel full, ignoring id %v", syntheticId)
+	}
+	return syntheticId, nil
+}
+
 func NewStreamIdMapper(maxStreamIds int) StreamIdMapper {
 	idMapper := make(map[int16]int16)
 	streamIdsQueue := make(chan int16, maxStreamIds)

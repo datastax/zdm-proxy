@@ -25,9 +25,9 @@ type streamIdProcessor struct {
 	metrics  metrics.Gauge
 }
 
-func NewStreamIdProcessor(maxStreamIds int, connType ClusterConnectorType, metrics metrics.Gauge) FrameProcessor {
+func NewStreamIdProcessor(mapper StreamIdMapper, connType ClusterConnectorType, metrics metrics.Gauge) FrameProcessor {
 	return &streamIdProcessor{
-		mapper:   NewStreamIdMapper(maxStreamIds),
+		mapper:   mapper,
 		connType: connType,
 		metrics:  metrics,
 	}
