@@ -71,15 +71,16 @@ func NewStreamIdMapper(maxStreamIds int) StreamIdMapper {
 }
 
 func (sim *streamIdMapper) GetNewIdFor(streamId int16) (int16, error) {
-	sim.Lock()
-	defer sim.Unlock()
 	select {
 	case id, ok := <-sim.clusterIds:
 		if ok {
+			sim.Lock()
 			if _, contains := sim.idMapper[id]; contains {
+				sim.Unlock()
 				return -1, fmt.Errorf("stream id collision, mapper already contains id %v", id)
 			}
 			sim.idMapper[id] = streamId
+			sim.Unlock()
 			return id, nil
 		} else {
 			return -1, fmt.Errorf("stream id channel closed")
@@ -91,9 +92,13 @@ func (sim *streamIdMapper) GetNewIdFor(streamId int16) (int16, error) {
 
 func (sim *streamIdMapper) ReleaseId(syntheticId int16) (int16, error) {
 	sim.Lock()
-	defer sim.Unlock()
-	var originalId = sim.idMapper[syntheticId]
+	originalId, contains := sim.idMapper[syntheticId]
+	if !contains {
+		sim.Unlock()
+		return originalId, fmt.Errorf("trying to release a stream id not found in mapper: %v", syntheticId)
+	}
 	delete(sim.idMapper, syntheticId)
+	sim.Unlock()
 	select {
 	case sim.clusterIds <- syntheticId:
 	default:

@@ -140,7 +140,7 @@ func (recv *writeCoalescer) RunWriteQueueLoop() {
 						ok = true
 					}
 
-					var err error = nil
+					var err error
 					log.Tracef("[%v] Writing %v on %v", recv.logPrefix, f.Header, connectionAddr)
 					if recv.frameProcessor != nil {
 						f, err = recv.frameProcessor.AssignUniqueId(f)

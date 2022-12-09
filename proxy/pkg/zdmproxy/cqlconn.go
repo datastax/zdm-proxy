@@ -163,7 +163,7 @@ func (c *cqlConn) StartResponseLoop() {
 			delete(c.pendingOperations, f.Header.StreamId)
 			f, err = c.frameProcessor.ReleaseIdFrame(f)
 			if err != nil {
-				log.Error(err)
+				log.Errorf("[CqlConnection] Error releasing stream id: %v", err)
 			}
 			c.pendingOperationsLock.Unlock()
 

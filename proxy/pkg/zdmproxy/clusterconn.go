@@ -513,7 +513,7 @@ func (cc *ClusterConnector) sendHeartbeat(version primitive.ProtocolVersion, hea
 	heartBeatFrame := frame.NewFrame(version, -1, optionsMsg)
 	rawFrame, err := defaultCodec.ConvertToRawFrame(heartBeatFrame)
 	if err != nil {
-		log.Error("Cannot convert heartbeat frame to raw frame")
+		log.Errorf("Cannot convert heartbeat frame to raw frame: %v", err)
 	}
 	log.Debugf("Sending heartbeat to cluster %v", cc.clusterType)
 	cc.sendRequestToCluster(rawFrame)
