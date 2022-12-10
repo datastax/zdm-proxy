@@ -1,0 +1,82 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: zdm-proxy-0
+  name: zdm-proxy-0
+  namespace: zdmproxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: zdm-proxy-0
+  template:
+    metadata:
+      labels:
+        app: zdm-proxy-0
+    spec:
+      containers:
+      - image: datastax/zdm-proxy:2.0.x
+        name: zdm-proxy-0
+        resources:
+          requests:
+            memory: "2048Mi"
+            cpu: "1000m"
+          limits:
+            memory: "4096Mi"
+            cpu: "2000m"
+        envFrom:
+        - configMapRef:
+            name: zdm-proxy
+        env:
+        - name: ZDM_PROXY_LISTEN_ADDRESS
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: ZDM_METRICS_ADDRESS
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP      
+        - name: ZDM_PROXY_TOPOLOGY_INDEX
+          value: "0"
+        - name: ZDM_PROXY_TOPOLOGY_ADDRESSES
+          value: $(ZDM_PROXY_0_SERVICE_HOST),$(ZDM_PROXY_1_SERVICE_HOST),$(ZDM_PROXY_2_SERVICE_HOST)
+        - name: ZDM_ORIGIN_SECURE_CONNECT_BUNDLE_PATH
+          value: /tmp/scb/origin.zip
+        - name: ZDM_TARGET_SECURE_CONNECT_BUNDLE_PATH
+          value: /tmp/scb/target.zip
+        - name: ZDM_ORIGIN_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: zdmproxy
+              key: ORIGIN_USERNAME
+        - name: ZDM_ORIGIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: zdmproxy
+              key: ORIGIN_PASSWORD
+        - name: ZDM_TARGET_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: zdmproxy
+              key: TARGET_USERNAME
+        - name: ZDM_TARGET_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: zdmproxy
+              key: TARGET_PASSWORD
+        ports:
+        - containerPort: 9042
+        volumeMounts:
+        - name: scb
+          mountPath: "/tmp/scb"
+          readOnly: true
+      volumes:
+      - name: scb
+        secret:
+          secretName: zdmproxy-scb
+          items:
+          - key: secure-connect-origin.zip
+            path: origin.zip
+          - key: secure-connect-target.zip
+            path: target.zip
