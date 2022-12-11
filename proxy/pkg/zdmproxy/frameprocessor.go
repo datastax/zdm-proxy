@@ -41,7 +41,9 @@ func (sip *streamIdProcessor) AssignUniqueId(rawFrame *frame.RawFrame) (*frame.R
 	if err != nil {
 		return rawFrame, err
 	}
-	sip.metrics.Add(1)
+	if sip.metrics != nil {
+		sip.metrics.Add(1)
+	}
 	return setRawFrameStreamId(rawFrame, newId), nil
 }
 
