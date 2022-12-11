@@ -4,10 +4,9 @@ const (
 	typeReadsOrigin = "reads_origin"
 	typeReadsTarget = "reads_target"
 	typeWrites      = "writes"
-	typeCount       = "count"
-	typeIdsOrigin   = "ids_origin"
-	typeIdsTarget   = "ids_target"
-	typeIdsAsync    = "ids_async"
+	typeIdsOrigin   = "origin"
+	typeIdsTarget   = "target"
+	typeIdsAsync    = "async"
 
 	failedRequestsClusterOrigin = "origin"
 	failedRequestsClusterTarget = "target"
