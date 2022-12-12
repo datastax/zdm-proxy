@@ -1,7 +1,6 @@
 apiVersion: v1
 kind: Service
 metadata:
-  creationTimestamp: null
   labels:
     app: zdm-proxy-0
     role: zdm-proxy
@@ -10,7 +9,7 @@ metadata:
 spec:
   ports:
   - name: 9042-9042
-    port: 9042
+    port: 9942
     protocol: TCP
     targetPort: 9042
   selector:
@@ -20,7 +19,6 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  creationTimestamp: null
   labels:
     app: zdm-proxy-1
     role: zdm-proxy
@@ -29,7 +27,7 @@ metadata:
 spec:
   ports:
   - name: 9042-9042
-    port: 9042
+    port: 9942
     protocol: TCP
     targetPort: 9042
   selector:
@@ -39,7 +37,6 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  creationTimestamp: null
   labels:
     app: zdm-proxy-2
     role: zdm-proxy
@@ -48,7 +45,7 @@ metadata:
 spec:
   ports:
   - name: 9042-9042
-    port: 9042
+    port: 9942
     protocol: TCP
     targetPort: 9042
   selector:

@@ -20,10 +20,10 @@ spec:
         name: zdm-proxy-2
         resources:
           requests:
-            memory: "2048Mi"
+            memory: "512Mi"
             cpu: "1000m"
           limits:
-            memory: "4096Mi"
+            memory: "512Mi"
             cpu: "2000m"
         envFrom:
         - configMapRef:
@@ -41,8 +41,6 @@ spec:
           value: "2"
         - name: ZDM_PROXY_TOPOLOGY_ADDRESSES
           value: $(ZDM_PROXY_0_SERVICE_HOST),$(ZDM_PROXY_1_SERVICE_HOST),$(ZDM_PROXY_2_SERVICE_HOST)
-        - name: ZDM_ORIGIN_SECURE_CONNECT_BUNDLE_PATH
-          value: /tmp/scb/origin.zip
         - name: ZDM_TARGET_SECURE_CONNECT_BUNDLE_PATH
           value: /tmp/scb/target.zip
         - name: ZDM_ORIGIN_USERNAME
@@ -76,7 +74,5 @@ spec:
         secret:
           secretName: zdmproxy-scb
           items:
-          - key: secure-connect-origin.zip
-            path: origin.zip
-          - key: secure-connect-target.zip
+          - key: scb-target.zip
             path: target.zip
