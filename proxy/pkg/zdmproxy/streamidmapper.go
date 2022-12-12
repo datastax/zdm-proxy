@@ -35,7 +35,7 @@ func NewInternalStreamIdMapper(maxStreamIds int) StreamIdMapper {
 	}
 }
 
-func (csid *internalStreamIdMapper) GetNewIdFor(streamId int16) (int16, error) {
+func (csid *internalStreamIdMapper) GetNewIdFor(_ int16) (int16, error) {
 	select {
 	case id, ok := <-csid.clusterIds:
 		if ok {
@@ -52,7 +52,7 @@ func (csid *internalStreamIdMapper) ReleaseId(syntheticId int16) (int16, error) 
 	select {
 	case csid.clusterIds <- syntheticId:
 	default:
-		return syntheticId, fmt.Errorf("stream ids channel full, ignoring id %v", syntheticId)
+		return -1, fmt.Errorf("stream ids channel full, ignoring id %v", syntheticId)
 	}
 	return syntheticId, nil
 }
@@ -94,7 +94,7 @@ func (sim *streamIdMapper) ReleaseId(syntheticId int16) (int16, error) {
 	originalId, contains := sim.idMapper[syntheticId]
 	if !contains {
 		sim.Unlock()
-		return originalId, fmt.Errorf("trying to release a stream id not found in mapper: %v", syntheticId)
+		return -1, fmt.Errorf("trying to release a stream id not found in mapper: %v", syntheticId)
 	}
 	delete(sim.idMapper, syntheticId)
 	sim.Unlock()

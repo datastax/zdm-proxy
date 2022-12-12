@@ -263,7 +263,7 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 			response, err := readRawFrame(bufferedReader, connectionAddr, cc.clusterConnContext)
 			response, releaseErr := cc.frameProcessor.ReleaseId(response)
 			if releaseErr != nil {
-				log.Error(releaseErr)
+				log.Errorf("[%v] Error releasing stream id: %v", string(cc.connectorType), releaseErr)
 			}
 
 			protocolErrResponseFrame, err := checkProtocolError(response, err, protocolErrOccurred, string(cc.connectorType))
@@ -395,8 +395,8 @@ func (cc *ClusterConnector) sendRequestToCluster(frame *frame.RawFrame) {
 		frame, err = cc.frameProcessor.AssignUniqueId(frame)
 	}
 	if err != nil {
-		log.Errorf("couldn't assign unique id to frame %v", frame)
-		handleConnectionError(err, cc.clusterConnContext, cc.cancelFunc, string(cc.connectorType), "writing", cc.connection.RemoteAddr().String())
+		log.Errorf("[%v] Couldn't assign stream id to frame %v: %v", string(cc.connectorType), frame.Header.OpCode, err)
+		return
 	} else {
 		cc.writeCoalescer.Enqueue(frame)
 	}
@@ -468,7 +468,7 @@ func (cc *ClusterConnector) sendAsyncRequestToCluster(
 	}
 	asyncReqCtx := NewAsyncRequestContext(requestInfo, asyncRequest.Header.StreamId, expectedResponse, overallRequestStartTime)
 
-	var err error = nil
+	var err error
 	asyncRequest, err = cc.frameProcessor.AssignUniqueId(asyncRequest)
 	if err == nil {
 		err = cc.asyncPendingRequests.store(asyncReqCtx, asyncRequest)
@@ -525,6 +525,7 @@ func (cc *ClusterConnector) sendHeartbeat(version primitive.ProtocolVersion, hea
 	rawFrame, err := defaultCodec.ConvertToRawFrame(heartBeatFrame)
 	if err != nil {
 		log.Errorf("Cannot convert heartbeat frame to raw frame: %v", err)
+		return
 	}
 	log.Debugf("Sending heartbeat to cluster %v", cc.clusterType)
 	cc.sendRequestToCluster(rawFrame)
