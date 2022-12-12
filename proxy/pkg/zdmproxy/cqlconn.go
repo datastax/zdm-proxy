@@ -95,7 +95,7 @@ func NewCqlConnection(
 		closed:                false,
 		eventHandlerLock:      &sync.Mutex{},
 		authEnabled:           true,
-		frameProcessor:        NewStreamIdProcessor(NewCqlStreamIdMapper(conf.ProxyMaxStreamIds), ClusterConnectorTypeNone, nil),
+		frameProcessor:        NewStreamIdProcessor(NewInternalStreamIdMapper(conf.ProxyMaxStreamIds), ClusterConnectorTypeNone, nil),
 	}
 	cqlConn.StartRequestLoop()
 	cqlConn.StartResponseLoop()

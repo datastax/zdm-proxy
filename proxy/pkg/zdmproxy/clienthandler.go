@@ -1425,6 +1425,7 @@ func (ch *ClientHandler) executeRequest(
 	}
 
 	startupFrameInterface := ch.startupRequest.Load()
+	// Determine the negotiated protocol version as stored by the startup frame to be used in eventual heartbeats.
 	var startupFrameVersion primitive.ProtocolVersion
 	if startupFrameInterface != nil {
 		startupFrameVersion = startupFrameInterface.(*frame.RawFrame).Header.Version
@@ -1765,7 +1766,7 @@ func (ch *ClientHandler) sendToAsyncConnector(
 
 	f := frameContext.GetRawFrame()
 
-	sent := ch.asyncConnector.sendAsyncRequest(
+	sent := ch.asyncConnector.sendAsyncRequestToCluster(
 		reqCtx.GetRequestInfo(), asyncRequest, !isFireAndForget, overallRequestStartTime, requestTimeout, func() {
 			if !isFireAndForget {
 				ch.closedRespChannelLock.RLock()

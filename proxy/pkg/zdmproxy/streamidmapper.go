@@ -19,24 +19,23 @@ type streamIdMapper struct {
 	clusterIds chan int16
 }
 
-type cqlStreamIdMapper struct {
+type internalStreamIdMapper struct {
 	clusterIds chan int16
 }
 
-func NewCqlStreamIdMapper(maxStreamIds int) StreamIdMapper {
+// NewInternalStreamIdMapper is used to assign unique ids to frames that have no initial stream id defined, such as
+// CQL queries initiated by the proxy or ASYNC requests.
+func NewInternalStreamIdMapper(maxStreamIds int) StreamIdMapper {
 	streamIdsQueue := make(chan int16, maxStreamIds)
 	for i := int16(0); i < int16(maxStreamIds); i++ {
 		streamIdsQueue <- i
 	}
-	return &cqlStreamIdMapper{
+	return &internalStreamIdMapper{
 		clusterIds: streamIdsQueue,
 	}
 }
 
-func (csid *cqlStreamIdMapper) GetNewIdFor(streamId int16) (int16, error) {
-	if streamId != -1 {
-		return -1, fmt.Errorf("expected initial stream id of -1 for internal cql frames, got %v", streamId)
-	}
+func (csid *internalStreamIdMapper) GetNewIdFor(streamId int16) (int16, error) {
 	select {
 	case id, ok := <-csid.clusterIds:
 		if ok {
@@ -49,7 +48,7 @@ func (csid *cqlStreamIdMapper) GetNewIdFor(streamId int16) (int16, error) {
 	}
 }
 
-func (csid *cqlStreamIdMapper) ReleaseId(syntheticId int16) (int16, error) {
+func (csid *internalStreamIdMapper) ReleaseId(syntheticId int16) (int16, error) {
 	select {
 	case csid.clusterIds <- syntheticId:
 	default:

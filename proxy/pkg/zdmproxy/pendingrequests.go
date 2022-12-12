@@ -34,15 +34,14 @@ func (p *pendingRequests) getOrCreateRequestContextHolder(streamId int16) *reque
 	}
 }
 
-func (p *pendingRequests) store(reqCtx RequestContext, frame *frame.RawFrame) (int16, error) {
-	streamId := frame.Header.StreamId
-	holder := getOrCreateRequestContextHolder(p.pending, streamId)
+func (p *pendingRequests) store(reqCtx RequestContext, frame *frame.RawFrame) error {
+	holder := getOrCreateRequestContextHolder(p.pending, frame.Header.StreamId)
 	err := holder.SetIfEmpty(reqCtx)
 	if err != nil {
-		return -1, fmt.Errorf("stream id collision (%d)", streamId)
+		return fmt.Errorf("stream id collision (%d)", frame.Header.StreamId)
 	}
 
-	return streamId, nil
+	return nil
 }
 
 func (p *pendingRequests) timeOut(streamId int16, reqCtx RequestContext, req *frame.RawFrame) bool {

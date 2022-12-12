@@ -149,12 +149,19 @@ func NewClusterConnector(
 	lastHeartbeatTime := &atomic.Value{}
 	lastHeartbeatTime.Store(time.Now())
 
-	// Initialize stream id processor to manage the ids sent to the clusters
 	metrics, err := GetStreamIdsMetricsByClusterConnector(proxyMetrics, connectorType)
 	if err != nil {
 		log.Error(err)
 	}
-	frameProcessor := NewStreamIdProcessor(NewStreamIdMapper(conf.ProxyMaxStreamIds), connectorType, metrics)
+
+	// Initialize stream id processor to manage the ids sent to the clusters
+	var mapper StreamIdMapper
+	if asyncConnector {
+		mapper = NewInternalStreamIdMapper(conf.ProxyMaxStreamIds)
+	} else {
+		mapper = NewStreamIdMapper(conf.ProxyMaxStreamIds)
+	}
+	frameProcessor := NewStreamIdProcessor(mapper, connectorType, metrics)
 
 	return &ClusterConnector{
 		conf:                   conf,
@@ -177,8 +184,7 @@ func NewClusterConnector(
 			string(connectorType),
 			true,
 			asyncConnector,
-			writeScheduler,
-			frameProcessor),
+			writeScheduler),
 		responseChan:                responseChan,
 		frameProcessor:              frameProcessor,
 		responseReadBufferSizeBytes: conf.ResponseReadBufferSizeBytes,
@@ -359,7 +365,7 @@ func (cc *ClusterConnector) handleAsyncResponse(response *frame.RawFrame) *frame
 						if err != nil {
 							log.Errorf("Could not send async PREPARE because convert raw frame failed: %v.", err.Error())
 						} else {
-							sent := cc.sendAsyncRequest(
+							sent := cc.sendAsyncRequestToCluster(
 								preparedData.GetPrepareRequestInfo(), prepareRawFrame, false, time.Now(),
 								time.Duration(cc.conf.ProxyRequestTimeoutMs)*time.Millisecond,
 								func() {
@@ -384,7 +390,16 @@ func (cc *ClusterConnector) handleAsyncResponse(response *frame.RawFrame) *frame
 }
 
 func (cc *ClusterConnector) sendRequestToCluster(frame *frame.RawFrame) {
-	cc.writeCoalescer.Enqueue(frame)
+	var err error
+	if cc.frameProcessor != nil {
+		frame, err = cc.frameProcessor.AssignUniqueId(frame)
+	}
+	if err != nil {
+		log.Errorf("couldn't assign unique id to frame %v", frame)
+		handleConnectionError(err, cc.clusterConnContext, cc.cancelFunc, string(cc.connectorType), "writing", cc.connection.RemoteAddr().String())
+	} else {
+		cc.writeCoalescer.Enqueue(frame)
+	}
 }
 
 func (cc *ClusterConnector) validateAsyncStateForRequest(frame *frame.RawFrame) bool {
@@ -409,10 +424,6 @@ func (cc *ClusterConnector) validateAsyncStateForRequest(frame *frame.RawFrame) 
 		log.Errorf("Unknown cluster connector state: %v. This is a bug, please report.", state)
 		return false
 	}
-}
-
-func (cc *ClusterConnector) sendAsyncRequestToCluster(frame *frame.RawFrame) bool {
-	return cc.writeCoalescer.EnqueueAsync(frame)
 }
 
 func (cc *ClusterConnector) SetReady() bool {
@@ -444,7 +455,7 @@ func handleConnectionError(err error, ctx context.Context, cancelFn context.Canc
 	}
 }
 
-func (cc *ClusterConnector) sendAsyncRequest(
+func (cc *ClusterConnector) sendAsyncRequestToCluster(
 	requestInfo RequestInfo,
 	asyncRequest *frame.RawFrame,
 	expectedResponse bool,
@@ -456,12 +467,13 @@ func (cc *ClusterConnector) sendAsyncRequest(
 		return false
 	}
 	asyncReqCtx := NewAsyncRequestContext(requestInfo, asyncRequest.Header.StreamId, expectedResponse, overallRequestStartTime)
-	var newStreamId int16
+
 	var err error = nil
 	asyncRequest, err = cc.frameProcessor.AssignUniqueId(asyncRequest)
 	if err == nil {
-		newStreamId, err = cc.asyncPendingRequests.store(asyncReqCtx, asyncRequest)
+		err = cc.asyncPendingRequests.store(asyncReqCtx, asyncRequest)
 	}
+
 	storedAsync := err == nil
 	if err != nil {
 		log.Warnf("Could not send async request due to an error while storing the request state: %v.", err.Error())
@@ -469,9 +481,8 @@ func (cc *ClusterConnector) sendAsyncRequest(
 		if requestInfo.ShouldBeTrackedInMetrics() {
 			cc.nodeMetrics.AsyncMetrics.InFlightRequests.Add(1)
 		}
-		asyncRequest.Header.StreamId = newStreamId
 		timer := time.AfterFunc(requestTimeout, func() {
-			if cc.asyncPendingRequests.timeOut(newStreamId, asyncReqCtx, asyncRequest) {
+			if cc.asyncPendingRequests.timeOut(asyncRequest.Header.StreamId, asyncReqCtx, asyncRequest) {
 				log.Warnf(
 					"Async Request (%v) timed out after %v ms.",
 					asyncRequest.Header.OpCode.String(), requestTimeout.Milliseconds())
@@ -485,14 +496,14 @@ func (cc *ClusterConnector) sendAsyncRequest(
 	if err == nil {
 		log.Tracef("Forwarding ASYNC request with opcode %v for stream %v to %v",
 			asyncRequest.Header.OpCode, asyncRequest.Header.StreamId, cc.clusterType)
-		if !cc.sendAsyncRequestToCluster(asyncRequest) {
+		if !cc.writeCoalescer.EnqueueAsync(asyncRequest) {
 			err = errors.New("async request was not sent")
 		}
 	}
 
 	if err != nil {
 		if storedAsync {
-			cc.asyncPendingRequests.cancel(newStreamId, asyncReqCtx) // wg.Done will be called by caller
+			cc.asyncPendingRequests.cancel(asyncRequest.Header.StreamId, asyncReqCtx) // wg.Done will be called by caller
 		}
 	}
 

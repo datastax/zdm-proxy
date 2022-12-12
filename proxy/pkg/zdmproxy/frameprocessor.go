@@ -59,7 +59,7 @@ func (sip *streamIdProcessor) AssignUniqueIdFrame(frame *frame.Frame) (*frame.Fr
 		sip.metrics.Add(1)
 	}
 	frame.Header.StreamId = newId
-	return frame, nil
+	return setFrameStreamId(frame, newId), nil
 }
 
 func (sip *streamIdProcessor) ReleaseId(rawFrame *frame.RawFrame) (*frame.RawFrame, error) {
@@ -77,17 +77,36 @@ func (sip *streamIdProcessor) ReleaseIdFrame(frame *frame.Frame) (*frame.Frame, 
 	if frame == nil {
 		return frame, nil
 	}
-	var _, err = sip.mapper.ReleaseId(frame.Header.StreamId)
+	var originalId, err = sip.mapper.ReleaseId(frame.Header.StreamId)
 	if sip.metrics != nil && err != nil {
 		sip.metrics.Subtract(1)
 	}
-	return frame, err
+	return setFrameStreamId(frame, originalId), err
 }
 
 func setRawFrameStreamId(f *frame.RawFrame, id int16) *frame.RawFrame {
+	// If the new id is the same as the original id (most likely an internal request), then just return the original
+	// frame
+	if f.Header.StreamId == id {
+		return f
+	}
 	newHeader := f.Header.Clone()
 	newHeader.StreamId = id
 	return &frame.RawFrame{
+		Header: newHeader,
+		Body:   f.Body,
+	}
+}
+
+func setFrameStreamId(f *frame.Frame, id int16) *frame.Frame {
+	// If the new id is the same as the original id (most likely an internal request), then just return the original
+	// frame
+	if f.Header.StreamId == id {
+		return f
+	}
+	newHeader := f.Header.Clone()
+	newHeader.StreamId = id
+	return &frame.Frame{
 		Header: newHeader,
 		Body:   f.Body,
 	}
