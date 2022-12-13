@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: cdm
+  name: cdm-1
+  namespace: zdmproxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cdm-1
+  template:
+    metadata:
+      labels:
+        app: cdm-1
+    spec:
+      containers:
+      - name:  cdm-1
+        image: datastax/cassandra-data-migrator:latest
+        resources:
+          requests:
+            memory: "2048Mi"
+            cpu: "1000m"
+          limits:
+            memory: "4096Mi"
+            cpu: "2000m"
+        envFrom:
+        - configMapRef:
+            name: zdm-proxy
+        env:
+        - name: ZDM_TARGET_SECURE_CONNECT_BUNDLE_PATH
+          value: /tmp/scb/target.zip
+        - name: ZDM_ORIGIN_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: zdmproxy
+              key: ORIGIN_USERNAME
+        - name: ZDM_ORIGIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: zdmproxy
+              key: ORIGIN_PASSWORD
+        - name: ZDM_TARGET_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: zdmproxy
+              key: TARGET_USERNAME
+        - name: ZDM_TARGET_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: zdmproxy
+              key: TARGET_PASSWORD
+        volumeMounts:
+        - name: scb
+          mountPath: "/tmp/scb"
+          readOnly: true
+      volumes:
+      - name: scb
+        secret:
+          secretName: zdmproxy-scb
+          items:
+          - key: scb-target.zip
+            path: target.zip
