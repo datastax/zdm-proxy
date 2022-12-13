@@ -6,9 +6,11 @@ metadata:
 data:
   ZDM_ORIGIN_USERNAME: cassandra
   ZDM_ORIGIN_PASSWORD: cassandra
+  ZDM_ORIGIN_CONTACT_POINTS: "node1.example.internal,node2.example.internal,node3.example.internal"
   ZDM_ORIGIN_PORT: "9042"
   ZDM_TARGET_USERNAME: cassandra
   ZDM_TARGET_PASSWORD: cassandra
+  ZDM_TARGET_CONTACT_POINTS: "newnode1.example.internal,newnode2.example.internal,newnode3.example.internal"
   ZDM_TARGET_PORT: "9042"
   ZDM_PROXY_LISTEN_PORT: "9042"
   ZDM_PROXY_LISTEN_ADDRESS: "127.0.0.1"
