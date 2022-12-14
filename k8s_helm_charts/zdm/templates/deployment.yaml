@@ -32,7 +32,7 @@ spec:
         app: {{ $zdm_fullname }}-{{ $index }}
     spec:
       containers:
-      - image: datastax/zdm-proxy:2.0.x
+      - image: "{{ $.Values.image.repository }}:{{ $.Values.image.tag | default $.Chart.AppVersion }}"
         name: {{ $zdm_fullname }}-{{ $index }}
         resources:
           requests:
