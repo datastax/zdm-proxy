@@ -149,9 +149,12 @@ func NewClusterConnector(
 	lastHeartbeatTime := &atomic.Value{}
 	lastHeartbeatTime.Store(time.Now())
 
-	metrics, err := GetStreamIdsMetricsByClusterConnector(proxyMetrics, connectorType)
+	streamIdMetrics, err := GetStreamIdsMetricsByClusterConnector(proxyMetrics, connectorType)
 	if err != nil {
 		log.Error(err)
+	}
+	if streamIdMetrics != nil {
+		streamIdMetrics.Add(conf.ProxyMaxStreamIds)
 	}
 
 	// Initialize stream id processor to manage the ids sent to the clusters
@@ -161,7 +164,7 @@ func NewClusterConnector(
 	} else {
 		mapper = NewStreamIdMapper(conf.ProxyMaxStreamIds)
 	}
-	frameProcessor := NewStreamIdProcessor(mapper, connectorType, metrics)
+	frameProcessor := NewStreamIdProcessor(mapper, connectorType, streamIdMetrics)
 
 	return &ClusterConnector{
 		conf:                   conf,

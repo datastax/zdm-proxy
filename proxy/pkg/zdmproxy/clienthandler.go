@@ -2187,11 +2187,11 @@ func GetNodeMetricsByClusterConnector(nodeMetrics *metrics.NodeMetrics, connecto
 func GetStreamIdsMetricsByClusterConnector(proxyMetrics *metrics.ProxyMetrics, connectorType ClusterConnectorType) (metrics.Gauge, error) {
 	switch connectorType {
 	case ClusterConnectorTypeOrigin:
-		return proxyMetrics.StreamIdsOrigin, nil
+		return proxyMetrics.AvailableStreamIdsOrigin, nil
 	case ClusterConnectorTypeTarget:
-		return proxyMetrics.StreamIdsTarget, nil
+		return proxyMetrics.AvailableStreamIdsTarget, nil
 	case ClusterConnectorTypeAsync:
-		return proxyMetrics.StreamIdsAsync, nil
+		return proxyMetrics.AvailableStreamIdsAsync, nil
 	default:
 		return nil, fmt.Errorf("unexpected connectorType %v, unable to retrieve stream ids metrics", connectorType)
 	}

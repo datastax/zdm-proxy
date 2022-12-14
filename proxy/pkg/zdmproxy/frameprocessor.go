@@ -113,7 +113,7 @@ func (sip *streamIdProcessor) getNewStreamId(streamId int16) (int16, error) {
 		return -1, err
 	}
 	if sip.metrics != nil {
-		sip.metrics.Add(1)
+		sip.metrics.Subtract(1)
 	}
 	return newId, err
 }
@@ -123,7 +123,7 @@ func (sip *streamIdProcessor) getNewStreamId(streamId int16) (int16, error) {
 func (sip *streamIdProcessor) releaseStreamId(syntheticId int16) (int16, error) {
 	var originalId, err = sip.mapper.ReleaseId(syntheticId)
 	if sip.metrics != nil && err != nil {
-		sip.metrics.Subtract(1)
+		sip.metrics.Add(1)
 	}
 	return originalId, err
 }

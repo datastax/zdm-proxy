@@ -759,15 +759,15 @@ func (p *ZdmProxy) CreateProxyMetrics(metricFactory metrics.MetricFactory) (*met
 		return nil, err
 	}
 
-	streamIdsOrigin, err := metricFactory.GetOrCreateGauge(metrics.StreamIdsOrigin)
+	streamIdsOrigin, err := metricFactory.GetOrCreateGauge(metrics.AvailableStreamIdsOrigin)
 	if err != nil {
 		return nil, err
 	}
-	streamIdsTarget, err := metricFactory.GetOrCreateGauge(metrics.StreamIdsTarget)
+	streamIdsTarget, err := metricFactory.GetOrCreateGauge(metrics.AvailableStreamIdsTarget)
 	if err != nil {
 		return nil, err
 	}
-	streamIdsAsync, err := metricFactory.GetOrCreateGauge(metrics.StreamIdsAsync)
+	streamIdsAsync, err := metricFactory.GetOrCreateGauge(metrics.AvailableStreamIdsAsync)
 	if err != nil {
 		return nil, err
 	}
@@ -787,9 +787,9 @@ func (p *ZdmProxy) CreateProxyMetrics(metricFactory metrics.MetricFactory) (*met
 		InFlightReadsTarget:      inFlightReadsTarget,
 		InFlightWrites:           inFlightWrites,
 		OpenClientConnections:    openClientConnections,
-		StreamIdsOrigin:          streamIdsOrigin,
-		StreamIdsTarget:          streamIdsTarget,
-		StreamIdsAsync:           streamIdsAsync,
+		AvailableStreamIdsOrigin: streamIdsOrigin,
+		AvailableStreamIdsTarget: streamIdsTarget,
+		AvailableStreamIdsAsync:  streamIdsAsync,
 	}
 
 	return proxyMetrics, nil

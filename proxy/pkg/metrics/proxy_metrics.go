@@ -128,7 +128,7 @@ var (
 		"Number of client connections currently open",
 	)
 
-	StreamIdsOrigin = NewMetricWithLabels(
+	AvailableStreamIdsOrigin = NewMetricWithLabels(
 		streamIdsName,
 		streamIdsDescription,
 		map[string]string{
@@ -136,7 +136,7 @@ var (
 		},
 	)
 
-	StreamIdsTarget = NewMetricWithLabels(
+	AvailableStreamIdsTarget = NewMetricWithLabels(
 		streamIdsName,
 		streamIdsDescription,
 		map[string]string{
@@ -144,7 +144,7 @@ var (
 		},
 	)
 
-	StreamIdsAsync = NewMetricWithLabels(
+	AvailableStreamIdsAsync = NewMetricWithLabels(
 		streamIdsName,
 		streamIdsDescription,
 		map[string]string{
@@ -173,7 +173,7 @@ type ProxyMetrics struct {
 
 	OpenClientConnections GaugeFunc
 
-	StreamIdsOrigin Gauge
-	StreamIdsTarget Gauge
-	StreamIdsAsync  Gauge
+	AvailableStreamIdsOrigin Gauge
+	AvailableStreamIdsTarget Gauge
+	AvailableStreamIdsAsync  Gauge
 }
