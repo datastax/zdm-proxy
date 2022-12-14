@@ -1,14 +1,14 @@
-# calculate a variable that contains all proxy service addresses
-{{ $service_addresses := "" -}}
-{{- range $index := until (.Values.proxy.count | int) -}}
-    {{- $service_addresses = printf "%s,$(ZDM_PROXY_%s_SERVICE_HOST)" $service_addresses ($index | toString) -}}
-{{- end -}}
-{{- $service_addresses = $service_addresses | trimPrefix "," -}}
-
 # pull in these templates outside of range loop
 {{ $zdm_fullname := include "zdm.fullname" . -}}
 {{- $zdm_labels := include "zdm.labels" . -}}
 {{- $zdm_selectorLabels := include "zdm.selectorLabels" . -}}
+
+# calculate a variable that contains all proxy service addresses
+{{ $service_addresses := "" -}}
+{{- range $index := until (.Values.proxy.count | int) -}}
+    {{- $service_addresses = printf "%s,$(%s_%s_SERVICE_HOST)" $service_addresses ($zdm_fullname | upper | replace "-" "_") ($index | toString) -}}
+{{- end -}}
+{{- $service_addresses = $service_addresses | trimPrefix "," -}}
 
 {{- range $index := until (.Values.proxy.count | int) -}}
 apiVersion: apps/v1
