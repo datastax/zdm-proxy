@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: cdm
+  name: cdm-1
+  namespace: {{ .Values.namespace }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cdm-1
+  template:
+    metadata:
+      labels:
+        app: cdm-1
+    spec:
+      containers:
+      - name:  cdm-1
+        image: {{ .Values.cdm.image.repository }}:{{ .Values.cdm.image.tag }}
+        resources:
+          requests:
+            memory: {{ .Values.cdm.resources.requests.memory }}
+            cpu: {{ .Values.cdm.resources.requests.cpu }}
+          limits:
+            memory: {{ .Values.cdm.resources.limits.memory }}
+            cpu: {{ .Values.cdm.resources.limits.cpu }}
+        envFrom:
+        - configMapRef:
+            name: {{ include "zdm.fullname" . }}
+        env:
+        - name: ZDM_TARGET_SECURE_CONNECT_BUNDLE_PATH
+          value: /tmp/scb/target.zip
+        - name: ZDM_ORIGIN_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "zdm.fullname" . }}
+              key: ORIGIN_USERNAME
+        - name: ZDM_ORIGIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "zdm.fullname" . }}
+              key: ORIGIN_PASSWORD
+        - name: ZDM_TARGET_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "zdm.fullname" . }}
+              key: TARGET_USERNAME
+        - name: ZDM_TARGET_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "zdm.fullname" . }}
+              key: TARGET_PASSWORD
+        volumeMounts:
+        - name: scb
+          mountPath: "/tmp/scb"
+          readOnly: true
+      volumes:
+      - name: scb
+        secret:
+          secretName: zdmproxy-scb
+          items:
+          - key: secure-connect-target.zip
+            path: target.zip

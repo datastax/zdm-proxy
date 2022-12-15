@@ -32,7 +32,7 @@ spec:
         app: {{ $zdm_fullname }}-{{ $index }}
     spec:
       containers:
-      - image: "{{ $.Values.image.repository }}:{{ $.Values.image.tag | default $.Chart.AppVersion }}"
+      - image: "{{ $.Values.proxy.image.repository }}:{{ $.Values.proxy.image.tag | default $.Chart.AppVersion }}"
         name: {{ $zdm_fullname }}-{{ $index }}
         resources:
           requests:

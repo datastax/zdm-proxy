@@ -18,14 +18,24 @@ proxy:
     requests:
       cpu: 1000m
       memory: 512Mi
+  image:
+    repository: datastax/zdm-proxy
+    pullPolicy: IfNotPresent
+    # Overrides the image tag whose default is the chart appVersion.
+    tag: ""
 
-image:
-  repository: datastax/zdm-proxy
-  pullPolicy: IfNotPresent
-  # Overrides the image tag whose default is the chart appVersion.
-  tag: ""
+cdm:
+  resources:
+    limits:
+      cpu: 2000m
+      memory: 4096Mi
+    requests:
+      cpu: 1000m
+      memory: 2048Mi
+  image:
+    repository: datastax/cassandra-data-migrator
+    tag: 2.10.2
 
-imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
 
