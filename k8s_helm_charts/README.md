@@ -11,6 +11,12 @@ Usage:
 
     ```helm -n zdmproxy install --set origin_username="$prod_astra_user" --set origin_password="$prod_astra_escaped_password" --set target_username="$prod_astra_user" --set target_password="$prod_astra_escaped_password" zdm-proxy ./zdm```
 
+   The default resource allocations _(memory and cpu) are designed for production environment, if you see pods pending due to not enough resources, try to use the following commands instead:
+
+    ```helm -n zdmproxy uninstall zdm-proxy```
+
+    ```helm -n zdmproxy install --set origin_username="$prod_astra_user" --set origin_password="$prod_astra_escaped_password" --set target_username="$prod_astra_user" --set target_password="$prod_astra_escaped_password" --set proxy.resources.requests.cpu=1000m --set proxy.resources.requests.memory=2000Mi --set proxy.resources.limits.cpu=1000m --set proxy.resources.limits.memory=2000Mi --set cdm.resources.requests.cpu=1000m --set cdm.resources.requests.memory=2000Mi --set cdm.resources.limits.cpu=1000m --set cdm.resources.limits.memory=2000Mi zdm-proxy ./zdm```
+
 4. Verify that all components are up and running.
 
     ```kubectl -n zdmproxy get svc,cm,secret,deploy,po -o wide --show-labels```
