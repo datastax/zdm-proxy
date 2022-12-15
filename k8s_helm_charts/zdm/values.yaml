@@ -13,11 +13,11 @@ proxy:
   count: 3
   resources:
     limits:
-      cpu: 2000m
-      memory: 512Mi
+      cpu: 4000m
+      memory: 8192Mi
     requests:
-      cpu: 1000m
-      memory: 512Mi
+      cpu: 4000m
+      memory: 8192Mi
   image:
     repository: datastax/zdm-proxy
     pullPolicy: IfNotPresent
@@ -27,14 +27,14 @@ proxy:
 cdm:
   resources:
     limits:
-      cpu: 2000m
-      memory: 4096Mi
+      cpu: 16000m
+      memory: 32768Mi
     requests:
-      cpu: 1000m
-      memory: 2048Mi
+      cpu: 16000m
+      memory: 32768Mi
   image:
     repository: datastax/cassandra-data-migrator
-    tag: 2.10.2
+    tag: 2.10.3
 
 nameOverride: ""
 fullnameOverride: ""
