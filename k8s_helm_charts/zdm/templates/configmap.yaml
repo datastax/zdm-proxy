@@ -4,8 +4,8 @@ metadata:
   name: {{ include "zdm.fullname" . }}
   namespace: {{ .Values.namespace }}
 data:
-  ZDM_PRIMARY_CLUSTER: {{ .Values.proxy.primaryCluster }}
-  ZDM_READ_MODE: {{ .Values.proxy.readMode }}
-  ZDM_LOG_LEVEL: {{ .Values.proxy.logLevel }}
-  ZDM_PROXY_MAX_CLIENT_CONNECTIONS: {{ .Values.proxy.maxClientConnections }}
-  ZDM_METRICS_ENABLED: {{ .Values.proxy.metricsEnabled }}
+  ZDM_PRIMARY_CLUSTER: {{ .Values.proxy.primaryCluster | quote }}
+  ZDM_READ_MODE: {{ .Values.proxy.readMode | quote }}
+  ZDM_LOG_LEVEL: {{ .Values.proxy.logLevel | quote }}
+  ZDM_PROXY_MAX_CLIENT_CONNECTIONS: {{ .Values.proxy.maxClientConnections | quote }}
+  ZDM_METRICS_ENABLED: {{ .Values.proxy.metricsEnabled | quote }}
