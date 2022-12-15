@@ -16,10 +16,10 @@ proxy:
   resources:
     limits:
       cpu: 4000m
-      memory: 8192Mi
+      memory: 2048Mi
     requests:
       cpu: 4000m
-      memory: 8192Mi
+      memory: 2048Mi
   image:
     repository: datastax/zdm-proxy
     pullPolicy: IfNotPresent
