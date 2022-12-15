@@ -183,7 +183,7 @@ func NewClientHandler(
 	handshakeDone := &atomic.Value{}
 
 	originConnector, err := NewClusterConnector(
-		originCassandraConnInfo, conf, psCache, nodeMetrics, metricHandler.GetProxyMetrics(), localClientHandlerWg, clientHandlerRequestWg,
+		originCassandraConnInfo, conf, psCache, nodeMetrics, localClientHandlerWg, clientHandlerRequestWg,
 		clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler, requestsDoneCtx,
 		false, nil, handshakeDone)
 	if err != nil {
@@ -192,7 +192,7 @@ func NewClientHandler(
 	}
 
 	targetConnector, err := NewClusterConnector(
-		targetCassandraConnInfo, conf, psCache, nodeMetrics, metricHandler.GetProxyMetrics(), localClientHandlerWg, clientHandlerRequestWg,
+		targetCassandraConnInfo, conf, psCache, nodeMetrics, localClientHandlerWg, clientHandlerRequestWg,
 		clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler, requestsDoneCtx,
 		false, nil, handshakeDone)
 	if err != nil {
@@ -210,7 +210,7 @@ func NewClientHandler(
 			asyncConnInfo = targetCassandraConnInfo
 		}
 		asyncConnector, err = NewClusterConnector(
-			asyncConnInfo, conf, psCache, nodeMetrics, metricHandler.GetProxyMetrics(), localClientHandlerWg, clientHandlerRequestWg,
+			asyncConnInfo, conf, psCache, nodeMetrics, localClientHandlerWg, clientHandlerRequestWg,
 			clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler, requestsDoneCtx,
 			true, asyncPendingRequests, handshakeDone)
 		if err != nil {
@@ -2181,18 +2181,5 @@ func GetNodeMetricsByClusterConnector(nodeMetrics *metrics.NodeMetrics, connecto
 		return nodeMetrics.AsyncMetrics, nil
 	default:
 		return nil, fmt.Errorf("unexpected connectorType %v, unable to retrieve node metrics", connectorType)
-	}
-}
-
-func GetStreamIdsMetricsByClusterConnector(proxyMetrics *metrics.ProxyMetrics, connectorType ClusterConnectorType) (metrics.Gauge, error) {
-	switch connectorType {
-	case ClusterConnectorTypeOrigin:
-		return proxyMetrics.AvailableStreamIdsOrigin, nil
-	case ClusterConnectorTypeTarget:
-		return proxyMetrics.AvailableStreamIdsTarget, nil
-	case ClusterConnectorTypeAsync:
-		return proxyMetrics.AvailableStreamIdsAsync, nil
-	default:
-		return nil, fmt.Errorf("unexpected connectorType %v, unable to retrieve stream ids metrics", connectorType)
 	}
 }

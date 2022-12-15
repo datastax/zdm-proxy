@@ -759,19 +759,6 @@ func (p *ZdmProxy) CreateProxyMetrics(metricFactory metrics.MetricFactory) (*met
 		return nil, err
 	}
 
-	streamIdsOrigin, err := metricFactory.GetOrCreateGauge(metrics.AvailableStreamIdsOrigin)
-	if err != nil {
-		return nil, err
-	}
-	streamIdsTarget, err := metricFactory.GetOrCreateGauge(metrics.AvailableStreamIdsTarget)
-	if err != nil {
-		return nil, err
-	}
-	streamIdsAsync, err := metricFactory.GetOrCreateGauge(metrics.AvailableStreamIdsAsync)
-	if err != nil {
-		return nil, err
-	}
-
 	proxyMetrics := &metrics.ProxyMetrics{
 		FailedReadsOrigin:        failedReadsOrigin,
 		FailedReadsTarget:        failedReadsTarget,
@@ -787,9 +774,6 @@ func (p *ZdmProxy) CreateProxyMetrics(metricFactory metrics.MetricFactory) (*met
 		InFlightReadsTarget:      inFlightReadsTarget,
 		InFlightWrites:           inFlightWrites,
 		OpenClientConnections:    openClientConnections,
-		AvailableStreamIdsOrigin: streamIdsOrigin,
-		AvailableStreamIdsTarget: streamIdsTarget,
-		AvailableStreamIdsAsync:  streamIdsAsync,
 	}
 
 	return proxyMetrics, nil
@@ -858,6 +842,11 @@ func (p *ZdmProxy) CreateOriginNodeMetrics(
 		return nil, err
 	}
 
+	originUsedStreamIds, err := metrics.CreateGaugeNodeMetric(metricFactory, originNodeDescription, metrics.OriginUsedStreamIds)
+	if err != nil {
+		return nil, err
+	}
+
 	return &metrics.NodeMetricsInstance{
 		ClientTimeouts:    originClientTimeouts,
 		ReadTimeouts:      originReadTimeouts,
@@ -871,6 +860,7 @@ func (p *ZdmProxy) CreateOriginNodeMetrics(
 		RequestDuration:   originRequestDuration,
 		OpenConnections:   openOriginConnections,
 		InFlightRequests:  inflightRequests,
+		UsedStreamIds:     originUsedStreamIds,
 	}, nil
 }
 
@@ -936,6 +926,11 @@ func (p *ZdmProxy) CreateAsyncNodeMetrics(
 		return nil, err
 	}
 
+	asyncUsedStreamIds, err := metrics.CreateGaugeNodeMetric(metricFactory, asyncNodeDescription, metrics.AsyncUsedStreamIds)
+	if err != nil {
+		return nil, err
+	}
+
 	return &metrics.NodeMetricsInstance{
 		ClientTimeouts:    asyncClientTimeouts,
 		ReadTimeouts:      asyncReadTimeouts,
@@ -949,6 +944,7 @@ func (p *ZdmProxy) CreateAsyncNodeMetrics(
 		RequestDuration:   asyncRequestDuration,
 		OpenConnections:   openAsyncConnections,
 		InFlightRequests:  inflightRequestsAsync,
+		UsedStreamIds:     asyncUsedStreamIds,
 	}, nil
 }
 
@@ -1015,6 +1011,11 @@ func (p *ZdmProxy) CreateTargetNodeMetrics(
 		return nil, err
 	}
 
+	targetUsedStreamIds, err := metrics.CreateGaugeNodeMetric(metricFactory, targetNodeDescription, metrics.TargetUsedStreamIds)
+	if err != nil {
+		return nil, err
+	}
+
 	return &metrics.NodeMetricsInstance{
 		ClientTimeouts:    targetClientTimeouts,
 		ReadTimeouts:      targetReadTimeouts,
@@ -1028,5 +1029,6 @@ func (p *ZdmProxy) CreateTargetNodeMetrics(
 		RequestDuration:   targetRequestDuration,
 		OpenConnections:   openTargetConnections,
 		InFlightRequests:  inflightRequests,
+		UsedStreamIds:     targetUsedStreamIds,
 	}, nil
 }

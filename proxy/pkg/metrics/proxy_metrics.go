@@ -4,9 +4,6 @@ const (
 	typeReadsOrigin = "reads_origin"
 	typeReadsTarget = "reads_target"
 	typeWrites      = "writes"
-	typeIdsOrigin   = "origin"
-	typeIdsTarget   = "target"
-	typeIdsAsync    = "async"
 
 	failedRequestsClusterOrigin = "origin"
 	failedRequestsClusterTarget = "target"
@@ -27,10 +24,6 @@ const (
 	inFlightRequestsName        = "proxy_inflight_requests_total"
 	inFlightRequestsTypeLabel   = "type"
 	inFlightRequestsDescription = "Number of requests currently in flight in the proxy"
-
-	streamIdsName        = "proxy_stream_ids"
-	streamIdsDescription = "Number of stream ids for the connector"
-	streamIdsTypeLabel   = "connector"
 )
 
 var (
@@ -127,30 +120,6 @@ var (
 		"client_connections_total",
 		"Number of client connections currently open",
 	)
-
-	AvailableStreamIdsOrigin = NewMetricWithLabels(
-		streamIdsName,
-		streamIdsDescription,
-		map[string]string{
-			streamIdsTypeLabel: typeIdsOrigin,
-		},
-	)
-
-	AvailableStreamIdsTarget = NewMetricWithLabels(
-		streamIdsName,
-		streamIdsDescription,
-		map[string]string{
-			streamIdsTypeLabel: typeIdsTarget,
-		},
-	)
-
-	AvailableStreamIdsAsync = NewMetricWithLabels(
-		streamIdsName,
-		streamIdsDescription,
-		map[string]string{
-			streamIdsTypeLabel: typeIdsAsync,
-		},
-	)
 )
 
 type ProxyMetrics struct {
@@ -172,8 +141,4 @@ type ProxyMetrics struct {
 	InFlightWrites      Gauge
 
 	OpenClientConnections GaugeFunc
-
-	AvailableStreamIdsOrigin Gauge
-	AvailableStreamIdsTarget Gauge
-	AvailableStreamIdsAsync  Gauge
 }

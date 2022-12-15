@@ -41,6 +41,9 @@ var nodeMetrics = []metrics.Metric{
 
 	metrics.OpenOriginConnections,
 	metrics.OpenTargetConnections,
+
+	metrics.OriginUsedStreamIds,
+	metrics.TargetUsedStreamIds,
 }
 
 var proxyMetrics = []metrics.Metric{
@@ -62,10 +65,6 @@ var proxyMetrics = []metrics.Metric{
 	metrics.InFlightWrites,
 
 	metrics.OpenClientConnections,
-
-	metrics.AvailableStreamIdsOrigin,
-	metrics.AvailableStreamIdsTarget,
-	metrics.AvailableStreamIdsAsync,
 }
 
 var allMetrics = append(proxyMetrics, nodeMetrics...)
@@ -424,9 +423,13 @@ func checkMetrics(
 			require.NotContains(t, lines, fmt.Sprintf("%v", getPrometheusNameWithSuffix(prefix, metrics.OriginRequestDuration, "count")))
 		}
 
-		requireEventuallyContainsLine(t, lines, fmt.Sprintf("%v %v", getPrometheusName(prefix, metrics.AvailableStreamIdsOrigin), streamIdsOrigin))
-		requireEventuallyContainsLine(t, lines, fmt.Sprintf("%v %v", getPrometheusName(prefix, metrics.AvailableStreamIdsTarget), streamIdsTarget))
-		requireEventuallyContainsLine(t, lines, fmt.Sprintf("%v %v", getPrometheusName(prefix, metrics.AvailableStreamIdsAsync), streamIdsAsync))
+		if (successOrigin + successBoth) == 0 {
+			require.Contains(t, lines, fmt.Sprintf("%v{node=\"%v\"} %v", getPrometheusName(prefix, metrics.OriginUsedStreamIds), originHost, streamIdsOrigin))
+			require.Contains(t, lines, fmt.Sprintf("%v{node=\"%v\"} %v", getPrometheusName(prefix, metrics.TargetUsedStreamIds), targetHost, streamIdsTarget))
+		}
+		if asyncEnabled {
+			requireEventuallyContainsLine(t, lines, fmt.Sprintf("%v{node=\"%v\"} %v", getPrometheusName(prefix, metrics.AsyncUsedStreamIds), asyncHost, streamIdsAsync))
+		}
 	}
 }
 
