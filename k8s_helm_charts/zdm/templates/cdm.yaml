@@ -31,26 +31,31 @@ spec:
         env:
         - name: ZDM_TARGET_SECURE_CONNECT_BUNDLE_PATH
           value: /tmp/scb/target.zip
+        - name: ZDM_ORIGIN_CONTACT_POINTS
+          valueFrom:
+            secretKeyRef:
+              name: zdmproxy
+              key: origin_contact_points
         - name: ZDM_ORIGIN_USERNAME
           valueFrom:
             secretKeyRef:
-              name: {{ include "zdm.fullname" . }}
-              key: ORIGIN_USERNAME
+              name: zdmproxy
+              key: origin_username
         - name: ZDM_ORIGIN_PASSWORD
           valueFrom:
             secretKeyRef:
-              name: {{ include "zdm.fullname" . }}
-              key: ORIGIN_PASSWORD
+              name: zdmproxy
+              key: origin_password
         - name: ZDM_TARGET_USERNAME
           valueFrom:
             secretKeyRef:
-              name: {{ include "zdm.fullname" . }}
-              key: TARGET_USERNAME
+              name: zdmproxy
+              key: target_username
         - name: ZDM_TARGET_PASSWORD
           valueFrom:
             secretKeyRef:
-              name: {{ include "zdm.fullname" . }}
-              key: TARGET_PASSWORD
+              name: zdmproxy
+              key: target_password
         volumeMounts:
         - name: scb
           mountPath: "/tmp/scb"

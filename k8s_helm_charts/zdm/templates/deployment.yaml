@@ -61,30 +61,33 @@ spec:
           value: {{ $index | quote }}
         - name: ZDM_PROXY_TOPOLOGY_ADDRESSES
           value: {{ $service_addresses }}
-        - name: ZDM_ORIGIN_SECURE_CONNECT_BUNDLE_PATH
-          value: /tmp/scb/origin.zip
         - name: ZDM_TARGET_SECURE_CONNECT_BUNDLE_PATH
           value: /tmp/scb/target.zip
+        - name: ZDM_ORIGIN_CONTACT_POINTS
+          valueFrom:
+            secretKeyRef:
+              name: zdmproxy
+              key: origin_contact_points
         - name: ZDM_ORIGIN_USERNAME
           valueFrom:
             secretKeyRef:
-              name: {{ $zdm_fullname }}
-              key: ORIGIN_USERNAME
+              name: zdmproxy
+              key: origin_username
         - name: ZDM_ORIGIN_PASSWORD
           valueFrom:
             secretKeyRef:
-              name: {{ $zdm_fullname }}
-              key: ORIGIN_PASSWORD
+              name: zdmproxy
+              key: origin_password
         - name: ZDM_TARGET_USERNAME
           valueFrom:
             secretKeyRef:
-              name: {{ $zdm_fullname }} 
-              key: TARGET_USERNAME
+              name: zdmproxy
+              key: target_username
         - name: ZDM_TARGET_PASSWORD
           valueFrom:
             secretKeyRef:
-              name: {{ $zdm_fullname }} 
-              key: TARGET_PASSWORD
+              name: zdmproxy
+              key: target_password
         ports:
         - containerPort: 9042
         volumeMounts:
@@ -96,8 +99,6 @@ spec:
         secret:
           secretName: zdmproxy-scb
           items:
-          - key: secure-connect-origin.zip
-            path: origin.zip
           - key: secure-connect-target.zip
             path: target.zip
 ---
