@@ -3,20 +3,20 @@ kind: Deployment
 metadata:
   labels:
     app: cdm
-  name: cdm-1
+  name: cdm
   namespace: {{ .Values.namespace }}
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: cdm-1
+      app: cdm
   template:
     metadata:
       labels:
-        app: cdm-1
+        app: cdm
     spec:
       containers:
-      - name:  cdm-1
+      - name:  cdm
         image: {{ .Values.cdm.image.repository }}:{{ .Values.cdm.image.tag }}
         resources:
           requests:
