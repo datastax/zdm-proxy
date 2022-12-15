@@ -4,11 +4,6 @@
 
 namespace: zdmproxy
 
-origin_username:
-origin_password:
-target_username:
-target_password:
-
 proxy:
   count: 3
   resources:

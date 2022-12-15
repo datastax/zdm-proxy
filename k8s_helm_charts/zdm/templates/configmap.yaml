@@ -4,7 +4,6 @@ metadata:
   name: {{ include "zdm.fullname" . }}
   namespace: {{ .Values.namespace }}
 data:
-  ZDM_ORIGIN_PORT: "9042"
   ZDM_TARGET_PORT: "9042"
   ZDM_PRIMARY_CLUSTER: ORIGIN
   ZDM_READ_MODE: PRIMARY_ONLY

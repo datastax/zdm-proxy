@@ -7,9 +7,9 @@ Usage:
 
     ```kubectl -n zdmproxy create secret generic zdmproxy-scb --from-file=/tmp/secure-connect-target.zip```
 
-   Import Origin contact points, Origin username and password, Target/Astra client ID and client Secret into another k8s secret called zdmproxy.
+   Import Origin contact points, Origin port, Origin username and password, Target/Astra client ID and client Secret into another k8s secret called zdmproxy.
 
-    ```kubectl -n zdmproxy create secret generic zdmproxy --from-literal=origin_contact_points="$origin_contact_points" --from-literal=origin_username="$origin_username" --from-literal=origin_password="$origin_password" --from-literal=target_username="$prod_astra_user" --from-literal=target_password="$prod_astra_password"```
+    ```kubectl -n zdmproxy create secret generic zdmproxy --from-literal=origin_contact_points="$origin_contact_points" --from-literal=origin_port="$origin_port" --from-literal=origin_username="$origin_username" --from-literal=origin_password="$origin_password" --from-literal=target_username="$prod_astra_user" --from-literal=target_password="$prod_astra_password"```
 
 3. Run helm install to deploy the helm charts.
 
