@@ -36,6 +36,11 @@ spec:
             secretKeyRef:
               name: zdmproxy
               key: origin_contact_points
+        - name: ZDM_ORIGIN_PORT
+          valueFrom:
+            secretKeyRef:
+              name: zdmproxy
+              key: origin_port
         - name: ZDM_ORIGIN_USERNAME
           valueFrom:
             secretKeyRef:
