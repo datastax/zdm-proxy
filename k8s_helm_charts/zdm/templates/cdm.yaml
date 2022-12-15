@@ -65,6 +65,9 @@ spec:
         - name: scb
           mountPath: "/tmp/scb"
           readOnly: true
+        - name: tls
+          mountPath: "/tmp/tls"
+          readOnly: true
       volumes:
       - name: scb
         secret:
@@ -72,3 +75,13 @@ spec:
           items:
           - key: secure-connect-target.zip
             path: target.zip
+      - name: tls
+        secret:
+          secretName: zdmproxy-tls
+          items:
+          - key: root_cert
+            path: root.crt
+          - key: client_cert
+            path: client.crt
+          - key: client_key
+            path: client.key

@@ -45,8 +45,32 @@ Usage:
    rm ./my.env
    ```
 
+4. We need to create a TLS secret `zdmproxy-tls`, *even if we do not use TLS*:
 
-4. Run helm install to deploy the helm charts; the default `cpu` and `memory` resource allocations are designed for production environment:
+   1. Ensure files exist with the right names:
+
+      1. `root.crt`: trusted public certificate offered by the server
+      2. `client.crt`: public certificate offered by the client
+      3. `client.key`: private key for the client
+
+       If not using TLS, `touch` these files, so that they are empty, for example:
+       ```
+       touch /tmp/root.crt
+       touch /tmp/client.crt
+       touch /tmp/client.key
+       ```
+
+   2. Create the secret `zdmproxy-tls`:
+
+    ```
+    kubectl -n zdmproxy create secret generic zdmproxy-tls \
+      --from-file=root_cert="/tmp/root.crt" \
+      --from-file=client_cert="/tmp/client.crt" \
+      --from-file=client_key="/tmp/client.key"
+    ```
+
+
+5. Run helm install to deploy the helm charts; the default `cpu` and `memory` resource allocations are designed for production environment:
 
     ```
     helm -n zdmproxy install zdm-proxy ./zdm
@@ -71,7 +95,7 @@ Usage:
       zdm-proxy ./zdm
     ```
 
-5. Verify that all components are up and running.
+6. Verify that all components are up and running.
 
     ```
     kubectl -n zdmproxy get svc,cm,secret,deploy,po -o wide --show-labels
@@ -84,7 +108,7 @@ Usage:
     time="2022-12-14T21:19:57Z" level=info msg="Proxy started. Waiting for SIGINT/SIGTERM to shutdown."
     ```
 
-6. When you're done, delete the namespace to remove all objects:
+7. When you're done, delete the namespace to remove all objects:
 
     ```
     kubectl delete namespace zdmproxy
