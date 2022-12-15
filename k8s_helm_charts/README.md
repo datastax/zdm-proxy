@@ -15,6 +15,13 @@ Usage:
 
     ```kubectl -n zdmproxy get svc,cm,secret,deploy,po -o wide --show-labels```
 
+   You can also run ```kubectl -n zdmproxy logs pod/zdm-proxy-0-xxxxxxx``` to see if there are the following entries in the log, which means everything is working as expected:
+
+    ```
+    time="2022-12-14T21:19:57Z" level=info msg="Proxy connected and ready to accept queries on 172.25.132.116:9042"
+    time="2022-12-14T21:19:57Z" level=info msg="Proxy started. Waiting for SIGINT/SIGTERM to shutdown."
+    ```
+
 5. When you're done, run helm uninstall to remove all objects.
 
     ```helm uninstall zdm-proxy```
