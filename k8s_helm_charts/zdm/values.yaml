@@ -6,6 +6,13 @@ namespace: zdmproxy
 
 proxy:
   count: 3
+  logLevel: "INFO"
+  # two options: PRIMARY_ONLY and ASYNC_READS_ON_SECONDARY
+  readMode: "PRIMARY_ONLY"
+  # two options: ORIGIN and TARGET
+  primaryCluster: "ORIGIN"
+  maxClientConnections: "1000"
+  metricsEnabled: "true"
   resources:
     limits:
       cpu: 4000m

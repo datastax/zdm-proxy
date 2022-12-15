@@ -4,9 +4,8 @@ metadata:
   name: {{ include "zdm.fullname" . }}
   namespace: {{ .Values.namespace }}
 data:
-  ZDM_TARGET_PORT: "9042"
-  ZDM_PRIMARY_CLUSTER: ORIGIN
-  ZDM_READ_MODE: PRIMARY_ONLY
-  ZDM_LOG_LEVEL: INFO
-  ZDM_PROXY_MAX_CLIENT_CONNECTIONS: "1000"
-  ZDM_METRICS_ENABLED: "true"
+  ZDM_PRIMARY_CLUSTER: {{ .Values.proxy.primaryCluster }}
+  ZDM_READ_MODE: {{ .Values.proxy.readMode }}
+  ZDM_LOG_LEVEL: {{ .Values.proxy.logLevel }}
+  ZDM_PROXY_MAX_CLIENT_CONNECTIONS: {{ .Values.proxy.maxClientConnections }}
+  ZDM_METRICS_ENABLED: {{ .Values.proxy.metricsEnabled }}
