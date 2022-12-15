@@ -3,13 +3,13 @@ Usage:
 
     ```kubectl create ns zdmproxy```
 
-2. Import Secure Connect Bundle into a k8s secret called zdmproxy-scb.
+2. Import Secure Connect Bundle (make sure the filename is exactly secure-connect-target.zip) into a k8s secret called zdmproxy-scb.
 
     ```kubectl -n zdmproxy create secret generic zdmproxy-scb --from-file=/tmp/secure-connect-target.zip```
 
    Import Origin contact points, Origin port, Origin username and password, Target/Astra client ID and client Secret into another k8s secret called zdmproxy.
 
-    ```kubectl -n zdmproxy create secret generic zdmproxy --from-literal=origin_contact_points="$origin_contact_points" --from-literal=origin_port="$origin_port" --from-literal=origin_username="$origin_username" --from-literal=origin_password="$origin_password" --from-literal=target_username="$prod_astra_user" --from-literal=target_password="$prod_astra_password"```
+    ```kubectl -n zdmproxy create secret generic zdmproxy --from-literal=origin_contact_points="$origin_contact_points" --from-literal=origin_port="$origin_port" --from-literal=origin_username="$origin_username" --from-literal=origin_password="$origin_password" --from-literal=target_username="$target_username" --from-literal=target_password="$target_password"```
 
 3. Run helm install to deploy the helm charts.
 
@@ -34,4 +34,4 @@ Usage:
 
 5. When you're done, run helm uninstall to remove all objects.
 
-    ```helm uninstall zdm-proxy```
+    ```helm -n zdmproxy uninstall zdm-proxy```
