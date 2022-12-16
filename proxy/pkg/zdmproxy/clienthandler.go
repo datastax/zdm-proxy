@@ -169,7 +169,7 @@ func NewClientHandler(
 
 	// Initialize stream id processors to manage the ids sent to the clusters
 	originFrameProcessor := newFrameProcessor(conf, nodeMetrics, ClusterConnectorTypeOrigin)
-	targetFrameProcessor := newFrameProcessor(conf, nodeMetrics, ClusterConnectorTypeOrigin)
+	targetFrameProcessor := newFrameProcessor(conf, nodeMetrics, ClusterConnectorTypeTarget)
 	asyncFrameProcessor := newFrameProcessor(conf, nodeMetrics, ClusterConnectorTypeAsync)
 
 	closeFrameProcessors := func() {
