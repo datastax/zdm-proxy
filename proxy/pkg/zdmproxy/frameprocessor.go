@@ -2,7 +2,6 @@ package zdmproxy
 
 import (
 	"github.com/datastax/go-cassandra-native-protocol/frame"
-	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
 )
 
 // FrameProcessor manages the mapping of incoming stream ids to the actual ids that are sent over to the clusters.
@@ -21,16 +20,12 @@ type FrameProcessor interface {
 // This way we guarantee that, through the same connection, we have non-overlapping ids with requests coming
 // from the client and requests generated internally by the proxy, such as the heartbeat requests.
 type streamIdProcessor struct {
-	mapper   StreamIdMapper
-	connType ClusterConnectorType
-	metrics  metrics.Gauge
+	mapper StreamIdMapper
 }
 
-func NewStreamIdProcessor(mapper StreamIdMapper, connType ClusterConnectorType, metrics metrics.Gauge) FrameProcessor {
+func NewStreamIdProcessor(mapper StreamIdMapper) FrameProcessor {
 	return &streamIdProcessor{
-		mapper:   mapper,
-		connType: connType,
-		metrics:  metrics,
+		mapper: mapper,
 	}
 }
 
@@ -38,7 +33,7 @@ func (sip *streamIdProcessor) AssignUniqueId(rawFrame *frame.RawFrame) (*frame.R
 	if rawFrame == nil {
 		return rawFrame, nil
 	}
-	var newId, err = sip.getNewStreamId(rawFrame.Header.StreamId)
+	var newId, err = sip.mapper.GetNewIdFor(rawFrame.Header.StreamId)
 	if err != nil {
 		return rawFrame, err
 	}
@@ -49,7 +44,7 @@ func (sip *streamIdProcessor) AssignUniqueIdFrame(frame *frame.Frame) (*frame.Fr
 	if frame == nil {
 		return frame, nil
 	}
-	var newId, err = sip.getNewStreamId(frame.Header.StreamId)
+	var newId, err = sip.mapper.GetNewIdFor(frame.Header.StreamId)
 	if err != nil {
 		return frame, err
 	}
@@ -60,7 +55,7 @@ func (sip *streamIdProcessor) ReleaseId(rawFrame *frame.RawFrame) (*frame.RawFra
 	if rawFrame == nil {
 		return rawFrame, nil
 	}
-	var originalId, err = sip.releaseStreamId(rawFrame.Header.StreamId)
+	var originalId, err = sip.mapper.ReleaseId(rawFrame.Header.StreamId)
 	if err != nil {
 		return rawFrame, err
 	}
@@ -71,41 +66,16 @@ func (sip *streamIdProcessor) ReleaseIdFrame(frame *frame.Frame) (*frame.Frame, 
 	if frame == nil {
 		return frame, nil
 	}
-	var originalId, err = sip.releaseStreamId(frame.Header.StreamId)
+	var originalId, err = sip.mapper.ReleaseId(frame.Header.StreamId)
 	if err != nil {
 		return frame, err
 	}
 	return setFrameStreamId(frame, originalId), err
 }
 
-// getNewStreamId encapsulates the retrieval of a new stream id and the addition to metrics as a reusable function
-// for the different mapper implementation
-func (sip *streamIdProcessor) getNewStreamId(streamId int16) (int16, error) {
-	var newId, err = sip.mapper.GetNewIdFor(streamId)
-	if err != nil {
-		return -1, err
-	}
-	if sip.metrics != nil {
-		sip.metrics.Add(1)
-	}
-	return newId, err
-}
-
-// releaseStreamId encapsulates the release of the synthetic stream id and the subtraction of the metrics
-// as a reusable function for the different mapper implementation
-func (sip *streamIdProcessor) releaseStreamId(syntheticId int16) (int16, error) {
-	var originalId, err = sip.mapper.ReleaseId(syntheticId)
-	if sip.metrics != nil && err == nil {
-		sip.metrics.Subtract(1)
-	}
-	return originalId, err
-}
-
 // Close zeroes out the stream id metrics
 func (sip *streamIdProcessor) Close() {
-	if sip.metrics != nil {
-		sip.metrics.Set(0)
-	}
+	sip.mapper.Close()
 }
 
 func setRawFrameStreamId(f *frame.RawFrame, id int16) *frame.RawFrame {

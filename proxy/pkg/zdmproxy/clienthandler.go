@@ -2207,9 +2207,9 @@ func newFrameProcessor(conf *config.Config, nodeMetrics *metrics.NodeMetrics, co
 	}
 	var mapper StreamIdMapper
 	if connectorType == ClusterConnectorTypeAsync {
-		mapper = NewInternalStreamIdMapper(conf.ProxyMaxStreamIds)
+		mapper = NewInternalStreamIdMapper(conf.ProxyMaxStreamIds, streamIdsMetric)
 	} else {
-		mapper = NewStreamIdMapper(conf.ProxyMaxStreamIds)
+		mapper = NewStreamIdMapper(conf.ProxyMaxStreamIds, streamIdsMetric)
 	}
-	return NewStreamIdProcessor(mapper, connectorType, streamIdsMetric)
+	return NewStreamIdProcessor(mapper)
 }
