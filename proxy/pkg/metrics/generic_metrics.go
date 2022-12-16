@@ -9,6 +9,7 @@ type Counter interface {
 type Gauge interface {
 	Add(valueToAdd int)
 	Subtract(valueToSubtract int)
+	Set(valueToSet int)
 }
 
 type GaugeFunc interface {

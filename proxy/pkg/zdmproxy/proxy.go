@@ -130,6 +130,11 @@ func (p *ZdmProxy) Start(ctx context.Context) error {
 
 	log.Infof("Starting proxy...")
 
+	err = p.initializeMetricHandler()
+	if err != nil {
+		return err
+	}
+
 	err = p.initializeControlConnections(ctx)
 	if err != nil {
 		return err
@@ -160,11 +165,6 @@ func (p *ZdmProxy) Start(ctx context.Context) error {
 
 	log.Infof("Initialized target control connection. Cluster Name: %v, Hosts: %v, Assigned Hosts: %v.",
 		p.targetControlConn.GetClusterName(), targetHosts, targetAssignedHosts)
-
-	err = p.initializeMetricHandler()
-	if err != nil {
-		return err
-	}
 
 	err = p.acceptConnectionsFromClients(p.Conf.ProxyListenAddress, p.Conf.ProxyListenPort, serverSideTlsConfig)
 	if err != nil {
@@ -249,7 +249,7 @@ func (p *ZdmProxy) initializeControlConnections(ctx context.Context) error {
 
 	originControlConn := NewControlConn(
 		p.controlConnShutdownCtx, p.Conf.OriginPort, p.originConnectionConfig,
-		p.Conf.OriginUsername, p.Conf.OriginPassword, p.Conf, topologyConfig, p.proxyRand)
+		p.Conf.OriginUsername, p.Conf.OriginPassword, p.Conf, topologyConfig, p.proxyRand, p.metricHandler)
 
 	if err := originControlConn.Start(p.controlConnShutdownWg, ctx); err != nil {
 		return fmt.Errorf("failed to initialize origin control connection: %w", err)
@@ -261,7 +261,7 @@ func (p *ZdmProxy) initializeControlConnections(ctx context.Context) error {
 
 	targetControlConn := NewControlConn(
 		p.controlConnShutdownCtx, p.Conf.TargetPort, p.targetConnectionConfig,
-		p.Conf.TargetUsername, p.Conf.TargetPassword, p.Conf, topologyConfig, p.proxyRand)
+		p.Conf.TargetUsername, p.Conf.TargetPassword, p.Conf, topologyConfig, p.proxyRand, p.metricHandler)
 
 	if err := targetControlConn.Start(p.controlConnShutdownWg, ctx); err != nil {
 		return fmt.Errorf("failed to initialize target control connection: %w", err)
@@ -842,6 +842,11 @@ func (p *ZdmProxy) CreateOriginNodeMetrics(
 		return nil, err
 	}
 
+	originUsedStreamIds, err := metrics.CreateGaugeNodeMetric(metricFactory, originNodeDescription, metrics.OriginUsedStreamIds)
+	if err != nil {
+		return nil, err
+	}
+
 	return &metrics.NodeMetricsInstance{
 		ClientTimeouts:    originClientTimeouts,
 		ReadTimeouts:      originReadTimeouts,
@@ -855,6 +860,7 @@ func (p *ZdmProxy) CreateOriginNodeMetrics(
 		RequestDuration:   originRequestDuration,
 		OpenConnections:   openOriginConnections,
 		InFlightRequests:  inflightRequests,
+		UsedStreamIds:     originUsedStreamIds,
 	}, nil
 }
 
@@ -920,6 +926,11 @@ func (p *ZdmProxy) CreateAsyncNodeMetrics(
 		return nil, err
 	}
 
+	asyncUsedStreamIds, err := metrics.CreateGaugeNodeMetric(metricFactory, asyncNodeDescription, metrics.AsyncUsedStreamIds)
+	if err != nil {
+		return nil, err
+	}
+
 	return &metrics.NodeMetricsInstance{
 		ClientTimeouts:    asyncClientTimeouts,
 		ReadTimeouts:      asyncReadTimeouts,
@@ -933,6 +944,7 @@ func (p *ZdmProxy) CreateAsyncNodeMetrics(
 		RequestDuration:   asyncRequestDuration,
 		OpenConnections:   openAsyncConnections,
 		InFlightRequests:  inflightRequestsAsync,
+		UsedStreamIds:     asyncUsedStreamIds,
 	}, nil
 }
 
@@ -999,6 +1011,11 @@ func (p *ZdmProxy) CreateTargetNodeMetrics(
 		return nil, err
 	}
 
+	targetUsedStreamIds, err := metrics.CreateGaugeNodeMetric(metricFactory, targetNodeDescription, metrics.TargetUsedStreamIds)
+	if err != nil {
+		return nil, err
+	}
+
 	return &metrics.NodeMetricsInstance{
 		ClientTimeouts:    targetClientTimeouts,
 		ReadTimeouts:      targetReadTimeouts,
@@ -1012,5 +1029,6 @@ func (p *ZdmProxy) CreateTargetNodeMetrics(
 		RequestDuration:   targetRequestDuration,
 		OpenConnections:   openTargetConnections,
 		InFlightRequests:  inflightRequests,
+		UsedStreamIds:     targetUsedStreamIds,
 	}, nil
 }
