@@ -264,21 +264,25 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 			}
 
 			// when there's a protocol error, we cannot rely on the returned stream id, the only exception is
-			// when it's a UnsupportedVersion error, which means the Frame was properly parsed but the proxy doesn't
-			// support the protocol version and in that case we can proceed with releasing the stream id in the mapper
-			if response != nil && response.Header.StreamId >= 0 && (err != nil || errCode == ProtocolErrorUnsupportedVersion) {
+			// when it's a UnsupportedVersion error, which means the Frame was properly parsed by the native protocol library
+			// but the proxy doesn't support the protocol version and in that case we can proceed with releasing the stream id in the mapper
+			if response != nil && response.Header.StreamId >= 0 && (err == nil || errCode == ProtocolErrorUnsupportedVersion) {
 				var releaseErr error
 				response, releaseErr = cc.frameProcessor.ReleaseId(response)
 				if releaseErr != nil {
-					log.Errorf("[%v] Error releasing stream id: %v", string(cc.connectorType), releaseErr)
-					// if releasing the stream id failed, check if we can parse the frame, if so
-					// forward the frame to the client handler, otherwise, if parsing fails, drop the frame
-					_, parseErr := defaultCodec.ConvertFromRawFrame(response)
-					if parseErr == nil {
-						log.Errorf("[%v] Dropping frame: %v", string(cc.connectorType), response.Header.StreamId)
+					// if releasing the stream id failed, check if it's a protocol error response
+					// if it is then ignore the release error and forward the response to the client handler so that
+					// it can be handled correctly
+					parsedResponse, parseErr := defaultCodec.ConvertFromRawFrame(response)
+					if parseErr != nil {
+						log.Errorf("[%v] Error converting frame when releasing stream id: %v. Original error: %v.", string(cc.connectorType), parseErr, releaseErr)
 						continue
 					}
-
+					_, isProtocolErr := parsedResponse.Body.Message.(*message.ProtocolError)
+					if !isProtocolErr {
+						log.Errorf("[%v] Error releasing stream id: %v.", string(cc.connectorType), releaseErr)
+						continue
+					}
 				}
 			}
 

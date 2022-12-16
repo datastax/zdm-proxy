@@ -49,6 +49,9 @@ func (csid *internalStreamIdMapper) GetNewIdFor(_ int16) (int16, error) {
 }
 
 func (csid *internalStreamIdMapper) ReleaseId(syntheticId int16) (int16, error) {
+	if syntheticId < 0 || int(syntheticId) >= cap(csid.clusterIds) {
+		return -1, fmt.Errorf("can not release invalid stream id %v (max id: %v)", syntheticId, cap(csid.clusterIds)-1)
+	}
 	select {
 	case csid.clusterIds <- syntheticId:
 	default:
@@ -90,6 +93,9 @@ func (sim *streamIdMapper) GetNewIdFor(streamId int16) (int16, error) {
 }
 
 func (sim *streamIdMapper) ReleaseId(syntheticId int16) (int16, error) {
+	if syntheticId < 0 || int(syntheticId) >= cap(sim.clusterIds) {
+		return -1, fmt.Errorf("can not release invalid stream id %v (max id: %v)", syntheticId, cap(sim.clusterIds)-1)
+	}
 	sim.Lock()
 	originalId, contains := sim.idMapper[syntheticId]
 	if !contains {
