@@ -16,4 +16,5 @@ require (
 	github.com/rs/zerolog v1.20.0
 	github.com/sirupsen/logrus v1.6.0
 	github.com/stretchr/testify v1.8.0
+	golang.org/x/sys v0.3.0 // indirect
 )
