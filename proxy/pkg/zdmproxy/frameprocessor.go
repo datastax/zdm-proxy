@@ -13,6 +13,7 @@ type FrameProcessor interface {
 	AssignUniqueIdFrame(frame *frame.Frame) (*frame.Frame, error)
 	ReleaseId(rawFrame *frame.RawFrame) (*frame.RawFrame, error)
 	ReleaseIdFrame(frame *frame.Frame) (*frame.Frame, error)
+	Close()
 }
 
 // streamIdProcessor replaces the incoming stream/request ids by internal, synthetic, ids before sending the
@@ -77,6 +78,36 @@ func (sip *streamIdProcessor) ReleaseIdFrame(frame *frame.Frame) (*frame.Frame, 
 	return setFrameStreamId(frame, originalId), err
 }
 
+// getNewStreamId encapsulates the retrieval of a new stream id and the addition to metrics as a reusable function
+// for the different mapper implementation
+func (sip *streamIdProcessor) getNewStreamId(streamId int16) (int16, error) {
+	var newId, err = sip.mapper.GetNewIdFor(streamId)
+	if err != nil {
+		return -1, err
+	}
+	if sip.metrics != nil {
+		sip.metrics.Add(1)
+	}
+	return newId, err
+}
+
+// releaseStreamId encapsulates the release of the synthetic stream id and the subtraction of the metrics
+// as a reusable function for the different mapper implementation
+func (sip *streamIdProcessor) releaseStreamId(syntheticId int16) (int16, error) {
+	var originalId, err = sip.mapper.ReleaseId(syntheticId)
+	if sip.metrics != nil && err == nil {
+		sip.metrics.Subtract(1)
+	}
+	return originalId, err
+}
+
+// Close zeroes out the stream id metrics
+func (sip *streamIdProcessor) Close() {
+	if sip.metrics != nil {
+		sip.metrics.Set(0)
+	}
+}
+
 func setRawFrameStreamId(f *frame.RawFrame, id int16) *frame.RawFrame {
 	// If the new id is the same as the original id (most likely an internal request), then just return the original
 	// frame
@@ -103,27 +134,4 @@ func setFrameStreamId(f *frame.Frame, id int16) *frame.Frame {
 		Header: newHeader,
 		Body:   f.Body,
 	}
-}
-
-// getNewStreamId encapsulates the retrieval of a new stream id and the addition to metrics as a reusable function
-// for the different mapper implementation
-func (sip *streamIdProcessor) getNewStreamId(streamId int16) (int16, error) {
-	var newId, err = sip.mapper.GetNewIdFor(streamId)
-	if err != nil {
-		return -1, err
-	}
-	if sip.metrics != nil {
-		sip.metrics.Add(1)
-	}
-	return newId, err
-}
-
-// releaseStreamId encapsulates the release of the synthetic stream id and the subtraction of the metrics
-// as a reusable function for the different mapper implementation
-func (sip *streamIdProcessor) releaseStreamId(syntheticId int16) (int16, error) {
-	var originalId, err = sip.mapper.ReleaseId(syntheticId)
-	if sip.metrics != nil && err != nil {
-		sip.metrics.Subtract(1)
-	}
-	return originalId, err
 }

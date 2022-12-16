@@ -167,6 +167,17 @@ func NewClientHandler(
 	clientHandlerShutdownRequestContext, clientHandlerShutdownRequestCancelFn := context.WithCancel(globalShutdownRequestCtx)
 	requestsDoneCtx, requestsDoneCancelFn := context.WithCancel(context.Background())
 
+	// Initialize stream id processors to manage the ids sent to the clusters
+	originFrameProcessor := newFrameProcessor(conf, nodeMetrics, ClusterConnectorTypeOrigin)
+	targetFrameProcessor := newFrameProcessor(conf, nodeMetrics, ClusterConnectorTypeOrigin)
+	asyncFrameProcessor := newFrameProcessor(conf, nodeMetrics, ClusterConnectorTypeAsync)
+
+	closeFrameProcessors := func() {
+		originFrameProcessor.Close()
+		targetFrameProcessor.Close()
+		asyncFrameProcessor.Close()
+	}
+
 	localClientHandlerWg := &sync.WaitGroup{}
 	globalClientHandlersWg.Add(1)
 	go func() {
@@ -174,6 +185,7 @@ func NewClientHandler(
 		<-clientHandlerContext.Done()
 		clientHandlerShutdownRequestCancelFn()
 		localClientHandlerWg.Wait()
+		closeFrameProcessors()
 		requestsDoneCancelFn() // make sure this ctx is not leaked but it should be canceled before this
 		log.Debugf("Client Handler is shutdown.")
 	}()
@@ -185,7 +197,7 @@ func NewClientHandler(
 	originConnector, err := NewClusterConnector(
 		originCassandraConnInfo, conf, psCache, nodeMetrics, localClientHandlerWg, clientHandlerRequestWg,
 		clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler, requestsDoneCtx,
-		false, nil, handshakeDone)
+		false, nil, handshakeDone, originFrameProcessor)
 	if err != nil {
 		clientHandlerCancelFunc()
 		return nil, err
@@ -194,7 +206,7 @@ func NewClientHandler(
 	targetConnector, err := NewClusterConnector(
 		targetCassandraConnInfo, conf, psCache, nodeMetrics, localClientHandlerWg, clientHandlerRequestWg,
 		clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler, requestsDoneCtx,
-		false, nil, handshakeDone)
+		false, nil, handshakeDone, targetFrameProcessor)
 	if err != nil {
 		clientHandlerCancelFunc()
 		return nil, err
@@ -212,7 +224,7 @@ func NewClientHandler(
 		asyncConnector, err = NewClusterConnector(
 			asyncConnInfo, conf, psCache, nodeMetrics, localClientHandlerWg, clientHandlerRequestWg,
 			clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler, requestsDoneCtx,
-			true, asyncPendingRequests, handshakeDone)
+			true, asyncPendingRequests, handshakeDone, asyncFrameProcessor)
 		if err != nil {
 			log.Errorf("Could not create async cluster connector to %s, async requests will not be forwarded: %s", asyncConnInfo.connConfig.GetClusterType(), err.Error())
 			asyncConnector = nil
@@ -2182,4 +2194,22 @@ func GetNodeMetricsByClusterConnector(nodeMetrics *metrics.NodeMetrics, connecto
 	default:
 		return nil, fmt.Errorf("unexpected connectorType %v, unable to retrieve node metrics", connectorType)
 	}
+}
+
+func newFrameProcessor(conf *config.Config, nodeMetrics *metrics.NodeMetrics, connectorType ClusterConnectorType) FrameProcessor {
+	var streamIdsMetric metrics.Gauge
+	connectorMetrics, err := GetNodeMetricsByClusterConnector(nodeMetrics, connectorType)
+	if err != nil {
+		log.Error(err)
+	}
+	if connectorMetrics != nil {
+		streamIdsMetric = connectorMetrics.UsedStreamIds
+	}
+	var mapper StreamIdMapper
+	if connectorType == ClusterConnectorTypeAsync {
+		mapper = NewInternalStreamIdMapper(conf.ProxyMaxStreamIds)
+	} else {
+		mapper = NewStreamIdMapper(conf.ProxyMaxStreamIds)
+	}
+	return NewStreamIdProcessor(mapper, connectorType, streamIdsMetric)
 }

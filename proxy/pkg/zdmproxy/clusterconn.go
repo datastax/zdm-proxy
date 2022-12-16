@@ -100,7 +100,8 @@ func NewClusterConnector(
 	requestsDoneCtx context.Context,
 	asyncConnector bool,
 	asyncPendingRequests *pendingRequests,
-	handshakeDone *atomic.Value) (*ClusterConnector, error) {
+	handshakeDone *atomic.Value,
+	frameProcessor FrameProcessor) (*ClusterConnector, error) {
 
 	var connectorType ClusterConnectorType
 	var clusterType common.ClusterType
@@ -147,20 +148,6 @@ func NewClusterConnector(
 	// Initialize heartbeat time
 	lastHeartbeatTime := &atomic.Value{}
 	lastHeartbeatTime.Store(time.Now())
-
-	streamIdMetrics, err := GetNodeMetricsByClusterConnector(nodeMetrics, connectorType)
-	if err != nil {
-		log.Error(err)
-	}
-
-	// Initialize stream id processor to manage the ids sent to the clusters
-	var mapper StreamIdMapper
-	if asyncConnector {
-		mapper = NewInternalStreamIdMapper(conf.ProxyMaxStreamIds)
-	} else {
-		mapper = NewStreamIdMapper(conf.ProxyMaxStreamIds)
-	}
-	frameProcessor := NewStreamIdProcessor(mapper, connectorType, streamIdMetrics.UsedStreamIds)
 
 	return &ClusterConnector{
 		conf:                   conf,
@@ -260,12 +247,27 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 		protocolErrOccurred := false
 		for {
 			response, err := readRawFrame(bufferedReader, connectionAddr, cc.clusterConnContext)
-			response, releaseErr := cc.frameProcessor.ReleaseId(response)
-			if releaseErr != nil {
-				log.Errorf("[%v] Error releasing stream id: %v", string(cc.connectorType), releaseErr)
+			protocolErrResponseFrame, err, errCode := checkProtocolError(response, err, protocolErrOccurred, string(cc.connectorType))
+
+			// when there's a protocol error, we cannot rely on the returned stream id, the only exception is
+			// when it's a UnsupportedVersion error, which means the Frame was properly parsed but the proxy doesn't
+			// support the protocol version and in that case we can proceed with releasing the stream id in the mapper
+			if err != nil || errCode == ProtocolErrorUnsupportedVersion {
+				var releaseErr error
+				response, releaseErr = cc.frameProcessor.ReleaseId(response)
+				if releaseErr != nil {
+					log.Errorf("[%v] Error releasing stream id: %v", string(cc.connectorType), releaseErr)
+					// if releasing the stream id failed, check if we can parse the frame, if so
+					// forward the frame to the client handler, otherwise, if parsing fails, drop the frame
+					_, parseErr := defaultCodec.ConvertFromRawFrame(response)
+					if parseErr == nil {
+						log.Errorf("[%v] Dropping frame: %v", string(cc.connectorType), response.Header.StreamId)
+						continue
+					}
+
+				}
 			}
 
-			protocolErrResponseFrame, err := checkProtocolError(response, err, protocolErrOccurred, string(cc.connectorType))
 			if err != nil {
 				handleConnectionError(
 					err, cc.clusterConnContext, cc.cancelFunc, string(cc.connectorType), "reading", connectionAddr)

@@ -423,10 +423,8 @@ func checkMetrics(
 			require.NotContains(t, lines, fmt.Sprintf("%v", getPrometheusNameWithSuffix(prefix, metrics.OriginRequestDuration, "count")))
 		}
 
-		if (successOrigin + successBoth) == 0 {
-			require.Contains(t, lines, fmt.Sprintf("%v{node=\"%v\"} %v", getPrometheusName(prefix, metrics.OriginUsedStreamIds), originHost, streamIdsOrigin))
-			require.Contains(t, lines, fmt.Sprintf("%v{node=\"%v\"} %v", getPrometheusName(prefix, metrics.TargetUsedStreamIds), targetHost, streamIdsTarget))
-		}
+		require.Contains(t, lines, fmt.Sprintf("%v{node=\"%v\"} %v", getPrometheusName(prefix, metrics.OriginUsedStreamIds), originHost, streamIdsOrigin))
+		require.Contains(t, lines, fmt.Sprintf("%v{node=\"%v\"} %v", getPrometheusName(prefix, metrics.TargetUsedStreamIds), targetHost, streamIdsTarget))
 		if asyncEnabled {
 			requireEventuallyContainsLine(t, lines, fmt.Sprintf("%v{node=\"%v\"} %v", getPrometheusName(prefix, metrics.AsyncUsedStreamIds), asyncHost, streamIdsAsync))
 		}
