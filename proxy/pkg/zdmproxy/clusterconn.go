@@ -249,10 +249,24 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 			response, err := readRawFrame(bufferedReader, connectionAddr, cc.clusterConnContext)
 			protocolErrResponseFrame, err, errCode := checkProtocolError(response, err, protocolErrOccurred, string(cc.connectorType))
 
+			if err != nil {
+				handleConnectionError(
+					err, cc.clusterConnContext, cc.cancelFunc, string(cc.connectorType), "reading", connectionAddr)
+				break
+			} else {
+				if protocolErrOccurred {
+					log.Debugf("[%v] Data received after protocol error occured, ignoring it.", string(cc.connectorType))
+					continue
+				} else if protocolErrResponseFrame != nil {
+					response = protocolErrResponseFrame
+					protocolErrOccurred = true
+				}
+			}
+
 			// when there's a protocol error, we cannot rely on the returned stream id, the only exception is
 			// when it's a UnsupportedVersion error, which means the Frame was properly parsed but the proxy doesn't
 			// support the protocol version and in that case we can proceed with releasing the stream id in the mapper
-			if err != nil || errCode == ProtocolErrorUnsupportedVersion {
+			if response != nil && response.Header.StreamId >= 0 && (err != nil || errCode == ProtocolErrorUnsupportedVersion) {
 				var releaseErr error
 				response, releaseErr = cc.frameProcessor.ReleaseId(response)
 				if releaseErr != nil {
@@ -265,20 +279,6 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 						continue
 					}
 
-				}
-			}
-
-			if err != nil {
-				handleConnectionError(
-					err, cc.clusterConnContext, cc.cancelFunc, string(cc.connectorType), "reading", connectionAddr)
-				break
-			} else {
-				if protocolErrOccurred {
-					log.Debugf("[%v] Data received after protocol error occured, ignoring it.", string(cc.connectorType))
-					continue
-				} else if protocolErrResponseFrame != nil {
-					response = protocolErrResponseFrame
-					protocolErrOccurred = true
 				}
 			}
 
