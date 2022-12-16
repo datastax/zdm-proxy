@@ -246,12 +246,12 @@ func checkProtocolError(f *frame.RawFrame, connErr error, protocolErrorOccurred 
 		}
 		rawProtocolErrResponse, err := generateProtocolErrorResponseFrame(streamId, protocolErrMsg)
 		if err != nil {
-			return nil, fmt.Errorf("could not generate protocol error response raw frame (%v): %v", protocolErrMsg, err), errorCode
+			return nil, fmt.Errorf("could not generate protocol error response raw frame (%v): %v", protocolErrMsg, err), -1
 		} else {
 			return rawProtocolErrResponse, nil, errorCode
 		}
 	} else {
-		return nil, connErr, errorCode
+		return nil, connErr, -1
 	}
 }
 
