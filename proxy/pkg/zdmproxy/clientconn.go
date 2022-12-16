@@ -16,6 +16,11 @@ import (
 
 const ClientConnectorLogPrefix = "CLIENT-CONNECTOR"
 
+const (
+	ProtocolErrorDecodeError int8 = iota
+	ProtocolErrorUnsupportedVersion
+)
+
 /*
   This owns:
     - a response channel to send responses back to the client
@@ -67,6 +72,7 @@ func NewClientConnector(
 	writeScheduler *Scheduler,
 	shutdownRequestCtx context.Context,
 	clientHandlerShutdownRequestCancelFn context.CancelFunc) *ClientConnector {
+
 	return &ClientConnector{
 		connection:              connection,
 		conf:                    conf,
@@ -170,7 +176,7 @@ func (cc *ClientConnector) listenForRequests() {
 		for cc.clientHandlerContext.Err() == nil {
 			f, err := readRawFrame(bufferedReader, connectionAddr, cc.clientHandlerContext)
 
-			protocolErrResponseFrame, err := checkProtocolError(f, err, protocolErrOccurred, ClientConnectorLogPrefix)
+			protocolErrResponseFrame, err, _ := checkProtocolError(f, err, protocolErrOccurred, ClientConnectorLogPrefix)
 			if err != nil {
 				handleConnectionError(
 					err, cc.clientHandlerContext, cc.clientHandlerCancelFunc, ClientConnectorLogPrefix, "reading", connectionAddr)
@@ -218,7 +224,7 @@ func (cc *ClientConnector) sendOverloadedToClient(request *frame.RawFrame) {
 	}
 }
 
-func checkProtocolError(f *frame.RawFrame, connErr error, protocolErrorOccurred bool, prefix string) (protocolErrResponse *frame.RawFrame, fatalErr error) {
+func checkProtocolError(f *frame.RawFrame, connErr error, protocolErrorOccurred bool, prefix string) (protocolErrResponse *frame.RawFrame, fatalErr error, errorCode int8) {
 	var protocolErrMsg *message.ProtocolError
 	var streamId int16
 	var logMsg string
@@ -226,10 +232,12 @@ func checkProtocolError(f *frame.RawFrame, connErr error, protocolErrorOccurred 
 		protocolErrMsg = checkUnsupportedProtocolError(connErr)
 		logMsg = fmt.Sprintf("Protocol error detected while decoding a frame: %v.", connErr)
 		streamId = 0
+		errorCode = ProtocolErrorDecodeError
 	} else {
 		protocolErrMsg = checkProtocolVersion(f.Header.Version)
 		logMsg = "Protocol v5 detected while decoding a frame."
 		streamId = f.Header.StreamId
+		errorCode = ProtocolErrorUnsupportedVersion
 	}
 
 	if protocolErrMsg != nil {
@@ -238,12 +246,12 @@ func checkProtocolError(f *frame.RawFrame, connErr error, protocolErrorOccurred 
 		}
 		rawProtocolErrResponse, err := generateProtocolErrorResponseFrame(streamId, protocolErrMsg)
 		if err != nil {
-			return nil, fmt.Errorf("could not generate protocol error response raw frame (%v): %v", protocolErrMsg, err)
+			return nil, fmt.Errorf("could not generate protocol error response raw frame (%v): %v", protocolErrMsg, err), errorCode
 		} else {
-			return rawProtocolErrResponse, nil
+			return rawProtocolErrResponse, nil, errorCode
 		}
 	} else {
-		return nil, connErr
+		return nil, connErr, errorCode
 	}
 }
 

@@ -63,6 +63,7 @@ type ClusterConnector struct {
 	responseReadBufferSizeBytes int
 	writeCoalescer              *writeCoalescer
 	doneChan                    chan bool
+	frameProcessor              FrameProcessor
 
 	handshakeDone *atomic.Value
 
@@ -71,6 +72,9 @@ type ClusterConnector struct {
 	asyncPendingRequests *pendingRequests
 
 	readScheduler *Scheduler
+
+	lastHeartbeatTime *atomic.Value
+	lastHeartbeatLock sync.Mutex
 }
 
 func NewClusterConnectionInfo(connConfig ConnectionConfig, endpointConfig Endpoint, isOriginCassandra bool) *ClusterConnectionInfo {
@@ -96,7 +100,8 @@ func NewClusterConnector(
 	requestsDoneCtx context.Context,
 	asyncConnector bool,
 	asyncPendingRequests *pendingRequests,
-	handshakeDone *atomic.Value) (*ClusterConnector, error) {
+	handshakeDone *atomic.Value,
+	frameProcessor FrameProcessor) (*ClusterConnector, error) {
 
 	var connectorType ClusterConnectorType
 	var clusterType common.ClusterType
@@ -140,6 +145,10 @@ func NewClusterConnector(
 		clusterConnEventsChan = make(chan *frame.RawFrame, conf.EventQueueSizeFrames)
 	}
 
+	// Initialize heartbeat time
+	lastHeartbeatTime := &atomic.Value{}
+	lastHeartbeatTime.Store(time.Now())
+
 	return &ClusterConnector{
 		conf:                   conf,
 		connection:             conn,
@@ -163,6 +172,7 @@ func NewClusterConnector(
 			asyncConnector,
 			writeScheduler),
 		responseChan:                responseChan,
+		frameProcessor:              frameProcessor,
 		responseReadBufferSizeBytes: conf.ResponseReadBufferSizeBytes,
 		doneChan:                    make(chan bool),
 		readScheduler:               readScheduler,
@@ -170,6 +180,7 @@ func NewClusterConnector(
 		asyncConnectorState:         ConnectorStateHandshake,
 		asyncPendingRequests:        asyncPendingRequests,
 		handshakeDone:               handshakeDone,
+		lastHeartbeatTime:           lastHeartbeatTime,
 	}, nil
 }
 
@@ -236,8 +247,8 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 		protocolErrOccurred := false
 		for {
 			response, err := readRawFrame(bufferedReader, connectionAddr, cc.clusterConnContext)
+			protocolErrResponseFrame, err, errCode := checkProtocolError(response, err, protocolErrOccurred, string(cc.connectorType))
 
-			protocolErrResponseFrame, err := checkProtocolError(response, err, protocolErrOccurred, string(cc.connectorType))
 			if err != nil {
 				handleConnectionError(
 					err, cc.clusterConnContext, cc.cancelFunc, string(cc.connectorType), "reading", connectionAddr)
@@ -249,6 +260,29 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 				} else if protocolErrResponseFrame != nil {
 					response = protocolErrResponseFrame
 					protocolErrOccurred = true
+				}
+			}
+
+			// when there's a protocol error, we cannot rely on the returned stream id, the only exception is
+			// when it's a UnsupportedVersion error, which means the Frame was properly parsed by the native protocol library
+			// but the proxy doesn't support the protocol version and in that case we can proceed with releasing the stream id in the mapper
+			if response != nil && response.Header.StreamId >= 0 && (err == nil || errCode == ProtocolErrorUnsupportedVersion) {
+				var releaseErr error
+				response, releaseErr = cc.frameProcessor.ReleaseId(response)
+				if releaseErr != nil {
+					// if releasing the stream id failed, check if it's a protocol error response
+					// if it is then ignore the release error and forward the response to the client handler so that
+					// it can be handled correctly
+					parsedResponse, parseErr := defaultCodec.ConvertFromRawFrame(response)
+					if parseErr != nil {
+						log.Errorf("[%v] Error converting frame when releasing stream id: %v. Original error: %v.", string(cc.connectorType), parseErr, releaseErr)
+						continue
+					}
+					_, isProtocolErr := parsedResponse.Body.Message.(*message.ProtocolError)
+					if !isProtocolErr {
+						log.Errorf("[%v] Error releasing stream id: %v.", string(cc.connectorType), releaseErr)
+						continue
+					}
 				}
 			}
 
@@ -336,7 +370,7 @@ func (cc *ClusterConnector) handleAsyncResponse(response *frame.RawFrame) *frame
 						if err != nil {
 							log.Errorf("Could not send async PREPARE because convert raw frame failed: %v.", err.Error())
 						} else {
-							sent := cc.sendAsyncRequest(
+							sent := cc.sendAsyncRequestToCluster(
 								preparedData.GetPrepareRequestInfo(), prepareRawFrame, false, time.Now(),
 								time.Duration(cc.conf.ProxyRequestTimeoutMs)*time.Millisecond,
 								func() {
@@ -361,7 +395,16 @@ func (cc *ClusterConnector) handleAsyncResponse(response *frame.RawFrame) *frame
 }
 
 func (cc *ClusterConnector) sendRequestToCluster(frame *frame.RawFrame) {
-	cc.writeCoalescer.Enqueue(frame)
+	var err error
+	if cc.frameProcessor != nil {
+		frame, err = cc.frameProcessor.AssignUniqueId(frame)
+	}
+	if err != nil {
+		log.Errorf("[%v] Couldn't assign stream id to frame %v: %v", string(cc.connectorType), frame.Header.OpCode, err)
+		return
+	} else {
+		cc.writeCoalescer.Enqueue(frame)
+	}
 }
 
 func (cc *ClusterConnector) validateAsyncStateForRequest(frame *frame.RawFrame) bool {
@@ -386,10 +429,6 @@ func (cc *ClusterConnector) validateAsyncStateForRequest(frame *frame.RawFrame) 
 		log.Errorf("Unknown cluster connector state: %v. This is a bug, please report.", state)
 		return false
 	}
-}
-
-func (cc *ClusterConnector) sendAsyncRequestToCluster(frame *frame.RawFrame) bool {
-	return cc.writeCoalescer.EnqueueAsync(frame)
 }
 
 func (cc *ClusterConnector) SetReady() bool {
@@ -421,7 +460,7 @@ func handleConnectionError(err error, ctx context.Context, cancelFn context.Canc
 	}
 }
 
-func (cc *ClusterConnector) sendAsyncRequest(
+func (cc *ClusterConnector) sendAsyncRequestToCluster(
 	requestInfo RequestInfo,
 	asyncRequest *frame.RawFrame,
 	expectedResponse bool,
@@ -432,10 +471,14 @@ func (cc *ClusterConnector) sendAsyncRequest(
 	if !cc.validateAsyncStateForRequest(asyncRequest) {
 		return false
 	}
-
 	asyncReqCtx := NewAsyncRequestContext(requestInfo, asyncRequest.Header.StreamId, expectedResponse, overallRequestStartTime)
-	var newStreamId int16
-	newStreamId, err := cc.asyncPendingRequests.store(asyncReqCtx)
+
+	var err error
+	asyncRequest, err = cc.frameProcessor.AssignUniqueId(asyncRequest)
+	if err == nil {
+		err = cc.asyncPendingRequests.store(asyncReqCtx, asyncRequest)
+	}
+
 	storedAsync := err == nil
 	if err != nil {
 		log.Warnf("Could not send async request due to an error while storing the request state: %v.", err.Error())
@@ -443,9 +486,8 @@ func (cc *ClusterConnector) sendAsyncRequest(
 		if requestInfo.ShouldBeTrackedInMetrics() {
 			cc.nodeMetrics.AsyncMetrics.InFlightRequests.Add(1)
 		}
-		asyncRequest.Header.StreamId = newStreamId
 		timer := time.AfterFunc(requestTimeout, func() {
-			if cc.asyncPendingRequests.timeOut(newStreamId, asyncReqCtx, asyncRequest) {
+			if cc.asyncPendingRequests.timeOut(asyncRequest.Header.StreamId, asyncReqCtx, asyncRequest) {
 				log.Warnf(
 					"Async Request (%v) timed out after %v ms.",
 					asyncRequest.Header.OpCode.String(), requestTimeout.Milliseconds())
@@ -459,16 +501,44 @@ func (cc *ClusterConnector) sendAsyncRequest(
 	if err == nil {
 		log.Tracef("Forwarding ASYNC request with opcode %v for stream %v to %v",
 			asyncRequest.Header.OpCode, asyncRequest.Header.StreamId, cc.clusterType)
-		if !cc.sendAsyncRequestToCluster(asyncRequest) {
+		if !cc.writeCoalescer.EnqueueAsync(asyncRequest) {
 			err = errors.New("async request was not sent")
 		}
 	}
 
 	if err != nil {
 		if storedAsync {
-			cc.asyncPendingRequests.cancel(newStreamId, asyncReqCtx) // wg.Done will be called by caller
+			cc.asyncPendingRequests.cancel(asyncRequest.Header.StreamId, asyncReqCtx) // wg.Done will be called by caller
 		}
 	}
 
 	return err == nil
+}
+
+func (cc *ClusterConnector) sendHeartbeat(version primitive.ProtocolVersion, heartbeatIntervalMs int) {
+	if version == 0 || !cc.shouldSendHeartbeat(heartbeatIntervalMs) {
+		return
+	}
+	cc.lastHeartbeatLock.Lock()
+	defer cc.lastHeartbeatLock.Unlock()
+	if !cc.shouldSendHeartbeat(heartbeatIntervalMs) {
+		return
+	}
+	cc.lastHeartbeatTime.Store(time.Now())
+	optionsMsg := &message.Options{}
+	heartBeatFrame := frame.NewFrame(version, -1, optionsMsg)
+	rawFrame, err := defaultCodec.ConvertToRawFrame(heartBeatFrame)
+	if err != nil {
+		log.Errorf("Cannot convert heartbeat frame to raw frame: %v", err)
+		return
+	}
+	log.Debugf("Sending heartbeat to cluster %v", cc.clusterType)
+	cc.sendRequestToCluster(rawFrame)
+}
+
+// shouldSendHeartbeat looks up the value of the last heartbeat time in the atomic value
+// and returns true if more time has passed than the configured interval, otherwise returns false.
+func (cc *ClusterConnector) shouldSendHeartbeat(heartbeatIntervalMs int) bool {
+	lastHeartbeatTime := cc.lastHeartbeatTime.Load().(time.Time)
+	return time.Since(lastHeartbeatTime) > time.Duration(heartbeatIntervalMs)*time.Millisecond
 }

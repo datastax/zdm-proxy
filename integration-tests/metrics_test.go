@@ -41,6 +41,9 @@ var nodeMetrics = []metrics.Metric{
 
 	metrics.OpenOriginConnections,
 	metrics.OpenTargetConnections,
+
+	metrics.OriginUsedStreamIds,
+	metrics.TargetUsedStreamIds,
 }
 
 var proxyMetrics = []metrics.Metric{
@@ -138,7 +141,7 @@ func testMetrics(t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback)
 			ensureMetricsServerListening(t, conf)
 
 			lines := gatherMetrics(t, conf, false)
-			checkMetrics(t, false, lines, conf.ReadMode, 0, 0, 0, 0, 0, 0, 0, 0, true, true, originEndpoint, targetEndpoint, asyncEndpoint)
+			checkMetrics(t, false, lines, conf.ReadMode, 0, 0, 0, 0, 0, 0, 0, 0, true, true, originEndpoint, targetEndpoint, asyncEndpoint, 0, 0, 0)
 
 			err = testSetup.Client.Connect(primitive.ProtocolVersion4)
 			require.Nil(t, err)
@@ -150,7 +153,7 @@ func testMetrics(t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback)
 			// 1 on both: STARTUP
 			// 2 on async: AUTH_RESPONSE and STARTUP
 			// but all of these are "system" requests so not tracked
-			checkMetrics(t, true, lines, conf.ReadMode, 1, 1, 1, expectedAsyncConnections, 0, 0, 0, 0, true, true, originEndpoint, targetEndpoint, asyncEndpoint)
+			checkMetrics(t, true, lines, conf.ReadMode, 1, 1, 1, expectedAsyncConnections, 0, 0, 0, 0, true, true, originEndpoint, targetEndpoint, asyncEndpoint, 0, 0, 0)
 
 			_, err = clientConn.SendAndReceive(insertQuery)
 			require.Nil(t, err)
@@ -161,7 +164,7 @@ func testMetrics(t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback)
 			// 2 on both: STARTUP and QUERY INSERT INTO
 			// 2 on async: AUTH_RESPONSE and STARTUP
 			// only QUERY is tracked
-			checkMetrics(t, true, lines, conf.ReadMode, 1, 1, 1, expectedAsyncConnections, 1, 0, 0, 0, true, true, originEndpoint, targetEndpoint, asyncEndpoint)
+			checkMetrics(t, true, lines, conf.ReadMode, 1, 1, 1, expectedAsyncConnections, 1, 0, 0, 0, true, true, originEndpoint, targetEndpoint, asyncEndpoint, 0, 0, 0)
 
 			_, err = clientConn.SendAndReceive(selectQuery)
 			require.Nil(t, err)
@@ -175,7 +178,7 @@ func testMetrics(t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback)
 			if conf.ReadMode == config.ReadModeDualAsyncOnSecondary {
 				time.Sleep(1000 * time.Millisecond)
 			}
-			checkMetrics(t, true, lines, conf.ReadMode, 1, 1, 1, expectedAsyncConnections, 1, 1, 0, 1, false, true, originEndpoint, targetEndpoint, asyncEndpoint)
+			checkMetrics(t, true, lines, conf.ReadMode, 1, 1, 1, expectedAsyncConnections, 1, 1, 0, 1, false, true, originEndpoint, targetEndpoint, asyncEndpoint, 0, 0, 0)
 		})
 	}
 }
@@ -267,6 +270,9 @@ func checkMetrics(
 	originHost string,
 	targetHost string,
 	asyncHost string,
+	streamIdsOrigin int,
+	streamIdsTarget int,
+	streamIdsAsync int,
 ) {
 	asyncEnabled := readMode == config.ReadModeDualAsyncOnSecondary
 	prefix := "zdm"
@@ -415,6 +421,12 @@ func checkMetrics(
 			requireEventuallyContainsLine(t, lines, fmt.Sprintf("%v{node=\"%v\"} %v", getPrometheusNameWithSuffix(prefix, metrics.AsyncRequestDuration, "count"), asyncHost, successAsync))
 		} else {
 			require.NotContains(t, lines, fmt.Sprintf("%v", getPrometheusNameWithSuffix(prefix, metrics.OriginRequestDuration, "count")))
+		}
+
+		require.Contains(t, lines, fmt.Sprintf("%v{node=\"%v\"} %v", getPrometheusName(prefix, metrics.OriginUsedStreamIds), originHost, streamIdsOrigin))
+		require.Contains(t, lines, fmt.Sprintf("%v{node=\"%v\"} %v", getPrometheusName(prefix, metrics.TargetUsedStreamIds), targetHost, streamIdsTarget))
+		if asyncEnabled {
+			requireEventuallyContainsLine(t, lines, fmt.Sprintf("%v{node=\"%v\"} %v", getPrometheusName(prefix, metrics.AsyncUsedStreamIds), asyncHost, streamIdsAsync))
 		}
 	}
 }
