@@ -112,8 +112,6 @@ spec:
             secretKeyRef:
               name: zdmproxy
               key: target_password
-        ports:
-        - containerPort: 9042
         volumeMounts:
         - name: scb
           mountPath: "/tmp/scb"
