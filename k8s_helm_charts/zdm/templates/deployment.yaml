@@ -34,6 +34,25 @@ spec:
       containers:
       - image: "{{ $.Values.proxy.image.repository }}:{{ $.Values.proxy.image.tag | default $.Chart.AppVersion }}"
         name: {{ $zdm_fullname }}-{{ $index }}
+        livenessProbe:
+          httpGet:
+            path: /health/liveness
+            port: httpproxy
+          initialDelaySeconds: 15
+          periodSeconds: 15
+        readinessProbe:
+          httpGet:
+            path: /health/readiness
+            port: httpproxy
+          initialDelaySeconds: 15
+          periodSeconds: 15
+        ports:
+          - name: httpproxy
+            containerPort: 14001
+            protocol: TCP
+          - name: cql
+            containerPort: 9042
+            protocol: TCP
         resources:
           requests:
             memory: {{ $.Values.proxy.resources.requests.memory | quote }}

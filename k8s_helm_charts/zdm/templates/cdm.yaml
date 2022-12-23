@@ -1,74 +1,65 @@
-apiVersion: apps/v1
-kind: Deployment
+apiVersion: v1
+kind: Pod
 metadata:
   labels:
     app: cdm
   name: cdm
   namespace: {{ .Values.namespace }}
 spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: cdm
-  template:
-    metadata:
-      labels:
-        app: cdm
-    spec:
-      containers:
-      - name:  cdm
-        image: {{ .Values.cdm.image.repository }}:{{ .Values.cdm.image.tag }}
-        resources:
-          requests:
-            memory: {{ .Values.cdm.resources.requests.memory }}
-            cpu: {{ .Values.cdm.resources.requests.cpu }}
-          limits:
-            memory: {{ .Values.cdm.resources.limits.memory }}
-            cpu: {{ .Values.cdm.resources.limits.cpu }}
-        envFrom:
-        - configMapRef:
-            name: {{ include "zdm.fullname" . }}
-        env:
-        - name: ZDM_TARGET_SECURE_CONNECT_BUNDLE_PATH
-          value: /tmp/scb/target.zip
-        - name: ZDM_ORIGIN_CONTACT_POINTS
-          valueFrom:
-            secretKeyRef:
-              name: zdmproxy
-              key: origin_contact_points
-        - name: ZDM_ORIGIN_PORT
-          valueFrom:
-            secretKeyRef:
-              name: zdmproxy
-              key: origin_port
-        - name: ZDM_ORIGIN_USERNAME
-          valueFrom:
-            secretKeyRef:
-              name: zdmproxy
-              key: origin_username
-        - name: ZDM_ORIGIN_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: zdmproxy
-              key: origin_password
-        - name: ZDM_TARGET_USERNAME
-          valueFrom:
-            secretKeyRef:
-              name: zdmproxy
-              key: target_username
-        - name: ZDM_TARGET_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: zdmproxy
-              key: target_password
-        volumeMounts:
-        - name: scb
-          mountPath: "/tmp/scb"
-          readOnly: true
-      volumes:
-      - name: scb
-        secret:
-          secretName: zdmproxy-scb
-          items:
-          - key: secure-connect-target.zip
-            path: target.zip
+  containers:
+  - name:  cdm
+    image: {{ .Values.cdm.image.repository }}:{{ .Values.cdm.image.tag }}
+    resources:
+      requests:
+        memory: {{ .Values.cdm.resources.requests.memory }}
+        cpu: {{ .Values.cdm.resources.requests.cpu }}
+      limits:
+        memory: {{ .Values.cdm.resources.limits.memory }}
+        cpu: {{ .Values.cdm.resources.limits.cpu }}
+    envFrom:
+    - configMapRef:
+        name: {{ include "zdm.fullname" . }}
+    env:
+    - name: ZDM_TARGET_SECURE_CONNECT_BUNDLE_PATH
+      value: /tmp/scb/target.zip
+    - name: ZDM_ORIGIN_CONTACT_POINTS
+      valueFrom:
+        secretKeyRef:
+          name: zdmproxy
+          key: origin_contact_points
+    - name: ZDM_ORIGIN_PORT
+      valueFrom:
+        secretKeyRef:
+          name: zdmproxy
+          key: origin_port
+    - name: ZDM_ORIGIN_USERNAME
+      valueFrom:
+        secretKeyRef:
+          name: zdmproxy
+          key: origin_username
+    - name: ZDM_ORIGIN_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: zdmproxy
+          key: origin_password
+    - name: ZDM_TARGET_USERNAME
+      valueFrom:
+        secretKeyRef:
+          name: zdmproxy
+          key: target_username
+    - name: ZDM_TARGET_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: zdmproxy
+          key: target_password
+    volumeMounts:
+    - name: scb
+      mountPath: "/tmp/scb"
+      readOnly: true
+  volumes:
+  - name: scb
+    secret:
+      secretName: zdmproxy-scb
+      items:
+      - key: secure-connect-target.zip
+        path: target.zip
