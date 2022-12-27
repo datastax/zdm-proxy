@@ -10,22 +10,14 @@ import (
 	"sync"
 )
 
-const MaxStreams = 2048
-
 type pendingRequests struct {
 	pending     *sync.Map
-	streams     chan int16
 	nodeMetrics *metrics.NodeMetrics
 }
 
-func newPendingRequests(maxStreams int16, nodeMetrics *metrics.NodeMetrics) *pendingRequests {
-	streams := make(chan int16, maxStreams)
-	for i := int16(0); i < maxStreams; i++ {
-		streams <- i
-	}
+func newPendingRequests(nodeMetrics *metrics.NodeMetrics) *pendingRequests {
 	return &pendingRequests{
 		pending:     &sync.Map{},
-		streams:     streams,
 		nodeMetrics: nodeMetrics,
 	}
 }
@@ -42,18 +34,14 @@ func (p *pendingRequests) getOrCreateRequestContextHolder(streamId int16) *reque
 	}
 }
 
-func (p *pendingRequests) store(reqCtx RequestContext) (int16, error) {
-	streamId, err := p.reserveStreamId()
+func (p *pendingRequests) store(reqCtx RequestContext, frame *frame.RawFrame) error {
+	holder := getOrCreateRequestContextHolder(p.pending, frame.Header.StreamId)
+	err := holder.SetIfEmpty(reqCtx)
 	if err != nil {
-		return -1, fmt.Errorf("stream id map ran out of stream ids: %w", err)
-	}
-	holder := getOrCreateRequestContextHolder(p.pending, streamId)
-	err = holder.SetIfEmpty(reqCtx)
-	if err != nil {
-		return -1, fmt.Errorf("stream id collision (%d)", streamId)
+		return fmt.Errorf("stream id collision (%d)", frame.Header.StreamId)
 	}
 
-	return streamId, nil
+	return nil
 }
 
 func (p *pendingRequests) timeOut(streamId int16, reqCtx RequestContext, req *frame.RawFrame) bool {
@@ -85,9 +73,7 @@ func (p *pendingRequests) markAsDone(
 	}
 	if reqCtx.SetResponse(p.nodeMetrics, f, cluster, connectorType) {
 		var err error
-		if clearPendingRequestState(streamId, holder, reqCtx) {
-			err = p.releaseStreamId(streamId)
-		} else {
+		if !clearPendingRequestState(streamId, holder, reqCtx) {
 			err = errors.New("could not clear pending request state")
 		}
 		if err != nil {
@@ -112,24 +98,6 @@ func (p *pendingRequests) clear(onCancelFunc func(ctx RequestContext)) {
 		}
 		return true
 	})
-}
-
-func (p *pendingRequests) releaseStreamId(streamId int16) error {
-	select {
-	case p.streams <- streamId:
-		return nil
-	default:
-		return errors.New("channel was full")
-	}
-}
-
-func (p *pendingRequests) reserveStreamId() (int16, error) {
-	select {
-	case streamId := <-p.streams:
-		return streamId, nil
-	default:
-		return -1, errors.New("channel was empty")
-	}
 }
 
 func clearPendingRequestState(streamId int16, holder *requestContextHolder, reqCtx RequestContext) bool {

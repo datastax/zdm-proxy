@@ -25,6 +25,10 @@ func (recv *PrometheusGauge) Subtract(valueToSubtract int) {
 	recv.g.Sub(float64(valueToSubtract))
 }
 
+func (recv *PrometheusGauge) Set(valueToSet int) {
+	recv.g.Set(float64(valueToSet))
+}
+
 type PrometheusGaugeFunc struct {
 	gf prometheus.GaugeFunc
 }

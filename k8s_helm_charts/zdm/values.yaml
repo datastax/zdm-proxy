@@ -1,0 +1,46 @@
+# Default values for zdm.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+namespace: zdmproxy
+
+proxy:
+  count: 3
+  logLevel: "INFO"
+  # two options: PRIMARY_ONLY and ASYNC_READS_ON_SECONDARY
+  readMode: "PRIMARY_ONLY"
+  # two options: ORIGIN and TARGET
+  primaryCluster: "ORIGIN"
+  maxClientConnections: "1000"
+  metricsEnabled: "true"
+  resources:
+    limits:
+      cpu: 4000m
+      memory: 2048Mi
+    requests:
+      cpu: 4000m
+      memory: 2048Mi
+  image:
+    repository: datastax/zdm-proxy
+    pullPolicy: IfNotPresent
+    # Overrides the image tag whose default is the chart appVersion.
+    tag: ""
+
+cdm:
+  resources:
+    limits:
+      cpu: 16000m
+      memory: 32768Mi
+    requests:
+      cpu: 16000m
+      memory: 32768Mi
+  image:
+    repository: datastax/cassandra-data-migrator
+    tag: 2.10.3
+
+nameOverride: ""
+fullnameOverride: ""
+
+service:
+  type: ClusterIP
+  port: 9942
