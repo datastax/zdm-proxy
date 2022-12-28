@@ -39,7 +39,7 @@ func TestStreamIdReads(t *testing.T) {
 		primeClustersWithDelay(resources.setup, query)
 
 		wg := asyncQuery(query)
-		time.Sleep(2*time.Second)
+		time.Sleep(500*time.Millisecond)
 
 		assertUsedStreamIds(resources.setup.Origin, 1)
 		assertUsedStreamIds(resources.setup.Target, 0)
@@ -53,7 +53,7 @@ func TestStreamIdReads(t *testing.T) {
 		primeClustersWithDelay(resources.setup, query)
 
 		wg := asyncQuery(query)
-		time.Sleep(2*time.Second)
+		time.Sleep(500*time.Millisecond)
 
 		assertUsedStreamIds(resources.setup.Origin, 1)
 		assertUsedStreamIds(resources.setup.Target, 1)
@@ -83,12 +83,10 @@ func asyncRunner(t *testing.T, client *client.TestClient) func(query string) *sy
 // tests
 func setupResources(t *testing.T) *resources {
 	metricsHandler, _ := runner.SetupHandlers()
-	config := setup.NewTestConfig("", "")
-	config.ProxyRequestTimeoutMs = int(20 * time.Second)
-	simulacronSetup, err := setup.NewSimulacronTestSetupWithConfig(t, config)
+	simulacronSetup, err := setup.NewSimulacronTestSetup(t)
 	require.Nil(t, err)
 
-	testClient, err := client.NewTestClientWithRequestTimeout(context.Background(), "127.0.0.1:14002", 20 * time.Second)
+	testClient, err := client.NewTestClientWithRequestTimeout(context.Background(), "127.0.0.1:14002", 2 * time.Second)
 	if err != nil {
 		t.Log("Unable to connect to proxy session.")
 		t.Fatal(err)
@@ -124,7 +122,7 @@ func primeClustersWithDelay(setup *setup.SimulacronTestSetup, query string) {
 		simulacron.WhenQuery(
 			query,
 			simulacron.NewWhenQueryOptions()).
-			ThenSuccess().WithDelay(10 * time.Second)
+			ThenSuccess().WithDelay(1 * time.Second)
 
 
 	setup.Origin.Prime(queryPrimeDelayedResponse)

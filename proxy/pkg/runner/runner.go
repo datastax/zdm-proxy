@@ -16,10 +16,20 @@ import (
 	"time"
 )
 
-func SetupHandlers() (metricsHandler *httpzdmproxy.HandlerWithFallback, readinessHandler *httpzdmproxy.HandlerWithFallback) {
+var (
 	metricsHandler = httpzdmproxy.NewHandlerWithFallback(metrics.DefaultHttpHandler())
 	readinessHandler = httpzdmproxy.NewHandlerWithFallback(health.DefaultReadinessHandler())
+	registerHandler = &sync.Mutex{}
+	registered 		= false
+)
 
+func SetupHandlers() (*httpzdmproxy.HandlerWithFallback, *httpzdmproxy.HandlerWithFallback) {
+	registerHandler.Lock()
+	defer registerHandler.Unlock()
+	if registered {
+		return metricsHandler, readinessHandler
+	}
+	registered = true
 	http.Handle("/metrics", metricsHandler.Handler())
 	http.Handle("/health/readiness", readinessHandler.Handler())
 	http.Handle("/health/liveness", health.LivenessHandler())
