@@ -10,42 +10,46 @@
 {{- end -}}
 {{- $service_addresses = $service_addresses | trimPrefix "," -}}
 
-{{- range $index := until (.Values.proxy.count | int) -}}
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   labels:
     {{- $zdm_labels | nindent 4 }}
-    app: {{ $zdm_fullname }}-{{ $index }}
-  name: {{ $zdm_fullname }}-{{ $index }}
+    app: {{ $zdm_fullname }}
+  name: {{ $zdm_fullname }}
   namespace: {{ $.Values.namespace }}
 spec:
-  replicas: 1
+  serviceName: {{ $zdm_fullname }}
+  replicas: {{ $.Values.proxy.count | int }}
   selector:
     matchLabels:
       {{- $zdm_selectorLabels | nindent 6 }}
-      app: {{ $zdm_fullname }}-{{ $index }}
+      app: {{ $zdm_fullname }}
   template:
     metadata:
       labels:
         {{- $zdm_selectorLabels | nindent 8 }}
-        app: {{ $zdm_fullname }}-{{ $index }}
+        app: {{ $zdm_fullname }}
     spec:
       containers:
       - image: "{{ $.Values.proxy.image.repository }}:{{ $.Values.proxy.image.tag | default $.Chart.AppVersion }}"
-        name: {{ $zdm_fullname }}-{{ $index }}
+        name: {{ $zdm_fullname }}
+        command:
+        - sh
+        - "-c"
+        - "ZDM_PROXY_TOPOLOGY_INDEX=`echo ${HOSTNAME##*-}` /main"
         livenessProbe:
           httpGet:
             path: /health/liveness
             port: httpproxy
-          initialDelaySeconds: 15
-          periodSeconds: 15
+          initialDelaySeconds: 10
+          periodSeconds: 10
         readinessProbe:
           httpGet:
             path: /health/readiness
             port: httpproxy
-          initialDelaySeconds: 15
-          periodSeconds: 15
+          initialDelaySeconds: 10
+          periodSeconds: 10
         ports:
           - name: httpproxy
             containerPort: 14001
@@ -60,10 +64,17 @@ spec:
           limits:
             memory: {{ $.Values.proxy.resources.limits.memory | quote }}
             cpu: {{ $.Values.proxy.resources.limits.cpu | quote }}
-        envFrom:
-        - configMapRef:
-            name: {{ $zdm_fullname }}
         env:
+        - name: ZDM_PRIMARY_CLUSTER
+          value: {{ $.Values.proxy.primaryCluster | upper | quote }}
+        - name: ZDM_READ_MODE
+          value: {{ $.Values.proxy.readMode | upper | quote }}
+        - name: ZDM_LOG_LEVEL
+          value: {{ $.Values.proxy.logLevel | upper | quote }}
+        - name: ZDM_PROXY_MAX_CLIENT_CONNECTIONS
+          value: {{ $.Values.proxy.maxClientConnections | quote }}
+        - name: ZDM_METRICS_ENABLED
+          value: {{ $.Values.proxy.metricsEnabled | quote }}
         - name: ZDM_PROXY_LISTEN_ADDRESS
           valueFrom:
             fieldRef:
@@ -76,8 +87,6 @@ spec:
               fieldPath: status.podIP
         - name: ZDM_METRICS_PORT
           value: "14001"
-        - name: ZDM_PROXY_TOPOLOGY_INDEX
-          value: {{ $index | quote }}
         - name: ZDM_PROXY_TOPOLOGY_ADDRESSES
           value: {{ $service_addresses }}
         - name: ZDM_TARGET_SECURE_CONNECT_BUNDLE_PATH
@@ -123,5 +132,3 @@ spec:
           items:
           - key: secure-connect-target.zip
             path: target.zip
----
-{{- end -}}

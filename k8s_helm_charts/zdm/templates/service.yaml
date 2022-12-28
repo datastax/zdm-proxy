@@ -21,6 +21,6 @@ spec:
       name: cql
   selector:
     {{- $zdm_selectorLabels | nindent 4 }}
-    app: {{ $zdm_fullname }}-{{ $index }}
+    statefulset.kubernetes.io/pod-name: {{ $zdm_fullname }}-{{ $index }}
 ---
 {{- end -}}

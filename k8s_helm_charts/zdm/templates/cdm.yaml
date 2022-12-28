@@ -16,9 +16,6 @@ spec:
       limits:
         memory: {{ .Values.cdm.resources.limits.memory }}
         cpu: {{ .Values.cdm.resources.limits.cpu }}
-    envFrom:
-    - configMapRef:
-        name: {{ include "zdm.fullname" . }}
     env:
     - name: ZDM_TARGET_SECURE_CONNECT_BUNDLE_PATH
       value: /tmp/scb/target.zip
