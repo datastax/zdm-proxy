@@ -19,7 +19,7 @@ import (
 
 func TestSimultaneousConnections(t *testing.T) {
 	if !env.RunCcmTests {
-		t.Skip("Test requires CCM, set USE_CCM env variable to TRUE")
+		t.Skip("Test requires CCM, set RUN_CCMTESTS env variable to TRUE")
 	}
 	ccmSetup, err := setup.NewTemporaryCcmTestSetup(false, false)
 	require.Nil(t, err)
@@ -34,8 +34,6 @@ func TestSimultaneousConnections(t *testing.T) {
 
 	cfg := setup.NewTestConfig(ccmSetup.Origin.GetInitialContactPoint(), ccmSetup.Target.GetInitialContactPoint())
 	cfg.ProxyMaxClientConnections = 4000
-	parallelSessionGoroutines := 20
-	numberOfSessionsPerGoroutine := 1
 	cfg.ProxyRequestTimeoutMs = 15000
 	cfg.ReadMaxWorkers = 1
 	cfg.WriteMaxWorkers = 1
@@ -68,6 +66,9 @@ func TestSimultaneousConnections(t *testing.T) {
 	defer log.SetLevel(oldLevel)
 	zerolog.SetGlobalLevel(zerolog.WarnLevel)
 	defer zerolog.SetGlobalLevel(oldZeroLogLevel)
+
+	parallelSessionGoroutines := 20
+	numberOfSessionsPerGoroutine := 1
 
 	fatalErr := errors.New("fatal err")
 	spawnGoroutinesWg := &sync.WaitGroup{}
