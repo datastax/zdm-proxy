@@ -69,7 +69,7 @@ func TestStreamIdReads(t *testing.T) {
 
 		repeat := 5
 		wg := asyncQuery(t, query, repeat)
-		time.Sleep(10*time.Second)
+		time.Sleep(1*time.Second)
 
 		assertUsedStreamIds(t, resources.setup.Origin, repeat)
 		assertUsedStreamIds(t, resources.setup.Target, repeat)
@@ -116,6 +116,7 @@ func setupResources(t *testing.T) *resources {
 
 	testClient, err := client.NewTestClientWithRequestTimeout(context.Background(), "127.0.0.1:14002", 60 * time.Second)
 	require.Nil(t, err)
+	testClient.PerformDefaultHandshake(context.Background(), primitive.ProtocolVersion3, false)
 
 	wg := &sync.WaitGroup{}
 	srv := startMetricsHandler(t, simulacronSetup.Proxy.Conf, wg, metricsHandler)
