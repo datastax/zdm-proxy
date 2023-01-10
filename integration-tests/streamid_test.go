@@ -28,7 +28,7 @@ type resources struct {
 	close   func()
 }
 
-func TestStreamIdReads(t *testing.T) {
+func TestStreamIdsMetrics(t *testing.T) {
 	resources := setupResources(t)
 	defer resources.close()
 
@@ -36,11 +36,10 @@ func TestStreamIdReads(t *testing.T) {
 	asyncQuery := asyncContextWrap(resources.testClient)
 
 	t.Run("Test single SELECT statement", func(t *testing.T) {
-		query := fmt.Sprintf("SELECT * FROM fake.%v", strings.ReplaceAll(t.Name(), "/", "_"))
+		query := fmt.Sprintf("SELECT * FROM fake.%v", formatName(t))
 		primeClustersWithDelay(resources.setup, query)
 
 		wg := asyncQuery(t, query, 1)
-		time.Sleep(1*time.Second)
 
 		assertUsedStreamIds(t, resources.setup.Origin, 1)
 		assertUsedStreamIds(t, resources.setup.Target, 0)
@@ -50,11 +49,10 @@ func TestStreamIdReads(t *testing.T) {
 	})
 
 	t.Run("Test single INSERT statement", func(t *testing.T) {
-		query := fmt.Sprintf("INSERT INTO fake.%v (a, b) VALUES (1, 2)",  strings.ReplaceAll(t.Name(), "/", "_"))
+		query := fmt.Sprintf("INSERT INTO fake.%v (a, b) VALUES (1, 2)",  formatName(t))
 		primeClustersWithDelay(resources.setup, query)
 
 		wg := asyncQuery(t, query, 1)
-		time.Sleep(1*time.Second)
 
 		assertUsedStreamIds(t, resources.setup.Origin, 1)
 		assertUsedStreamIds(t, resources.setup.Target, 1)
@@ -64,16 +62,47 @@ func TestStreamIdReads(t *testing.T) {
 	})
 
 	t.Run("Test multiple INSERT statements", func(t *testing.T) {
-		query := fmt.Sprintf("INSERT INTO fake.%v (a, b) VALUES (1, 2)", strings.ReplaceAll(t.Name(), "/", "_"))
+		query := fmt.Sprintf("INSERT INTO fake.%v (a, b) VALUES (1, 2)", formatName(t))
 		primeClustersWithDelay(resources.setup, query)
 
-		repeat := 5
+		repeat := 50
 		wg := asyncQuery(t, query, repeat)
-		time.Sleep(1*time.Second)
 
 		assertUsedStreamIds(t, resources.setup.Origin, repeat)
 		assertUsedStreamIds(t, resources.setup.Target, repeat)
 		wg.Wait()
+		assertUsedStreamIds(t, resources.setup.Origin, 0)
+		assertUsedStreamIds(t, resources.setup.Target, 0)
+	})
+
+	t.Run("Test multiple SELECT statements", func(t *testing.T) {
+		query := fmt.Sprintf("SELECT * FROM fake.%v", formatName(t))
+		primeClustersWithDelay(resources.setup, query)
+
+		repeat := 50
+		wg := asyncQuery(t, query, repeat)
+
+		assertUsedStreamIds(t, resources.setup.Origin, repeat)
+		assertUsedStreamIds(t, resources.setup.Target, 0)
+		wg.Wait()
+		assertUsedStreamIds(t, resources.setup.Origin, 0)
+		assertUsedStreamIds(t, resources.setup.Target, 0)
+	})
+
+	t.Run("Test mixed SELECT/INSERT statements", func(t *testing.T) {
+		querySelect := fmt.Sprintf("SELECT * FROM fake.%v", formatName(t))
+		queryInsert := fmt.Sprintf("INSERT INTO fake.%v (a, b) VALUES (1, 2)", formatName(t))
+		primeClustersWithDelay(resources.setup, querySelect)
+		primeClustersWithDelay(resources.setup, queryInsert)
+
+		repeat := 50
+		wgSelect := asyncQuery(t, querySelect, repeat)
+		wgInsert := asyncQuery(t, queryInsert, repeat)
+
+		assertUsedStreamIds(t, resources.setup.Origin, repeat*2)
+		assertUsedStreamIds(t, resources.setup.Target, repeat)
+		wgSelect.Wait()
+		wgInsert.Wait()
 		assertUsedStreamIds(t, resources.setup.Origin, 0)
 		assertUsedStreamIds(t, resources.setup.Target, 0)
 	})
@@ -91,16 +120,14 @@ func asyncContextWrap(testClient *client.TestClient) func(t *testing.T, query st
 		dispatchedWg.Add(repeat)
 		returnedWg.Add(repeat)
 		for i := 0; i < repeat; i++ {
-			log.Infof("repeating: %v", i)
 			go func(testClient *client.TestClient, dispatched *sync.WaitGroup, returned *sync.WaitGroup) {
 				defer returnedWg.Done()
 				dispatchedWg.Done()
-				log.Infof("sending: %v", i)
 				executeQuery(t, testClient, query)
-				log.Infof("sent: %v", i)
 			}(testClient, dispatchedWg, returnedWg)
 		}
 		dispatchedWg.Wait()
+		time.Sleep(1*time.Second) // give it some time to update the internal structs in the proxy for all the requests
 		return returnedWg
 	}
 	return run
@@ -114,7 +141,7 @@ func setupResources(t *testing.T) *resources {
 	require.Nil(t, err)
 
 
-	testClient, err := client.NewTestClientWithRequestTimeout(context.Background(), "127.0.0.1:14002", 60 * time.Second)
+	testClient, err := client.NewTestClientWithRequestTimeout(context.Background(), "127.0.0.1:14002", 10 * time.Second)
 	require.Nil(t, err)
 	testClient.PerformDefaultHandshake(context.Background(), primitive.ProtocolVersion3, false)
 
@@ -155,7 +182,6 @@ func primeClustersWithDelay(setup *setup.SimulacronTestSetup, query string) {
 // executeQuery sends the query string in a Frame message through the test client and handles any failures internally
 // by failing the tests, otherwise, returns the response to the caller
 func executeQuery(t *testing.T, client *client.TestClient, query string) *frame.Frame {
-	log.Info("executing query")
 	q := &message.Query{
 		Query: query,
 	}
@@ -184,4 +210,9 @@ func metricsFor(cluster *simulacron.Cluster, setup *setup.SimulacronTestSetup) m
 		return metrics.OriginUsedStreamIds
 	}
 	return metrics.TargetUsedStreamIds
+}
+
+// formatName returns a string suitable for usage in a CQL statement based on the test name
+func formatName(t *testing.T) string {
+	return strings.ReplaceAll(t.Name(), "/", "_")
 }
