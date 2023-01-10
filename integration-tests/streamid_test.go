@@ -34,28 +34,28 @@ func TestStreamIdsMetrics(t *testing.T) {
 	}{
 		{
 			name:                  "Test single SELECT statement",
-			queries:               []string{fmt.Sprintf("SELECT * FROM fake.%v", formatName(t))},
+			queries:               []string{"SELECT * FROM fake.%v"},
 			repeat:                1,
 			expectedUsedOriginIds: 1,
 			expectedUsedTargetIds: 0,
 		},
 		{
 			name:                  "Test single INSERT statement",
-			queries:               []string{fmt.Sprintf("INSERT INTO fake.%v (a, b) VALUES (1, 2)", formatName(t))},
+			queries:               []string{"INSERT INTO fake.%v (a, b) VALUES (1, 2)"},
 			repeat:                1,
 			expectedUsedOriginIds: 1,
 			expectedUsedTargetIds: 1,
 		},
 		{
 			name:                  "Test multiple INSERT statements",
-			queries:               []string{fmt.Sprintf("INSERT INTO fake.%v (a, b) VALUES (1, 2)", formatName(t))},
+			queries:               []string{"INSERT INTO fake.%v (a, b) VALUES (1, 2)"},
 			repeat:                50,
 			expectedUsedOriginIds: 50,
 			expectedUsedTargetIds: 50,
 		},
 		{
 			name:                  "Test multiple SELECT statements",
-			queries:               []string{fmt.Sprintf("SELECT * FROM fake.%v", formatName(t))},
+			queries:               []string{"SELECT * FROM fake.%v"},
 			repeat:                50,
 			expectedUsedOriginIds: 50,
 			expectedUsedTargetIds: 0,
@@ -63,8 +63,8 @@ func TestStreamIdsMetrics(t *testing.T) {
 		{
 			name: "Test mixed SELECT/INSERT statements",
 			queries: []string{
-				fmt.Sprintf("SELECT * FROM fake.%v", formatName(t)),
-				fmt.Sprintf("INSERT INTO fake.%v (a, b) VALUES (1, 2)", formatName(t))},
+				"SELECT * FROM fake.%v",
+				"INSERT INTO fake.%v (a, b) VALUES (1, 2)"},
 			repeat:                50,
 			expectedUsedOriginIds: 100,
 			expectedUsedTargetIds: 50,
@@ -102,8 +102,10 @@ func TestStreamIdsMetrics(t *testing.T) {
 
 				assertUsedStreamIds := initAsserts(resources.setup, metricsPrefix)
 				asyncQuery := asyncContextWrap(resources.testClient)
-				for _, query := range testCase.queries {
-					primeClustersWithDelay(resources.setup, query)
+				for idx, query := range testCase.queries {
+					replacedQuery := fmt.Sprintf(query, formatName(t))
+					testCase.queries[idx] = replacedQuery
+					primeClustersWithDelay(resources.setup, replacedQuery)
 				}
 				waitGroups := make([]*sync.WaitGroup, 0, len(testCase.queries))
 				for _, query := range testCase.queries {
