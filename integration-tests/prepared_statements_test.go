@@ -899,7 +899,17 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 
 			if !test.read || dualReadsEnabled {
 				require.Equal(t, 2, targetCtx["EXECUTE_"+string(targetPreparedId)])
-				if test.targetUnprepared {
+				if test.read && dualReadsEnabled {
+					// depending on go routine scheduling, the 2 async Executes can be both UNPREPARED, both ROWS or 1 of each
+					unpreparedResultsInterface := targetCtx["UNPREPARED_"+string(targetPreparedId)]
+					unpreparedResults := 0
+					if unpreparedResultsInterface != nil {
+						unpreparedResults = unpreparedResultsInterface.(int)
+					}
+					require.GreaterOrEqual(t, unpreparedResults, 0)
+					require.LessOrEqual(t, unpreparedResults, len(targetExecuteMessages))
+					require.Equal(t, len(targetExecuteMessages)-unpreparedResults, targetCtx["ROWS_"+string(targetPreparedId)])
+				} else if test.targetUnprepared {
 					require.Equal(t, 1, targetCtx["UNPREPARED_"+string(targetPreparedId)])
 					require.Equal(t, 1, targetCtx["ROWS_"+string(targetPreparedId)])
 				} else {

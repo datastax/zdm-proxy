@@ -11,7 +11,7 @@ import (
 )
 
 func TestNewPrometheusZdmProxyMetrics(t *testing.T) {
-	actual := NewPrometheusMetricFactory(prometheus.NewRegistry())
+	actual := NewPrometheusMetricFactory(prometheus.NewRegistry(), "zdm")
 	assert.NotNil(t, actual)
 	assert.Empty(t, actual.registeredCollectors)
 }
@@ -19,7 +19,7 @@ func TestNewPrometheusZdmProxyMetrics(t *testing.T) {
 func TestPrometheusZdmProxyMetrics_AddCounter(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	counterMetric := newTestMetric("test_counter")
-	handler := NewPrometheusMetricFactory(registry)
+	handler := NewPrometheusMetricFactory(registry, "zdm")
 	assert.Empty(t, handler.registeredCollectors)
 	counter, err := handler.GetOrCreateCounter(counterMetric)
 	assert.Contains(t, handler.registeredCollectors, &collectorEntry{
@@ -41,7 +41,7 @@ func TestPrometheusZdmProxyMetrics_AddCounter(t *testing.T) {
 func TestPrometheusZdmProxyMetrics_AddCounterWithLabels(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	counterMetric := newTestMetricWithLabels("test_counter", map[string]string{"counter_type": "type1"})
-	handler := NewPrometheusMetricFactory(registry)
+	handler := NewPrometheusMetricFactory(registry, "zdm")
 	assert.Empty(t, handler.registeredCollectors)
 
 	counter, err := handler.GetOrCreateCounter(counterMetric)
@@ -70,7 +70,7 @@ func TestPrometheusZdmProxyMetrics_AddCounterWithLabels(t *testing.T) {
 func TestPrometheusZdmProxyMetrics_AddGauge(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	gaugeMetric := newTestMetric("test_gauge")
-	handler := NewPrometheusMetricFactory(registry)
+	handler := NewPrometheusMetricFactory(registry, "zdm")
 	assert.Empty(t, handler.registeredCollectors)
 	gauge, err := handler.GetOrCreateGauge(gaugeMetric)
 	assert.Nil(t, err)
@@ -92,7 +92,7 @@ func TestPrometheusZdmProxyMetrics_AddGauge(t *testing.T) {
 func TestPrometheusZdmProxyMetrics_AddGaugeWithLabels(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	gaugeMetric := newTestMetricWithLabels("test_gauge_with_labels", map[string]string{"gauge_type": "gauge1"})
-	handler := NewPrometheusMetricFactory(registry)
+	handler := NewPrometheusMetricFactory(registry, "zdm")
 	assert.Empty(t, handler.registeredCollectors)
 
 	g, err := handler.GetOrCreateGauge(gaugeMetric)
@@ -123,7 +123,7 @@ func TestPrometheusZdmProxyMetrics_AddGaugeWithLabels(t *testing.T) {
 func TestPrometheusZdmProxyMetrics_AddGaugeFunction(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	gaugeFuncMetric := newTestMetric("test_gauge_func")
-	handler := NewPrometheusMetricFactory(registry)
+	handler := NewPrometheusMetricFactory(registry, "zdm")
 	assert.Empty(t, handler.registeredCollectors)
 	gf, err := handler.GetOrCreateGaugeFunc(gaugeFuncMetric, func() float64 { return 12.34 })
 	assert.Nil(t, err)
@@ -145,7 +145,7 @@ func TestPrometheusZdmProxyMetrics_AddGaugeFunction(t *testing.T) {
 func TestPrometheusZdmProxyMetrics_AddHistogram(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	histogramMetric := newTestMetric("test_histogram")
-	handler := NewPrometheusMetricFactory(registry)
+	handler := NewPrometheusMetricFactory(registry, "zdm")
 	assert.Empty(t, handler.registeredCollectors)
 	h, err := handler.GetOrCreateHistogram(histogramMetric, nil)
 	assert.Nil(t, err)
@@ -167,7 +167,7 @@ func TestPrometheusZdmProxyMetrics_AddHistogram(t *testing.T) {
 func TestPrometheusZdmProxyMetrics_AddHistogramWithLabels(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	histogramMetric := newTestMetricWithLabels("test_histogram_with_labels", map[string]string{"label1": "value1"})
-	handler := NewPrometheusMetricFactory(registry)
+	handler := NewPrometheusMetricFactory(registry, "zdm")
 	assert.Empty(t, handler.registeredCollectors)
 
 	h, err := handler.GetOrCreateHistogram(histogramMetric, nil)
@@ -198,7 +198,7 @@ func TestPrometheusZdmProxyMetrics_AddHistogramWithLabels(t *testing.T) {
 }
 
 func TestPrometheusZdmProxyMetrics_IncrementCountByOne_Counter(t *testing.T) {
-	handler := NewPrometheusMetricFactory(prometheus.NewRegistry())
+	handler := NewPrometheusMetricFactory(prometheus.NewRegistry(), "zdm")
 	counterMetric := newTestMetric("test_add_count_by_one_counter")
 	c, err := handler.GetOrCreateCounter(counterMetric)
 	assert.Nil(t, err)
@@ -209,7 +209,7 @@ func TestPrometheusZdmProxyMetrics_IncrementCountByOne_Counter(t *testing.T) {
 }
 
 func TestPrometheusZdmProxyMetrics_IncrementCountByOne_Gauge(t *testing.T) {
-	handler := NewPrometheusMetricFactory(prometheus.NewRegistry())
+	handler := NewPrometheusMetricFactory(prometheus.NewRegistry(), "zdm")
 	gaugeMetric := newTestMetric("test_add_count_by_one_counter")
 	g, err := handler.GetOrCreateGauge(gaugeMetric)
 	assert.Nil(t, err)
@@ -220,7 +220,7 @@ func TestPrometheusZdmProxyMetrics_IncrementCountByOne_Gauge(t *testing.T) {
 }
 
 func TestPrometheusZdmProxyMetrics_IncrementCountByOne_Counter_Labels(t *testing.T) {
-	handler := NewPrometheusMetricFactory(prometheus.NewRegistry())
+	handler := NewPrometheusMetricFactory(prometheus.NewRegistry(), "zdm")
 	counterMetric := newTestMetricWithLabels("test_add_count_by_one_counter_labels", map[string]string{"l": "v"})
 	c, err := handler.GetOrCreateCounter(counterMetric)
 	assert.Nil(t, err)
@@ -231,7 +231,7 @@ func TestPrometheusZdmProxyMetrics_IncrementCountByOne_Counter_Labels(t *testing
 }
 
 func TestPrometheusZdmProxyMetrics_IncrementCountByOne_Gauge_Labels(t *testing.T) {
-	handler := NewPrometheusMetricFactory(prometheus.NewRegistry())
+	handler := NewPrometheusMetricFactory(prometheus.NewRegistry(), "zdm")
 	gaugeMetric := newTestMetricWithLabels("test_add_count_by_one_counter_labels", map[string]string{"label": "value"})
 	g, err := handler.GetOrCreateGauge(gaugeMetric)
 	assert.Nil(t, err)
@@ -242,7 +242,7 @@ func TestPrometheusZdmProxyMetrics_IncrementCountByOne_Gauge_Labels(t *testing.T
 }
 
 func TestPrometheusZdmProxyMetrics_DecrementCountByOne(t *testing.T) {
-	handler := NewPrometheusMetricFactory(prometheus.NewRegistry())
+	handler := NewPrometheusMetricFactory(prometheus.NewRegistry(), "zdm")
 	gaugeMetric := newTestMetric("test_decrement_count_gauge")
 	g, err := handler.GetOrCreateGauge(gaugeMetric)
 	assert.Nil(t, err)
@@ -253,7 +253,7 @@ func TestPrometheusZdmProxyMetrics_DecrementCountByOne(t *testing.T) {
 }
 
 func TestPrometheusZdmProxyMetrics_DecrementCountByOne_Labels(t *testing.T) {
-	handler := NewPrometheusMetricFactory(prometheus.NewRegistry())
+	handler := NewPrometheusMetricFactory(prometheus.NewRegistry(), "zdm")
 	gaugeMetric := newTestMetricWithLabels("test_decrement_count_gauge_labels", map[string]string{"label": "value"})
 	g, err := handler.GetOrCreateGauge(gaugeMetric)
 	g.Subtract(1)
@@ -264,7 +264,7 @@ func TestPrometheusZdmProxyMetrics_DecrementCountByOne_Labels(t *testing.T) {
 }
 
 func TestPrometheusZdmProxyMetrics_TrackInHistogram(t *testing.T) {
-	handler := NewPrometheusMetricFactory(prometheus.NewRegistry())
+	handler := NewPrometheusMetricFactory(prometheus.NewRegistry(), "zdm")
 	histogramMetric := newTestMetric("test_histogram")
 	h, err := handler.GetOrCreateHistogram(histogramMetric, nil)
 	assert.Nil(t, err)
@@ -280,7 +280,7 @@ func TestPrometheusZdmProxyMetrics_TrackInHistogram(t *testing.T) {
 }
 
 func TestPrometheusZdmProxyMetrics_TrackInHistogram_WithLabels(t *testing.T) {
-	handler := NewPrometheusMetricFactory(prometheus.NewRegistry())
+	handler := NewPrometheusMetricFactory(prometheus.NewRegistry(), "zdm")
 	histogramMetric := newTestMetricWithLabels("test_histogram_with_labels", map[string]string{"l": "v"})
 	h, err := handler.GetOrCreateHistogram(histogramMetric, nil)
 	assert.Nil(t, err)
@@ -297,7 +297,7 @@ func TestPrometheusZdmProxyMetrics_TrackInHistogram_WithLabels(t *testing.T) {
 
 func TestPrometheusZdmProxyMetrics_UnregisterAllMetrics(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	handler := NewPrometheusMetricFactory(registry)
+	handler := NewPrometheusMetricFactory(registry, "zdm")
 	counterMetric := newTestMetric("test_counter")
 	counterMetricWithLabels1 := newTestMetricWithLabels("test_counter_with_labels", map[string]string{"counter_type": "counter1"})
 	counterMetricWithLabels2 := newTestMetricWithLabels("test_counter_with_labels", map[string]string{"counter_type": "counter2"})

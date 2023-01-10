@@ -138,16 +138,16 @@ func testMetrics(t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback)
 				}
 			}()
 
-			ensureMetricsServerListening(t, conf)
+			EnsureMetricsServerListening(t, conf)
 
-			lines := gatherMetrics(t, conf, false)
+			lines := GatherMetrics(t, conf, false)
 			checkMetrics(t, false, lines, conf.ReadMode, 0, 0, 0, 0, 0, 0, 0, 0, true, true, originEndpoint, targetEndpoint, asyncEndpoint, 0, 0, 0)
 
 			err = testSetup.Client.Connect(primitive.ProtocolVersion4)
 			require.Nil(t, err)
 			clientConn := testSetup.Client.CqlConnection
 
-			lines = gatherMetrics(t, conf, true)
+			lines = GatherMetrics(t, conf, true)
 			// 1 on origin: AUTH_RESPONSE
 			// 1 on target: AUTH_RESPONSE
 			// 1 on both: STARTUP
@@ -158,7 +158,7 @@ func testMetrics(t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback)
 			_, err = clientConn.SendAndReceive(insertQuery)
 			require.Nil(t, err)
 
-			lines = gatherMetrics(t, conf, true)
+			lines = GatherMetrics(t, conf, true)
 			// 1 on origin: AUTH_RESPONSE
 			// 1 on target: AUTH_RESPONSE
 			// 2 on both: STARTUP and QUERY INSERT INTO
@@ -169,7 +169,7 @@ func testMetrics(t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback)
 			_, err = clientConn.SendAndReceive(selectQuery)
 			require.Nil(t, err)
 
-			lines = gatherMetrics(t, conf, true)
+			lines = GatherMetrics(t, conf, true)
 			// 2 on origin: AUTH_RESPONSE and QUERY SELECT
 			// 1 on target: AUTH_RESPONSE
 			// 2 on both: STARTUP and QUERY INSERT INTO
@@ -212,7 +212,7 @@ func startMetricsHandler(
 	return srv
 }
 
-func ensureMetricsServerListening(t *testing.T, conf *config.Config) {
+func EnsureMetricsServerListening(t *testing.T, conf *config.Config) {
 	var err error
 	for tries := 0; tries < 5; tries++ {
 		if tries > 0 {
@@ -226,7 +226,7 @@ func ensureMetricsServerListening(t *testing.T, conf *config.Config) {
 	require.Nil(t, err)
 }
 
-func gatherMetrics(t *testing.T, conf *config.Config, checkNodeMetrics bool) []string {
+func GatherMetrics(t *testing.T, conf *config.Config, checkNodeMetrics bool) []string {
 	httpAddr := fmt.Sprintf("%s:%d", conf.MetricsAddress, conf.MetricsPort)
 	statusCode, rspStr, err := utils.GetMetrics(httpAddr)
 	require.Nil(t, err)
