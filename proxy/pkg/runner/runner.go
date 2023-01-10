@@ -17,10 +17,10 @@ import (
 )
 
 var (
-	metricsHandler = httpzdmproxy.NewHandlerWithFallback(metrics.DefaultHttpHandler())
+	metricsHandler   = httpzdmproxy.NewHandlerWithFallback(metrics.DefaultHttpHandler())
 	readinessHandler = httpzdmproxy.NewHandlerWithFallback(health.DefaultReadinessHandler())
-	registerHandler = &sync.Mutex{}
-	registered 		= false
+	registerHandler  = &sync.Mutex{}
+	registered       = false
 )
 
 func SetupHandlers() (*httpzdmproxy.HandlerWithFallback, *httpzdmproxy.HandlerWithFallback) {

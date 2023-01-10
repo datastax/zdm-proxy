@@ -21,11 +21,11 @@ import (
 )
 
 type resources struct {
-	setup  *setup.SimulacronTestSetup
+	setup      *setup.SimulacronTestSetup
 	testClient *client.TestClient
-	wg      *sync.WaitGroup
-	metrics *http.Server
-	close   func()
+	wg         *sync.WaitGroup
+	metrics    *http.Server
+	close      func()
 }
 
 func TestStreamIdsMetrics(t *testing.T) {
@@ -49,7 +49,7 @@ func TestStreamIdsMetrics(t *testing.T) {
 	})
 
 	t.Run("Test single INSERT statement", func(t *testing.T) {
-		query := fmt.Sprintf("INSERT INTO fake.%v (a, b) VALUES (1, 2)",  formatName(t))
+		query := fmt.Sprintf("INSERT INTO fake.%v (a, b) VALUES (1, 2)", formatName(t))
 		primeClustersWithDelay(resources.setup, query)
 
 		wg := asyncQuery(t, query, 1)
@@ -127,7 +127,7 @@ func asyncContextWrap(testClient *client.TestClient) func(t *testing.T, query st
 			}(testClient, dispatchedWg, returnedWg)
 		}
 		dispatchedWg.Wait()
-		time.Sleep(1*time.Second) // give it some time to update the internal structs in the proxy for all the requests
+		time.Sleep(1 * time.Second) // give it some time to update the internal structs in the proxy for all the requests
 		return returnedWg
 	}
 	return run
@@ -140,8 +140,7 @@ func setupResources(t *testing.T) *resources {
 	simulacronSetup, err := setup.NewSimulacronTestSetup(t)
 	require.Nil(t, err)
 
-
-	testClient, err := client.NewTestClientWithRequestTimeout(context.Background(), "127.0.0.1:14002", 10 * time.Second)
+	testClient, err := client.NewTestClientWithRequestTimeout(context.Background(), "127.0.0.1:14002", 10*time.Second)
 	require.Nil(t, err)
 	testClient.PerformDefaultHandshake(context.Background(), primitive.ProtocolVersion3, false)
 
@@ -151,11 +150,11 @@ func setupResources(t *testing.T) *resources {
 	EnsureMetricsServerListening(t, simulacronSetup.Proxy.Conf)
 
 	return &resources{
-		setup:   simulacronSetup,
-		testClient:  testClient,
-		wg:      wg,
-		metrics: srv,
-		close: func(){
+		setup:      simulacronSetup,
+		testClient: testClient,
+		wg:         wg,
+		metrics:    srv,
+		close: func() {
 			simulacronSetup.Cleanup()
 			err := srv.Close()
 			if err != nil {
@@ -194,8 +193,8 @@ func executeQuery(t *testing.T, client *client.TestClient, query string) *frame.
 
 // initAsserts is a higher-order function that holds a reference to the setup structs which
 // allows the inner function to take only the necessary assertion params
-func initAsserts(setup *setup.SimulacronTestSetup) func (t *testing.T, cluster *simulacron.Cluster, expectedValue int) {
-	asserts := func (t *testing.T, cluster *simulacron.Cluster, expectedValue int) {
+func initAsserts(setup *setup.SimulacronTestSetup) func(t *testing.T, cluster *simulacron.Cluster, expectedValue int) {
+	asserts := func(t *testing.T, cluster *simulacron.Cluster, expectedValue int) {
 		lines := GatherMetrics(t, setup.Proxy.Conf, true)
 		prefix := "zdm"
 		endpoint := fmt.Sprintf("%v:9042", cluster.InitialContactPoint)
