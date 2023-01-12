@@ -10,7 +10,7 @@ When cutting a new release, update the `unreleased` heading to the tag being gen
 
 ### New Features
 
-* TBD Send heartbeats to clusters
+* [#97](https://github.com/datastax/zdm-proxy/issues/97) Send heartbeats (OPTIONS messages) in cluster connections
 
 ### Improvements
 
