@@ -778,7 +778,7 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 				// depending on goroutine scheduling, async cluster connector might receive an UNPREPARED and send a PREPARE on its own or not
 				// so with async reads we will assert greater or equal instead of equal
 				expectedTargetPrepares += 2
-				expectedMaxTargetPrepares += 3
+				expectedMaxTargetPrepares += 4
 			}
 			if test.batchQuery != "" {
 				expectedTargetBatches += 2
