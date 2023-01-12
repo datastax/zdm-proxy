@@ -16,10 +16,10 @@ With ZDM-Proxy in the mix, there won't be an issue if the workload has both read
 
 This release enables the ZDM-Proxy to independently send heartbeats on the SECONDARY cluster connection if that connection has not seen any activity over a certain period of time which should fix the issue of disconnects happening when a client application was only sending read requests to the proxy.
 
-[Changelog](CHANGELOG-2.1.md#v210---2023-11-13)
+[Changelog](CHANGELOG/CHANGELOG-2.1.md#v210---2023-11-13)
 
 ## v2.0.0 - 2022-10-18
 
 Open-source release that also includes renaming of the product, public documentation launch and a revamp of configuration and metrics.
 
-[Changelog](CHANGELOG-2.0.md#v200---2022-10-18)
+[Changelog](CHANGELOG/CHANGELOG-2.0.md#v200---2022-10-18)
