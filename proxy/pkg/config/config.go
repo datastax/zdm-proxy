@@ -82,7 +82,7 @@ type Config struct {
 
 	// Heartbeat bucket
 
-	HeartbeatIntervalMs int `default:"5000" split_words:"true"`
+	HeartbeatIntervalMs int `default:"30000" split_words:"true"`
 
 	HeartbeatRetryIntervalMinMs int     `default:"250" split_words:"true"`
 	HeartbeatRetryIntervalMaxMs int     `default:"30000" split_words:"true"`
