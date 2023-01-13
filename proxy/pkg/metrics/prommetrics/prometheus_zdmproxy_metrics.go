@@ -12,23 +12,23 @@ import (
 	"sync"
 )
 
-const metricsPrefix = "zdm"
-
 type PrometheusMetricFactory struct {
 	registerer           prometheus.Registerer
 	lock                 *sync.Mutex
 	registeredCollectors []*collectorEntry
+	metricsPrefix        string
 }
 
 /***
 	Instantiation and initialization
  ***/
 
-func NewPrometheusMetricFactory(registerer prometheus.Registerer) *PrometheusMetricFactory {
+func NewPrometheusMetricFactory(registerer prometheus.Registerer, metricsPrefix string) *PrometheusMetricFactory {
 	m := &PrometheusMetricFactory{
 		registerer:           registerer,
 		lock:                 &sync.Mutex{},
 		registeredCollectors: make([]*collectorEntry, 0),
+		metricsPrefix:        metricsPrefix,
 	}
 	return m
 }
@@ -43,14 +43,14 @@ func (pm *PrometheusMetricFactory) GetOrCreateCounter(mn metrics.Metric) (metric
 	if mn.GetLabels() != nil {
 		c = prometheus.NewCounterVec(
 			prometheus.CounterOpts{
-				Namespace: metricsPrefix,
+				Namespace: pm.metricsPrefix,
 				Name:      mn.GetName(),
 				Help:      mn.GetDescription(),
 			},
 			getLabelNames(mn))
 	} else {
 		c = prometheus.NewCounter(prometheus.CounterOpts{
-			Namespace: metricsPrefix,
+			Namespace: pm.metricsPrefix,
 			Name:      mn.GetName(),
 			Help:      mn.GetDescription(),
 		})
@@ -85,14 +85,14 @@ func (pm *PrometheusMetricFactory) GetOrCreateGauge(mn metrics.Metric) (metrics.
 	if mn.GetLabels() != nil {
 		g = prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
-				Namespace: metricsPrefix,
+				Namespace: pm.metricsPrefix,
 				Name:      mn.GetName(),
 				Help:      mn.GetDescription(),
 			},
 			getLabelNames(mn))
 	} else {
 		g = prometheus.NewGauge(prometheus.GaugeOpts{
-			Namespace: metricsPrefix,
+			Namespace: pm.metricsPrefix,
 			Name:      mn.GetName(),
 			Help:      mn.GetDescription(),
 		})
@@ -129,7 +129,7 @@ func (pm *PrometheusMetricFactory) GetOrCreateGaugeFunc(mn metrics.Metric, mf fu
 	} else {
 		gf = prometheus.NewGaugeFunc(
 			prometheus.GaugeOpts{
-				Namespace: metricsPrefix,
+				Namespace: pm.metricsPrefix,
 				Name:      mn.GetName(),
 				Help:      mn.GetDescription(),
 			},
@@ -156,7 +156,7 @@ func (pm *PrometheusMetricFactory) GetOrCreateHistogram(mn metrics.Metric, bucke
 	if mn.GetLabels() != nil {
 		h = prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{
-				Namespace: metricsPrefix,
+				Namespace: pm.metricsPrefix,
 				Name:      mn.GetName(),
 				Help:      mn.GetDescription(),
 				Buckets:   buckets,
@@ -164,7 +164,7 @@ func (pm *PrometheusMetricFactory) GetOrCreateHistogram(mn metrics.Metric, bucke
 			getLabelNames(mn))
 	} else {
 		h = prometheus.NewHistogram(prometheus.HistogramOpts{
-			Namespace: metricsPrefix,
+			Namespace: pm.metricsPrefix,
 			Name:      mn.GetName(),
 			Help:      mn.GetDescription(),
 			Buckets:   buckets,
