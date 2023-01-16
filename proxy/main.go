@@ -14,7 +14,7 @@ import (
 )
 
 // TODO: to be managed externally
-const ZdmVersionString = "2.0.0"
+const ZdmVersionString = "2.1.0"
 
 var displayVersion = flag.Bool("version", false, "Display the ZDM proxy version and exit")
 

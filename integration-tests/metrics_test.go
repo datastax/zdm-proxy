@@ -41,6 +41,9 @@ var nodeMetrics = []metrics.Metric{
 
 	metrics.OpenOriginConnections,
 	metrics.OpenTargetConnections,
+
+	metrics.OriginUsedStreamIds,
+	metrics.TargetUsedStreamIds,
 }
 
 var proxyMetrics = []metrics.Metric{
@@ -135,38 +138,38 @@ func testMetrics(t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback)
 				}
 			}()
 
-			ensureMetricsServerListening(t, conf)
+			EnsureMetricsServerListening(t, conf)
 
-			lines := gatherMetrics(t, conf, false)
-			checkMetrics(t, false, lines, conf.ReadMode, 0, 0, 0, 0, 0, 0, 0, 0, true, true, originEndpoint, targetEndpoint, asyncEndpoint)
+			lines := GatherMetrics(t, conf, false)
+			checkMetrics(t, false, lines, conf.ReadMode, 0, 0, 0, 0, 0, 0, 0, 0, true, true, originEndpoint, targetEndpoint, asyncEndpoint, 0, 0, 0)
 
 			err = testSetup.Client.Connect(primitive.ProtocolVersion4)
 			require.Nil(t, err)
 			clientConn := testSetup.Client.CqlConnection
 
-			lines = gatherMetrics(t, conf, true)
+			lines = GatherMetrics(t, conf, true)
 			// 1 on origin: AUTH_RESPONSE
 			// 1 on target: AUTH_RESPONSE
 			// 1 on both: STARTUP
 			// 2 on async: AUTH_RESPONSE and STARTUP
 			// but all of these are "system" requests so not tracked
-			checkMetrics(t, true, lines, conf.ReadMode, 1, 1, 1, expectedAsyncConnections, 0, 0, 0, 0, true, true, originEndpoint, targetEndpoint, asyncEndpoint)
+			checkMetrics(t, true, lines, conf.ReadMode, 1, 1, 1, expectedAsyncConnections, 0, 0, 0, 0, true, true, originEndpoint, targetEndpoint, asyncEndpoint, 0, 0, 0)
 
 			_, err = clientConn.SendAndReceive(insertQuery)
 			require.Nil(t, err)
 
-			lines = gatherMetrics(t, conf, true)
+			lines = GatherMetrics(t, conf, true)
 			// 1 on origin: AUTH_RESPONSE
 			// 1 on target: AUTH_RESPONSE
 			// 2 on both: STARTUP and QUERY INSERT INTO
 			// 2 on async: AUTH_RESPONSE and STARTUP
 			// only QUERY is tracked
-			checkMetrics(t, true, lines, conf.ReadMode, 1, 1, 1, expectedAsyncConnections, 1, 0, 0, 0, true, true, originEndpoint, targetEndpoint, asyncEndpoint)
+			checkMetrics(t, true, lines, conf.ReadMode, 1, 1, 1, expectedAsyncConnections, 1, 0, 0, 0, true, true, originEndpoint, targetEndpoint, asyncEndpoint, 0, 0, 0)
 
 			_, err = clientConn.SendAndReceive(selectQuery)
 			require.Nil(t, err)
 
-			lines = gatherMetrics(t, conf, true)
+			lines = GatherMetrics(t, conf, true)
 			// 2 on origin: AUTH_RESPONSE and QUERY SELECT
 			// 1 on target: AUTH_RESPONSE
 			// 2 on both: STARTUP and QUERY INSERT INTO
@@ -175,7 +178,7 @@ func testMetrics(t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback)
 			if conf.ReadMode == config.ReadModeDualAsyncOnSecondary {
 				time.Sleep(1000 * time.Millisecond)
 			}
-			checkMetrics(t, true, lines, conf.ReadMode, 1, 1, 1, expectedAsyncConnections, 1, 1, 0, 1, false, true, originEndpoint, targetEndpoint, asyncEndpoint)
+			checkMetrics(t, true, lines, conf.ReadMode, 1, 1, 1, expectedAsyncConnections, 1, 1, 0, 1, false, true, originEndpoint, targetEndpoint, asyncEndpoint, 0, 0, 0)
 		})
 	}
 }
@@ -209,7 +212,7 @@ func startMetricsHandler(
 	return srv
 }
 
-func ensureMetricsServerListening(t *testing.T, conf *config.Config) {
+func EnsureMetricsServerListening(t *testing.T, conf *config.Config) {
 	var err error
 	for tries := 0; tries < 5; tries++ {
 		if tries > 0 {
@@ -223,7 +226,7 @@ func ensureMetricsServerListening(t *testing.T, conf *config.Config) {
 	require.Nil(t, err)
 }
 
-func gatherMetrics(t *testing.T, conf *config.Config, checkNodeMetrics bool) []string {
+func GatherMetrics(t *testing.T, conf *config.Config, checkNodeMetrics bool) []string {
 	httpAddr := fmt.Sprintf("%s:%d", conf.MetricsAddress, conf.MetricsPort)
 	statusCode, rspStr, err := utils.GetMetrics(httpAddr)
 	require.Nil(t, err)
@@ -267,6 +270,9 @@ func checkMetrics(
 	originHost string,
 	targetHost string,
 	asyncHost string,
+	streamIdsOrigin int,
+	streamIdsTarget int,
+	streamIdsAsync int,
 ) {
 	asyncEnabled := readMode == config.ReadModeDualAsyncOnSecondary
 	prefix := "zdm"
@@ -415,6 +421,12 @@ func checkMetrics(
 			requireEventuallyContainsLine(t, lines, fmt.Sprintf("%v{node=\"%v\"} %v", getPrometheusNameWithSuffix(prefix, metrics.AsyncRequestDuration, "count"), asyncHost, successAsync))
 		} else {
 			require.NotContains(t, lines, fmt.Sprintf("%v", getPrometheusNameWithSuffix(prefix, metrics.OriginRequestDuration, "count")))
+		}
+
+		require.Contains(t, lines, fmt.Sprintf("%v{node=\"%v\"} %v", getPrometheusName(prefix, metrics.OriginUsedStreamIds), originHost, streamIdsOrigin))
+		require.Contains(t, lines, fmt.Sprintf("%v{node=\"%v\"} %v", getPrometheusName(prefix, metrics.TargetUsedStreamIds), targetHost, streamIdsTarget))
+		if asyncEnabled {
+			requireEventuallyContainsLine(t, lines, fmt.Sprintf("%v{node=\"%v\"} %v", getPrometheusName(prefix, metrics.AsyncUsedStreamIds), asyncHost, streamIdsAsync))
 		}
 	}
 }

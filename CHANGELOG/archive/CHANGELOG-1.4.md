@@ -6,6 +6,12 @@ When cutting a new release, update the `unreleased` heading to the tag being gen
 
 ## Unreleased
 
+## v.1.4.1 - 2022-09-16
+
+### Improvements
+
+* [ZDM-390](https://datastax.jira.com/browse/ZDM-390) Change docker base image to alpine due to GCP scan tool requirements
+
 ## v.1.4.0 - 2022-08-19
 
 ### New Features

@@ -62,6 +62,7 @@ type Config struct {
 	ProxyListenPort           int    `default:"14002" split_words:"true"`
 	ProxyRequestTimeoutMs     int    `default:"10000" split_words:"true"`
 	ProxyMaxClientConnections int    `default:"1000" split_words:"true"`
+	ProxyMaxStreamIds         int    `default:"2048" split_words:"true"`
 
 	ProxyTlsCaPath            string `split_words:"true"`
 	ProxyTlsCertPath          string `split_words:"true"`
@@ -73,6 +74,7 @@ type Config struct {
 	MetricsEnabled bool   `default:"true" split_words:"true"`
 	MetricsAddress string `default:"localhost" split_words:"true"`
 	MetricsPort    int    `default:"14001" split_words:"true"`
+	MetricsPrefix  string `default:"zdm" split_words:"true"`
 
 	MetricsOriginLatencyBucketsMs    string `default:"1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000" split_words:"true"`
 	MetricsTargetLatencyBucketsMs    string `default:"1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000" split_words:"true"`

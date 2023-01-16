@@ -45,4 +45,6 @@ func (recv *NoopMetric) Add(val int) {}
 
 func (recv *NoopMetric) Subtract(val int) {}
 
+func (recv *NoopMetric) Set(val int) {}
+
 func (recv *NoopMetric) Track(begin time.Time) {}

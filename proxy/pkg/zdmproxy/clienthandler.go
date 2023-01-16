@@ -57,7 +57,7 @@ type ClientHandler struct {
 
 	authErrorMessage *message.AuthenticationError
 
-	startupRequest           *frame.RawFrame
+	startupRequest           *atomic.Value
 	secondaryStartupResponse *frame.RawFrame
 	secondaryHandshakeCreds  *AuthCredentials
 	asyncHandshakeCreds      *AuthCredentials
@@ -167,6 +167,17 @@ func NewClientHandler(
 	clientHandlerShutdownRequestContext, clientHandlerShutdownRequestCancelFn := context.WithCancel(globalShutdownRequestCtx)
 	requestsDoneCtx, requestsDoneCancelFn := context.WithCancel(context.Background())
 
+	// Initialize stream id processors to manage the ids sent to the clusters
+	originFrameProcessor := newFrameProcessor(conf, nodeMetrics, ClusterConnectorTypeOrigin)
+	targetFrameProcessor := newFrameProcessor(conf, nodeMetrics, ClusterConnectorTypeTarget)
+	asyncFrameProcessor := newFrameProcessor(conf, nodeMetrics, ClusterConnectorTypeAsync)
+
+	closeFrameProcessors := func() {
+		originFrameProcessor.Close()
+		targetFrameProcessor.Close()
+		asyncFrameProcessor.Close()
+	}
+
 	localClientHandlerWg := &sync.WaitGroup{}
 	globalClientHandlersWg.Add(1)
 	go func() {
@@ -174,6 +185,7 @@ func NewClientHandler(
 		<-clientHandlerContext.Done()
 		clientHandlerShutdownRequestCancelFn()
 		localClientHandlerWg.Wait()
+		closeFrameProcessors()
 		requestsDoneCancelFn() // make sure this ctx is not leaked but it should be canceled before this
 		log.Debugf("Client Handler is shutdown.")
 	}()
@@ -185,7 +197,7 @@ func NewClientHandler(
 	originConnector, err := NewClusterConnector(
 		originCassandraConnInfo, conf, psCache, nodeMetrics, localClientHandlerWg, clientHandlerRequestWg,
 		clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler, requestsDoneCtx,
-		false, nil, handshakeDone)
+		false, nil, handshakeDone, originFrameProcessor)
 	if err != nil {
 		clientHandlerCancelFunc()
 		return nil, err
@@ -194,13 +206,13 @@ func NewClientHandler(
 	targetConnector, err := NewClusterConnector(
 		targetCassandraConnInfo, conf, psCache, nodeMetrics, localClientHandlerWg, clientHandlerRequestWg,
 		clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler, requestsDoneCtx,
-		false, nil, handshakeDone)
+		false, nil, handshakeDone, targetFrameProcessor)
 	if err != nil {
 		clientHandlerCancelFunc()
 		return nil, err
 	}
 
-	asyncPendingRequests := newPendingRequests(MaxStreams, nodeMetrics)
+	asyncPendingRequests := newPendingRequests(nodeMetrics)
 	var asyncConnector *ClusterConnector
 	if readMode == common.ReadModeDualAsyncOnSecondary {
 		var asyncConnInfo *ClusterConnectionInfo
@@ -212,7 +224,7 @@ func NewClientHandler(
 		asyncConnector, err = NewClusterConnector(
 			asyncConnInfo, conf, psCache, nodeMetrics, localClientHandlerWg, clientHandlerRequestWg,
 			clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler, requestsDoneCtx,
-			true, asyncPendingRequests, handshakeDone)
+			true, asyncPendingRequests, handshakeDone, asyncFrameProcessor)
 		if err != nil {
 			log.Errorf("Could not create async cluster connector to %s, async requests will not be forwarded: %s", asyncConnInfo.connConfig.GetClusterType(), err.Error())
 			asyncConnector = nil
@@ -263,7 +275,7 @@ func NewClientHandler(
 		currentKeyspaceName:                  &atomic.Value{},
 		handshakeDone:                        handshakeDone,
 		authErrorMessage:                     nil,
-		startupRequest:                       nil,
+		startupRequest:                       &atomic.Value{},
 		targetUsername:                       targetUsername,
 		targetPassword:                       targetPassword,
 		originUsername:                       originUsername,
@@ -1027,6 +1039,12 @@ type handshakeRequestResult struct {
 	customResponseChan chan *customResponse
 }
 
+type startHandshakeResult struct {
+	secondaryHandshakeCh chan error
+	asyncHandshakeCh     chan error
+	err                  error
+}
+
 // Handles requests while the handshake has not been finalized.
 //
 // Forwards certain requests that are part of the handshake to Origin only.
@@ -1129,11 +1147,71 @@ func (ch *ClientHandler) handleHandshakeRequest(request *frame.RawFrame, wg *syn
 		}
 
 		ch.secondaryStartupResponse = secondaryResponse
-		ch.startupRequest = request
+		ch.startupRequest.Store(request)
 
 		err := validateSecondaryStartupResponse(secondaryResponse, secondaryCluster)
 		if err != nil {
 			return false, fmt.Errorf("unsuccessful startup on %v: %w", secondaryCluster, err)
+		}
+	}
+
+	startHandshakeCh := make(chan *startHandshakeResult, 1)
+	wg.Add(1)
+	ch.requestResponseScheduler.Schedule(func() {
+		defer wg.Done()
+		defer close(startHandshakeCh)
+		tempResult := &startHandshakeResult{
+			secondaryHandshakeCh: nil,
+			asyncHandshakeCh:     nil,
+			err:                  nil,
+		}
+		if aggregatedResponse.Header.OpCode == primitive.OpCodeReady || aggregatedResponse.Header.OpCode == primitive.OpCodeAuthSuccess {
+			// target handshake must happen within a single client request lifetime
+			// to guarantee that no other request with the same
+			// stream id goes to target in the meantime
+
+			// if we add stream id mapping logic in the future, then
+			// we can start the secondary handshake earlier and wait for it to end here
+			secondaryHandshakeChannel, err := ch.startSecondaryHandshake(false)
+			if err != nil {
+				tempResult.err = err
+				startHandshakeCh <- tempResult
+				return
+			}
+			var asyncConnectorHandshakeChannel chan error
+			if ch.asyncConnector != nil {
+				asyncConnectorHandshakeChannel, err = ch.startSecondaryHandshake(true)
+				if err != nil {
+					log.Errorf("Error occured in async connector (%v) handshake: %v. "+
+						"Async requests will not be forwarded.", ch.asyncConnector.clusterType, err.Error())
+					ch.asyncConnector.Shutdown()
+					asyncConnectorHandshakeChannel = nil
+				}
+			}
+			tempResult.secondaryHandshakeCh = secondaryHandshakeChannel
+			tempResult.asyncHandshakeCh = asyncConnectorHandshakeChannel
+			startHandshakeCh <- tempResult
+		}
+	})
+
+	var errAsync error
+	var errSecondary error
+	handshakeInitiated := false
+	secondaryHandshakeResult, ok := <-startHandshakeCh
+	if ok {
+		handshakeInitiated = true
+		if secondaryHandshakeResult.err != nil {
+			return false, secondaryHandshakeResult.err
+		}
+		asyncConnectorHandshakeChannel := secondaryHandshakeResult.asyncHandshakeCh
+		secondaryHandshakeChannel := secondaryHandshakeResult.secondaryHandshakeCh
+		for asyncConnectorHandshakeChannel != nil || secondaryHandshakeChannel != nil {
+			select {
+			case errAsync, _ = <-asyncConnectorHandshakeChannel:
+				asyncConnectorHandshakeChannel = nil
+			case errSecondary, _ = <-secondaryHandshakeChannel:
+				secondaryHandshakeChannel = nil
+			}
 		}
 	}
 
@@ -1147,60 +1225,28 @@ func (ch *ClientHandler) handleHandshakeRequest(request *frame.RawFrame, wg *syn
 			err:                nil,
 			customResponseChan: nil,
 		}
-		if aggregatedResponse.Header.OpCode == primitive.OpCodeReady || aggregatedResponse.Header.OpCode == primitive.OpCodeAuthSuccess {
-			// target handshake must happen within a single client request lifetime
-			// to guarantee that no other request with the same
-			// stream id goes to target in the meantime
-
-			// if we add stream id mapping logic in the future, then
-			// we can start the secondary handshake earlier and wait for it to end here
-
-			secondaryClusterType := common.ClusterTypeTarget
-			if ch.forwardAuthToTarget {
-				secondaryClusterType = common.ClusterTypeOrigin
-			}
-			secondaryHandshakeChannel, err := ch.startSecondaryHandshake(false)
-			if err != nil {
-				tempResult.err = err
-				scheduledTaskChannel <- tempResult
-				return
-			}
-			var asyncConnectorHandshakeChannel chan error
-			if ch.asyncConnector != nil {
-				asyncConnectorHandshakeChannel, err = ch.startSecondaryHandshake(true)
-				if err != nil {
-					log.Errorf("Error occured in async connector (%v) handshake: %v. "+
-						"Async requests will not be forwarded.", ch.asyncConnector.clusterType, err.Error())
-					ch.asyncConnector.Shutdown()
-					asyncConnectorHandshakeChannel = nil
-				}
-			}
-			var errAsync error
-			for asyncConnectorHandshakeChannel != nil || secondaryHandshakeChannel != nil {
-				select {
-				case errAsync, _ = <-asyncConnectorHandshakeChannel:
-					asyncConnectorHandshakeChannel = nil
-				case err, _ = <-secondaryHandshakeChannel:
-					secondaryHandshakeChannel = nil
-				}
-			}
-
+		secondaryClusterType := common.ClusterTypeTarget
+		if ch.forwardAuthToTarget {
+			secondaryClusterType = common.ClusterTypeOrigin
+		}
+		if handshakeInitiated {
 			if errAsync != nil {
 				log.Errorf("Async connector (%v) handshake failed, async requests will not be forwarded: %s",
 					ch.asyncConnector.clusterType, errAsync.Error())
 				ch.asyncConnector.Shutdown()
 			}
 
-			if err != nil {
+			if errSecondary != nil {
 				var authError *AuthError
-				if errors.As(err, &authError) {
+				if errors.As(errSecondary, &authError) {
 					ch.authErrorMessage = authError.errMsg
 					tempResult.err = ch.sendAuthErrorToClient(request, secondaryClusterType)
 					scheduledTaskChannel <- tempResult
 					return
 				}
 
-				log.Errorf("secondary (%v) handshake failed, shutting down the client handler and connectors: %s", secondaryClusterType, err.Error())
+				log.Errorf("Secondary (%v) handshake failed (client: %v), shutting down the client handler and connectors: %s",
+					secondaryClusterType, ch.clientConnector.connection.RemoteAddr().String(), errSecondary.Error())
 				ch.clientHandlerCancelFunc()
 				tempResult.err = fmt.Errorf("handshake failed: %w", ShutdownErr)
 				scheduledTaskChannel <- tempResult
@@ -1258,10 +1304,11 @@ func (ch *ClientHandler) buildAuthErrorResponse(
 //
 // The handshake was successful if the returned channel contains a "nil" value.
 func (ch *ClientHandler) startSecondaryHandshake(asyncConnector bool) (chan error, error) {
-	startupFrame := ch.startupRequest
-	if startupFrame == nil {
+	startupFrameInterface := ch.startupRequest.Load()
+	if startupFrameInterface == nil {
 		return nil, errors.New("can not start secondary handshake before a Startup request was received")
 	}
+	startupFrame := startupFrameInterface.(*frame.RawFrame)
 	startupResponse := ch.secondaryStartupResponse
 	if startupResponse == nil {
 		return nil, errors.New("can not start secondary handshake before a Startup response was received")
@@ -1423,6 +1470,13 @@ func (ch *ClientHandler) executeRequest(
 		reqCtx.SetTimer(timer)
 	}
 
+	startupFrameInterface := ch.startupRequest.Load()
+	// Determine the negotiated protocol version as stored by the startup frame to be used in eventual heartbeats.
+	var startupFrameVersion primitive.ProtocolVersion
+	if startupFrameInterface != nil {
+		startupFrameVersion = startupFrameInterface.(*frame.RawFrame).Header.Version
+	}
+
 	sendAlsoToAsync := requestInfo.ShouldAlsoBeSentAsync() && ch.asyncConnector != nil
 	switch fwdDecision {
 	case forwardToBoth:
@@ -1434,10 +1488,12 @@ func (ch *ClientHandler) executeRequest(
 		log.Tracef("Forwarding request with opcode %v for stream %v to %v",
 			f.Header.OpCode, f.Header.StreamId, common.ClusterTypeOrigin)
 		ch.originCassandraConnector.sendRequestToCluster(originRequest)
+		ch.targetCassandraConnector.sendHeartbeat(startupFrameVersion, ch.conf.HeartbeatIntervalMs)
 	case forwardToTarget:
 		log.Tracef("Forwarding request with opcode %v for stream %v to %v",
 			f.Header.OpCode, f.Header.StreamId, common.ClusterTypeTarget)
 		ch.targetCassandraConnector.sendRequestToCluster(targetRequest)
+		ch.originCassandraConnector.sendHeartbeat(startupFrameVersion, ch.conf.HeartbeatIntervalMs)
 	case forwardToAsyncOnly:
 	default:
 		return fmt.Errorf("unknown forward decision %v, stream: %d", fwdDecision, f.Header.StreamId)
@@ -1756,7 +1812,7 @@ func (ch *ClientHandler) sendToAsyncConnector(
 
 	f := frameContext.GetRawFrame()
 
-	sent := ch.asyncConnector.sendAsyncRequest(
+	sent := ch.asyncConnector.sendAsyncRequestToCluster(
 		reqCtx.GetRequestInfo(), asyncRequest, !isFireAndForget, overallRequestStartTime, requestTimeout, func() {
 			if !isFireAndForget {
 				ch.closedRespChannelLock.RLock()
@@ -2172,4 +2228,22 @@ func GetNodeMetricsByClusterConnector(nodeMetrics *metrics.NodeMetrics, connecto
 	default:
 		return nil, fmt.Errorf("unexpected connectorType %v, unable to retrieve node metrics", connectorType)
 	}
+}
+
+func newFrameProcessor(conf *config.Config, nodeMetrics *metrics.NodeMetrics, connectorType ClusterConnectorType) FrameProcessor {
+	var streamIdsMetric metrics.Gauge
+	connectorMetrics, err := GetNodeMetricsByClusterConnector(nodeMetrics, connectorType)
+	if err != nil {
+		log.Error(err)
+	}
+	if connectorMetrics != nil {
+		streamIdsMetric = connectorMetrics.UsedStreamIds
+	}
+	var mapper StreamIdMapper
+	if connectorType == ClusterConnectorTypeAsync {
+		mapper = NewInternalStreamIdMapper(conf.ProxyMaxStreamIds, streamIdsMetric)
+	} else {
+		mapper = NewStreamIdMapper(conf.ProxyMaxStreamIds, streamIdsMetric)
+	}
+	return NewStreamIdProcessor(mapper)
 }

@@ -406,8 +406,11 @@ func NewTestConfig(originHost string, targetHost string) *config.Config {
 
 	conf.ForwardClientCredentialsToOrigin = false
 
+	conf.MetricsEnabled = true
 	conf.MetricsAddress = "localhost"
 	conf.MetricsPort = 14001
+	conf.MetricsPrefix = "zdm"
+
 	conf.ProxyListenPort = 14002
 	conf.ProxyListenAddress = "localhost"
 
@@ -424,8 +427,6 @@ func NewTestConfig(originHost string, targetHost string) *config.Config {
 	conf.MetricsTargetLatencyBucketsMs = "1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000"
 	conf.MetricsAsyncReadLatencyBucketsMs = "1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000"
 
-	conf.MetricsEnabled = true
-
 	conf.RequestWriteQueueSizeFrames = 128
 	conf.RequestWriteBufferSizeBytes = 4096
 	conf.RequestReadBufferSizeBytes = 32768
@@ -435,6 +436,7 @@ func NewTestConfig(originHost string, targetHost string) *config.Config {
 	conf.ResponseReadBufferSizeBytes = 32768
 
 	conf.ProxyMaxClientConnections = 1000
+	conf.ProxyMaxStreamIds = 2048
 
 	conf.RequestResponseMaxWorkers = -1
 	conf.WriteMaxWorkers = -1

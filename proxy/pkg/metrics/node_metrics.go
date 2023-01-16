@@ -249,6 +249,18 @@ var (
 		"async_inflight_requests_total",
 		"Number of async requests currently in flight",
 	)
+
+	OriginUsedStreamIds = NewMetric(
+		"origin_used_stream_ids_total",
+		"Number of used stream ids in Origin connections")
+
+	TargetUsedStreamIds = NewMetric(
+		"target_used_stream_ids_total",
+		"Number of used stream ids in Target connections")
+
+	AsyncUsedStreamIds = NewMetric(
+		"async_used_stream_ids_total",
+		"Number of used stream ids in Async connections")
 )
 
 type NodeMetrics struct {
@@ -273,6 +285,8 @@ type NodeMetricsInstance struct {
 	OpenConnections Gauge
 
 	InFlightRequests Gauge
+
+	UsedStreamIds Gauge
 }
 
 func CreateCounterNodeMetric(metricFactory MetricFactory, nodeDescription string, mn Metric) (Counter, error) {
