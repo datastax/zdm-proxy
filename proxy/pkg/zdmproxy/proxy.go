@@ -381,7 +381,10 @@ func (p *ZdmProxy) initializeGlobalStructures() error {
 	p.globalClientHandlersWg = &sync.WaitGroup{}
 	p.clientHandlersShutdownRequestCtx, p.clientHandlersShutdownRequestCancelFn = context.WithCancel(context.Background())
 
-	p.PreparedStatementCache = NewPreparedStatementCache()
+	p.PreparedStatementCache, err = NewPreparedStatementCache(p.Conf.ProxyMaxPreparedStatementCacheSize)
+	if err != nil {
+		return err
+	}
 
 	p.controlConnShutdownCtx, p.controlConnCancelFn = context.WithCancel(context.Background())
 	p.controlConnShutdownWg = &sync.WaitGroup{}
