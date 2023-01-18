@@ -26,18 +26,6 @@ proxy:
     # Overrides the image tag whose default is the chart appVersion.
     tag: ""
 
-cdm:
-  resources:
-    limits:
-      cpu: 16000m
-      memory: 32768Mi
-    requests:
-      cpu: 16000m
-      memory: 32768Mi
-  image:
-    repository: datastax/cassandra-data-migrator
-    tag: 2.10.3
-
 nameOverride: ""
 fullnameOverride: ""
 
