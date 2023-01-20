@@ -15,10 +15,10 @@ const InterceptedIdPrefix = "interceptedId_"
 type CacheMapType string
 
 const (
-	CacheMapTypeOrigin = CacheMapType("CACHE-ORIGIN")
-	CacheMapTypeTarget = CacheMapType("INDEX-TARGET")
-	CacheMapTypeIntercepted  = CacheMapType("INTERCEPTED")
-	CacheMapTypeNone = CacheMapType("NONE")
+	CacheMapTypeOrigin      = CacheMapType("CACHE-ORIGIN")
+	CacheMapTypeTarget      = CacheMapType("INDEX-TARGET")
+	CacheMapTypeIntercepted = CacheMapType("INTERCEPTED")
+	CacheMapTypeNone        = CacheMapType("NONE")
 )
 
 /*
@@ -191,32 +191,32 @@ func checkIfElementIsInInterceptedMap(psCache *PreparedStatementCache, elementSu
 This test focuses on ensuring that Get and GetByTargetPreparedId work correctly.
 It inserts elements directly into the cache maps to avoid coupling this test to the logic in the PS Cache's store methods.
 It uses dummy, non-realistic data.
- */
+*/
 func TestPreparedStatementCache_GetFromCache(t *testing.T) {
 
 	tests := []struct {
-		name              string
-		elementId string
-		cacheMapType      CacheMapType
+		name         string
+		elementId    string
+		cacheMapType CacheMapType
 	}{
 		{
-			name: "Add to origin cache map, found by Get",
-			elementId: "someOriginId",
+			name:         "Add to origin cache map, found by Get",
+			elementId:    "someOriginId",
 			cacheMapType: CacheMapTypeOrigin,
 		},
 		{
-			name: "Add to target cache map, found by GetByTargetId",
-			elementId: "someTargetId",
+			name:         "Add to target cache map, found by GetByTargetId",
+			elementId:    "someTargetId",
 			cacheMapType: CacheMapTypeTarget,
 		},
 		{
-			name: "Add to intercepted cache map, found by Get",
-			elementId: "someInterceptedId",
+			name:         "Add to intercepted cache map, found by Get",
+			elementId:    "someInterceptedId",
 			cacheMapType: CacheMapTypeTarget,
 		},
 		{
-			name: "Not added, not found",
-			elementId: "someElementId",
+			name:         "Not added, not found",
+			elementId:    "someElementId",
 			cacheMapType: CacheMapTypeNone,
 		},
 	}
@@ -241,8 +241,8 @@ func TestPreparedStatementCache_GetFromCache(t *testing.T) {
 				_, foundByGetByTargetPreparedId := psCache.GetByTargetPreparedId([]byte(test.elementId))
 				require.False(tt, foundByGetByTargetPreparedId)
 			case CacheMapTypeTarget:
-				psCache.index.Add(test.elementId, "origin_" + test.elementId)
-				psCache.cache.Add("origin_" + test.elementId, dummyPreparedData)
+				psCache.index.Add(test.elementId, "origin_"+test.elementId)
+				psCache.cache.Add("origin_"+test.elementId, dummyPreparedData)
 
 				_, foundByGet := psCache.Get([]byte(test.elementId))
 				require.False(tt, foundByGet)
