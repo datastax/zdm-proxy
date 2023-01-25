@@ -5,7 +5,7 @@
 
 # calculate a variable that contains all proxy service addresses
 {{ $service_addresses := "" -}}
-{{- range $index := until (.Values.proxy.count | int) -}}
+{{- range $index := until (.Values.count | int) -}}
     {{- $service_addresses = printf "%s,$(%s_%s_SERVICE_HOST)" $service_addresses ($zdm_fullname | upper | replace "-" "_") ($index | toString) -}}
 {{- end -}}
 {{- $service_addresses = $service_addresses | trimPrefix "," -}}
@@ -20,7 +20,7 @@ metadata:
   namespace: {{ $.Values.namespace }}
 spec:
   serviceName: {{ $zdm_fullname }}
-  replicas: {{ $.Values.proxy.count | int }}
+  replicas: {{ $.Values.count | int }}
   selector:
     matchLabels:
       {{- $zdm_selectorLabels | nindent 6 }}
@@ -32,7 +32,7 @@ spec:
         app: {{ $zdm_fullname }}
     spec:
       containers:
-      - image: "{{ $.Values.proxy.image.repository }}:{{ $.Values.proxy.image.tag | default $.Chart.AppVersion }}"
+      - image: "{{ $.Values.imageRepository }}:{{ $.Values.imageTag | default $.Chart.AppVersion }}"
         name: {{ $zdm_fullname }}
         command:
         - sh
@@ -58,23 +58,18 @@ spec:
             containerPort: 9042
             protocol: TCP
         resources:
-          requests:
-            memory: {{ $.Values.proxy.resources.requests.memory | quote }}
-            cpu: {{ $.Values.proxy.resources.requests.cpu | quote }}
-          limits:
-            memory: {{ $.Values.proxy.resources.limits.memory | quote }}
-            cpu: {{ $.Values.proxy.resources.limits.cpu | quote }}
+        {{- toYaml .Values.resources | nindent 10 }}
         env:
         - name: ZDM_PRIMARY_CLUSTER
-          value: {{ $.Values.proxy.primaryCluster | upper | quote }}
+          value: {{ $.Values.primaryCluster | upper | quote }}
         - name: ZDM_READ_MODE
-          value: {{ $.Values.proxy.readMode | upper | quote }}
+          value: {{ $.Values.readMode | upper | quote }}
         - name: ZDM_LOG_LEVEL
-          value: {{ $.Values.proxy.logLevel | upper | quote }}
+          value: {{ $.Values.logLevel | upper | quote }}
         - name: ZDM_PROXY_MAX_CLIENT_CONNECTIONS
-          value: {{ $.Values.proxy.maxClientConnections | quote }}
+          value: {{ $.Values.maxClientConnections | quote }}
         - name: ZDM_METRICS_ENABLED
-          value: {{ $.Values.proxy.metricsEnabled | quote }}
+          value: {{ $.Values.metricsEnabled | quote }}
         - name: ZDM_PROXY_LISTEN_ADDRESS
           valueFrom:
             fieldRef:

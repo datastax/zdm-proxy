@@ -23,7 +23,7 @@ Usage:
 
 4. Verify that all components are up and running.
 
-    ```kubectl -n zdmproxy get svc,ep,po,cm,secret -o wide --show-labels```
+    ```kubectl -n zdmproxy get svc,ep,po,secret -o wide --show-labels```
 
    You can also run ```kubectl -n zdmproxy logs pod/zdm-proxy-0``` to see if there are the following entries in the log, which means everything is working as expected:
 
