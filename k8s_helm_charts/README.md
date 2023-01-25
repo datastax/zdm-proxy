@@ -19,7 +19,7 @@ Usage:
 
     ```helm -n zdmproxy uninstall zdm-proxy```
 
-    ```helm -n zdmproxy install --set proxy.resources.requests.cpu=1000m --set proxy.resources.requests.memory=2000Mi --set proxy.resources.limits.cpu=1000m --set proxy.resources.limits.memory=2000Mi --set cdm.resources.requests.cpu=1000m --set cdm.resources.requests.memory=2000Mi --set cdm.resources.limits.cpu=1000m --set cdm.resources.limits.memory=2000Mi zdm-proxy ./zdm```
+    ```helm -n zdmproxy install --set resources.requests.cpu=1000m --set resources.requests.memory=2000Mi --set resources.limits.cpu=1000m --set resources.limits.memory=2000Mi zdm-proxy ./zdm```
 
 4. Verify that all components are up and running.
 
@@ -35,13 +35,13 @@ Usage:
 
 5. Switch primary cluster to target (all proxy pods will automatically roll-restart after the change).
 
-    ```helm -n zdmproxy upgrade zdm-proxy ./zdm --set proxy.primaryCluster=TARGET```
+    ```helm -n zdmproxy upgrade zdm-proxy ./zdm --set primaryCluster=TARGET```
 
 6. Scale out/in to different number of proxy pods.
 
-    ```helm -n zdmproxy upgrade zdm-proxy ./zdm --set proxy.count=5```
+    ```helm -n zdmproxy upgrade zdm-proxy ./zdm --set count=5```
 
-    Note: if you've already switched primary cluster to target, make sure you add ```--set proxy.primaryCluster=TARGET``` in this command line as well. An alternative is to directly edit zdm/values.yaml then run helm upgrade.
+    Note: if you've already switched primary cluster to target, make sure you add ```--set primaryCluster=TARGET``` in this command line as well. An alternative is to directly edit zdm/values.yaml then run helm upgrade.
 
 7. When you're done, run helm uninstall to remove all objects.
 
