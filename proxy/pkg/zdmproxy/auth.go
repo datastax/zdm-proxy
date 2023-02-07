@@ -98,9 +98,9 @@ var (
 func (a *DsePlainTextAuthenticator) InitialResponse(authenticator string) ([]byte, error) {
 	if authenticator == "com.datastax.bdp.cassandra.auth.DseAuthenticator" {
 		return mechanism, nil
-        } else {
+	} else {
 		return a.Credentials.Marshal(), nil
-        }
+	}
 }
 
 func (a *DsePlainTextAuthenticator) EvaluateChallenge(challenge []byte) ([]byte, error) {
