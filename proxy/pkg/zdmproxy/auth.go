@@ -96,13 +96,11 @@ var (
 )
 
 func (a *DsePlainTextAuthenticator) InitialResponse(authenticator string) ([]byte, error) {
-	switch authenticator {
-	case "com.datastax.bdp.cassandra.auth.DseAuthenticator":
+	if authenticator == "com.datastax.bdp.cassandra.auth.DseAuthenticator" {
 		return mechanism, nil
-	case "org.apache.cassandra.auth.PasswordAuthenticator":
+	} else {
 		return a.Credentials.Marshal(), nil
 	}
-	return nil, fmt.Errorf("unknown authenticator: %v", authenticator)
 }
 
 func (a *DsePlainTextAuthenticator) EvaluateChallenge(challenge []byte) ([]byte, error) {
