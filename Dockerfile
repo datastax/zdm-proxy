@@ -31,6 +31,9 @@ RUN cp /build/main .
 # Build a small image
 FROM alpine
 
+# remove shell access
+RUN rm /bin/ash /bin/sh /usr/bin/nsenter
+
 COPY --from=builder /dist/main /
 COPY LICENSE /
 
