@@ -285,7 +285,7 @@ func (p *ZdmProxy) initializeMetricHandler() error {
 
 	var metricFactory metrics.MetricFactory
 	if p.Conf.MetricsEnabled {
-		metricFactory = prommetrics.NewPrometheusMetricFactory(prometheus.DefaultRegisterer)
+		metricFactory = prommetrics.NewPrometheusMetricFactory(prometheus.DefaultRegisterer, p.Conf.MetricsPrefix)
 	} else {
 		metricFactory = noopmetrics.NewNoopMetricFactory()
 	}
