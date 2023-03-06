@@ -46,7 +46,6 @@ func (psc PreparedStatementCache) GetPreparedStatementCacheSize() float64 {
 	psc.lock.RLock()
 	defer psc.lock.RUnlock()
 
-	//return float64(len(psc.cache) + len(psc.interceptedCache))
 	return float64(psc.cache.Len() + psc.interceptedCache.Len())
 }
 

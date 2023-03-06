@@ -7,6 +7,7 @@ require (
 	github.com/datastax/go-cassandra-native-protocol v0.0.0-20220525125956-6158d9e218b8
 	github.com/gocql/gocql v0.0.0-20200624222514-34081eda590e
 	github.com/google/uuid v1.1.1
+	github.com/hashicorp/golang-lru v0.5.4 // indirect
 	github.com/jpillora/backoff v1.0.0
 	github.com/kelseyhightower/envconfig v1.4.0
 	github.com/prometheus/client_golang v1.3.0
