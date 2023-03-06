@@ -57,14 +57,14 @@ func TestInspectFrame(t *testing.T) {
 		targetPreparedId:   []byte("LOCAL"),
 		prepareRequestInfo: NewPrepareRequestInfo(NewInterceptedRequestInfo(local, newStarSelectClause()), nil, false, "SELECT * FROM system.local", ""),
 	}
-	psCache := NewPreparedStatementCache()
-	psCache.cache["BOTH"] = bothCacheEntry
-	psCache.cache["ORIGIN"] = originCacheEntry
-	psCache.cache["TARGET"] = targetCacheEntry
-	psCache.interceptedCache["PEERS"] = peersCacheEntry
-	psCache.interceptedCache["PEERS_KS"] = peersKsCacheEntry
-	psCache.interceptedCache["LOCAL"] = localCacheEntry
-	psCache.interceptedCache["LOCAL_KS"] = localKsCacheEntry
+	psCache := createPSCacheForTests(t)
+	psCache.cache.Add("BOTH", bothCacheEntry)
+	psCache.cache.Add("ORIGIN", originCacheEntry)
+	psCache.cache.Add("TARGET", targetCacheEntry)
+	psCache.interceptedCache.Add("PEERS", peersCacheEntry)
+	psCache.interceptedCache.Add("PEERS_KS", peersKsCacheEntry)
+	psCache.interceptedCache.Add("LOCAL", localCacheEntry)
+	psCache.interceptedCache.Add("LOCAL_KS", localKsCacheEntry)
 	mh := newFakeMetricHandler()
 	km := ""
 	primaryClusterTarget := common.ClusterTypeTarget

@@ -58,11 +58,12 @@ type Config struct {
 
 	// Proxy bucket
 
-	ProxyListenAddress        string `default:"localhost" split_words:"true"`
-	ProxyListenPort           int    `default:"14002" split_words:"true"`
-	ProxyRequestTimeoutMs     int    `default:"10000" split_words:"true"`
-	ProxyMaxClientConnections int    `default:"1000" split_words:"true"`
-	ProxyMaxStreamIds         int    `default:"2048" split_words:"true"`
+	ProxyListenAddress                 string `default:"localhost" split_words:"true"`
+	ProxyListenPort                    int    `default:"14002" split_words:"true"`
+	ProxyRequestTimeoutMs              int    `default:"10000" split_words:"true"`
+	ProxyMaxClientConnections          int    `default:"1000" split_words:"true"`
+	ProxyMaxStreamIds                  int    `default:"2048" split_words:"true"`
+	ProxyMaxPreparedStatementCacheSize int    `default:"5000" split_words:"true"`
 
 	ProxyTlsCaPath            string `split_words:"true"`
 	ProxyTlsCertPath          string `split_words:"true"`
