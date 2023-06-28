@@ -12,7 +12,7 @@ the proxy connects to both Origin and Target clusters.
 By default, the proxy will forward read requests only to the Origin cluster, though you can optionally configure it to
 forward reads to both clusters asynchronously, while writes will always be sent to both clusters concurrently.
 
-An overview of the proxy architecture and logical flow can be viewed [here](https://docs.datastax.com/en/astra-serverless/docs/migrate/introduction.html#migration-workflow).
+An overview of the proxy architecture and logical flow can be viewed [here](https://docs.datastax.com/en/astra-serverless/docs/migrate/introduction.html#_migration_phases).
 
 ## Quick Start
 

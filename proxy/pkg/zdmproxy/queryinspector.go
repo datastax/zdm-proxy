@@ -170,23 +170,25 @@ func (recv *selectClause) GetSelectors() []selector {
 }
 
 // selector represents a selector in the cql grammar. 'term' and 'K_CAST' selectors are not supported.
-//   selector
-//      : unaliasedSelector ( K_AS identifier )?
-//      ;
 //
-//   unaliasedSelector
-//      : identifier
-//      | term
-//      | K_COUNT '(' '*' ')'
-//      | K_CAST '(' unaliasedSelector K_AS primitiveType ')'
-//      ;
+//	selector
+//	   : unaliasedSelector ( K_AS identifier )?
+//	   ;
+//
+//	unaliasedSelector
+//	   : identifier
+//	   | term
+//	   | K_COUNT '(' '*' ')'
+//	   | K_CAST '(' unaliasedSelector K_AS primitiveType ')'
+//	   ;
 type selector interface {
 	Name() string
 }
 
 // idSelector represents an unaliased identifier selector:
-//   unaliasedSelector
-//      : identifier
+//
+//	unaliasedSelector
+//	   : identifier
 type idSelector struct {
 	name string
 }
@@ -196,7 +198,8 @@ func (recv *idSelector) Name() string {
 }
 
 // countSelector represents an unaliased count(*) selector:
-//   K_COUNT '(' '*' ')'
+//
+//	K_COUNT '(' '*' ')'
 type countSelector struct {
 	name string
 }
@@ -206,9 +209,10 @@ func (recv *countSelector) Name() string {
 }
 
 // aliasedSelector represents an unaliased selector combined with an alias:
-//   selector
-//      : unaliasedSelector ( K_AS identifier )?
-//      ;
+//
+//	selector
+//	   : unaliasedSelector ( K_AS identifier )?
+//	   ;
 type aliasedSelector struct {
 	selector selector
 	alias    string
