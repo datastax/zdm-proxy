@@ -340,6 +340,7 @@ func TestVirtualizationTokenAwareness(t *testing.T) {
 cqlsh> describe system.local;
 #3.11
 CREATE TABLE system.local (
+
 	key text PRIMARY KEY,
 	bootstrapped text,
 	broadcast_address inet,
@@ -358,21 +359,22 @@ CREATE TABLE system.local (
 	thrift_version text,
 	tokens set<text>,
 	truncated_at map<uuid, blob>
-)
- cqlsh> describe system.peers;
- #3.11
- CREATE TABLE system.peers (
-     peer inet PRIMARY KEY,
-     data_center text,
-     host_id uuid,
-     preferred_ip inet,
-     rack text,
-     release_version text,
-     rpc_address inet,
-     schema_version uuid,
-     tokens set<text>
- )
 
+)
+
+	cqlsh> describe system.peers;
+	#3.11
+	CREATE TABLE system.peers (
+	    peer inet PRIMARY KEY,
+	    data_center text,
+	    host_id uuid,
+	    preferred_ip inet,
+	    rack text,
+	    release_version text,
+	    rpc_address inet,
+	    schema_version uuid,
+	    tokens set<text>
+	)
 */
 func TestInterceptedQueries(t *testing.T) {
 	testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodes(t, false, false, 3)
