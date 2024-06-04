@@ -3,11 +3,23 @@ package setup
 // TestKeyspace is the dedicated keyspace for testing
 const TestKeyspace = "zdmproxy_test"
 
-// TestTable is the dedicated table for testing
-const TestTable = "tasks"
+// TasksModel is the dedicated table for testing
+const TasksModel = "tasks"
 
-// TestTable2 is another dedicated table for testing
-const TestTable2 = "people"
+// PeopleModel is another dedicated table for testing
+const PeopleModel = "people"
 
-// TestTables is an array of dedicated tables for testing
-var TestTables = [...]string{TestTable, TestTable2}
+// EmployeeModel is dedicated table for SAI index testing
+const EmployeeModel = "employee"
+
+var DataModels = map[string]DataModel{
+	TasksModel: SimpleDataModel{
+		table: TasksModel,
+	},
+	PeopleModel: SimpleDataModel{
+		table: PeopleModel,
+	},
+	EmployeeModel: SearchDataModel{
+		SimpleDataModel{table: EmployeeModel},
+	},
+}

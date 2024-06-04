@@ -57,9 +57,12 @@ func Create(name string, version string, isDse bool) (string, error) {
 
 }
 
-func Add(seed bool, address string, remoteDebugPort int, jmxPort int, name string) (string, error) {
+func Add(seed bool, address string, remoteDebugPort int, jmxPort int, name string, isDse bool) (string, error) {
 	var addArgs = []string{
 		"-i", address, "-r", fmt.Sprintf("%d", remoteDebugPort), "-j", fmt.Sprintf("%d", jmxPort), name}
+	if isDse {
+		addArgs = append(addArgs, "--dse")
+	}
 	if seed {
 		return execCcm(append([]string{"add", "-s"}, addArgs...)...)
 	} else {
