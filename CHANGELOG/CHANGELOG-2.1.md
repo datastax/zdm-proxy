@@ -22,3 +22,5 @@ When cutting a new release, update the `unreleased` heading to the tag being gen
 * [#69](https://github.com/datastax/zdm-proxy/issues/69) Client connection can be closed before proxy returns protocol error
 * [#76](https://github.com/datastax/zdm-proxy/issues/76) Log error when closing connection
 * [#74](https://github.com/datastax/zdm-proxy/issues/74) Handshakes with auth enabled can deadlock if multiple handshakes are happening concurrently
+
+---

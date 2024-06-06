@@ -1,66 +1,50 @@
 bindings:
-  seq_key: Mod(<<keycount:1000000000>>); ToInt();
-  seq_value: Hash(); Mod(<<valuecount:1000000000>>); ToString() -> String
-  rw_key: <<keydist:Uniform(0,1000000000)->int>>;
-  rw_value: Hash(); <<valdist:Uniform(0,1000000000)->int>>; ToString() -> String
+  seq_key: Mod(TEMPLATE(keycount,1000000000)); ToInt();
+  seq_value: Hash(); Mod(TEMPLATE(valuecount,1000000000)); ToString() -> String
+  rw_key: TEMPLATE(keydist,Uniform(0,1000000000)->int);
+  rw_value: Hash(); TEMPLATE(valdist,Uniform(0,1000000000)->int); ToString() -> String
 
 scenarios:
-  rampup: run driver=cqld4 tags=phase:rampup cycles=20000
-  write: run driver=cqld4 tags=phase:write cycles=20000
-  read: run driver=cqld4 tags=phase:read cycles=20000
-  verify: run driver=cqld4 tags=phase:verify errors=warn,unverified->count compare=all cycles=20000
+  rampup: run driver=cqld4 tags=block:rampup cycles=20000
+  write: run driver=cqld4 tags=block:write cycles=20000
+  read: run driver=cqld4 tags=block:read cycles=20000
+  verify: run driver=cqld4 tags=block:verify errors=warn,unverified->count compare=all cycles=20000
+
+params:
+  driver: cql
+  prepared: true
 
 blocks:
-  - name: rampup
-    tags:
-      phase: rampup
+  rampup:
     params:
-      cl: <<write_cl:LOCAL_QUORUM>>
-      prepared: true
-    statements:
-      - rampup-insert: |
-          insert into <<keyspace:test>>.<<table:keyvalue>>
-          (key, value)
-          values ({seq_key},{seq_value});
-        tags:
-          name: rampup-insert
-  - name: verify
-    tags:
-      phase: verify
-      type: read
+      cl: TEMPLATE(write_cl,LOCAL_QUORUM)
+    ops:
+      rampup_insert: |
+        INSERT INTO TEMPLATE(keyspace,test).TEMPLATE(table,keyvalue)
+        (key, value)
+        VALUES ({seq_key},{seq_value});
+
+  verify:
     params:
-      cl: <<read_cl:LOCAL_QUORUM>>
-      prepared: true
-    statements:
-      - verify-select: |
-          select * from <<keyspace:test>>.<<table:keyvalue>> where key={rw_key};
-        verify-fields: key->rw_key, value->rw_value
-        tags:
-          name: verify
-  - name: read
-    tags:
-      phase: read
-      type: read
-      prepared: true
+      cl: TEMPLATE(read_cl,LOCAL_QUORUM)
+    ops:
+      verify_select: |
+        SELECT * FROM TEMPLATE(keyspace,test).TEMPLATE(table,keyvalue) WHERE key={rw_key};
+      verify_fields: key->rw_key, value->rw_value
+
+  read:
     params:
       ratio: 1
-      cl: <<read_cl:LOCAL_QUORUM>>
-    statements:
-      - main-select: |
-          select * from <<keyspace:test>>.<<table:keyvalue>> where key={rw_key};
-        tags:
-          name: main-select
-  - name: write
-    tags:
-      phase: write
-      type: write
-      prepared: true
+      cl: TEMPLATE(read_cl,LOCAL_QUORUM)
+    ops:
+      main_select: |
+        select * from TEMPLATE(keyspace,test).TEMPLATE(table,keyvalue) where key={rw_key};
+
+  write:
     params:
       ratio: 1
-      cl: <<write_cl:LOCAL_QUORUM>>
-    statements:
-      - main-insert: |
-          insert into <<keyspace:test>>.<<table:keyvalue>>
-          (key, value) values ({rw_key}, {rw_value});
-        tags:
-          name: main-insert
+      cl: TEMPLATE(write_cl,LOCAL_QUORUM)
+    ops:
+      main-insert: |
+        insert into TEMPLATE(keyspace,test).TEMPLATE(table,keyvalue)
+        (key, value) values ({rw_key}, {rw_value});
