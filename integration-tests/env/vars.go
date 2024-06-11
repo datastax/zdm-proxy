@@ -87,6 +87,42 @@ func InitGlobalVars() {
 	}
 }
 
+func CompareServerVersion(version string) int {
+	v1 := parseVersion(ServerVersion)
+	v2 := parseVersion(version)
+	return compareVersion(v1, v2)
+}
+
+func parseVersion(version string) []int {
+	// remove optional suffix (e.g. 5.0-beta1 becomes 5.0) and split version segments
+	segmentsStr := strings.Split(strings.Split(version, "-")[0], ".")
+	segments := make([]int, len(segmentsStr))
+	for i, str := range segmentsStr {
+		val, err := strconv.Atoi(str)
+		if err != nil {
+			return []int{0, 0, 0}
+		}
+		segments[i] = val
+	}
+	// if we have less than 3 segments, pad with zeros
+	for i := len(segments); i < 3; i++ {
+		segments = append(segments, 0)
+	}
+	return segments
+}
+
+func compareVersion(v1 []int, v2 []int) int {
+	for i := 0; i < len(v1); i++ {
+		if v1[i] == v2[i] {
+			continue
+		} else if v1[i] < v2[i] {
+			return -1
+		}
+		return 1
+	}
+	return 0
+}
+
 func getEnvironmentVariableOrDefault(key string, defaultValue string) string {
 	if value, ok := os.LookupEnv(key); ok {
 		return value

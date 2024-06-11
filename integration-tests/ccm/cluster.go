@@ -74,7 +74,8 @@ func (ccmCluster *Cluster) Create(numberOfNodes int, start bool) error {
 			fmt.Sprintf("127.0.0.%d", nodeIndex),
 			2000+nodeIndex*100,
 			7000+nodeIndex*100,
-			fmt.Sprintf("node%d", nodeIndex))
+			fmt.Sprintf("node%d", nodeIndex),
+			ccmCluster.isDse)
 
 		if err != nil {
 			Remove(ccmCluster.name)
@@ -152,7 +153,8 @@ func (ccmCluster *Cluster) AddNode(index int) error {
 		fmt.Sprintf("127.0.0.%d", nodeIndex),
 		2000+nodeIndex*100,
 		7000+nodeIndex*100,
-		fmt.Sprintf("node%d", nodeIndex))
+		fmt.Sprintf("node%d", nodeIndex),
+		ccmCluster.isDse)
 	return err
 }
 

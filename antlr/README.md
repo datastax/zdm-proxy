@@ -2,10 +2,17 @@
 
 ## How to generate the grammar files
 
-First, install antlr 4.
+1. Install ANTLR 4.
+   - On a Mac: `brew install antlr`.
 
-On a Mac: `brew install antlr`.
-
-Second, generate the Go files for the `SimplifiedCql` grammar:
-
+2. Generate the Go files for the `SimplifiedCql` grammar:
+    ```
     antlr -Dlanguage=Go antlr/SimplifiedCql.g4
+    ```
+
+Current ZDM code works with ANTLR 4.9.3, so if you have issues downloading it from system package managers you can:
+1. Download JAR file from https://repo1.maven.org/maven2/org/antlr/antlr4/4.9.3
+2. Generate Go files for simplified CQL grammar:
+   ```
+   java -Xmx500M -cp ".:/path/to/antlr4-4.9.3-complete.jar" org.antlr.v4.Tool -Dlanguage=Go antlr/SimplifiedCql.g4
+   ```

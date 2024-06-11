@@ -183,7 +183,12 @@ condition
 
 // Note: custom index expressions not supported
 whereClause
-    : K_WHERE relation ( K_AND relation )*
+    : K_WHERE relation ( logicalOperator relation )*
+    ;
+
+logicalOperator
+    : K_AND
+    | K_OR
     ;
 
 relation
@@ -211,6 +216,7 @@ operator
     | '>'
     | '>='
     | '!='
+    | ':'
     ;
 
 // CQL literals
@@ -492,6 +498,7 @@ K_MAP:         M A P;
 K_NAN:         N A N;
 K_NOT:         N O T;
 K_NULL:        N U L L;
+K_OR:          O R;
 K_ORDER:       O R D E R;
 K_PARTITION:   P A R T I T I O N;
 K_PER:         P E R;

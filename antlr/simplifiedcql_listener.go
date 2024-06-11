@@ -92,6 +92,9 @@ type SimplifiedCqlListener interface {
 	// EnterWhereClause is called when entering the whereClause production.
 	EnterWhereClause(c *WhereClauseContext)
 
+	// EnterLogicalOperator is called when entering the logicalOperator production.
+	EnterLogicalOperator(c *LogicalOperatorContext)
+
 	// EnterRelation is called when entering the relation production.
 	EnterRelation(c *RelationContext)
 
@@ -292,6 +295,9 @@ type SimplifiedCqlListener interface {
 
 	// ExitWhereClause is called when exiting the whereClause production.
 	ExitWhereClause(c *WhereClauseContext)
+
+	// ExitLogicalOperator is called when exiting the logicalOperator production.
+	ExitLogicalOperator(c *LogicalOperatorContext)
 
 	// ExitRelation is called when exiting the relation production.
 	ExitRelation(c *RelationContext)

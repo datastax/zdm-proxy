@@ -1,7 +1,7 @@
 #!/bin/bash
 
 apt-get update
-apt-get -y install netcat
+apt-get -y install netcat-openbsd
 
 function test_conn() {
 	nc -z -v  $1 9042;

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 apt-get update
-apt-get -y install netcat
+apt-get -y install netcat-openbsd
 
 go install github.com/go-delve/delve/cmd/dlv@latest
 
