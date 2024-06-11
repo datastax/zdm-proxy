@@ -6,6 +6,12 @@ Build artifacts are available at [Docker Hub](https://hub.docker.com/repository/
 
 For additional details on the changes included in a specific release, see the associated CHANGELOG-x.x.md file.
 
+## v2.2.0 - 2024-06-11
+
+Support SAI queries and third-party authenticators.
+
+[Changelog](CHANGELOG/CHANGELOG-2.2.md#v220---2024-06-11)
+
 ## v2.1.0 - 2023-11-13
 
 Enables read only workloads to work correctly with ZDM-Proxy and Datastax Astra. 
