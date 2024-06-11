@@ -15,6 +15,9 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v2
+        # workaround for issue: https://github.com/docker-library/golang/issues/452#issuecomment-1418939909
+      - name: Set workspace as safe
+        run: git config --global --add safe.directory $GITHUB_WORKSPACE
       - name: Build Linux/amd64 binary
         run: |
           export GO111MODULE=on
