@@ -6,7 +6,12 @@ All published container images can be found at [https://hub.docker.com/r/datasta
 
 ### Before publishing an official release
 
-Before triggering the build and publish process for an official/stable release, two files need to be updated, the `RELEASE_NOTES` and `CHANGELOG`.
+Before triggering the build and publish process for an official/stable release, three files need to be updated, the `RELEASE_NOTES`, `CHANGELOG` and `main.go`.
+
+Please update the ZDM version displayed during component startup in `main.go`:
+```go
+const ZdmVersionString = "2.0.0"
+```
 
 The [RELEASE_NOTES.md](RELEASE_NOTES.md) file should be updated so that it contains a section for the new release.
 
@@ -36,13 +41,12 @@ The result of that workflow is the creation and publishing of a Docker image wit
 
 ### Create an official `Release` in GitHub
 
-Once the tag has been pushed to the repository and the build has been verified, a `Release` should be created within GitHub matching the tag.  This is a manual step that must be completed after the automation.
+Once the tag has been pushed to the repository and the build process completed, a new `Release` will be created automatically within GitHub matching the tag. A manual step is required to update the release notes.
 
-1. Navigate in a browser to [https://github.com/datastax/zdm-proxy/releases](https://github.com/datastax/zdm-proxy/releases) and select the `Draft a new release` button.
-2. Select the `Choose a tag` button and select the previously pushed tag, in our example, `v1.1.0` from the dropdown.
-3. Set the `Release title` to the same name as the tag, in our example, `v1.1.0`.
-4. Paste the contents of the `RELEASE_NOTES` relevant to this release into text-area for `Describe the release`.
-5. Click the `Publish release` button.
+1. Navigate in a browser to [https://github.com/datastax/zdm-proxy/releases](https://github.com/datastax/zdm-proxy/releases).
+2. Search for the release matching the new tag name and edit it.
+3. Paste the contents of the `RELEASE_NOTES` relevant to this release into the text-area for `Describe the release`.
+4. Click the `Update release` button.
 
 ## Per-Merge Releases
 
