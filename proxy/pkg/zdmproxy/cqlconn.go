@@ -59,6 +59,7 @@ type cqlConn struct {
 	eventHandlerLock      *sync.Mutex
 	authEnabled           bool
 	frameProcessor        FrameProcessor
+	protocolVersion       primitive.ProtocolVersion
 }
 
 var (
@@ -237,6 +238,7 @@ func (c *cqlConn) InitializeContext(version primitive.ProtocolVersion, ctx conte
 		return fmt.Errorf("failed to perform handshake: %w", err)
 	}
 
+	c.protocolVersion = version
 	c.initialized = true
 	c.authEnabled = authEnabled
 	return nil
@@ -375,7 +377,7 @@ func (c *cqlConn) Query(
 		},
 	}
 
-	queryFrame := frame.NewFrame(ccProtocolVersion, -1, queryMsg)
+	queryFrame := frame.NewFrame(c.protocolVersion, -1, queryMsg)
 	var rowSet *ParsedRowSet
 	for {
 		localResponse, err := c.SendAndReceive(queryFrame, ctx)
@@ -429,7 +431,7 @@ func (c *cqlConn) Query(
 }
 
 func (c *cqlConn) Execute(msg message.Message, ctx context.Context) (message.Message, error) {
-	queryFrame := frame.NewFrame(ccProtocolVersion, -1, msg)
+	queryFrame := frame.NewFrame(c.protocolVersion, -1, msg)
 	localResponse, err := c.SendAndReceive(queryFrame, ctx)
 	if err != nil {
 		return nil, err
@@ -440,7 +442,7 @@ func (c *cqlConn) Execute(msg message.Message, ctx context.Context) (message.Mes
 
 func (c *cqlConn) SendHeartbeat(ctx context.Context) error {
 	optionsMsg := &message.Options{}
-	heartBeatFrame := frame.NewFrame(ccProtocolVersion, -1, optionsMsg)
+	heartBeatFrame := frame.NewFrame(c.protocolVersion, -1, optionsMsg)
 
 	response, err := c.SendAndReceive(heartBeatFrame, ctx)
 	if err != nil {

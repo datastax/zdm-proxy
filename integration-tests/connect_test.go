@@ -8,6 +8,7 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
 	"github.com/datastax/zdm-proxy/integration-tests/client"
+	"github.com/datastax/zdm-proxy/integration-tests/env"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/integration-tests/utils"
 	"github.com/datastax/zdm-proxy/proxy/pkg/config"
@@ -25,6 +26,40 @@ func TestGoCqlConnect(t *testing.T) {
 
 	// Connect to proxy as a "client"
 	proxy, err := utils.ConnectToCluster("127.0.0.1", "", "", 14002)
+
+	if err != nil {
+		t.Log("Unable to connect to proxy session.")
+		t.Fatal(err)
+	}
+	defer proxy.Close()
+
+	iter := proxy.Query("SELECT * FROM fakeks.faketb").Iter()
+	result, err := iter.SliceMap()
+
+	if err != nil {
+		t.Fatal("query failed:", err)
+	}
+
+	require.Equal(t, 0, len(result))
+
+	// simulacron generates fake response metadata when queries aren't primed
+	require.Equal(t, "fake", iter.Columns()[0].Name)
+}
+
+func TestProtocolVersionNegotiation(t *testing.T) {
+	testCassandraVersion := env.CassandraVersion
+	env.CassandraVersion = "2.1" // downgrade C* version for protocol negotiation test
+	defer func() {
+		env.CassandraVersion = testCassandraVersion
+	}()
+	c := setup.NewTestConfig("", "")
+	c.ProtocolVersion = 4 // configure unsupported protocol version
+	testSetup, err := setup.NewSimulacronTestSetupWithConfig(t, c)
+	require.Nil(t, err)
+	defer testSetup.Cleanup()
+
+	// Connect to proxy as a "client"
+	proxy, err := utils.ConnectToClusterUsingVersion("127.0.0.1", "", "", 14002, 3)
 
 	if err != nil {
 		t.Log("Unable to connect to proxy session.")

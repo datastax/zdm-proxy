@@ -21,6 +21,7 @@ type Config struct {
 	ReplaceCqlFunctions     bool   `default:"false" split_words:"true"`
 	AsyncHandshakeTimeoutMs int    `default:"4000" split_words:"true"`
 	LogLevel                string `default:"INFO" split_words:"true"`
+	ProtocolVersion         uint   `default:"3" split_words:"true"`
 
 	// Proxy Topology (also known as system.peers "virtualization") bucket
 
