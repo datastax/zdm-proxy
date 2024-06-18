@@ -16,12 +16,12 @@ type Config struct {
 
 	// Global bucket
 
-	PrimaryCluster          string `default:"ORIGIN" split_words:"true"`
-	ReadMode                string `default:"PRIMARY_ONLY" split_words:"true"`
-	ReplaceCqlFunctions     bool   `default:"false" split_words:"true"`
-	AsyncHandshakeTimeoutMs int    `default:"4000" split_words:"true"`
-	LogLevel                string `default:"INFO" split_words:"true"`
-	ProtocolVersion         uint   `default:"3" split_words:"true"`
+	PrimaryCluster                string `default:"ORIGIN" split_words:"true"`
+	ReadMode                      string `default:"PRIMARY_ONLY" split_words:"true"`
+	ReplaceCqlFunctions           bool   `default:"false" split_words:"true"`
+	AsyncHandshakeTimeoutMs       int    `default:"4000" split_words:"true"`
+	LogLevel                      string `default:"INFO" split_words:"true"`
+	ControlConnMaxProtocolVersion uint   `default:"3" split_words:"true"`
 
 	// Proxy Topology (also known as system.peers "virtualization") bucket
 

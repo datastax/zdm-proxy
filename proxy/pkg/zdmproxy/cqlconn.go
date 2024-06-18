@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -32,7 +33,7 @@ type CqlConnection interface {
 	SendAndReceive(request *frame.Frame, ctx context.Context) (*frame.Frame, error)
 	Close() error
 	Execute(msg message.Message, ctx context.Context) (message.Message, error)
-	Query(cql string, genericTypeCodec *GenericTypeCodec, version primitive.ProtocolVersion, ctx context.Context) (*ParsedRowSet, error)
+	Query(cql string, genericTypeCodec *GenericTypeCodec, ctx context.Context) (*ParsedRowSet, error)
 	SendHeartbeat(ctx context.Context) error
 	SetEventHandler(eventHandler func(f *frame.Frame, conn CqlConnection))
 	SubscribeToProtocolEvents(ctx context.Context, eventTypes []primitive.EventType) error
@@ -59,7 +60,7 @@ type cqlConn struct {
 	eventHandlerLock      *sync.Mutex
 	authEnabled           bool
 	frameProcessor        FrameProcessor
-	protocolVersion       primitive.ProtocolVersion
+	protocolVersion       *atomic.Value
 }
 
 var (
@@ -238,7 +239,8 @@ func (c *cqlConn) InitializeContext(version primitive.ProtocolVersion, ctx conte
 		return fmt.Errorf("failed to perform handshake: %w", err)
 	}
 
-	c.protocolVersion = version
+	c.protocolVersion = &atomic.Value{}
+	c.protocolVersion.Store(version)
 	c.initialized = true
 	c.authEnabled = authEnabled
 	return nil
@@ -369,7 +371,7 @@ func (c *cqlConn) PerformHandshake(version primitive.ProtocolVersion, ctx contex
 }
 
 func (c *cqlConn) Query(
-	cql string, genericTypeCodec *GenericTypeCodec, version primitive.ProtocolVersion, ctx context.Context) (*ParsedRowSet, error) {
+	cql string, genericTypeCodec *GenericTypeCodec, ctx context.Context) (*ParsedRowSet, error) {
 	queryMsg := &message.Query{
 		Query: cql,
 		Options: &message.QueryOptions{
@@ -377,7 +379,8 @@ func (c *cqlConn) Query(
 		},
 	}
 
-	queryFrame := frame.NewFrame(c.protocolVersion, -1, queryMsg)
+	version := c.protocolVersion.Load().(primitive.ProtocolVersion)
+	queryFrame := frame.NewFrame(version, -1, queryMsg)
 	var rowSet *ParsedRowSet
 	for {
 		localResponse, err := c.SendAndReceive(queryFrame, ctx)
@@ -431,7 +434,8 @@ func (c *cqlConn) Query(
 }
 
 func (c *cqlConn) Execute(msg message.Message, ctx context.Context) (message.Message, error) {
-	queryFrame := frame.NewFrame(c.protocolVersion, -1, msg)
+	version := c.protocolVersion.Load().(primitive.ProtocolVersion)
+	queryFrame := frame.NewFrame(version, -1, msg)
 	localResponse, err := c.SendAndReceive(queryFrame, ctx)
 	if err != nil {
 		return nil, err
@@ -442,7 +446,8 @@ func (c *cqlConn) Execute(msg message.Message, ctx context.Context) (message.Mes
 
 func (c *cqlConn) SendHeartbeat(ctx context.Context) error {
 	optionsMsg := &message.Options{}
-	heartBeatFrame := frame.NewFrame(c.protocolVersion, -1, optionsMsg)
+	version := c.protocolVersion.Load().(primitive.ProtocolVersion)
+	heartBeatFrame := frame.NewFrame(version, -1, optionsMsg)
 
 	response, err := c.SendAndReceive(heartBeatFrame, ctx)
 	if err != nil {

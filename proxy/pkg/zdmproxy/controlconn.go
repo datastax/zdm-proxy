@@ -54,7 +54,6 @@ type ControlConn struct {
 	protocolEventSubscribers map[ProtocolEventObserver]interface{}
 	authEnabled              *atomic.Value
 	metricsHandler           *metrics.MetricHandler
-	protocolVersion          primitive.ProtocolVersion
 }
 
 const ProxyVirtualRack = "rack0"
@@ -321,7 +320,7 @@ func (cc *ControlConn) openInternal(endpoints []Endpoint, ctx context.Context) (
 		currentIndex := (firstEndpointIndex + i) % len(endpoints)
 		endpoint = endpoints[currentIndex]
 
-		newConn, err := cc.connAndNegotiateProtoVer(endpoint, cc.conf.ProtocolVersion, ctx)
+		newConn, err := cc.connAndNegotiateProtoVer(endpoint, cc.conf.ControlConnMaxProtocolVersion, ctx)
 
 		if err == nil {
 			newConn.SetEventHandler(func(f *frame.Frame, c CqlConnection) {
@@ -394,7 +393,6 @@ func (cc *ControlConn) connAndNegotiateProtoVer(endpoint Endpoint, initialProtoV
 			}
 			continue // retry lower protocol version
 		} else {
-			cc.protocolVersion = protoVer
 			return newConn, err // we may have successfully established connection or faced other error
 		}
 	}
@@ -429,7 +427,7 @@ func (cc *ControlConn) Close() {
 }
 
 func (cc *ControlConn) RefreshHosts(conn CqlConnection, ctx context.Context) ([]*Host, error) {
-	localQueryResult, err := conn.Query("SELECT * FROM system.local", GetDefaultGenericTypeCodec(), cc.protocolVersion, ctx)
+	localQueryResult, err := conn.Query("SELECT * FROM system.local", GetDefaultGenericTypeCodec(), ctx)
 	if err != nil {
 		return nil, fmt.Errorf("could not fetch information from system.local table: %w", err)
 	}
@@ -452,7 +450,7 @@ func (cc *ControlConn) RefreshHosts(conn CqlConnection, ctx context.Context) ([]
 		}
 	}
 
-	peersQuery, err := conn.Query("SELECT * FROM system.peers", GetDefaultGenericTypeCodec(), cc.protocolVersion, ctx)
+	peersQuery, err := conn.Query("SELECT * FROM system.peers", GetDefaultGenericTypeCodec(), ctx)
 	if err != nil {
 		return nil, fmt.Errorf("could not fetch information from system.peers table: %w", err)
 	}

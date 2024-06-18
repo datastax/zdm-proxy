@@ -53,7 +53,7 @@ func TestProtocolVersionNegotiation(t *testing.T) {
 		env.CassandraVersion = testCassandraVersion
 	}()
 	c := setup.NewTestConfig("", "")
-	c.ProtocolVersion = 4 // configure unsupported protocol version
+	c.ControlConnMaxProtocolVersion = 4 // configure unsupported protocol version
 	testSetup, err := setup.NewSimulacronTestSetupWithConfig(t, c)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
@@ -62,8 +62,7 @@ func TestProtocolVersionNegotiation(t *testing.T) {
 	proxy, err := utils.ConnectToClusterUsingVersion("127.0.0.1", "", "", 14002, 3)
 
 	if err != nil {
-		t.Log("Unable to connect to proxy session.")
-		t.Fatal(err)
+		t.Fatal("Unable to connect to proxy session.")
 	}
 	defer proxy.Close()
 
