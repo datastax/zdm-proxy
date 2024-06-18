@@ -2,6 +2,7 @@ package zdmproxy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
@@ -378,7 +379,8 @@ func (cc *ControlConn) connAndNegotiateProtoVer(endpoint Endpoint, initialProtoV
 		}
 		newConn := NewCqlConnection(tcpConn, cc.username, cc.password, ccReadTimeout, ccWriteTimeout, cc.conf)
 		err = newConn.InitializeContext(protoVer, ctx)
-		if err != nil && strings.Contains(err.Error(), "Invalid or unsupported protocol version") {
+		var respErr *ResponseError
+		if err != nil && errors.As(err, &respErr) && respErr.IsProtocolError() && strings.Contains(err.Error(), "Invalid or unsupported protocol version") {
 			// unsupported protocol version
 			// protocol renegotiation requires opening a new TCP connection
 			err2 := newConn.Close()

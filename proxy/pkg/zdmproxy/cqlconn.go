@@ -357,6 +357,8 @@ func (c *cqlConn) PerformHandshake(version primitive.ProtocolVersion, ctx contex
 					}
 				}
 			}
+		case *message.ProtocolError:
+			err = &ResponseError{Response: response}
 		default:
 			err = fmt.Errorf("expected AUTHENTICATE or READY, got %v", response.Body.Message)
 		}
