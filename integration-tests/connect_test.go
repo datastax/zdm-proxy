@@ -10,6 +10,7 @@ import (
 	"github.com/datastax/zdm-proxy/integration-tests/client"
 	"github.com/datastax/zdm-proxy/integration-tests/env"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
+	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
 	"github.com/datastax/zdm-proxy/integration-tests/utils"
 	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 	"github.com/rs/zerolog"
@@ -54,7 +55,7 @@ func TestProtocolVersionNegotiation(t *testing.T) {
 	}()
 	c := setup.NewTestConfig("", "")
 	c.ControlConnMaxProtocolVersion = 4 // configure unsupported protocol version
-	testSetup, err := setup.NewSimulacronTestSetupWithConfig(t, c)
+	testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodesAndConfig(t, true, false, 1, c, &simulacron.ClusterVersion{"2.1", "2.1"})
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 

@@ -127,22 +127,22 @@ func NewSimulacronTestSetupWithSession(t *testing.T, createProxy bool, createSes
 }
 
 func NewSimulacronTestSetupWithSessionAndConfig(t *testing.T, createProxy bool, createSession bool, config *config.Config) (*SimulacronTestSetup, error) {
-	return NewSimulacronTestSetupWithSessionAndNodesAndConfig(t, createProxy, createSession, 1, config)
+	return NewSimulacronTestSetupWithSessionAndNodesAndConfig(t, createProxy, createSession, 1, config, nil)
 }
 
 func NewSimulacronTestSetupWithSessionAndNodes(t *testing.T, createProxy bool, createSession bool, nodes int) (*SimulacronTestSetup, error) {
-	return NewSimulacronTestSetupWithSessionAndNodesAndConfig(t, createProxy, createSession, nodes, nil)
+	return NewSimulacronTestSetupWithSessionAndNodesAndConfig(t, createProxy, createSession, nodes, nil, nil)
 }
 
-func NewSimulacronTestSetupWithSessionAndNodesAndConfig(t *testing.T, createProxy bool, createSession bool, nodes int, config *config.Config) (*SimulacronTestSetup, error) {
+func NewSimulacronTestSetupWithSessionAndNodesAndConfig(t *testing.T, createProxy bool, createSession bool, nodes int, config *config.Config, version *simulacron.ClusterVersion) (*SimulacronTestSetup, error) {
 	if !env.RunMockTests {
 		t.Skip("Skipping Simulacron tests, RUN_MOCKTESTS is set false")
 	}
-	origin, err := simulacron.GetNewCluster(createSession, nodes)
+	origin, err := simulacron.GetNewCluster(createSession, nodes, version)
 	if err != nil {
 		log.Panic("simulacron origin startup failed: ", err)
 	}
-	target, err := simulacron.GetNewCluster(createSession, nodes)
+	target, err := simulacron.GetNewCluster(createSession, nodes, version)
 	if err != nil {
 		log.Panic("simulacron target startup failed: ", err)
 	}
