@@ -1,6 +1,9 @@
 package zdmproxy
 
-import "fmt"
+import (
+	"fmt"
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
+)
 
 type RequestInfo interface {
 	GetForwardDecision() forwardDecision
@@ -32,10 +35,11 @@ func (recv *baseRequestInfo) ShouldBeTrackedInMetrics() bool {
 
 type GenericRequestInfo struct {
 	*baseRequestInfo
+	OpCode primitive.OpCode
 }
 
-func NewGenericRequestInfo(decision forwardDecision, shouldBeSentAsync bool, trackMetrics bool) *GenericRequestInfo {
-	return &GenericRequestInfo{baseRequestInfo: newBaseRequestInfo(decision, shouldBeSentAsync, trackMetrics)}
+func NewGenericRequestInfo(decision forwardDecision, shouldBeSentAsync bool, trackMetrics bool, opCode primitive.OpCode) *GenericRequestInfo {
+	return &GenericRequestInfo{baseRequestInfo: newBaseRequestInfo(decision, shouldBeSentAsync, trackMetrics), OpCode: opCode}
 }
 
 func (recv *GenericRequestInfo) String() string {

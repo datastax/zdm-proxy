@@ -19,7 +19,7 @@ func TestParseAndInspect_GraphRequests_Core_StringAPI(t *testing.T) {
 		{"Create graph",
 			false,
 			"system.graph('friendship').ifNotExists().create()",
-			NewGenericRequestInfo(forwardToBoth, false, true),
+			NewGenericRequestInfo(forwardToBoth, false, true, primitive.OpCodeExecute),
 		},
 		{"Create graph schema",
 			true,
@@ -32,7 +32,7 @@ func TestParseAndInspect_GraphRequests_Core_StringAPI(t *testing.T) {
 				".by('hometown').asText().by('age').create();" +
 				"schema.edgeLabel('is_friend_of').from('person').to('person')" +
 				".materializedView('person__is_parent_of__person_by_in_id').ifNotExists().inverse().create()}} ",
-			NewGenericRequestInfo(forwardToBoth, false, true),
+			NewGenericRequestInfo(forwardToBoth, false, true, primitive.OpCodeExecute),
 		},
 		{"Write data to graph",
 			true,
@@ -41,17 +41,17 @@ func TestParseAndInspect_GraphRequests_Core_StringAPI(t *testing.T) {
 				".property('firstname', p2_firstname).property('surname', p2_surname)" +
 				".property('hometown', p2_hometown).property('age', p2_age).as('p2')" +
 				".addE('is_friend_of').from('p1').to('p2').property('friendshipStartDate', fsd);",
-			NewGenericRequestInfo(forwardToBoth, false, true),
+			NewGenericRequestInfo(forwardToBoth, false, true, primitive.OpCodeExecute),
 		},
 		{"Select person vertex by id (Brenda_Peterson)",
 			true,
 			"g.V().has('person','id', p1_id).elementMap()",
-			NewGenericRequestInfo(forwardToBoth, false, true),
+			NewGenericRequestInfo(forwardToBoth, false, true, primitive.OpCodeQuery),
 		},
 		{"Select person vertices by age range (70-90)",
 			true,
 			"g.V().has('person','age', gt(lower_end)).has('person','age', lt(upper_end)).elementMap()",
-			NewGenericRequestInfo(forwardToBoth, false, true),
+			NewGenericRequestInfo(forwardToBoth, false, true, primitive.OpCodeQuery),
 		},
 	}
 
@@ -96,20 +96,20 @@ func TestParseAndInspect_GraphRequests_Core_FluentAPI(t *testing.T) {
 				0, 0, 0, 1, 3, 0, 0, 0, 0, 2, 112, 49, 0, 0, 0, 2, 116, 111, 0, 0, 0, 1, 3, 0, 0, 0, 0, 2, 112, 50, 0, 0, 0, 8, 112, 114, 111, 112, 101, 114, 116,
 				121, 0, 0, 0, 2, 3, 0, 0, 0, 0, 19, 102, 114, 105, 101, 110, 100, 115, 104, 105, 112, 83, 116, 97, 114, 116, 68, 97, 116, 101, 132, 0, 0,
 				0, 7, 169, 6, 16, 0, 0, 0, 0},
-			NewGenericRequestInfo(forwardToBoth, false, true),
+			NewGenericRequestInfo(forwardToBoth, false, true, primitive.OpCodeExecute),
 		},
 		{"Select person vertex by id (Brenda_Peterson)",
 			[]byte{21, 0, 0, 0, 0, 3, 0, 0, 0, 1, 86, 0, 0, 0, 0, 0, 0, 0, 3, 104, 97, 115, 0, 0, 0, 3, 3, 0, 0, 0, 0, 6, 112, 101, 114, 115, 111,
 				110, 3, 0, 0, 0, 0, 2, 105, 100, 3, 0, 0, 0, 0, 15, 66, 114, 101, 110, 100, 97, 95, 80, 101, 116, 101, 114, 115, 111, 110, 0, 0, 0, 10, 101,
 				108, 101, 109, 101, 110, 116, 77, 97, 112, 0, 0, 0, 0, 0, 0, 0, 0},
-			NewGenericRequestInfo(forwardToBoth, false, true),
+			NewGenericRequestInfo(forwardToBoth, false, true, primitive.OpCodeQuery),
 		},
 		{"Select person vertices by age range (70-90)",
 			[]byte{21, 0, 0, 0, 0, 4, 0, 0, 0, 1, 86, 0, 0, 0, 0, 0, 0, 0, 3, 104, 97, 115, 0, 0, 0, 3, 3, 0, 0, 0, 0, 6, 112, 101, 114, 115, 111,
 				110, 3, 0, 0, 0, 0, 3, 97, 103, 101, 30, 0, 0, 0, 0, 2, 103, 116, 0, 0, 0, 1, 1, 0, 0, 0, 0, 70, 0, 0, 0, 3, 104, 97, 115, 0, 0, 0, 3, 3, 0, 0, 0,
 				0, 6, 112, 101, 114, 115, 111, 110, 3, 0, 0, 0, 0, 3, 97, 103, 101, 30, 0, 0, 0, 0, 2, 108, 116, 0, 0, 0, 1, 1, 0, 0, 0, 0, 90, 0, 0, 0, 10,
 				101, 108, 101, 109, 101, 110, 116, 77, 97, 112, 0, 0, 0, 0, 0, 0, 0, 0},
-			NewGenericRequestInfo(forwardToBoth, false, true),
+			NewGenericRequestInfo(forwardToBoth, false, true, primitive.OpCodeQuery),
 		},
 	}
 

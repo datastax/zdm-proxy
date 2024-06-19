@@ -280,7 +280,7 @@ type NodeMetricsInstance struct {
 	UnavailableErrors Counter
 	OtherErrors       Counter
 
-	RequestDuration Histogram
+	RequestDuration map[string]Histogram
 
 	OpenConnections Gauge
 
@@ -298,13 +298,29 @@ func CreateCounterNodeMetric(metricFactory MetricFactory, nodeDescription string
 	return m, nil
 }
 
-func CreateHistogramNodeMetric(metricFactory MetricFactory, nodeDescription string, mn Metric, buckets []float64) (Histogram, error) {
+func CreateHistogramNodeMetric(metricFactory MetricFactory, nodeDescription string, mn Metric, buckets []float64, labels ...string) (Histogram, error) {
+	customLabels := make(map[string]string)
+	for i := 0; i < len(labels); i = i + 2 {
+		customLabels[labels[i]] = labels[i+1]
+	}
 	m, err := metricFactory.GetOrCreateHistogram(
-		mn.WithLabels(map[string]string{nodeLabel: nodeDescription}), buckets)
+		mn.WithLabels(map[string]string{nodeLabel: nodeDescription}).WithLabels(customLabels), buckets)
 	if err != nil {
 		return nil, err
 	}
 	return m, nil
+}
+
+func CreateHistogramNodeRequestDurationMetrics(metricFactory MetricFactory, nodeDescription string, mn Metric, buckets []float64) (map[string]Histogram, error) {
+	requestDuration := make(map[string]Histogram)
+	for _, stmtCtg := range StatementCategories {
+		item, err := CreateHistogramNodeMetric(metricFactory, nodeDescription, mn, buckets, RequestDurationTypeLabel, stmtCtg)
+		if err != nil {
+			return nil, err
+		}
+		requestDuration[stmtCtg] = item
+	}
+	return requestDuration, nil
 }
 
 func CreateGaugeNodeMetric(metricFactory MetricFactory, nodeDescription string, mn Metric) (Gauge, error) {

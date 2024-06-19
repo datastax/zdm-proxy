@@ -826,7 +826,7 @@ func (p *ZdmProxy) CreateOriginNodeMetrics(
 		return nil, err
 	}
 
-	originRequestDuration, err := metrics.CreateHistogramNodeMetric(metricFactory, originNodeDescription, metrics.OriginRequestDuration, originBuckets)
+	originRequestDuration, err := metrics.CreateHistogramNodeRequestDurationMetrics(metricFactory, originNodeDescription, metrics.OriginRequestDuration, originBuckets)
 	if err != nil {
 		return nil, err
 	}
@@ -911,7 +911,7 @@ func (p *ZdmProxy) CreateAsyncNodeMetrics(
 		return nil, err
 	}
 
-	asyncRequestDuration, err := metrics.CreateHistogramNodeMetric(metricFactory, asyncNodeDescription, metrics.AsyncRequestDuration, asyncBuckets)
+	asyncRequestDuration, err := metrics.CreateHistogramNodeRequestDurationMetrics(metricFactory, asyncNodeDescription, metrics.AsyncRequestDuration, asyncBuckets)
 	if err != nil {
 		return nil, err
 	}
@@ -995,7 +995,7 @@ func (p *ZdmProxy) CreateTargetNodeMetrics(
 		return nil, err
 	}
 
-	targetRequestDuration, err := metrics.CreateHistogramNodeMetric(metricFactory, targetNodeDescription, metrics.TargetRequestDuration, targetBuckets)
+	targetRequestDuration, err := metrics.CreateHistogramNodeRequestDurationMetrics(metricFactory, targetNodeDescription, metrics.TargetRequestDuration, targetBuckets)
 	if err != nil {
 		return nil, err
 	}

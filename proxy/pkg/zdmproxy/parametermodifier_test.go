@@ -20,7 +20,7 @@ func TestAddValuesToExecuteFrame_NoReplacedTerms(t *testing.T) {
 		ResultMetadataId: nil,
 		Options:          &message.QueryOptions{},
 	})
-	prepareRequestInfo := NewPrepareRequestInfo(NewGenericRequestInfo(forwardToBoth, false, true), []*term{}, false, "", "")
+	prepareRequestInfo := NewPrepareRequestInfo(NewGenericRequestInfo(forwardToBoth, false, true, primitive.OpCodePrepare), []*term{}, false, "", "")
 	variablesMetadata := &message.VariablesMetadata{
 		PkIndices: nil,
 		Columns:   nil,
@@ -42,7 +42,7 @@ func TestAddValuesToExecuteFrame_InvalidMessageType(t *testing.T) {
 		Query:   "SELECT * FROM asd WHERE a = :param1",
 		Options: &message.QueryOptions{},
 	})
-	prepareRequestInfo := NewPrepareRequestInfo(NewGenericRequestInfo(forwardToBoth, false, true), []*term{}, false, "", "")
+	prepareRequestInfo := NewPrepareRequestInfo(NewGenericRequestInfo(forwardToBoth, false, true, primitive.OpCodePrepare), []*term{}, false, "", "")
 	variablesMetadata := &message.VariablesMetadata{
 		PkIndices: nil,
 		Columns:   nil,
@@ -205,7 +205,7 @@ func TestAddValuesToExecuteFrame_PositionalValues(t *testing.T) {
 				Options:          clonedQueryOpts,
 			})
 			containsPositionalMarkers := ((len(requestPosVals) + len(replacedTerms)) > 0) && !test.prepareContainsNamedValues
-			prepareRequestInfo := NewPrepareRequestInfo(NewGenericRequestInfo(forwardToBoth, false, true), replacedTerms, containsPositionalMarkers, "", "")
+			prepareRequestInfo := NewPrepareRequestInfo(NewGenericRequestInfo(forwardToBoth, false, true, primitive.OpCodePrepare), replacedTerms, containsPositionalMarkers, "", "")
 
 			replacementTimeUuids := parameterModifier.generateTimeUuids(prepareRequestInfo)
 			executeMsg, err := parameterModifier.AddValuesToExecuteFrame(f, prepareRequestInfo, vm, replacementTimeUuids)
@@ -350,7 +350,7 @@ func TestAddValuesToExecuteFrame_NamedValues(t *testing.T) {
 				ResultMetadataId: nil,
 				Options:          clonedQueryOpts,
 			})
-			prepareRequestInfo := NewPrepareRequestInfo(NewGenericRequestInfo(forwardToBoth, false, true), replacedTerms, false, "", "")
+			prepareRequestInfo := NewPrepareRequestInfo(NewGenericRequestInfo(forwardToBoth, false, true, primitive.OpCodePrepare), replacedTerms, false, "", "")
 
 			replacementTimeUuids := parameterModifier.generateTimeUuids(prepareRequestInfo)
 			executeMsg, err := parameterModifier.AddValuesToExecuteFrame(f, prepareRequestInfo, vm, replacementTimeUuids)

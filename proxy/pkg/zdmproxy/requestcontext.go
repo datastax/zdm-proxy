@@ -3,6 +3,7 @@ package zdmproxy
 import (
 	"fmt"
 	"github.com/datastax/go-cassandra-native-protocol/frame"
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
 	"github.com/datastax/zdm-proxy/proxy/pkg/common"
 	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
@@ -193,9 +194,11 @@ func (recv *requestContextImpl) SetResponse(nodeMetrics *metrics.NodeMetrics, f 
 	if recv.GetRequestInfo().ShouldBeTrackedInMetrics() {
 		switch connectorType {
 		case ClusterConnectorTypeOrigin:
-			nodeMetrics.OriginMetrics.RequestDuration.Track(recv.startTime)
+			stmtCtg := getStatementCategory(recv.GetRequestInfo())
+			nodeMetrics.OriginMetrics.RequestDuration[stmtCtg].Track(recv.startTime)
 		case ClusterConnectorTypeTarget:
-			nodeMetrics.TargetMetrics.RequestDuration.Track(recv.startTime)
+			stmtCtg := getStatementCategory(recv.GetRequestInfo())
+			nodeMetrics.TargetMetrics.RequestDuration[stmtCtg].Track(recv.startTime)
 		case ClusterConnectorTypeAsync:
 		default:
 			log.Errorf("could not recognize connector type %v", connectorType)
@@ -203,6 +206,27 @@ func (recv *requestContextImpl) SetResponse(nodeMetrics *metrics.NodeMetrics, f 
 	}
 
 	return finished
+}
+
+func getStatementCategory(req RequestInfo) string {
+	switch req.(type) {
+	case *BatchRequestInfo:
+		return metrics.TypeWrites
+	case *ExecuteRequestInfo:
+		return metrics.TypeWrites
+	case *InterceptedRequestInfo:
+		return metrics.TypeReads
+	case *GenericRequestInfo:
+		switch req.(*GenericRequestInfo).OpCode {
+		case primitive.OpCodeExecute:
+			return metrics.TypeWrites
+		case primitive.OpCodeQuery:
+			return metrics.TypeReads
+		case primitive.OpCodeBatch:
+			return metrics.TypeWrites
+		}
+	}
+	return metrics.TypeOther
 }
 
 func (recv *requestContextImpl) updateInternalState(f *frame.RawFrame, cluster common.ClusterType) (state int, updated bool) {
@@ -331,7 +355,8 @@ func (recv *asyncRequestContextImpl) SetResponse(
 	}
 
 	if recv.GetRequestInfo().ShouldBeTrackedInMetrics() {
-		nodeMetrics.AsyncMetrics.RequestDuration.Track(recv.startTime)
+		stmtCtg := getStatementCategory(recv.GetRequestInfo())
+		nodeMetrics.AsyncMetrics.RequestDuration[stmtCtg].Track(recv.startTime)
 		nodeMetrics.AsyncMetrics.InFlightRequests.Subtract(1)
 	}
 
