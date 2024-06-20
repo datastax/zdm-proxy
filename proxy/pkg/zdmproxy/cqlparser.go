@@ -80,7 +80,7 @@ func buildRequestInfo(
 		}
 		return getRequestInfoFromQueryInfo(
 			frameContext.GetRawFrame(), primaryCluster,
-			forwardSystemQueriesToTarget, virtualizationEnabled, stmtQueryData.queryData, f.Header.OpCode), nil
+			forwardSystemQueriesToTarget, virtualizationEnabled, stmtQueryData.queryData), nil
 	case primitive.OpCodePrepare:
 		stmtQueryData, err := frameContext.GetOrInspectStatement(currentKeyspaceName, timeUuidGenerator)
 		if err != nil {
@@ -96,7 +96,7 @@ func buildRequestInfo(
 		}
 		baseRequestInfo := getRequestInfoFromQueryInfo(
 			frameContext.GetRawFrame(), primaryCluster,
-			forwardSystemQueriesToTarget, virtualizationEnabled, stmtQueryData.queryData, f.Header.OpCode)
+			forwardSystemQueriesToTarget, virtualizationEnabled, stmtQueryData.queryData)
 		replacedTerms := make([]*term, 0)
 		if len(stmtsReplacedTerms) > 1 {
 			return nil, fmt.Errorf("expected single list of replaced terms for prepare message but got %v", len(stmtsReplacedTerms))
@@ -144,14 +144,14 @@ func buildRequestInfo(
 		}
 	case primitive.OpCodeAuthResponse:
 		if forwardAuthToTarget {
-			return NewGenericRequestInfo(forwardToTarget, false, false, f.Header.OpCode), nil
+			return NewGenericRequestInfo(forwardToTarget, false, false), nil
 		} else {
-			return NewGenericRequestInfo(forwardToOrigin, false, false, f.Header.OpCode), nil
+			return NewGenericRequestInfo(forwardToOrigin, false, false), nil
 		}
 	case primitive.OpCodeRegister, primitive.OpCodeStartup:
-		return NewGenericRequestInfo(forwardToBoth, false, false, f.Header.OpCode), nil
+		return NewGenericRequestInfo(forwardToBoth, false, false), nil
 	default:
-		return NewGenericRequestInfo(forwardToBoth, true, false, f.Header.OpCode), nil
+		return NewGenericRequestInfo(forwardToBoth, true, false), nil
 	}
 }
 
@@ -178,8 +178,7 @@ func getRequestInfoFromQueryInfo(
 	primaryCluster common.ClusterType,
 	forwardSystemQueriesToTarget bool,
 	virtualizationEnabled bool,
-	queryInfo QueryInfo,
-	opCode primitive.OpCode) RequestInfo {
+	queryInfo QueryInfo) RequestInfo {
 
 	var sendAlsoToAsync bool
 	forwardDecision := forwardToBoth
@@ -222,7 +221,7 @@ func getRequestInfoFromQueryInfo(
 
 	log.Tracef("Forward decision: %s", forwardDecision)
 
-	return NewGenericRequestInfo(forwardDecision, sendAlsoToAsync, true, opCode)
+	return NewGenericRequestInfo(forwardDecision, sendAlsoToAsync, true)
 }
 
 func isSystemQuery(info QueryInfo) bool {

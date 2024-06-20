@@ -3,7 +3,6 @@ package zdmproxy
 import (
 	"fmt"
 	"github.com/datastax/go-cassandra-native-protocol/frame"
-	"github.com/datastax/go-cassandra-native-protocol/primitive"
 	"github.com/datastax/zdm-proxy/proxy/pkg/common"
 	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
@@ -209,24 +208,11 @@ func (recv *requestContextImpl) SetResponse(nodeMetrics *metrics.NodeMetrics, f 
 }
 
 func getStatementCategory(req RequestInfo) string {
-	switch req.(type) {
-	case *BatchRequestInfo:
+	switch req.GetForwardDecision() {
+	case forwardToBoth:
 		return metrics.TypeWrites
-	case *ExecuteRequestInfo:
-		return metrics.TypeWrites
-	case *InterceptedRequestInfo:
-		return metrics.TypeReads
-	case *GenericRequestInfo:
-		switch req.(*GenericRequestInfo).OpCode {
-		case primitive.OpCodeExecute:
-			return metrics.TypeWrites
-		case primitive.OpCodeQuery:
-			return metrics.TypeReads
-		case primitive.OpCodeBatch:
-			return metrics.TypeWrites
-		}
 	}
-	return metrics.TypeOther
+	return metrics.TypeReads
 }
 
 func (recv *requestContextImpl) updateInternalState(f *frame.RawFrame, cluster common.ClusterType) (state int, updated bool) {

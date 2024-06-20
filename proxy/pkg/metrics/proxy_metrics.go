@@ -5,7 +5,6 @@ const (
 	typeReadsTarget = "reads_target"
 	TypeWrites      = "writes"
 	TypeReads       = "reads"
-	TypeOther       = "other"
 
 	failedRequestsClusterOrigin = "origin"
 	failedRequestsClusterTarget = "target"
@@ -29,7 +28,7 @@ const (
 )
 
 var (
-	StatementCategories = []string{TypeWrites, TypeReads, TypeOther}
+	StatementCategories = []string{TypeWrites, TypeReads}
 )
 
 var (
