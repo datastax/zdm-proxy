@@ -38,6 +38,7 @@ type CqlConnection interface {
 	SetEventHandler(eventHandler func(f *frame.Frame, conn CqlConnection))
 	SubscribeToProtocolEvents(ctx context.Context, eventTypes []primitive.EventType) error
 	IsAuthEnabled() (bool, error)
+	GetProtocolVersion() *atomic.Value
 }
 
 // Not thread safe
@@ -98,6 +99,7 @@ func NewCqlConnection(
 		eventHandlerLock:      &sync.Mutex{},
 		authEnabled:           true,
 		frameProcessor:        NewStreamIdProcessor(NewInternalStreamIdMapper(conf.ProxyMaxStreamIds, nil)),
+		protocolVersion:       &atomic.Value{},
 	}
 	cqlConn.StartRequestLoop()
 	cqlConn.StartResponseLoop()
@@ -233,13 +235,16 @@ func (c *cqlConn) IsAuthEnabled() (bool, error) {
 	return c.authEnabled, nil
 }
 
+func (c *cqlConn) GetProtocolVersion() *atomic.Value {
+	return c.protocolVersion
+}
+
 func (c *cqlConn) InitializeContext(version primitive.ProtocolVersion, ctx context.Context) error {
 	authEnabled, err := c.PerformHandshake(version, ctx)
 	if err != nil {
 		return fmt.Errorf("failed to perform handshake: %w", err)
 	}
 
-	c.protocolVersion = &atomic.Value{}
 	c.protocolVersion.Store(version)
 	c.initialized = true
 	c.authEnabled = authEnabled

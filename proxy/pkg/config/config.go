@@ -21,7 +21,7 @@ type Config struct {
 	ReplaceCqlFunctions           bool   `default:"false" split_words:"true"`
 	AsyncHandshakeTimeoutMs       int    `default:"4000" split_words:"true"`
 	LogLevel                      string `default:"INFO" split_words:"true"`
-	ControlConnMaxProtocolVersion uint   `default:"3" split_words:"true"`
+	ControlConnMaxProtocolVersion string `default:"3" split_words:"true"` // Numeric Cassandra OSS protocol version or Dse1 / Dse2
 
 	// Proxy Topology (also known as system.peers "virtualization") bucket
 
@@ -283,6 +283,11 @@ func (c *Config) Validate() error {
 		return err
 	}
 
+	_, err = c.ParseControlConnMaxProtocolVersion()
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -335,6 +340,24 @@ func (c *Config) ParseReadMode() (common.ReadMode, error) {
 		return common.ReadModeUndefined, fmt.Errorf("invalid value for ZDM_READ_MODE; possible values are: %v and %v",
 			ReadModePrimaryOnly, ReadModeDualAsyncOnSecondary)
 	}
+}
+
+func (c *Config) ParseControlConnMaxProtocolVersion() (uint, error) {
+	switch c.ControlConnMaxProtocolVersion {
+	case "Dse2":
+		return 0b_1_000010, nil
+	case "Dse1":
+		return 0b_1_000001, nil
+	}
+	ver, err := strconv.ParseUint(c.ControlConnMaxProtocolVersion, 10, 32)
+	if err != nil {
+		return 0, fmt.Errorf("could not parse control connection max protocol version, valid values are "+
+			"2, 3, 4, Dse1, Dse2; original err: %w", err)
+	}
+	if ver < 2 || ver > 4 {
+		return 0, fmt.Errorf("invalid control connection max protocol version, valid values are 2, 3, 4, Dse1, Dse2")
+	}
+	return uint(ver), nil
 }
 
 func (c *Config) ParseLogLevel() (log.Level, error) {

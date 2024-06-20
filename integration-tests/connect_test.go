@@ -47,31 +47,64 @@ func TestGoCqlConnect(t *testing.T) {
 }
 
 func TestProtocolVersionNegotiation(t *testing.T) {
-	c := setup.NewTestConfig("", "")
-	c.ControlConnMaxProtocolVersion = 4 // configure unsupported protocol version
-	testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodesAndConfig(t, true, false, 1, c, &simulacron.ClusterVersion{"2.1", "2.1"})
-	require.Nil(t, err)
-	defer testSetup.Cleanup()
-
-	// Connect to proxy as a "client"
-	proxy, err := utils.ConnectToClusterUsingVersion("127.0.0.1", "", "", 14002, 3)
-
-	if err != nil {
-		t.Fatal("Unable to connect to proxy session.")
+	tests := []struct {
+		name                          string
+		clusterVersion                string
+		controlConnMaxProtocolVersion string
+		negotiatedProtocolVersion     primitive.ProtocolVersion
+	}{
+		{
+			name:                          "Cluster2.1_MaxCCProtoVer4_NegotiatedProtoVer3",
+			clusterVersion:                "2.1",
+			controlConnMaxProtocolVersion: "4",
+			negotiatedProtocolVersion:     primitive.ProtocolVersion3, // protocol downgraded to V3, V4 is not supported
+		},
+		{
+			name:                          "Cluster3.0_MaxCCProtoVer4_NegotiatedProtoVer4",
+			clusterVersion:                "3.0",
+			controlConnMaxProtocolVersion: "4",
+			negotiatedProtocolVersion:     primitive.ProtocolVersion4,
+		},
+		{
+			name:                          "Cluster4.0_MaxCCProtoVer4_NegotiatedProtoVer4",
+			clusterVersion:                "4.0",
+			controlConnMaxProtocolVersion: "4",
+			negotiatedProtocolVersion:     primitive.ProtocolVersion4,
+		},
 	}
-	defer proxy.Close()
 
-	iter := proxy.Query("SELECT * FROM fakeks.faketb").Iter()
-	result, err := iter.SliceMap()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := setup.NewTestConfig("", "")
+			c.ControlConnMaxProtocolVersion = tt.controlConnMaxProtocolVersion
+			testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodesAndConfig(t, true, false, 1, c,
+				&simulacron.ClusterVersion{tt.clusterVersion, tt.clusterVersion})
+			require.Nil(t, err)
+			defer testSetup.Cleanup()
 
-	if err != nil {
-		t.Fatal("query failed:", err)
+			// Connect to proxy as a "client"
+			proxy, err := utils.ConnectToClusterUsingVersion("127.0.0.1", "", "", 14002, 3)
+
+			if err != nil {
+				t.Fatal("Unable to connect to proxy session.")
+			}
+			defer proxy.Close()
+
+			cqlConn, _ := testSetup.Proxy.GetOriginControlConn().GetConnAndContactPoint()
+			negotiatedProto := cqlConn.GetProtocolVersion().Load().(primitive.ProtocolVersion)
+
+			require.Equal(t, tt.negotiatedProtocolVersion, negotiatedProto)
+
+			iter := proxy.Query("SELECT * FROM fakeks.faketb").Iter()
+			result, err := iter.SliceMap()
+
+			if err != nil {
+				t.Fatal("query failed:", err)
+			}
+
+			require.Equal(t, 0, len(result))
+		})
 	}
-
-	require.Equal(t, 0, len(result))
-
-	// simulacron generates fake response metadata when queries aren't primed
-	require.Equal(t, "fake", iter.Columns()[0].Name)
 }
 
 func TestMaxClientsThreshold(t *testing.T) {

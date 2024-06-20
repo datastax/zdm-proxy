@@ -125,7 +125,7 @@ func (cc *ControlConn) Start(wg *sync.WaitGroup, ctx context.Context) error {
 
 			log.Infof("Received topology event from %v, refreshing topology.", cc.connConfig.GetClusterType())
 
-			conn, _ := cc.getConnAndContactPoint()
+			conn, _ := cc.GetConnAndContactPoint()
 			if conn == nil {
 				log.Debugf("Topology refresh scheduled but the control connection isn't open. " +
 					"Falling back to the connection where the event was received.")
@@ -162,7 +162,7 @@ func (cc *ControlConn) Start(wg *sync.WaitGroup, ctx context.Context) error {
 				cc.Close()
 			}
 
-			conn, _ := cc.getConnAndContactPoint()
+			conn, _ := cc.GetConnAndContactPoint()
 			if conn == nil {
 				useContactPointsOnly := false
 				if !lastOpenSuccessful {
@@ -251,7 +251,7 @@ func (cc *ControlConn) ReadFailureCounter() int {
 }
 
 func (cc *ControlConn) Open(contactPointsOnly bool, ctx context.Context) (CqlConnection, error) {
-	oldConn, _ := cc.getConnAndContactPoint()
+	oldConn, _ := cc.GetConnAndContactPoint()
 	if oldConn != nil {
 		cc.Close()
 		oldConn = nil
@@ -321,7 +321,8 @@ func (cc *ControlConn) openInternal(endpoints []Endpoint, ctx context.Context) (
 		currentIndex := (firstEndpointIndex + i) % len(endpoints)
 		endpoint = endpoints[currentIndex]
 
-		newConn, err := cc.connAndNegotiateProtoVer(endpoint, cc.conf.ControlConnMaxProtocolVersion, ctx)
+		maxProtoVer, _ := cc.conf.ParseControlConnMaxProtocolVersion()
+		newConn, err := cc.connAndNegotiateProtoVer(endpoint, maxProtoVer, ctx)
 
 		if err == nil {
 			newConn.SetEventHandler(func(f *frame.Frame, c CqlConnection) {
@@ -678,7 +679,7 @@ func (cc *ControlConn) setConn(oldConn CqlConnection, newConn CqlConnection, new
 	return cc.cqlConn, cc.currentContactPoint
 }
 
-func (cc *ControlConn) getConnAndContactPoint() (CqlConnection, Endpoint) {
+func (cc *ControlConn) GetConnAndContactPoint() (CqlConnection, Endpoint) {
 	cc.cqlConnLock.Lock()
 	conn := cc.cqlConn
 	contactPoint := cc.currentContactPoint
