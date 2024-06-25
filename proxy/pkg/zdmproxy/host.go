@@ -64,9 +64,13 @@ func ParseSystemLocalResult(rs *ParsedRowSet, defaultPort int) (map[string]*opti
 		return nil, nil, err
 	}
 
-	host, err := parseHost(addr, port, row)
-	if err != nil {
-		return nil, nil, err
+	var host *Host
+	if addr != nil {
+		// could not resolve address from system.local table (e.g. not present in C* 2.0.0)
+		host, err = parseHost(addr, port, row)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 
 	sysLocalCols := map[string]*optionalColumn{
@@ -178,6 +182,9 @@ func ParseRpcAddress(isPeersV2 bool, row *ParsedRow, defaultPort int) (net.IP, i
 		addr = parseRpcAddressPeersV2(row)
 	} else {
 		addr = parseRpcAddressLocalOrPeersV1(row)
+	}
+	if addr == nil {
+		return nil, -1, nil
 	}
 
 	if addr.IsUnspecified() {

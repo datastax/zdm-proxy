@@ -378,7 +378,7 @@ func (cc *ControlConn) connAndNegotiateProtoVer(endpoint Endpoint, initialProtoV
 				cc.connConfig.GetClusterType(), endpoint.GetEndpointIdentifier(), err)
 			return nil, err
 		}
-		newConn := NewCqlConnection(tcpConn, cc.username, cc.password, ccReadTimeout, ccWriteTimeout, cc.conf)
+		newConn := NewCqlConnection(tcpConn, cc.username, cc.password, ccReadTimeout, ccWriteTimeout, cc.conf, protoVer)
 		err = newConn.InitializeContext(protoVer, ctx)
 		var respErr *ResponseError
 		if err != nil && errors.As(err, &respErr) && respErr.IsProtocolError() && strings.Contains(err.Error(), "Invalid or unsupported protocol version") {
@@ -436,6 +436,7 @@ func (cc *ControlConn) RefreshHosts(conn CqlConnection, ctx context.Context) ([]
 	}
 
 	localInfo, localHost, err := ParseSystemLocalResult(localQueryResult, cc.defaultPort)
+	// localHost may be nil, if we did not find the address in system.local table
 	if err != nil {
 		return nil, err
 	}
@@ -475,11 +476,13 @@ func (cc *ControlConn) RefreshHosts(conn CqlConnection, ctx context.Context) ([]
 		}
 	}
 
-	oldLocalhost, localHostExists := hostsById[localHost.HostId]
-	if localHostExists {
-		log.Warnf("Local host is also on the peers list: %v vs %v, ignoring the former one.", oldLocalhost, localHost)
+	if localHost != nil {
+		oldLocalhost, localHostExists := hostsById[localHost.HostId]
+		if localHostExists {
+			log.Warnf("Local host is also on the peers list: %v vs %v, ignoring the former one.", oldLocalhost, localHost)
+		}
+		hostsById[localHost.HostId] = localHost
 	}
-	hostsById[localHost.HostId] = localHost
 	orderedLocalHosts := make([]*Host, 0, len(hostsById))
 	for _, h := range hostsById {
 		orderedLocalHosts = append(orderedLocalHosts, h)
@@ -489,9 +492,11 @@ func (cc *ControlConn) RefreshHosts(conn CqlConnection, ctx context.Context) ([]
 	currentDc := cc.datacenter
 	cc.topologyLock.RUnlock()
 
-	orderedLocalHosts, currentDc, err = filterHosts(orderedLocalHosts, currentDc, cc.connConfig, localHost)
-	if err != nil {
-		return nil, err
+	if localHost != nil {
+		orderedLocalHosts, currentDc, err = filterHosts(orderedLocalHosts, currentDc, cc.connConfig, localHost)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	sort.Slice(orderedLocalHosts, func(i, j int) bool {

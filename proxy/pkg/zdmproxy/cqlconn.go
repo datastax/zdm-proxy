@@ -19,10 +19,13 @@ import (
 )
 
 const (
-	eventQueueLength = 2048
+	eventQueueLength   = 2048
+	eventQueueLengthV2 = 128
 
-	maxIncomingPending = 2048
-	maxOutgoingPending = 2048
+	maxIncomingPending   = 2048
+	maxIncomingPendingV2 = 128
+	maxOutgoingPending   = 2048
+	maxOutgoingPendingV2 = 128
 
 	timeOutsThreshold = 1024
 )
@@ -76,7 +79,7 @@ func NewCqlConnection(
 	conn net.Conn,
 	username string, password string,
 	readTimeout time.Duration, writeTimeout time.Duration,
-	conf *config.Config) CqlConnection {
+	conf *config.Config, protoVer primitive.ProtocolVersion) CqlConnection {
 	ctx, cFn := context.WithCancel(context.Background())
 	cqlConn := &cqlConn{
 		readTimeout:  readTimeout,
@@ -86,12 +89,13 @@ func NewCqlConnection(
 			Username: username,
 			Password: password,
 		},
-		initialized:           false,
-		ctx:                   ctx,
-		cancelFn:              cFn,
-		wg:                    &sync.WaitGroup{},
-		outgoingCh:            make(chan *frame.Frame, maxOutgoingPending),
-		eventsQueue:           make(chan *frame.Frame, eventQueueLength),
+		initialized: false,
+		ctx:         ctx,
+		cancelFn:    cFn,
+		wg:          &sync.WaitGroup{},
+		// protoVer is the proposed protocol version using which we will try to establish connectivity
+		outgoingCh:            make(chan *frame.Frame, maxOutgoingPendingRequests(protoVer)),
+		eventsQueue:           make(chan *frame.Frame, maxEventsQueue(protoVer)),
 		pendingOperations:     make(map[int16]chan *frame.Frame),
 		pendingOperationsLock: &sync.RWMutex{},
 		timedOutOperations:    0,
@@ -105,6 +109,22 @@ func NewCqlConnection(
 	cqlConn.StartResponseLoop()
 	cqlConn.StartEventLoop()
 	return cqlConn
+}
+
+func maxOutgoingPendingRequests(protocolVersion primitive.ProtocolVersion) int {
+	switch protocolVersion {
+	case primitive.ProtocolVersion2:
+		return maxOutgoingPendingV2
+	}
+	return maxOutgoingPending
+}
+
+func maxEventsQueue(protocolVersion primitive.ProtocolVersion) int {
+	switch protocolVersion {
+	case primitive.ProtocolVersion2:
+		return eventQueueLengthV2
+	}
+	return eventQueueLength
 }
 
 func (c *cqlConn) SetEventHandler(eventHandler func(f *frame.Frame, conn CqlConnection)) {
@@ -382,7 +402,7 @@ func (c *cqlConn) Query(
 	queryMsg := &message.Query{
 		Query: cql,
 		Options: &message.QueryOptions{
-			Consistency: primitive.ConsistencyLevelLocalQuorum,
+			Consistency: primitive.ConsistencyLevelOne,
 		},
 	}
 
