@@ -528,7 +528,5 @@ func sumAllRequestsFromNode(lines []string, prefix string, metric metrics.Metric
 	valueWrites, _ := findMetricValueWithDefault(lines, writesMetric, 0)
 	readsMetric := getPrometheusNameWithSuffixAndNodeLabel(prefix, metric, suffix, host, "type", "reads")
 	valueReads, _ := findMetricValueWithDefault(lines, readsMetric, 0)
-	otherMetric := getPrometheusNameWithSuffixAndNodeLabel(prefix, metric, suffix, host, "type", "other")
-	valueOther, _ := findMetricValueWithDefault(lines, otherMetric, 0)
-	return valueWrites + valueReads + valueOther
+	return valueWrites + valueReads
 }

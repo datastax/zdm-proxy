@@ -1,8 +1,6 @@
 package zdmproxy
 
-import (
-	"fmt"
-)
+import "fmt"
 
 type RequestInfo interface {
 	GetForwardDecision() forwardDecision
