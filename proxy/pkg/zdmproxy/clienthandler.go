@@ -629,7 +629,7 @@ func (ch *ClientHandler) responseLoop() {
 						log.Errorf("Failed to finish request because request context conversion failed. "+
 							"This is most likely a bug, please report. RequestContext: %v", reqCtx)
 					} else {
-						ch.finishRequest(holder, typedReqCtx)
+						ch.finishRequest(ch.LoadCurrentKeyspace(), holder, typedReqCtx)
 					}
 				}
 			})
@@ -685,7 +685,7 @@ func decodeError(responseFrame *frame.RawFrame) (message.Error, error) {
 }
 
 // should only be called after SetTimeout or SetResponse returns true
-func (ch *ClientHandler) finishRequest(holder *requestContextHolder, reqCtx *requestContextImpl) {
+func (ch *ClientHandler) finishRequest(currentKeyspace string, holder *requestContextHolder, reqCtx *requestContextImpl) {
 	defer ch.clientHandlerRequestWaitGroup.Done()
 
 	err := holder.Clear(reqCtx)
@@ -715,7 +715,7 @@ func (ch *ClientHandler) finishRequest(holder *requestContextHolder, reqCtx *req
 	finalResponse := aggregatedResponse
 	if err == nil && reqCtx.requestInfo.GetForwardDecision() != forwardToAsyncOnly {
 		// async only requests can't have "PREPARED", "SETKEYSPACE" or "UNPREPARED" responses so skip this
-		finalResponse, err = ch.processClientResponse(aggregatedResponse, responseClusterType, reqCtx)
+		finalResponse, err = ch.processClientResponse(currentKeyspace, aggregatedResponse, responseClusterType, reqCtx)
 	}
 
 	if err != nil {
@@ -854,7 +854,7 @@ func (ch *ClientHandler) computeClientResponse(requestContext *requestContextImp
 
 // Modifies internal state based on the provided aggregated response (e.g. storing prepared IDs)
 func (ch *ClientHandler) processClientResponse(
-	response *frame.RawFrame, responseClusterType common.ClusterType, reqCtx *requestContextImpl) (*frame.RawFrame, error) {
+	currentKeyspace string, response *frame.RawFrame, responseClusterType common.ClusterType, reqCtx *requestContextImpl) (*frame.RawFrame, error) {
 
 	var newFrame *frame.Frame
 	switch response.Header.OpCode {
@@ -866,7 +866,7 @@ func (ch *ClientHandler) processClientResponse(
 
 		switch bodyMsg := decodedFrame.Body.Message.(type) {
 		case *message.PreparedResult:
-			newFrame, err = ch.processPreparedResponse(decodedFrame, bodyMsg, reqCtx)
+			newFrame, err = ch.processPreparedResponse(currentKeyspace, decodedFrame, responseClusterType, bodyMsg, reqCtx)
 			if err != nil {
 				return nil, fmt.Errorf("failed to handle prepared result: %w", err)
 			}
@@ -877,32 +877,35 @@ func (ch *ClientHandler) processClientResponse(
 				ch.StoreCurrentKeyspace(bodyMsg.Keyspace)
 			}
 		case *message.Unprepared:
-			var unpreparedId []byte
+			var preparedEntry PreparedEntry
+			var ok bool
 			switch responseClusterType {
 			case common.ClusterTypeOrigin:
-				unpreparedId = bodyMsg.Id
+				preparedEntry, ok = ch.preparedStatementCache.GetByOriginPreparedId(bodyMsg.Id)
+				if !ok {
+					return nil, fmt.Errorf("could not get PreparedData by OriginPreparedId: %v", hex.EncodeToString(bodyMsg.Id))
+				}
 			case common.ClusterTypeTarget:
-				preparedData, ok := ch.preparedStatementCache.GetByTargetPreparedId(bodyMsg.Id)
+				preparedEntry, ok = ch.preparedStatementCache.GetByTargetPreparedId(bodyMsg.Id)
 				if !ok {
 					return nil, fmt.Errorf("could not get PreparedData by TargetPreparedId: %v", hex.EncodeToString(bodyMsg.Id))
 				}
-				unpreparedId = preparedData.GetOriginPreparedId()
 			default:
 				return nil, fmt.Errorf("invalid cluster type: %v", responseClusterType)
 			}
-
+			unpreparedId := preparedEntry.GetClientPreparedId()
 			newFrame = decodedFrame.Clone()
 			newUnprepared := &message.Unprepared{
 				ErrorMessage: fmt.Sprintf("Prepared query with ID %s not found (either the query was not prepared "+
 					"on this host (maybe the host has been restarted?) or you have prepared too many queries and it has "+
-					"been evicted from the internal cache)", hex.EncodeToString(unpreparedId)),
-				Id: unpreparedId,
+					"been evicted from the internal cache)", hex.EncodeToString(unpreparedId[:])),
+				Id: unpreparedId[:],
 			}
 			newFrame.Body.Message = newUnprepared
 
 			log.Infof("Received UNPREPARED from %v, generating UNPREPARED response with prepared ID %s. "+
 				"Prepared ID in response from %v: %v. Original error: %v",
-				responseClusterType, hex.EncodeToString(unpreparedId),
+				responseClusterType, hex.EncodeToString(unpreparedId[:]),
 				responseClusterType, hex.EncodeToString(bodyMsg.Id), bodyMsg.ErrorMessage)
 		}
 	}
@@ -919,118 +922,173 @@ func (ch *ClientHandler) processClientResponse(
 }
 
 func (ch *ClientHandler) processPreparedResponse(
-	response *frame.Frame, bodyMsg *message.PreparedResult, reqCtx *requestContextImpl) (*frame.Frame, error) {
+	currentKeyspace string, response *frame.Frame, responseClusterType common.ClusterType,
+	bodyMsg *message.PreparedResult, reqCtx *requestContextImpl) (*frame.Frame, error) {
 	if bodyMsg.PreparedQueryId == nil {
 		return nil, errors.New("unexpected prepared query id nil")
 	} else if reqCtx.requestInfo == nil {
 		return nil, errors.New("unexpected statement info nil on request context")
 	} else if prepareRequestInfo, ok := reqCtx.requestInfo.(*PrepareRequestInfo); !ok {
 		return nil, errors.New("unexpected request context statement info is not prepared statement info")
-	} else if reqCtx.targetResponse == nil {
-		return nil, errors.New("unexpected target response nil")
+	} else if reqCtx.targetResponse == nil && reqCtx.originResponse == nil {
+		return nil, errors.New("unexpected target response and origin response nil")
 	} else {
-		targetBody, err := defaultCodec.DecodeBody(reqCtx.targetResponse.Header, bytes.NewReader(reqCtx.targetResponse.Body))
-		if err != nil {
-			return nil, fmt.Errorf("error decoding target result response: %w", err)
-		}
-
-		targetPreparedResult, ok := targetBody.Message.(*message.PreparedResult)
+		newResponse := response.Clone()
+		newPreparedBody, ok := newResponse.Body.Message.(*message.PreparedResult)
 		if !ok {
-			return nil, fmt.Errorf("expected PREPARED RESULT targetBody in target result response but got %T", targetBody.Message)
+			return nil, fmt.Errorf("expected PREPARED RESULT targetBody in target result response but got %v",
+				newResponse.Body.Message.GetOpCode().String())
 		}
 
-		newResponse := response
-		if len(prepareRequestInfo.replacedTerms) > 0 {
-			if bodyMsg.VariablesMetadata == nil {
-				return nil, fmt.Errorf("replaced terms in the prepared statement but prepared result doesn't have variables metadata: %v", bodyMsg)
-			}
+		err := ch.replaceTermsOnPreparedBody(newPreparedBody, prepareRequestInfo, bodyMsg)
+		if err != nil {
+			return nil, fmt.Errorf("error replacing terms on prepared result: %w", err)
+		}
 
-			newResponse = response.Clone()
-			newPreparedBody, ok := newResponse.Body.Message.(*message.PreparedResult)
-			if !ok {
-				return nil, fmt.Errorf("could not modify prepared result to remove generated parameters because "+
-					"cloned PreparedResult is of different type: %v", newResponse.Body)
-			}
+		var originPreparedResult *message.PreparedResult
+		var targetPreparedResult *message.PreparedResult
 
-			if prepareRequestInfo.ContainsPositionalMarkers() {
-				positionalMarkersToRemove := make([]int, 0, len(prepareRequestInfo.replacedTerms))
-				positionalMarkerOffset := 0
-				for _, replacedTerm := range prepareRequestInfo.replacedTerms {
-					positionalMarkersToRemove = append(
-						positionalMarkersToRemove,
-						positionalMarkerOffset+replacedTerm.previousPositionalIndex+1)
-					positionalMarkerOffset++
-				}
-
-				if len(newPreparedBody.VariablesMetadata.Columns) < len(positionalMarkersToRemove) {
-					return nil, fmt.Errorf("prepared response variables metadata has less parameters than the number of markers to remove: %v", newPreparedBody)
-				}
-
-				newColumns := make([]*message.ColumnMetadata, 0, len(newPreparedBody.VariablesMetadata.Columns)-len(positionalMarkersToRemove))
-				indicesToRemove := make([]int, 0, len(positionalMarkersToRemove))
-				start := 0
-				for _, positionalIndexToRemove := range positionalMarkersToRemove {
-					if positionalIndexToRemove < len(newPreparedBody.VariablesMetadata.Columns)-1 {
-						indicesToRemove = append(indicesToRemove, positionalIndexToRemove)
-						newColumns = append(newColumns, newPreparedBody.VariablesMetadata.Columns[start:positionalIndexToRemove]...)
-						start = positionalIndexToRemove + 1
-					}
-				}
-				newColumns = append(newColumns, newPreparedBody.VariablesMetadata.Columns[start:]...)
-
-				if len(indicesToRemove) > 0 && len(newPreparedBody.VariablesMetadata.PkIndices) > 0 {
-					sort.Ints(indicesToRemove)
-					var newPkIndices []uint16
-					for _, pkIndex := range newPreparedBody.VariablesMetadata.PkIndices {
-						foundIndex := sort.SearchInts(indicesToRemove, int(pkIndex))
-						if foundIndex == len(indicesToRemove) {
-							newPkIndices = append(newPkIndices, pkIndex)
-						}
-					}
-
-					newPreparedBody.VariablesMetadata.PkIndices = newPkIndices
-				}
-
-				newPreparedBody.VariablesMetadata.Columns = newColumns
+		if reqCtx.originResponse != nil {
+			var preparedBodyMsg *message.PreparedResult
+			if responseClusterType == common.ClusterTypeOrigin {
+				preparedBodyMsg = bodyMsg
 			} else {
-				namedMarkersToRemove := GetSortedZdmNamedMarkers()
-				newCols := make([]*message.ColumnMetadata, 0, len(newPreparedBody.VariablesMetadata.Columns))
-				indicesToRemove := make([]int, 0, len(namedMarkersToRemove))
-				start := 0
-				for idx, col := range newPreparedBody.VariablesMetadata.Columns {
-					if col.Name == "" {
-						continue
-					}
-
-					if sort.SearchStrings(namedMarkersToRemove, col.Name) != len(namedMarkersToRemove) {
-						indicesToRemove = append(indicesToRemove, idx)
-						newCols = append(newCols, newPreparedBody.VariablesMetadata.Columns[start:idx]...)
-						start = idx + 1
-					}
+				decodedFrame, err := defaultCodec.ConvertFromRawFrame(reqCtx.originResponse)
+				if err != nil {
+					return nil, fmt.Errorf("error decoding origin response: %w", err)
 				}
-
-				newCols = append(newCols, newPreparedBody.VariablesMetadata.Columns[start:]...)
-
-				if len(indicesToRemove) > 0 && len(newPreparedBody.VariablesMetadata.PkIndices) > 0 {
-					sort.Ints(indicesToRemove)
-					var newPkIndices []uint16
-					for _, pkIndex := range newPreparedBody.VariablesMetadata.PkIndices {
-						foundIndex := sort.SearchInts(indicesToRemove, int(pkIndex))
-						if foundIndex == len(indicesToRemove) {
-							newPkIndices = append(newPkIndices, pkIndex)
-						}
-					}
-
-					newPreparedBody.VariablesMetadata.PkIndices = newPkIndices
+				typedResult, ok := decodedFrame.Body.Message.(*message.PreparedResult)
+				if !ok {
+					return nil, fmt.Errorf("received prepare response on origin but couldnt decode the result: %v",
+						decodedFrame.Body.Message.GetOpCode().String())
 				}
-
-				newPreparedBody.VariablesMetadata.Columns = newCols
+				preparedBodyMsg = typedResult
 			}
+			originPreparedResult = preparedBodyMsg
 		}
 
-		ch.preparedStatementCache.Store(bodyMsg, targetPreparedResult, prepareRequestInfo)
+		if reqCtx.targetResponse != nil {
+			var preparedBodyMsg *message.PreparedResult
+			if responseClusterType == common.ClusterTypeTarget {
+				preparedBodyMsg = bodyMsg
+			} else {
+				decodedFrame, err := defaultCodec.ConvertFromRawFrame(reqCtx.targetResponse)
+				if err != nil {
+					return nil, fmt.Errorf("error decoding target response: %w", err)
+				}
+				typedResult, ok := decodedFrame.Body.Message.(*message.PreparedResult)
+				if !ok {
+					return nil, fmt.Errorf("received prepare response on target but couldnt decode the result: %v",
+						decodedFrame.Body.Message.GetOpCode().String())
+				}
+				preparedBodyMsg = typedResult
+			}
+			targetPreparedResult = preparedBodyMsg
+		}
+
+		var preparedEntry PreparedEntry
+		if originPreparedResult != nil && targetPreparedResult != nil {
+			preparedEntry = ch.preparedStatementCache.StorePreparedOnBoth(originPreparedResult, targetPreparedResult, prepareRequestInfo)
+		} else if originPreparedResult != nil {
+			preparedEntry = ch.preparedStatementCache.StorePreparedOnOrigin(originPreparedResult, prepareRequestInfo)
+		} else if targetPreparedResult != nil {
+			preparedEntry = ch.preparedStatementCache.StorePreparedOnTarget(targetPreparedResult, prepareRequestInfo)
+		} else {
+			return nil, errors.New("could not retrieve client prepared id because both prepared results from origin and target are nil")
+		}
+
+		clientId := preparedEntry.GetClientPreparedId()
+		newPreparedBody.PreparedQueryId = clientId[:]
+
 		return newResponse, nil
 	}
+}
+
+func (ch *ClientHandler) replaceTermsOnPreparedBody(newPreparedBody *message.PreparedResult,
+	prepareRequestInfo *PrepareRequestInfo,
+	bodyMsg *message.PreparedResult) error {
+
+	if len(prepareRequestInfo.replacedTerms) > 0 {
+		if bodyMsg.VariablesMetadata == nil {
+			return fmt.Errorf("replaced terms in the prepared statement but prepared result doesn't have variables metadata: %v", bodyMsg)
+		}
+
+		if prepareRequestInfo.ContainsPositionalMarkers() {
+			positionalMarkersToRemove := make([]int, 0, len(prepareRequestInfo.replacedTerms))
+			positionalMarkerOffset := 0
+			for _, replacedTerm := range prepareRequestInfo.replacedTerms {
+				positionalMarkersToRemove = append(
+					positionalMarkersToRemove,
+					positionalMarkerOffset+replacedTerm.previousPositionalIndex+1)
+				positionalMarkerOffset++
+			}
+
+			if len(newPreparedBody.VariablesMetadata.Columns) < len(positionalMarkersToRemove) {
+				return fmt.Errorf("prepared response variables metadata has less parameters than the number of markers to remove: %v", newPreparedBody)
+			}
+
+			newColumns := make([]*message.ColumnMetadata, 0, len(newPreparedBody.VariablesMetadata.Columns)-len(positionalMarkersToRemove))
+			indicesToRemove := make([]int, 0, len(positionalMarkersToRemove))
+			start := 0
+			for _, positionalIndexToRemove := range positionalMarkersToRemove {
+				if positionalIndexToRemove < len(newPreparedBody.VariablesMetadata.Columns)-1 {
+					indicesToRemove = append(indicesToRemove, positionalIndexToRemove)
+					newColumns = append(newColumns, newPreparedBody.VariablesMetadata.Columns[start:positionalIndexToRemove]...)
+					start = positionalIndexToRemove + 1
+				}
+			}
+			newColumns = append(newColumns, newPreparedBody.VariablesMetadata.Columns[start:]...)
+
+			if len(indicesToRemove) > 0 && len(newPreparedBody.VariablesMetadata.PkIndices) > 0 {
+				sort.Ints(indicesToRemove)
+				var newPkIndices []uint16
+				for _, pkIndex := range newPreparedBody.VariablesMetadata.PkIndices {
+					foundIndex := sort.SearchInts(indicesToRemove, int(pkIndex))
+					if foundIndex == len(indicesToRemove) {
+						newPkIndices = append(newPkIndices, pkIndex)
+					}
+				}
+
+				newPreparedBody.VariablesMetadata.PkIndices = newPkIndices
+			}
+
+			newPreparedBody.VariablesMetadata.Columns = newColumns
+		} else {
+			namedMarkersToRemove := GetSortedZdmNamedMarkers()
+			newCols := make([]*message.ColumnMetadata, 0, len(newPreparedBody.VariablesMetadata.Columns))
+			indicesToRemove := make([]int, 0, len(namedMarkersToRemove))
+			start := 0
+			for idx, col := range newPreparedBody.VariablesMetadata.Columns {
+				if col.Name == "" {
+					continue
+				}
+
+				if sort.SearchStrings(namedMarkersToRemove, col.Name) != len(namedMarkersToRemove) {
+					indicesToRemove = append(indicesToRemove, idx)
+					newCols = append(newCols, newPreparedBody.VariablesMetadata.Columns[start:idx]...)
+					start = idx + 1
+				}
+			}
+
+			newCols = append(newCols, newPreparedBody.VariablesMetadata.Columns[start:]...)
+
+			if len(indicesToRemove) > 0 && len(newPreparedBody.VariablesMetadata.PkIndices) > 0 {
+				sort.Ints(indicesToRemove)
+				var newPkIndices []uint16
+				for _, pkIndex := range newPreparedBody.VariablesMetadata.PkIndices {
+					foundIndex := sort.SearchInts(indicesToRemove, int(pkIndex))
+					if foundIndex == len(indicesToRemove) {
+						newPkIndices = append(newPkIndices, pkIndex)
+					}
+				}
+
+				newPreparedBody.VariablesMetadata.PkIndices = newPkIndices
+			}
+
+			newPreparedBody.VariablesMetadata.Columns = newCols
+		}
+	}
+	return nil
 }
 
 type handshakeRequestResult struct {
@@ -1332,7 +1390,7 @@ func (ch *ClientHandler) handleRequest(f *frame.RawFrame) {
 	err := ch.forwardRequest(f, nil)
 
 	if err != nil {
-		log.Warnf("error sending request with opcode %02x and streamid %d: %s", f.Header.OpCode, f.Header.StreamId, err.Error())
+		log.Warnf("error sending request with opcode %v and streamid %d: %s", f.Header.OpCode.String(), f.Header.StreamId, err.Error())
 		return
 	}
 }
@@ -1461,7 +1519,7 @@ func (ch *ClientHandler) executeRequest(
 			if ch.closedRespChannel {
 				finished := reqCtx.SetTimeout(ch.nodeMetrics, f)
 				if finished {
-					ch.finishRequest(holder, reqCtx)
+					ch.finishRequest(currentKeyspace, holder, reqCtx)
 				}
 				return
 			}
@@ -1477,7 +1535,6 @@ func (ch *ClientHandler) executeRequest(
 		startupFrameVersion = startupFrameInterface.(*frame.RawFrame).Header.Version
 	}
 
-	sendAlsoToAsync := requestInfo.ShouldAlsoBeSentAsync() && ch.asyncConnector != nil
 	switch fwdDecision {
 	case forwardToBoth:
 		log.Tracef("Forwarding request with opcode %v for stream %v to %v and %v",
@@ -1499,6 +1556,7 @@ func (ch *ClientHandler) executeRequest(
 		return fmt.Errorf("unknown forward decision %v, stream: %d", fwdDecision, f.Header.StreamId)
 	}
 
+	sendAlsoToAsync := requestInfo.ShouldAlsoBeSentAsync() && ch.asyncConnector != nil
 	if !sendAlsoToAsync && fwdDecision != forwardToAsyncOnly {
 		return nil
 	}
@@ -1509,7 +1567,7 @@ func (ch *ClientHandler) executeRequest(
 	// like async connector handshake requests
 
 	return ch.sendToAsyncConnector(
-		frameContext, originRequest, targetRequest, fwdDecision, reqCtx, holder, sendAlsoToAsync,
+		currentKeyspace, frameContext, originRequest, targetRequest, fwdDecision, reqCtx, holder, sendAlsoToAsync,
 		overallRequestStartTime, requestTimeout)
 }
 
@@ -1590,9 +1648,8 @@ func (ch *ClientHandler) handleInterceptedRequest(
 		return nil, fmt.Errorf("could not convert intercepted response frame %v: %w", interceptedResponseFrame, err)
 	}
 
-	preparedMsg, ok := interceptedQueryResponse.(*message.PreparedResult)
-	if ok {
-		ch.preparedStatementCache.StoreIntercepted(preparedMsg, prepareRequestInfo)
+	if prepareRequestInfo != nil {
+		ch.preparedStatementCache.StoreIntercepted(prepareRequestInfo)
 	}
 
 	return interceptedResponseRawFrame, nil
@@ -1626,8 +1683,8 @@ func (ch *ClientHandler) handleExecuteRequest(
 	originRequest = f
 	targetRequest = f
 
-	preparedData := castedRequestInfo.GetPreparedData()
-	prepareRequestInfo := preparedData.GetPrepareRequestInfo()
+	preparedEntry := castedRequestInfo.GetPreparedEntry()
+	prepareRequestInfo := preparedEntry.GetPrepareRequestInfo()
 	fwdDecision := castedRequestInfo.GetForwardDecision()
 
 	if fwdDecision == forwardToNone {
@@ -1645,36 +1702,97 @@ func (ch *ClientHandler) handleExecuteRequest(
 	}
 
 	sendToAsyncConnector := (castedRequestInfo.ShouldAlsoBeSentAsync() || fwdDecision == forwardToAsyncOnly) && ch.asyncConnector != nil
-	replacedTerms := prepareRequestInfo.GetReplacedTerms()
 	asyncConnectorIsOrigin := ch.asyncConnector != nil && ch.asyncConnector.clusterType == common.ClusterTypeOrigin
+
+	originExecuteRequestRaw, replacementTimeUuids, err := ch.rewriteOriginPrepare(
+		castedRequestInfo, frameContext, sendToAsyncConnector, asyncConnectorIsOrigin)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	originRequest = originExecuteRequestRaw
+
+	asyncConnectorIsTarget := ch.asyncConnector != nil && ch.asyncConnector.clusterType == common.ClusterTypeTarget
+	targetRequest, err = ch.rewriteTargetPrepare(
+		castedRequestInfo, frameContext, replacementTimeUuids, sendToAsyncConnector, asyncConnectorIsTarget)
+
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	return nil, originRequest, targetRequest, nil
+}
+
+func (ch *ClientHandler) rewriteOriginPrepare(castedRequestInfo *ExecuteRequestInfo, frameContext *frameDecodeContext,
+	sendToAsyncConnector bool, asyncConnectorIsOrigin bool) (*frame.RawFrame, []*uuid.UUID, error) {
+	preparedEntry := castedRequestInfo.GetPreparedEntry()
+	prepareRequestInfo := preparedEntry.GetPrepareRequestInfo()
+	fwdDecision := castedRequestInfo.GetForwardDecision()
+	preparedData := preparedEntry.GetPreparedData()
+	replacedTerms := prepareRequestInfo.GetReplacedTerms()
+
 	var replacementTimeUuids []*uuid.UUID
-	if len(replacedTerms) > 0 && (fwdDecision == forwardToBoth || fwdDecision == forwardToOrigin || (sendToAsyncConnector && asyncConnectorIsOrigin)) {
+	if fwdDecision == forwardToBoth || fwdDecision == forwardToOrigin || (sendToAsyncConnector && asyncConnectorIsOrigin) {
+		if fwdDecision == forwardToTarget {
+			if preparedData.GetOriginPreparedId() == nil {
+				log.Debugf("Discarding async read because prepared response hasn't arrived yet: %s", prepareRequestInfo.GetQuery())
+				return nil, replacementTimeUuids, nil
+			}
+		}
 		clientRequest, err := frameContext.GetOrDecodeFrame()
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("could not decode execute raw frame: %w", err)
+			return nil, replacementTimeUuids, fmt.Errorf("could not decode execute raw frame: %w", err)
 		}
 
-		replacementTimeUuids = ch.parameterModifier.generateTimeUuids(prepareRequestInfo)
 		newOriginRequest := clientRequest.Clone()
-		_, err = ch.parameterModifier.AddValuesToExecuteFrame(
-			newOriginRequest, prepareRequestInfo, preparedData.GetOriginVariablesMetadata(), replacementTimeUuids)
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("could not add values to origin EXECUTE: %w", err)
+		var newOriginExecuteMsg *message.Execute
+		if len(replacedTerms) > 0 {
+			replacementTimeUuids = ch.parameterModifier.generateTimeUuids(prepareRequestInfo)
+			newOriginExecuteMsg, err = ch.parameterModifier.AddValuesToExecuteFrame(
+				newOriginRequest, prepareRequestInfo, preparedData.GetOriginVariablesMetadata(), replacementTimeUuids)
+			if err != nil {
+				return nil, replacementTimeUuids, fmt.Errorf("could not add values to origin EXECUTE: %w", err)
+			}
+		} else {
+			var ok bool
+			newOriginExecuteMsg, ok = newOriginRequest.Body.Message.(*message.Execute)
+			if !ok {
+				return nil, replacementTimeUuids, fmt.Errorf("expected Execute but got %v instead",
+					newOriginRequest.Body.Message.GetOpCode())
+			}
 		}
+
+		originalQueryId := newOriginExecuteMsg.QueryId
+		newOriginExecuteMsg.QueryId = preparedData.GetOriginPreparedId()
+		log.Tracef("Replacing prepared ID %s with %s for origin cluster.",
+			hex.EncodeToString(originalQueryId), hex.EncodeToString(newOriginExecuteMsg.QueryId))
 
 		originExecuteRequestRaw, err := defaultCodec.ConvertToRawFrame(newOriginRequest)
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("could not convert origin EXECUTE response to raw frame: %w", err)
+			return nil, replacementTimeUuids, fmt.Errorf("could not convert origin EXECUTE response to raw frame: %w", err)
 		}
 
-		originRequest = originExecuteRequestRaw
+		return originExecuteRequestRaw, replacementTimeUuids, nil
 	}
+	return frameContext.GetRawFrame(), replacementTimeUuids, nil
+}
 
-	asyncConnectorIsTarget := ch.asyncConnector != nil && ch.asyncConnector.clusterType == common.ClusterTypeTarget
+func (ch *ClientHandler) rewriteTargetPrepare(castedRequestInfo *ExecuteRequestInfo, frameContext *frameDecodeContext,
+	replacementTimeUuids []*uuid.UUID, sendToAsyncConnector bool, asyncConnectorIsTarget bool) (*frame.RawFrame, error) {
+	preparedEntry := castedRequestInfo.GetPreparedEntry()
+	prepareRequestInfo := preparedEntry.GetPrepareRequestInfo()
+	fwdDecision := castedRequestInfo.GetForwardDecision()
+	preparedData := preparedEntry.GetPreparedData()
+	replacedTerms := prepareRequestInfo.GetReplacedTerms()
 	if fwdDecision == forwardToBoth || fwdDecision == forwardToTarget || (sendToAsyncConnector && asyncConnectorIsTarget) {
+		if fwdDecision == forwardToOrigin {
+			if preparedData.GetTargetPreparedId() == nil {
+				log.Debugf("Discarding async read because prepared response hasn't arrived yet: %s", prepareRequestInfo.GetQuery())
+				return nil, nil
+			}
+		}
 		clientRequest, err := frameContext.GetOrDecodeFrame()
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("could not decode execute raw frame: %w", err)
+			return nil, fmt.Errorf("could not decode execute raw frame: %w", err)
 		}
 
 		newTargetRequest := clientRequest.Clone()
@@ -1686,13 +1804,13 @@ func (ch *ClientHandler) handleExecuteRequest(
 			newTargetExecuteMsg, err = ch.parameterModifier.AddValuesToExecuteFrame(
 				newTargetRequest, prepareRequestInfo, preparedData.GetTargetVariablesMetadata(), replacementTimeUuids)
 			if err != nil {
-				return nil, nil, nil, fmt.Errorf("could not add values to target EXECUTE: %w", err)
+				return nil, fmt.Errorf("could not add values to target EXECUTE: %w", err)
 			}
 		} else {
 			var ok bool
 			newTargetExecuteMsg, ok = newTargetRequest.Body.Message.(*message.Execute)
 			if !ok {
-				return nil, nil, nil, fmt.Errorf("expected Execute but got %v instead", newTargetRequest.Body.Message.GetOpCode())
+				return nil, fmt.Errorf("expected Execute but got %v instead", newTargetRequest.Body.Message.GetOpCode())
 			}
 		}
 
@@ -1703,13 +1821,12 @@ func (ch *ClientHandler) handleExecuteRequest(
 
 		newTargetRequestRaw, err := defaultCodec.ConvertToRawFrame(newTargetRequest)
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("could not convert target EXECUTE response to raw frame: %w", err)
+			return nil, fmt.Errorf("could not convert target EXECUTE response to raw frame: %w", err)
 		}
 
-		targetRequest = newTargetRequestRaw
+		return newTargetRequestRaw, nil
 	}
-
-	return nil, originRequest, targetRequest, nil
+	return frameContext.GetRawFrame(), nil
 }
 
 func (ch *ClientHandler) handleBatchRequest(
@@ -1723,31 +1840,27 @@ func (ch *ClientHandler) handleBatchRequest(
 		return nil, nil, fmt.Errorf("could not decode batch raw frame: %w", err)
 	}
 
-	var newOriginRequest *frame.Frame
-	var newOriginBatchMsg *message.Batch
-
 	newTargetRequest := decodedFrame.Clone()
 	newTargetBatchMsg, ok := newTargetRequest.Body.Message.(*message.Batch)
 	if !ok {
 		return nil, nil, fmt.Errorf("expected Batch but got %v instead", newTargetRequest.Body.Message.GetOpCode())
 	}
+	newOriginRequest := decodedFrame.Clone()
+	newOriginBatchMsg, ok := newOriginRequest.Body.Message.(*message.Batch)
+	if !ok {
+		return nil, nil, fmt.Errorf("expected Batch but got %v instead", newOriginRequest.Body.Message.GetOpCode())
+	}
 
-	for stmtIdx, preparedData := range castedRequestInfo.GetPreparedDataByStmtIdx() {
-		prepareRequestInfo := preparedData.GetPrepareRequestInfo()
+	for stmtIdx, preparedEntry := range castedRequestInfo.GetPreparedDataByStmtIdx() {
+		prepareRequestInfo := preparedEntry.GetPrepareRequestInfo()
+		preparedData := preparedEntry.GetPreparedData()
 		if len(prepareRequestInfo.GetReplacedTerms()) > 0 {
-			if newOriginRequest == nil {
-				newOriginRequest = decodedFrame.Clone()
-				newOriginBatchMsg, ok = newOriginRequest.Body.Message.(*message.Batch)
-				if !ok {
-					return nil, nil, fmt.Errorf("expected Batch but got %v instead", newOriginRequest.Body.Message.GetOpCode())
-				}
-			}
 			replacementTimeUuids := ch.parameterModifier.generateTimeUuids(prepareRequestInfo)
 			err = ch.parameterModifier.addValuesToBatchChild(decodedFrame.Header.Version, newTargetBatchMsg.Children[stmtIdx],
-				preparedData.GetPrepareRequestInfo(), preparedData.GetTargetVariablesMetadata(), replacementTimeUuids)
+				preparedEntry.GetPrepareRequestInfo(), preparedData.GetTargetVariablesMetadata(), replacementTimeUuids)
 			if err == nil && newOriginBatchMsg != nil {
 				err = ch.parameterModifier.addValuesToBatchChild(decodedFrame.Header.Version, newOriginBatchMsg.Children[stmtIdx],
-					preparedData.GetPrepareRequestInfo(), preparedData.GetOriginVariablesMetadata(), replacementTimeUuids)
+					preparedEntry.GetPrepareRequestInfo(), preparedData.GetOriginVariablesMetadata(), replacementTimeUuids)
 			}
 			if err != nil {
 				return nil, nil, fmt.Errorf("could not add values to batch child statement: %w", err)
@@ -1758,16 +1871,17 @@ func (ch *ClientHandler) handleBatchRequest(
 		newTargetBatchMsg.Children[stmtIdx].QueryOrId = preparedData.GetTargetPreparedId()
 		log.Tracef("Replacing prepared ID %s within a BATCH with %s for target cluster.",
 			hex.EncodeToString(originalQueryId), hex.EncodeToString(preparedData.GetTargetPreparedId()))
+		newOriginBatchMsg.Children[stmtIdx].QueryOrId = preparedData.GetOriginPreparedId()
+		log.Tracef("Replacing prepared ID %s within a BATCH with %s for origin cluster.",
+			hex.EncodeToString(originalQueryId), hex.EncodeToString(preparedData.GetOriginPreparedId()))
 	}
 
-	if newOriginRequest != nil {
-		originBatchRequest, err := defaultCodec.ConvertToRawFrame(newOriginRequest)
-		if err != nil {
-			return nil, nil, fmt.Errorf("could not convert origin BATCH response to raw frame: %w", err)
-		}
-
-		originRequest = originBatchRequest
+	originBatchRequest, err := defaultCodec.ConvertToRawFrame(newOriginRequest)
+	if err != nil {
+		return nil, nil, fmt.Errorf("could not convert origin BATCH response to raw frame: %w", err)
 	}
+
+	originRequest = originBatchRequest
 
 	targetBatchRequest, err := defaultCodec.ConvertToRawFrame(newTargetRequest)
 	if err != nil {
@@ -1780,7 +1894,7 @@ func (ch *ClientHandler) handleBatchRequest(
 }
 
 func (ch *ClientHandler) sendToAsyncConnector(
-	frameContext *frameDecodeContext, originRequest *frame.RawFrame, targetRequest *frame.RawFrame,
+	currentKeyspace string, frameContext *frameDecodeContext, originRequest *frame.RawFrame, targetRequest *frame.RawFrame,
 	fwdDecision forwardDecision, reqCtx *requestContextImpl, holder *requestContextHolder, sendAlsoToAsync bool,
 	overallRequestStartTime time.Time, requestTimeout time.Duration) error {
 	var asyncRequest *frame.RawFrame
@@ -1788,6 +1902,10 @@ func (ch *ClientHandler) sendToAsyncConnector(
 		asyncRequest = originRequest
 	} else {
 		asyncRequest = targetRequest
+	}
+
+	if asyncRequest == nil {
+		return nil //discarded
 	}
 
 	// forwardToAsyncOnly requests are not fire and forget, i.e., client handler waits for the response
@@ -1820,7 +1938,7 @@ func (ch *ClientHandler) sendToAsyncConnector(
 				if ch.closedRespChannel {
 					finished := reqCtx.SetTimeout(ch.nodeMetrics, f)
 					if finished {
-						ch.finishRequest(holder, reqCtx)
+						ch.finishRequest(currentKeyspace, holder, reqCtx)
 					}
 				} else {
 					ch.respChannel <- NewTimeoutResponse(f, true)
@@ -1864,9 +1982,6 @@ func (ch *ClientHandler) aggregateAndTrackResponses(
 			log.Tracef("Aggregated response: both successes, sending back %v response with opcode %d",
 				common.ClusterTypeTarget, originOpCode)
 			return responseFromTargetCassandra, common.ClusterTypeTarget
-		} else if request.Header.OpCode == primitive.OpCodePrepare {
-			// special case for PREPARE requests to always return ORIGIN, even though the default handling for "BOTH" requests would be enough
-			return responseFromOriginCassandra, common.ClusterTypeOrigin
 		} else {
 			if ch.primaryCluster == common.ClusterTypeTarget {
 				log.Tracef("Aggregated response: both successes, sending back %v response with opcode %d",

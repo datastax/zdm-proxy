@@ -103,7 +103,8 @@ func buildRequestInfo(
 		} else if len(stmtsReplacedTerms) == 1 {
 			replacedTerms = stmtsReplacedTerms[0].replacedTerms
 		}
-		return NewPrepareRequestInfo(baseRequestInfo, replacedTerms, stmtQueryData.queryData.hasPositionalBindMarkers(), prepareMsg.Query, prepareMsg.Keyspace), nil
+		return NewPrepareRequestInfo(baseRequestInfo, stmtQueryData.queryData.isFullyQualified(), replacedTerms,
+			stmtQueryData.queryData.hasPositionalBindMarkers(), currentKeyspaceName, prepareMsg.Query, prepareMsg.Keyspace), nil
 	case primitive.OpCodeBatch:
 		decodedFrame, err := frameContext.GetOrDecodeFrame()
 		if err != nil {
@@ -113,11 +114,11 @@ func buildRequestInfo(
 		if !ok {
 			return nil, fmt.Errorf("could not convert message with batch op code to batch type, got %v instead", decodedFrame.Body.Message)
 		}
-		preparedDataByStmtIdxMap := make(map[int]PreparedData)
+		preparedDataByStmtIdxMap := make(map[int]PreparedEntry)
 		for childIdx, child := range batchMsg.Children {
 			switch queryOrId := child.QueryOrId.(type) {
 			case []byte:
-				preparedData, err := getPreparedData(psCache, mh, queryOrId, primitive.OpCodeBatch, decodedFrame)
+				preparedData, err := getPreparedEntry(psCache, mh, queryOrId, primitive.OpCodeBatch, decodedFrame)
 				if err != nil {
 					return nil, err
 				} else {
@@ -136,11 +137,11 @@ func buildRequestInfo(
 		if !ok {
 			return nil, fmt.Errorf("expected Execute but got %v instead", decodedFrame.Body.Message.GetOpCode())
 		}
-		preparedData, err := getPreparedData(psCache, mh, executeMsg.QueryId, primitive.OpCodeExecute, decodedFrame)
+		preparedEntry, err := getPreparedEntry(psCache, mh, executeMsg.QueryId, primitive.OpCodeExecute, decodedFrame)
 		if err != nil {
 			return nil, err
 		} else {
-			return NewExecuteRequestInfo(preparedData), nil
+			return NewExecuteRequestInfo(preparedEntry), nil
 		}
 	case primitive.OpCodeAuthResponse:
 		if forwardAuthToTarget {
@@ -155,21 +156,27 @@ func buildRequestInfo(
 	}
 }
 
-func getPreparedData(
+func getPreparedEntry(
 	psCache *PreparedStatementCache,
 	mh *metrics.MetricHandler,
-	preparedId []byte,
+	clientPreparedId []byte,
 	code primitive.OpCode,
-	decodedFrame *frame.Frame) (PreparedData, error) {
-	if preparedData, ok := psCache.Get(preparedId); ok {
-		log.Tracef("%v with prepared-id = '%s' has prepared-data = %v", code.String(), hex.EncodeToString(preparedId), preparedData)
+	decodedFrame *frame.Frame) (PreparedEntry, error) {
+	if len(clientPreparedId) != 16 {
+		log.Warnf("Unexpected length of prepared id %v for %v, expected md5 digest of length 16. Returning UNPREPARED",
+			hex.EncodeToString(clientPreparedId), code.String())
+		return nil, &UnpreparedExecuteError{Header: decodedFrame.Header, Body: decodedFrame.Body, preparedId: clientPreparedId}
+	}
+	md5Id := ConvertToMd5Digest(clientPreparedId)
+	if preparedData, ok := psCache.GetByClientPreparedId(md5Id); ok {
+		log.Tracef("%v with prepared-id = '%s' has prepared-data = %v", code.String(), hex.EncodeToString(clientPreparedId), preparedData)
 		// The forward decision was set in the cache when handling the corresponding PREPARE request
 		return preparedData, nil
 	} else {
-		log.Warnf("No cached entry for prepared-id = '%s' for %v.", hex.EncodeToString(preparedId), code.String())
+		log.Warnf("No cached entry for prepared-id = '%s' for %v.", hex.EncodeToString(clientPreparedId), code.String())
 		mh.GetProxyMetrics().PSCacheMissCount.Add(1)
 		// return meaningful error to caller so it can generate an unprepared response
-		return nil, &UnpreparedExecuteError{Header: decodedFrame.Header, Body: decodedFrame.Body, preparedId: preparedId}
+		return nil, &UnpreparedExecuteError{Header: decodedFrame.Header, Body: decodedFrame.Body, preparedId: clientPreparedId}
 	}
 }
 

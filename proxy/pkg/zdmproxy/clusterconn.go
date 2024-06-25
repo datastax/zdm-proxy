@@ -350,20 +350,20 @@ func (cc *ClusterConnector) handleAsyncResponse(response *frame.RawFrame) *frame
 				}
 				switch msg := errMsg.(type) {
 				case *message.Unprepared:
-					var preparedData PreparedData
+					var preparedEntry PreparedEntry
 					var ok bool
 					if cc.clusterType == common.ClusterTypeTarget {
-						preparedData, ok = cc.psCache.GetByTargetPreparedId(msg.Id)
+						preparedEntry, ok = cc.psCache.GetByTargetPreparedId(msg.Id)
 					} else {
-						preparedData, ok = cc.psCache.Get(msg.Id)
+						preparedEntry, ok = cc.psCache.GetByOriginPreparedId(msg.Id)
 					}
 					if !ok {
 						log.Warnf("Received UNPREPARED for async request with prepare ID %v "+
 							"but could not find prepared data.", hex.EncodeToString(msg.Id))
 					} else {
 						prepare := &message.Prepare{
-							Query:    preparedData.GetPrepareRequestInfo().GetQuery(),
-							Keyspace: preparedData.GetPrepareRequestInfo().GetKeyspace(),
+							Query:    preparedEntry.GetPrepareRequestInfo().GetQuery(),
+							Keyspace: preparedEntry.GetPrepareRequestInfo().GetKeyspace(),
 						}
 						prepareFrame := frame.NewFrame(response.Header.Version, response.Header.StreamId, prepare)
 						prepareRawFrame, err := defaultCodec.ConvertToRawFrame(prepareFrame)
@@ -371,7 +371,7 @@ func (cc *ClusterConnector) handleAsyncResponse(response *frame.RawFrame) *frame
 							log.Errorf("Could not send async PREPARE because convert raw frame failed: %v.", err.Error())
 						} else {
 							sent := cc.sendAsyncRequestToCluster(
-								preparedData.GetPrepareRequestInfo(), prepareRawFrame, false, time.Now(),
+								preparedEntry.GetPrepareRequestInfo(), prepareRawFrame, false, time.Now(),
 								time.Duration(cc.conf.ProxyRequestTimeoutMs)*time.Millisecond,
 								func() {
 									cc.clientHandlerRequestWg.Done()
@@ -383,6 +383,24 @@ func (cc *ClusterConnector) handleAsyncResponse(response *frame.RawFrame) *frame
 					}
 				default:
 					log.Warnf("Async Request failed with error code %v. Error message: %v", errMsg.GetErrorCode(), errMsg.GetErrorMessage())
+				}
+			} else {
+				decodedMsg, err := defaultCodec.ConvertFromRawFrame(response)
+				if err != nil {
+					log.Warnf("Could not decode async result: %v", err)
+				}
+				switch msg := decodedMsg.Body.Message.(type) {
+				case *message.PreparedResult:
+					prepareRequestInfo, ok := reqCtx.GetRequestInfo().(*PrepareRequestInfo)
+					if !ok {
+						log.Errorf("Received prepared result on async connector but request info is not prepared: %T.", reqCtx.GetRequestInfo())
+					}
+					switch cc.clusterType {
+					case common.ClusterTypeTarget:
+						_ = cc.psCache.StorePreparedOnTarget(msg, prepareRequestInfo)
+					case common.ClusterTypeOrigin:
+						_ = cc.psCache.StorePreparedOnOrigin(msg, prepareRequestInfo)
+					}
 				}
 			}
 

@@ -45,22 +45,28 @@ func (recv *GenericRequestInfo) String() string {
 
 type PrepareRequestInfo struct {
 	baseRequestInfo           RequestInfo
+	fullyQualified            bool
 	replacedTerms             []*term
 	containsPositionalMarkers bool
+	currentKeyspace           string
 	query                     string
 	keyspace                  string
 }
 
 func NewPrepareRequestInfo(
 	baseRequestInfo RequestInfo,
+	fullyQualified bool,
 	replacedTerms []*term,
 	containsPositionalMarkers bool,
+	currentKeyspace string,
 	query string,
 	keyspace string) *PrepareRequestInfo {
 	return &PrepareRequestInfo{
 		baseRequestInfo:           baseRequestInfo,
+		fullyQualified:            fullyQualified,
 		replacedTerms:             replacedTerms,
 		containsPositionalMarkers: containsPositionalMarkers,
+		currentKeyspace:           currentKeyspace,
 		query:                     query,
 		keyspace:                  keyspace}
 }
@@ -78,6 +84,10 @@ func (recv *PrepareRequestInfo) ShouldBeTrackedInMetrics() bool {
 	return false
 }
 
+func (recv *PrepareRequestInfo) IsFullyQualified() bool {
+	return recv.fullyQualified
+}
+
 func (recv *PrepareRequestInfo) GetQuery() string {
 	return recv.query
 }
@@ -86,11 +96,12 @@ func (recv *PrepareRequestInfo) GetKeyspace() string {
 	return recv.keyspace
 }
 
+func (recv *PrepareRequestInfo) GetCurrentKeyspace() string {
+	return recv.currentKeyspace
+}
+
 func (recv *PrepareRequestInfo) GetForwardDecision() forwardDecision {
-	if recv.GetBaseRequestInfo().GetForwardDecision() == forwardToNone {
-		return forwardToNone // intercepted queries
-	}
-	return forwardToBoth // always send PREPARE to both, use origin's ID
+	return recv.GetBaseRequestInfo().GetForwardDecision()
 }
 
 func (recv *PrepareRequestInfo) GetBaseRequestInfo() RequestInfo {
@@ -106,31 +117,31 @@ func (recv *PrepareRequestInfo) ContainsPositionalMarkers() bool {
 }
 
 type ExecuteRequestInfo struct {
-	preparedData PreparedData
+	preparedEntry PreparedEntry
 }
 
-func NewExecuteRequestInfo(preparedData PreparedData) *ExecuteRequestInfo {
-	return &ExecuteRequestInfo{preparedData: preparedData}
+func NewExecuteRequestInfo(preparedEntry PreparedEntry) *ExecuteRequestInfo {
+	return &ExecuteRequestInfo{preparedEntry: preparedEntry}
 }
 
 func (recv *ExecuteRequestInfo) String() string {
-	return fmt.Sprintf("ExecuteRequestInfo{PreparedData: %v}", recv.preparedData)
+	return fmt.Sprintf("ExecuteRequestInfo{PreparedData: %v}", recv.preparedEntry)
 }
 
 func (recv *ExecuteRequestInfo) GetForwardDecision() forwardDecision {
-	return recv.preparedData.GetPrepareRequestInfo().GetBaseRequestInfo().GetForwardDecision()
+	return recv.preparedEntry.GetPrepareRequestInfo().GetBaseRequestInfo().GetForwardDecision()
 }
 
-func (recv *ExecuteRequestInfo) GetPreparedData() PreparedData {
-	return recv.preparedData
+func (recv *ExecuteRequestInfo) GetPreparedEntry() PreparedEntry {
+	return recv.preparedEntry
 }
 
 func (recv *ExecuteRequestInfo) ShouldAlsoBeSentAsync() bool {
-	return recv.preparedData.GetPrepareRequestInfo().GetBaseRequestInfo().ShouldAlsoBeSentAsync()
+	return recv.preparedEntry.GetPrepareRequestInfo().GetBaseRequestInfo().ShouldAlsoBeSentAsync()
 }
 
 func (recv *ExecuteRequestInfo) ShouldBeTrackedInMetrics() bool {
-	return recv.preparedData.GetPrepareRequestInfo().GetBaseRequestInfo().ShouldBeTrackedInMetrics()
+	return recv.preparedEntry.GetPrepareRequestInfo().GetBaseRequestInfo().ShouldBeTrackedInMetrics()
 }
 
 // InterceptedRequestInfo on its own means that this intercepted request is a QUERY request.
@@ -164,10 +175,10 @@ func (recv *InterceptedRequestInfo) GetParsedSelectClause() *selectClause {
 }
 
 type BatchRequestInfo struct {
-	preparedDataByStmtIdx map[int]PreparedData
+	preparedDataByStmtIdx map[int]PreparedEntry
 }
 
-func NewBatchRequestInfo(preparedDataByStmtIdx map[int]PreparedData) *BatchRequestInfo {
+func NewBatchRequestInfo(preparedDataByStmtIdx map[int]PreparedEntry) *BatchRequestInfo {
 	return &BatchRequestInfo{preparedDataByStmtIdx: preparedDataByStmtIdx}
 }
 
@@ -187,6 +198,6 @@ func (recv *BatchRequestInfo) ShouldBeTrackedInMetrics() bool {
 	return true
 }
 
-func (recv *BatchRequestInfo) GetPreparedDataByStmtIdx() map[int]PreparedData {
+func (recv *BatchRequestInfo) GetPreparedDataByStmtIdx() map[int]PreparedEntry {
 	return recv.preparedDataByStmtIdx
 }

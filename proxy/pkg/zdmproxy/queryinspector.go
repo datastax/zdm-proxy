@@ -51,6 +51,7 @@ type QueryInfo interface {
 	getStatementType() statementType
 	getKeyspaceName() string
 	getTableName() string
+	isFullyQualified() bool
 
 	// Returns the "current" keyspace when this request was parsed. This could have been set by a "USE" request beforehand
 	// or by using the keyspace query/prepare flag in v5 or DseV2.
@@ -342,6 +343,10 @@ func (l *cqlListener) getKeyspaceName() string {
 
 func (l *cqlListener) getTableName() string {
 	return l.tableName
+}
+
+func (l *cqlListener) isFullyQualified() bool {
+	return l.getKeyspaceName() != ""
 }
 
 func (l *cqlListener) getRequestKeyspace() string {
