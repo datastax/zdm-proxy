@@ -475,13 +475,11 @@ func (cc *ControlConn) RefreshHosts(conn CqlConnection, ctx context.Context) ([]
 		}
 	}
 
-	if localHost != nil {
-		oldLocalhost, localHostExists := hostsById[localHost.HostId]
-		if localHostExists {
-			log.Warnf("Local host is also on the peers list: %v vs %v, ignoring the former one.", oldLocalhost, localHost)
-		}
-		hostsById[localHost.HostId] = localHost
+	oldLocalhost, localHostExists := hostsById[localHost.HostId]
+	if localHostExists {
+		log.Warnf("Local host is also on the peers list: %v vs %v, ignoring the former one.", oldLocalhost, localHost)
 	}
+	hostsById[localHost.HostId] = localHost
 	orderedLocalHosts := make([]*Host, 0, len(hostsById))
 	for _, h := range hostsById {
 		orderedLocalHosts = append(orderedLocalHosts, h)
@@ -491,11 +489,9 @@ func (cc *ControlConn) RefreshHosts(conn CqlConnection, ctx context.Context) ([]
 	currentDc := cc.datacenter
 	cc.topologyLock.RUnlock()
 
-	if localHost != nil {
-		orderedLocalHosts, currentDc, err = filterHosts(orderedLocalHosts, currentDc, cc.connConfig, localHost)
-		if err != nil {
-			return nil, err
-		}
+	orderedLocalHosts, currentDc, err = filterHosts(orderedLocalHosts, currentDc, cc.connConfig, localHost)
+	if err != nil {
+		return nil, err
 	}
 
 	sort.Slice(orderedLocalHosts, func(i, j int) bool {
