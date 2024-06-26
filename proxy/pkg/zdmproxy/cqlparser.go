@@ -115,15 +115,13 @@ func buildRequestInfo(
 		}
 		preparedDataByStmtIdxMap := make(map[int]PreparedData)
 		for childIdx, child := range batchMsg.Children {
-			switch queryOrId := child.QueryOrId.(type) {
-			case []byte:
-				preparedData, err := getPreparedData(psCache, mh, queryOrId, primitive.OpCodeBatch, decodedFrame)
+			if child.Id != nil {
+				preparedData, err := getPreparedData(psCache, mh, child.Id, primitive.OpCodeBatch, decodedFrame)
 				if err != nil {
 					return nil, err
 				} else {
 					preparedDataByStmtIdxMap[childIdx] = preparedData
 				}
-			default:
 			}
 		}
 		return NewBatchRequestInfo(preparedDataByStmtIdxMap), nil
@@ -352,11 +350,10 @@ func (recv *frameDecodeContext) inspectStatements(currentKeyspace string, timeUu
 			currentKeyspace = typedMsg.Keyspace
 		}
 		for idx, childStmt := range typedMsg.Children {
-			switch typedQueryOrId := childStmt.QueryOrId.(type) {
-			case string:
+			if len(childStmt.Query) > 0 {
 				statementsQueryData = append(
 					statementsQueryData, &statementQueryData{
-						statementIndex: idx, queryData: inspectCqlQuery(typedQueryOrId, currentKeyspace, timeUuidGenerator)})
+						statementIndex: idx, queryData: inspectCqlQuery(childStmt.Query, currentKeyspace, timeUuidGenerator)})
 			}
 		}
 	default:

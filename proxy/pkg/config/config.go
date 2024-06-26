@@ -20,7 +20,7 @@ type Config struct {
 	ReadMode                      string `default:"PRIMARY_ONLY" split_words:"true"`
 	ReplaceCqlFunctions           bool   `default:"false" split_words:"true"`
 	AsyncHandshakeTimeoutMs       int    `default:"4000" split_words:"true"`
-	LogLevel                      string `default:"INFO" split_words:"true"`
+	LogLevel                      string `default:"DEBUG" split_words:"true"`
 	ControlConnMaxProtocolVersion string `default:"3" split_words:"true"` // Numeric Cassandra OSS protocol version or Dse1 / Dse2
 
 	// Proxy Topology (also known as system.peers "virtualization") bucket

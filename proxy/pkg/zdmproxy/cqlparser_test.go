@@ -182,7 +182,15 @@ func mockExecuteFrame(t *testing.T, preparedId string) *frame.RawFrame {
 }
 
 func mockBatch(t *testing.T, query interface{}) *frame.RawFrame {
-	batchMsg := &message.Batch{Children: []*message.BatchChild{{QueryOrId: query}}}
+	var child message.BatchChild
+	switch query.(type) {
+	case []byte:
+		child = message.BatchChild{Id: query.([]byte)}
+	default:
+		child = message.BatchChild{Query: query.(string)}
+
+	}
+	batchMsg := &message.Batch{Children: []*message.BatchChild{&child}}
 	return mockFrame(t, batchMsg, primitive.ProtocolVersion4)
 }
 

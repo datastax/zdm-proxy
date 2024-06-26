@@ -31,6 +31,7 @@ const (
 )
 
 type CqlConnection interface {
+	GetEndpoint() Endpoint
 	IsInitialized() bool
 	InitializeContext(version primitive.ProtocolVersion, ctx context.Context) error
 	SendAndReceive(request *frame.Frame, ctx context.Context) (*frame.Frame, error)
@@ -48,6 +49,7 @@ type CqlConnection interface {
 type cqlConn struct {
 	readTimeout           time.Duration
 	writeTimeout          time.Duration
+	endpoint              Endpoint
 	conn                  net.Conn
 	credentials           *AuthCredentials
 	initialized           bool
@@ -71,12 +73,16 @@ var (
 	StreamIdMismatchErr = errors.New("stream id of the response is different from the stream id of the request")
 )
 
+func (c *cqlConn) GetEndpoint() Endpoint {
+	return c.endpoint
+}
+
 func (c *cqlConn) String() string {
 	return fmt.Sprintf("cqlConn{conn: %v}", c.conn.RemoteAddr().String())
 }
 
 func NewCqlConnection(
-	conn net.Conn,
+	endpoint Endpoint, conn net.Conn,
 	username string, password string,
 	readTimeout time.Duration, writeTimeout time.Duration,
 	conf *config.Config, protoVer primitive.ProtocolVersion) CqlConnection {
@@ -84,6 +90,7 @@ func NewCqlConnection(
 	cqlConn := &cqlConn{
 		readTimeout:  readTimeout,
 		writeTimeout: writeTimeout,
+		endpoint:     endpoint,
 		conn:         conn,
 		credentials: &AuthCredentials{
 			Username: username,

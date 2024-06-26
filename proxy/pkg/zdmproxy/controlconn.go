@@ -378,7 +378,7 @@ func (cc *ControlConn) connAndNegotiateProtoVer(endpoint Endpoint, initialProtoV
 				cc.connConfig.GetClusterType(), endpoint.GetEndpointIdentifier(), err)
 			return nil, err
 		}
-		newConn := NewCqlConnection(tcpConn, cc.username, cc.password, ccReadTimeout, ccWriteTimeout, cc.conf, protoVer)
+		newConn := NewCqlConnection(endpoint, tcpConn, cc.username, cc.password, ccReadTimeout, ccWriteTimeout, cc.conf, protoVer)
 		err = newConn.InitializeContext(protoVer, ctx)
 		var respErr *ResponseError
 		if err != nil && errors.As(err, &respErr) && respErr.IsProtocolError() && strings.Contains(err.Error(), "Invalid or unsupported protocol version") {
@@ -435,8 +435,7 @@ func (cc *ControlConn) RefreshHosts(conn CqlConnection, ctx context.Context) ([]
 		return nil, fmt.Errorf("could not fetch information from system.local table: %w", err)
 	}
 
-	localInfo, localHost, err := ParseSystemLocalResult(localQueryResult, cc.defaultPort)
-	// localHost may be nil, if we did not find the address in system.local table
+	localInfo, localHost, err := ParseSystemLocalResult(localQueryResult, conn.GetEndpoint(), cc.defaultPort)
 	if err != nil {
 		return nil, err
 	}

@@ -187,7 +187,7 @@ func (cc *ClientConnector) listenForRequests() {
 				cc.sendResponseToClient(protocolErrResponseFrame)
 				continue
 			} else if alreadySentProtocolErr != nil {
-				clonedProtocolErr := alreadySentProtocolErr.Clone()
+				clonedProtocolErr := alreadySentProtocolErr.DeepCopy()
 				clonedProtocolErr.Header.StreamId = f.Header.StreamId
 				cc.sendResponseToClient(clonedProtocolErr)
 				continue

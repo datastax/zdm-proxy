@@ -123,7 +123,7 @@ func TestReplaceQueryString(t *testing.T) {
 		{"OpCodeBatch Mixed Prepared and Simple",
 			mockBatchWithChildren(t, []*message.BatchChild{
 				{
-					QueryOrId: "UPDATE blah SET a = ?, b = 123 " +
+					Query: "UPDATE blah SET a = ?, b = 123 " +
 						"WHERE f[now()] = ? IF " +
 						"g[123] IN (2, 3, ?, now(), ?, now()) AND " +
 						"d IN ? AND " +
@@ -132,12 +132,12 @@ func TestReplaceQueryString(t *testing.T) {
 					Values: []*primitive.Value{}, // not used by the SUT (system under test)
 				},
 				{
-					QueryOrId: []byte{0},
-					Values:    []*primitive.Value{}, // not used by the SUT
+					Id:     []byte{0},
+					Values: []*primitive.Value{}, // not used by the SUT
 				},
 				{
-					QueryOrId: "DELETE FROM blah WHERE b = 123 AND a = now()",
-					Values:    []*primitive.Value{}, // not used by the SUT
+					Query:  "DELETE FROM blah WHERE b = 123 AND a = now()",
+					Values: []*primitive.Value{}, // not used by the SUT
 				}}),
 			[]*statementReplacedTerms{
 				{statementIndex: 0, replacedTerms: []*term{

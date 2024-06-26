@@ -39,6 +39,8 @@ func getGeneralParamsForTests(t *testing.T) params {
 }
 
 func buildQueryMessageForTests(queryString string) *message.Query {
+	var defaultTimestamp int64 = 1647023221311969
+	var serialConsistency = primitive.ConsistencyLevelLocalSerial
 	return &message.Query{
 		Query: queryString,
 		Options: &message.QueryOptions{
@@ -49,8 +51,8 @@ func buildQueryMessageForTests(queryString string) *message.Query {
 			PageSize:          5000,
 			PageSizeInBytes:   false,
 			PagingState:       nil,
-			SerialConsistency: &primitive.NillableConsistencyLevel{Value: primitive.ConsistencyLevelLocalSerial},
-			DefaultTimestamp:  &primitive.NillableInt64{Value: 1647023221311969},
+			SerialConsistency: &serialConsistency,
+			DefaultTimestamp:  &defaultTimestamp,
 			Keyspace:          "",
 			NowInSeconds:      nil,
 			ContinuousPagingOptions: &message.ContinuousPagingOptions{
