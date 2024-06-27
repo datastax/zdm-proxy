@@ -78,6 +78,19 @@ var systemLocalColumns = []*message.ColumnMetadata{
 	tokensColumn,
 }
 
+var systemLocalColumnsV2 = []*message.ColumnMetadata{
+	keyColumn,
+	clusterNameColumn,
+	cqlVersionColumn,
+	datacenterColumn,
+	hostIdColumn,
+	partitionerColumn,
+	rackColumn,
+	releaseVersionColumn,
+	schemaVersionColumn,
+	tokensColumn,
+}
+
 var (
 	peerColumn                = &message.ColumnMetadata{Keyspace: "system", Table: "peers", Name: "peer", Type: datatype.Inet}
 	datacenterPeersColumn     = &message.ColumnMetadata{Keyspace: "system", Table: "peers", Name: "data_center", Type: datatype.Varchar}
@@ -112,13 +125,15 @@ var (
 	schemaVersionValue      = message.Column{0xC0, 0xD1, 0xD2, 0x1E, 0xBB, 0x01, 0x41, 0x96, 0x86, 0xDB, 0xBC, 0x31, 0x7B, 0xC1, 0x79, 0x6A}
 )
 
-func systemLocalRow(cluster string, datacenter string, customPartitioner string, addr net.Addr, version primitive.ProtocolVersion) message.Row {
+func systemLocalRow(cluster string, datacenter string, customPartitioner string, addr *net.Addr, version primitive.ProtocolVersion) message.Row {
 	addrBuf := &bytes.Buffer{}
-	inetAddr := addr.(*net.TCPAddr).IP
-	if inetAddr.To4() != nil {
-		addrBuf.Write(inetAddr.To4())
-	} else {
-		addrBuf.Write(inetAddr)
+	if addr != nil {
+		inetAddr := (*addr).(*net.TCPAddr).IP
+		if inetAddr.To4() != nil {
+			addrBuf.Write(inetAddr.To4())
+		} else {
+			addrBuf.Write(inetAddr)
+		}
 	}
 	// emulate {'-9223372036854775808'} (entire ring)
 	tokensBuf := &bytes.Buffer{}
@@ -135,25 +150,40 @@ func systemLocalRow(cluster string, datacenter string, customPartitioner string,
 	if customPartitioner != "" {
 		partitionerValue = message.Column(customPartitioner)
 	}
+	if addrBuf.Len() > 0 {
+		return message.Row{
+			keyValue,
+			addrBuf.Bytes(),
+			message.Column(cluster),
+			cqlVersionValue,
+			message.Column(datacenter),
+			hostIdValue,
+			addrBuf.Bytes(),
+			partitionerValue,
+			rackValue,
+			releaseVersionValue,
+			addrBuf.Bytes(),
+			schemaVersionValue,
+			tokensBuf.Bytes(),
+		}
+	}
 	return message.Row{
 		keyValue,
-		addrBuf.Bytes(),
 		message.Column(cluster),
 		cqlVersionValue,
 		message.Column(datacenter),
 		hostIdValue,
-		addrBuf.Bytes(),
 		partitionerValue,
 		rackValue,
 		releaseVersionValue,
-		addrBuf.Bytes(),
 		schemaVersionValue,
 		tokensBuf.Bytes(),
 	}
 }
 
 func fullSystemLocal(cluster string, datacenter string, customPartitioner string, request *frame.Frame, conn *client.CqlServerConnection) *frame.Frame {
-	systemLocalRow := systemLocalRow(cluster, datacenter, customPartitioner, conn.LocalAddr(), request.Header.Version)
+	localAddress := conn.LocalAddr()
+	systemLocalRow := systemLocalRow(cluster, datacenter, customPartitioner, &localAddress, request.Header.Version)
 	msg := &message.RowsResult{
 		Metadata: &message.RowsMetadata{
 			ColumnCount: int32(len(systemLocalColumns)),
