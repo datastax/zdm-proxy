@@ -524,16 +524,16 @@ func TestPreparedIdReplacement(t *testing.T) {
 				require.Equal(t, expectedBatchPrepareMsg, originPrepareMessages[1])
 
 				if test.expectedBatchPreparedStmtVariables != nil {
-					require.NotEqual(t, batchMsg.Children[0].Query, originBatchMessages[0].Children[0].Query)
-					require.NotEqual(t, batchMsg.Children[0].Query, targetBatchMessages[0].Children[0].Query)
-					require.Equal(t, originBatchMessages[0].Children[0].Query, targetBatchMessages[0].Children[0].Query)
+					batchChildNotEqual(t, batchMsg.Children[0], originBatchMessages[0].Children[0])
+					batchChildNotEqual(t, batchMsg.Children[0], targetBatchMessages[0].Children[0])
+					batchChildEqual(t, originBatchMessages[0].Children[0], targetBatchMessages[0].Children[0])
 					require.Equal(t, 0, len(targetBatchMessages[0].Children[0].Values))
 					require.Equal(t, 0, len(originBatchMessages[0].Children[0].Values))
 					require.Equal(t, 0, len(batchMsg.Children[0].Values))
 
-					require.Equal(t, batchMsg.Children[1].Query, originBatchMessages[0].Children[1].Query)
-					require.NotEqual(t, batchMsg.Children[1].Id, targetBatchMessages[0].Children[1].Id)
-					require.NotEqual(t, originBatchMessages[0].Children[1].Id, targetBatchMessages[0].Children[1].Id)
+					batchChildEqual(t, batchMsg.Children[1], originBatchMessages[0].Children[1])
+					batchChildNotEqual(t, batchMsg.Children[1], targetBatchMessages[0].Children[1])
+					batchChildNotEqual(t, originBatchMessages[0].Children[1], targetBatchMessages[0].Children[1])
 					require.Equal(t, targetBatchPreparedId, targetBatchMessages[0].Children[1].Id)
 					require.Equal(t, originBatchPreparedId, originBatchMessages[0].Children[1].Id)
 					require.Equal(t, originBatchPreparedId, batchMsg.Children[1].Id)
@@ -553,6 +553,46 @@ func TestPreparedIdReplacement(t *testing.T) {
 			}
 		})
 	}
+}
+
+func batchChildEqual(t *testing.T, child1 *message.BatchChild, child2 *message.BatchChild) {
+	id := false
+	if child1.Id != nil && child2.Id != nil {
+		id = true
+		require.Equal(t, child1.Id, child2.Id)
+	} else if child1.Id != nil || child2.Id != nil {
+		require.Fail(t, "unexpected id field presence: [%v], [%v]", child1.Id, child2.Id)
+	}
+
+	query := false
+	if len(child1.Query) > 0 && len(child2.Query) > 0 {
+		query = true
+		require.Equal(t, child1.Query, child2.Query)
+	} else if len(child1.Query) > 0 || len(child2.Query) > 0 {
+		require.Fail(t, "unexpected query field presence: [%v], [%v]", child1.Query, child2.Query)
+	}
+
+	require.True(t, id || query, "id or query fields should be present")
+}
+
+func batchChildNotEqual(t *testing.T, child1 *message.BatchChild, child2 *message.BatchChild) {
+	id := false
+	if child1.Id != nil && child2.Id != nil {
+		id = true
+		require.NotEqual(t, child1.Id, child2.Id)
+	} else if child1.Id != nil || child2.Id != nil {
+		require.Fail(t, "unexpected query field presence: [%v], [%v]", child1.Id, child2.Id)
+	}
+
+	query := false
+	if len(child1.Query) > 0 && len(child2.Query) > 0 {
+		query = true
+		require.NotEqual(t, child1.Query, child2.Query)
+	} else if len(child1.Query) > 0 || len(child2.Query) > 0 {
+		require.Fail(t, "unexpected query field presence: [%v], [%v]", child1.Query, child2.Query)
+	}
+
+	require.True(t, id || query, "id or query fields should be present")
 }
 
 func TestUnpreparedIdReplacement(t *testing.T) {
