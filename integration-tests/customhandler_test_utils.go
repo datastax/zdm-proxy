@@ -78,7 +78,10 @@ var systemLocalColumns = []*message.ColumnMetadata{
 	tokensColumn,
 }
 
-var systemLocalColumnsV2 = []*message.ColumnMetadata{
+// These columns are a subset of the total columns returned by OSS C* 2.0.0, and contain all the information that
+// drivers need in order to establish the cluster topology and determine its characteristics. Please note that RPC address
+// column is not present.
+var systemLocalColumnsProtocolV2 = []*message.ColumnMetadata{
 	keyColumn,
 	clusterNameColumn,
 	cqlVersionColumn,
@@ -125,10 +128,10 @@ var (
 	schemaVersionValue      = message.Column{0xC0, 0xD1, 0xD2, 0x1E, 0xBB, 0x01, 0x41, 0x96, 0x86, 0xDB, 0xBC, 0x31, 0x7B, 0xC1, 0x79, 0x6A}
 )
 
-func systemLocalRow(cluster string, datacenter string, customPartitioner string, addr *net.Addr, version primitive.ProtocolVersion) message.Row {
+func systemLocalRow(cluster string, datacenter string, customPartitioner string, addr net.Addr, version primitive.ProtocolVersion) message.Row {
 	addrBuf := &bytes.Buffer{}
 	if addr != nil {
-		inetAddr := (*addr).(*net.TCPAddr).IP
+		inetAddr := addr.(*net.TCPAddr).IP
 		if inetAddr.To4() != nil {
 			addrBuf.Write(inetAddr.To4())
 		} else {
@@ -150,7 +153,7 @@ func systemLocalRow(cluster string, datacenter string, customPartitioner string,
 	if customPartitioner != "" {
 		partitionerValue = message.Column(customPartitioner)
 	}
-	if addrBuf.Len() > 0 {
+	if version >= primitive.ProtocolVersion3 {
 		return message.Row{
 			keyValue,
 			addrBuf.Bytes(),
@@ -182,8 +185,7 @@ func systemLocalRow(cluster string, datacenter string, customPartitioner string,
 }
 
 func fullSystemLocal(cluster string, datacenter string, customPartitioner string, request *frame.Frame, conn *client.CqlServerConnection) *frame.Frame {
-	localAddress := conn.LocalAddr()
-	systemLocalRow := systemLocalRow(cluster, datacenter, customPartitioner, &localAddress, request.Header.Version)
+	systemLocalRow := systemLocalRow(cluster, datacenter, customPartitioner, conn.LocalAddr(), request.Header.Version)
 	msg := &message.RowsResult{
 		Metadata: &message.RowsMetadata{
 			ColumnCount: int32(len(systemLocalColumns)),

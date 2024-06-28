@@ -19,8 +19,7 @@ import (
 )
 
 const (
-	eventQueueLength   = 2048
-	eventQueueLengthV2 = 128
+	eventQueueLength = 2048
 
 	maxIncomingPending   = 2048
 	maxIncomingPendingV2 = 128
@@ -102,7 +101,7 @@ func NewCqlConnection(
 		wg:          &sync.WaitGroup{},
 		// protoVer is the proposed protocol version using which we will try to establish connectivity
 		outgoingCh:            make(chan *frame.Frame, maxOutgoingPendingRequests(protoVer)),
-		eventsQueue:           make(chan *frame.Frame, maxEventsQueue(protoVer)),
+		eventsQueue:           make(chan *frame.Frame, eventQueueLength),
 		pendingOperations:     make(map[int16]chan *frame.Frame),
 		pendingOperationsLock: &sync.RWMutex{},
 		timedOutOperations:    0,
@@ -124,14 +123,6 @@ func maxOutgoingPendingRequests(protocolVersion primitive.ProtocolVersion) int {
 		return maxOutgoingPendingV2
 	}
 	return maxOutgoingPending
-}
-
-func maxEventsQueue(protocolVersion primitive.ProtocolVersion) int {
-	switch protocolVersion {
-	case primitive.ProtocolVersion2:
-		return eventQueueLengthV2
-	}
-	return eventQueueLength
 }
 
 func (c *cqlConn) SetEventHandler(eventHandler func(f *frame.Frame, conn CqlConnection)) {

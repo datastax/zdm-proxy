@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
 	"github.com/datastax/zdm-proxy/proxy/pkg/common"
 	"github.com/kelseyhightower/envconfig"
 	log "github.com/sirupsen/logrus"
@@ -342,22 +343,22 @@ func (c *Config) ParseReadMode() (common.ReadMode, error) {
 	}
 }
 
-func (c *Config) ParseControlConnMaxProtocolVersion() (uint, error) {
-	switch c.ControlConnMaxProtocolVersion {
-	case "Dse2":
-		return 0b_1_000010, nil
-	case "Dse1":
-		return 0b_1_000001, nil
+func (c *Config) ParseControlConnMaxProtocolVersion() (primitive.ProtocolVersion, error) {
+	if strings.EqualFold(c.ControlConnMaxProtocolVersion, "DseV2") {
+		return primitive.ProtocolVersionDse2, nil
+	}
+	if strings.EqualFold(c.ControlConnMaxProtocolVersion, "DseV1") {
+		return primitive.ProtocolVersionDse1, nil
 	}
 	ver, err := strconv.ParseUint(c.ControlConnMaxProtocolVersion, 10, 32)
 	if err != nil {
 		return 0, fmt.Errorf("could not parse control connection max protocol version, valid values are "+
-			"2, 3, 4, Dse1, Dse2; original err: %w", err)
+			"2, 3, 4, DseV1, DseV2; original err: %w", err)
 	}
 	if ver < 2 || ver > 4 {
-		return 0, fmt.Errorf("invalid control connection max protocol version, valid values are 2, 3, 4, Dse1, Dse2")
+		return 0, fmt.Errorf("invalid control connection max protocol version, valid values are 2, 3, 4, DseV1, DseV2")
 	}
-	return uint(ver), nil
+	return primitive.ProtocolVersion(ver), nil
 }
 
 func (c *Config) ParseLogLevel() (log.Level, error) {

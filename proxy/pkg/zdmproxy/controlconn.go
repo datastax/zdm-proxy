@@ -361,16 +361,16 @@ func (cc *ControlConn) openInternal(endpoints []Endpoint, ctx context.Context) (
 		}
 
 		conn = newConn
-		log.Infof("Successfully opened control connection to %v using endpoint %v.",
-			cc.connConfig.GetClusterType(), endpoint.String())
+		log.Infof("Successfully opened control connection to %v using endpoint %v with %v.",
+			cc.connConfig.GetClusterType(), endpoint.String(), newConn.GetProtocolVersion().Load().(primitive.ProtocolVersion))
 		break
 	}
 
 	return conn, endpoint
 }
 
-func (cc *ControlConn) connAndNegotiateProtoVer(endpoint Endpoint, initialProtoVer uint, ctx context.Context) (CqlConnection, error) {
-	protoVer := primitive.ProtocolVersion(initialProtoVer)
+func (cc *ControlConn) connAndNegotiateProtoVer(endpoint Endpoint, initialProtoVer primitive.ProtocolVersion, ctx context.Context) (CqlConnection, error) {
+	protoVer := initialProtoVer
 	for {
 		tcpConn, _, err := openConnection(cc.connConfig, endpoint, ctx, false)
 		if err != nil {
@@ -389,7 +389,7 @@ func (cc *ControlConn) connAndNegotiateProtoVer(endpoint Endpoint, initialProtoV
 				log.Errorf("Failed to close cql connection: %v", err2)
 			}
 			protoVer = downgradeProtocol(protoVer)
-			log.Infof("Downgrading protocol version: %v", protoVer)
+			log.Debugf("Downgrading protocol version: %v", protoVer)
 			if protoVer == 0 {
 				// we cannot downgrade anymore
 				return nil, err

@@ -128,8 +128,8 @@ func (recv *ProtocolV2RequestHandler) HandleRequest(
 			sysLocRow := systemLocalRow(recv.cluster, recv.datacenter, "Murmur3Partitioner", nil, request.Header.Version)
 			sysLocMsg := &message.RowsResult{
 				Metadata: &message.RowsMetadata{
-					ColumnCount: int32(len(systemLocalColumnsV2)),
-					Columns:     systemLocalColumnsV2,
+					ColumnCount: int32(len(systemLocalColumnsProtocolV2)),
+					Columns:     systemLocalColumnsProtocolV2,
 				},
 				Data: message.RowSet{sysLocRow},
 			}
