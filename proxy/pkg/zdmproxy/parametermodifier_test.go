@@ -25,7 +25,7 @@ func TestAddValuesToExecuteFrame_NoReplacedTerms(t *testing.T) {
 		PkIndices: nil,
 		Columns:   nil,
 	}
-	fClone := f.Clone()
+	fClone := f.DeepCopy()
 	replacementTimeUuids := parameterModifier.generateTimeUuids(prepareRequestInfo)
 	newMsg, err := parameterModifier.AddValuesToExecuteFrame(fClone, prepareRequestInfo, variablesMetadata, replacementTimeUuids)
 	require.Same(t, fClone.Body.Message, newMsg)
@@ -198,7 +198,7 @@ func TestAddValuesToExecuteFrame_PositionalValues(t *testing.T) {
 			require.Nil(t, err)
 			parameterModifier := NewParameterModifier(generator)
 			queryOpts := &message.QueryOptions{PositionalValues: requestPosVals}
-			clonedQueryOpts := queryOpts.Clone() // we use this so that we keep the "original" request options
+			clonedQueryOpts := queryOpts.DeepCopy() // we use this so that we keep the "original" request options
 			f := frame.NewFrame(primitive.ProtocolVersion4, 1, &message.Execute{
 				QueryId:          nil,
 				ResultMetadataId: nil,
@@ -344,7 +344,7 @@ func TestAddValuesToExecuteFrame_NamedValues(t *testing.T) {
 			require.Nil(t, err)
 			parameterModifier := NewParameterModifier(generator)
 			queryOpts := &message.QueryOptions{NamedValues: requestNamedVals}
-			clonedQueryOpts := queryOpts.Clone() // we use this so that we keep the "original" request options
+			clonedQueryOpts := queryOpts.DeepCopy() // we use this so that we keep the "original" request options
 			f := frame.NewFrame(primitive.ProtocolVersion4, 1, &message.Execute{
 				QueryId:          nil,
 				ResultMetadataId: nil,

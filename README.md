@@ -81,7 +81,7 @@ containerized sandbox environment.
 
 ## Supported Protocol Versions
 
-**ZDM Proxy supports protocol versions v3, v4, DSE_V1 and DSE_V2.**
+**ZDM Proxy supports protocol versions v2, v3, v4, DSE_V1 and DSE_V2.**
 
 It technically doesn't support v5, but handles protocol negotiation so that the client application properly downgrades
 the protocol version to v4 if v5 is requested. This means that any client application using a recent driver that supports
@@ -96,8 +96,7 @@ migration process.
 
 In practice this means that ZDM Proxy supports the following cluster versions (as Origin and / or Target):
 
-- Apache Cassandra from 2.1+ up to (and including) Apache Cassandra 4.x. Apache Cassandra 2.0 support will be introduced 
-when protocol version v2 is supported.
+- Apache Cassandra from 2.0+ up to (and including) Apache Cassandra 4.x.
 - DataStax Enterprise 4.8+. DataStax Enterprise 4.6 and 4.7 support will be introduced when protocol version v2 is supported.
 - DataStax Astra DB (both Serverless and Classic)
 

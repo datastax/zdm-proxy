@@ -287,7 +287,7 @@ func TestAsyncReadsRequestTypes(t *testing.T) {
 	}
 
 	testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodesAndConfig(
-		t, false, false, 1, nil)
+		t, false, false, 1, nil, nil)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 

@@ -353,9 +353,9 @@ func TestPreparedIdReplacement(t *testing.T) {
 			var batchPrepareMsg *message.Prepare
 			var expectedBatchPrepareMsg *message.Prepare
 			if test.batchQuery != "" {
-				batchPrepareMsg = prepareMsg.Clone().(*message.Prepare)
+				batchPrepareMsg = prepareMsg.DeepCopy()
 				batchPrepareMsg.Query = test.batchQuery
-				expectedBatchPrepareMsg = batchPrepareMsg.Clone().(*message.Prepare)
+				expectedBatchPrepareMsg = batchPrepareMsg.DeepCopy()
 				expectedBatchPrepareMsg.Query = test.expectedBatchQuery
 				prepareResp, err = testSetup.Client.CqlConnection.SendAndReceive(
 					frame.NewFrame(primitive.ProtocolVersion4, 10, batchPrepareMsg))
@@ -391,15 +391,15 @@ func TestPreparedIdReplacement(t *testing.T) {
 					Type: primitive.BatchTypeLogged,
 					Children: []*message.BatchChild{
 						{
-							QueryOrId: test.query,
+							Query: test.query,
 
 							// the decoder uses empty slices instead of nil so this has to be initialized this way
 							// so that the equality assertions work later in this test
 							Values: make([]*primitive.Value, 0),
 						},
 						{
-							QueryOrId: originBatchPreparedId,
-							Values:    make([]*primitive.Value, 0),
+							Id:     originBatchPreparedId,
+							Values: make([]*primitive.Value, 0),
 						},
 					},
 					Consistency:       primitive.ConsistencyLevelLocalQuorum,
@@ -482,7 +482,7 @@ func TestPreparedIdReplacement(t *testing.T) {
 			require.Equal(t, originPreparedId, originExecuteMessages[0].QueryId)
 			if expectedOriginBatches > 0 {
 				require.Equal(t, 2, len(originBatchMessages[0].Children))
-				require.Equal(t, originBatchPreparedId, originBatchMessages[0].Children[1].QueryOrId)
+				require.Equal(t, originBatchPreparedId, originBatchMessages[0].Children[1].Id)
 			}
 
 			for _, targetExecute := range targetExecuteMessages {
@@ -491,7 +491,7 @@ func TestPreparedIdReplacement(t *testing.T) {
 			}
 			if expectedTargetBatches > 0 {
 				require.Equal(t, 2, len(targetBatchMessages[0].Children))
-				require.Equal(t, targetBatchPreparedId, targetBatchMessages[0].Children[1].QueryOrId)
+				require.Equal(t, targetBatchPreparedId, targetBatchMessages[0].Children[1].Id)
 				require.NotEqual(t, batchMsg, targetBatchMessages[0])
 			}
 
@@ -508,8 +508,8 @@ func TestPreparedIdReplacement(t *testing.T) {
 				require.NotEqual(t, len(executeMsg.Options.PositionalValues), len(originExecuteMessages[0].Options.PositionalValues))
 
 				// check if only the positional values are different, we test the parameter replacement in depth on other tests
-				modifiedOriginExecuteMsg := originExecuteMessages[0].Clone()
-				modifiedOriginExecuteMsg.(*message.Execute).Options.PositionalValues = executeMsg.Options.PositionalValues
+				modifiedOriginExecuteMsg := originExecuteMessages[0].DeepCopy()
+				modifiedOriginExecuteMsg.Options.PositionalValues = executeMsg.Options.PositionalValues
 				require.Equal(t, executeMsg, modifiedOriginExecuteMsg)
 				require.Equal(t, originExecuteMessages[0].Options, targetExecuteMessages[0].Options)
 			} else {
@@ -524,19 +524,19 @@ func TestPreparedIdReplacement(t *testing.T) {
 				require.Equal(t, expectedBatchPrepareMsg, originPrepareMessages[1])
 
 				if test.expectedBatchPreparedStmtVariables != nil {
-					require.NotEqual(t, batchMsg.Children[0].QueryOrId, originBatchMessages[0].Children[0].QueryOrId)
-					require.NotEqual(t, batchMsg.Children[0].QueryOrId, targetBatchMessages[0].Children[0].QueryOrId)
-					require.Equal(t, originBatchMessages[0].Children[0].QueryOrId, targetBatchMessages[0].Children[0].QueryOrId)
+					batchChildNotEqual(t, batchMsg.Children[0], originBatchMessages[0].Children[0])
+					batchChildNotEqual(t, batchMsg.Children[0], targetBatchMessages[0].Children[0])
+					batchChildEqual(t, originBatchMessages[0].Children[0], targetBatchMessages[0].Children[0])
 					require.Equal(t, 0, len(targetBatchMessages[0].Children[0].Values))
 					require.Equal(t, 0, len(originBatchMessages[0].Children[0].Values))
 					require.Equal(t, 0, len(batchMsg.Children[0].Values))
 
-					require.Equal(t, batchMsg.Children[1].QueryOrId, originBatchMessages[0].Children[1].QueryOrId)
-					require.NotEqual(t, batchMsg.Children[1].QueryOrId, targetBatchMessages[0].Children[1].QueryOrId)
-					require.NotEqual(t, originBatchMessages[0].Children[1].QueryOrId, targetBatchMessages[0].Children[1].QueryOrId)
-					require.Equal(t, targetBatchPreparedId, targetBatchMessages[0].Children[1].QueryOrId)
-					require.Equal(t, originBatchPreparedId, originBatchMessages[0].Children[1].QueryOrId)
-					require.Equal(t, originBatchPreparedId, batchMsg.Children[1].QueryOrId)
+					batchChildEqual(t, batchMsg.Children[1], originBatchMessages[0].Children[1])
+					batchChildNotEqual(t, batchMsg.Children[1], targetBatchMessages[0].Children[1])
+					batchChildNotEqual(t, originBatchMessages[0].Children[1], targetBatchMessages[0].Children[1])
+					require.Equal(t, targetBatchPreparedId, targetBatchMessages[0].Children[1].Id)
+					require.Equal(t, originBatchPreparedId, originBatchMessages[0].Children[1].Id)
+					require.Equal(t, originBatchPreparedId, batchMsg.Children[1].Id)
 					require.Equal(t, len(test.expectedBatchPreparedStmtVariables.Columns), len(targetBatchMessages[0].Children[1].Values))
 					require.Equal(t, len(test.expectedBatchPreparedStmtVariables.Columns), len(originBatchMessages[0].Children[1].Values))
 					require.Equal(t, 0, len(batchMsg.Children[1].Values))
@@ -546,13 +546,53 @@ func TestPreparedIdReplacement(t *testing.T) {
 				} else {
 					require.Equal(t, batchMsg, originBatchMessages[0])
 					require.NotEqual(t, batchMsg, targetBatchMessages[0])
-					clonedBatchMsg := targetBatchMessages[0].Clone().(*message.Batch)
-					clonedBatchMsg.Children[1].QueryOrId = originBatchPreparedId
+					clonedBatchMsg := targetBatchMessages[0].DeepCopy()
+					clonedBatchMsg.Children[1].Id = originBatchPreparedId
 					require.Equal(t, batchMsg, clonedBatchMsg)
 				}
 			}
 		})
 	}
+}
+
+func batchChildEqual(t *testing.T, child1 *message.BatchChild, child2 *message.BatchChild) {
+	id := false
+	if child1.Id != nil && child2.Id != nil {
+		id = true
+		require.Equal(t, child1.Id, child2.Id)
+	} else if child1.Id != nil || child2.Id != nil {
+		require.Fail(t, "unexpected id field presence: [%v], [%v]", child1.Id, child2.Id)
+	}
+
+	query := false
+	if len(child1.Query) > 0 && len(child2.Query) > 0 {
+		query = true
+		require.Equal(t, child1.Query, child2.Query)
+	} else if len(child1.Query) > 0 || len(child2.Query) > 0 {
+		require.Fail(t, "unexpected query field presence: [%v], [%v]", child1.Query, child2.Query)
+	}
+
+	require.True(t, id || query, "id or query fields should be present")
+}
+
+func batchChildNotEqual(t *testing.T, child1 *message.BatchChild, child2 *message.BatchChild) {
+	id := false
+	if child1.Id != nil && child2.Id != nil {
+		id = true
+		require.NotEqual(t, child1.Id, child2.Id)
+	} else if child1.Id != nil || child2.Id != nil {
+		require.Fail(t, "unexpected query field presence: [%v], [%v]", child1.Id, child2.Id)
+	}
+
+	query := false
+	if len(child1.Query) > 0 && len(child2.Query) > 0 {
+		query = true
+		require.NotEqual(t, child1.Query, child2.Query)
+	} else if len(child1.Query) > 0 || len(child2.Query) > 0 {
+		require.Fail(t, "unexpected query field presence: [%v], [%v]", child1.Query, child2.Query)
+	}
+
+	require.True(t, id || query, "id or query fields should be present")
 }
 
 func TestUnpreparedIdReplacement(t *testing.T) {
@@ -706,7 +746,7 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 			var batchMsg *message.Batch
 			var batchPrepareMsg *message.Prepare
 			if test.batchQuery != "" {
-				batchPrepareMsg = prepareMsg.Clone().(*message.Prepare)
+				batchPrepareMsg = prepareMsg.DeepCopy()
 				batchPrepareMsg.Query = test.batchQuery
 				prepareResp, err = testSetup.Client.CqlConnection.SendAndReceive(
 					frame.NewFrame(primitive.ProtocolVersion4, 10, batchPrepareMsg))
@@ -721,14 +761,14 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 					Type: primitive.BatchTypeLogged,
 					Children: []*message.BatchChild{
 						{
-							QueryOrId: test.query,
+							Query: test.query,
 							// the decoder uses empty slices instead of nil so this has to be initialized this way
 							// so that the equality assertions work later in this test
 							Values: make([]*primitive.Value, 0),
 						},
 						{
-							QueryOrId: originBatchPreparedId,
-							Values:    make([]*primitive.Value, 0),
+							Id:     originBatchPreparedId,
+							Values: make([]*primitive.Value, 0),
 						},
 					},
 					Consistency:       primitive.ConsistencyLevelLocalQuorum,
@@ -843,7 +883,7 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 			if expectedTargetBatches > 0 {
 				for _, batch := range targetBatchMessages {
 					require.Equal(t, 2, len(batch.Children))
-					require.Equal(t, targetBatchPreparedId, batch.Children[1].QueryOrId)
+					require.Equal(t, targetBatchPreparedId, batch.Children[1].Id)
 					require.NotEqual(t, batchMsg, batch)
 				}
 			}
@@ -1117,13 +1157,11 @@ func NewPreparedTestHandler(
 func checkIfPreparedIdMatches(batchMsg *message.Batch, preparedId []byte) (bool, []byte) {
 	var batchPreparedId []byte
 	for _, child := range batchMsg.Children {
-		switch queryOrId := child.QueryOrId.(type) {
-		case []byte:
-			batchPreparedId = queryOrId
-			if !bytes.Equal(queryOrId, preparedId) {
+		if child.Id != nil {
+			batchPreparedId = child.Id
+			if !bytes.Equal(child.Id, preparedId) {
 				return false, batchPreparedId
 			}
-		default:
 		}
 	}
 

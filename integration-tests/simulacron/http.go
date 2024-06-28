@@ -18,6 +18,11 @@ type ClusterData struct {
 	Datacenters []*DatacenterData `json:"data_centers"`
 }
 
+type ClusterVersion struct {
+	Cassandra string
+	Dse       string
+}
+
 type DatacenterData struct {
 	Id    int         `json:"id"`
 	Nodes []*NodeData `json:"nodes"`
@@ -31,11 +36,14 @@ type NodeData struct {
 
 const createUrl = "/cluster?data_centers=%s&cassandra_version=%s&dse_version=%s&name=%s&activity_log=%s&num_tokens=%d"
 
-func (process *Process) Create(startSession bool, numberOfNodes int) (*Cluster, error) {
+func (process *Process) Create(startSession bool, numberOfNodes int, version *ClusterVersion) (*Cluster, error) {
+	if version == nil {
+		version = &ClusterVersion{env.CassandraVersion, env.DseVersion}
+	}
 	name := "test_" + uuid.New().String()
 	resp, err := process.execHttp(
 		"POST",
-		fmt.Sprintf(createUrl, strconv.FormatInt(int64(numberOfNodes), 10), env.CassandraVersion, env.DseVersion, name, "true", 1),
+		fmt.Sprintf(createUrl, strconv.FormatInt(int64(numberOfNodes), 10), version.Cassandra, version.Dse, name, "true", 1),
 		nil)
 
 	if err != nil {

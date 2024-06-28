@@ -57,7 +57,7 @@ var (
 	releaseVersionColumn   = &message.ColumnMetadata{Keyspace: "system", Table: "local", Name: "release_version", Type: datatype.Varchar}
 	rpcAddressColumn       = &message.ColumnMetadata{Keyspace: "system", Table: "local", Name: "rpc_address", Type: datatype.Inet}
 	schemaVersionColumn    = &message.ColumnMetadata{Keyspace: "system", Table: "local", Name: "schema_version", Type: datatype.Uuid}
-	tokensColumn           = &message.ColumnMetadata{Keyspace: "system", Table: "local", Name: "tokens", Type: datatype.NewSetType(datatype.Varchar)}
+	tokensColumn           = &message.ColumnMetadata{Keyspace: "system", Table: "local", Name: "tokens", Type: datatype.NewSet(datatype.Varchar)}
 )
 
 // These columns are a subset of the total columns returned by OSS C* 3.11.2, and contain all the information that
@@ -78,6 +78,22 @@ var systemLocalColumns = []*message.ColumnMetadata{
 	tokensColumn,
 }
 
+// These columns are a subset of the total columns returned by OSS C* 2.0.0, and contain all the information that
+// drivers need in order to establish the cluster topology and determine its characteristics. Please note that RPC address
+// column is not present.
+var systemLocalColumnsProtocolV2 = []*message.ColumnMetadata{
+	keyColumn,
+	clusterNameColumn,
+	cqlVersionColumn,
+	datacenterColumn,
+	hostIdColumn,
+	partitionerColumn,
+	rackColumn,
+	releaseVersionColumn,
+	schemaVersionColumn,
+	tokensColumn,
+}
+
 var (
 	peerColumn                = &message.ColumnMetadata{Keyspace: "system", Table: "peers", Name: "peer", Type: datatype.Inet}
 	datacenterPeersColumn     = &message.ColumnMetadata{Keyspace: "system", Table: "peers", Name: "data_center", Type: datatype.Varchar}
@@ -86,7 +102,7 @@ var (
 	releaseVersionPeersColumn = &message.ColumnMetadata{Keyspace: "system", Table: "peers", Name: "release_version", Type: datatype.Varchar}
 	rpcAddressPeersColumn     = &message.ColumnMetadata{Keyspace: "system", Table: "peers", Name: "rpc_address", Type: datatype.Inet}
 	schemaVersionPeersColumn  = &message.ColumnMetadata{Keyspace: "system", Table: "peers", Name: "schema_version", Type: datatype.Uuid}
-	tokensPeersColumn         = &message.ColumnMetadata{Keyspace: "system", Table: "peers", Name: "tokens", Type: datatype.NewSetType(datatype.Varchar)}
+	tokensPeersColumn         = &message.ColumnMetadata{Keyspace: "system", Table: "peers", Name: "tokens", Type: datatype.NewSet(datatype.Varchar)}
 )
 
 // These columns are a subset of the total columns returned by OSS C* 3.11.2, and contain all the information that
@@ -114,11 +130,13 @@ var (
 
 func systemLocalRow(cluster string, datacenter string, customPartitioner string, addr net.Addr, version primitive.ProtocolVersion) message.Row {
 	addrBuf := &bytes.Buffer{}
-	inetAddr := addr.(*net.TCPAddr).IP
-	if inetAddr.To4() != nil {
-		addrBuf.Write(inetAddr.To4())
-	} else {
-		addrBuf.Write(inetAddr)
+	if addr != nil {
+		inetAddr := addr.(*net.TCPAddr).IP
+		if inetAddr.To4() != nil {
+			addrBuf.Write(inetAddr.To4())
+		} else {
+			addrBuf.Write(inetAddr)
+		}
 	}
 	// emulate {'-9223372036854775808'} (entire ring)
 	tokensBuf := &bytes.Buffer{}
@@ -135,18 +153,32 @@ func systemLocalRow(cluster string, datacenter string, customPartitioner string,
 	if customPartitioner != "" {
 		partitionerValue = message.Column(customPartitioner)
 	}
+	if version >= primitive.ProtocolVersion3 {
+		return message.Row{
+			keyValue,
+			addrBuf.Bytes(),
+			message.Column(cluster),
+			cqlVersionValue,
+			message.Column(datacenter),
+			hostIdValue,
+			addrBuf.Bytes(),
+			partitionerValue,
+			rackValue,
+			releaseVersionValue,
+			addrBuf.Bytes(),
+			schemaVersionValue,
+			tokensBuf.Bytes(),
+		}
+	}
 	return message.Row{
 		keyValue,
-		addrBuf.Bytes(),
 		message.Column(cluster),
 		cqlVersionValue,
 		message.Column(datacenter),
 		hostIdValue,
-		addrBuf.Bytes(),
 		partitionerValue,
 		rackValue,
 		releaseVersionValue,
-		addrBuf.Bytes(),
 		schemaVersionValue,
 		tokensBuf.Bytes(),
 	}

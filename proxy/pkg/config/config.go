@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
 	"github.com/datastax/zdm-proxy/proxy/pkg/common"
 	"github.com/kelseyhightower/envconfig"
 	log "github.com/sirupsen/logrus"
@@ -16,11 +17,12 @@ type Config struct {
 
 	// Global bucket
 
-	PrimaryCluster          string `default:"ORIGIN" split_words:"true"`
-	ReadMode                string `default:"PRIMARY_ONLY" split_words:"true"`
-	ReplaceCqlFunctions     bool   `default:"false" split_words:"true"`
-	AsyncHandshakeTimeoutMs int    `default:"4000" split_words:"true"`
-	LogLevel                string `default:"INFO" split_words:"true"`
+	PrimaryCluster                string `default:"ORIGIN" split_words:"true"`
+	ReadMode                      string `default:"PRIMARY_ONLY" split_words:"true"`
+	ReplaceCqlFunctions           bool   `default:"false" split_words:"true"`
+	AsyncHandshakeTimeoutMs       int    `default:"4000" split_words:"true"`
+	LogLevel                      string `default:"DEBUG" split_words:"true"`
+	ControlConnMaxProtocolVersion string `default:"3" split_words:"true"` // Numeric Cassandra OSS protocol version or Dse1 / Dse2
 
 	// Proxy Topology (also known as system.peers "virtualization") bucket
 
@@ -282,6 +284,11 @@ func (c *Config) Validate() error {
 		return err
 	}
 
+	_, err = c.ParseControlConnMaxProtocolVersion()
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -334,6 +341,24 @@ func (c *Config) ParseReadMode() (common.ReadMode, error) {
 		return common.ReadModeUndefined, fmt.Errorf("invalid value for ZDM_READ_MODE; possible values are: %v and %v",
 			ReadModePrimaryOnly, ReadModeDualAsyncOnSecondary)
 	}
+}
+
+func (c *Config) ParseControlConnMaxProtocolVersion() (primitive.ProtocolVersion, error) {
+	if strings.EqualFold(c.ControlConnMaxProtocolVersion, "DseV2") {
+		return primitive.ProtocolVersionDse2, nil
+	}
+	if strings.EqualFold(c.ControlConnMaxProtocolVersion, "DseV1") {
+		return primitive.ProtocolVersionDse1, nil
+	}
+	ver, err := strconv.ParseUint(c.ControlConnMaxProtocolVersion, 10, 32)
+	if err != nil {
+		return 0, fmt.Errorf("could not parse control connection max protocol version, valid values are "+
+			"2, 3, 4, DseV1, DseV2; original err: %w", err)
+	}
+	if ver < 2 || ver > 4 {
+		return 0, fmt.Errorf("invalid control connection max protocol version, valid values are 2, 3, 4, DseV1, DseV2")
+	}
+	return primitive.ProtocolVersion(ver), nil
 }
 
 func (c *Config) ParseLogLevel() (log.Level, error) {

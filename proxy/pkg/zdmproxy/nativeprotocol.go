@@ -262,10 +262,10 @@ var (
 	storagePortColumn                = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemLocalTableName, Name: "storage_port", Type: datatype.Int}
 	storagePortSslColumn             = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemLocalTableName, Name: "storage_port_ssl", Type: datatype.Int}
 	thriftVersionColumn              = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemLocalTableName, Name: "thrift_version", Type: datatype.Varchar}
-	tokensColumn                     = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemLocalTableName, Name: "tokens", Type: datatype.NewSetType(datatype.Varchar)}
-	truncatedAtColumn                = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemLocalTableName, Name: "truncated_at", Type: datatype.NewMapType(datatype.Uuid, datatype.Blob)}
+	tokensColumn                     = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemLocalTableName, Name: "tokens", Type: datatype.NewSet(datatype.Varchar)}
+	truncatedAtColumn                = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemLocalTableName, Name: "truncated_at", Type: datatype.NewMap(datatype.Uuid, datatype.Blob)}
 	workloadColumn                   = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemLocalTableName, Name: "workload", Type: datatype.Varchar}
-	workloadsColumn                  = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemLocalTableName, Name: "workloads", Type: datatype.NewSetType(datatype.Varchar)}
+	workloadsColumn                  = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemLocalTableName, Name: "workloads", Type: datatype.NewSet(datatype.Varchar)}
 )
 
 var systemLocalColumns = []*message.ColumnMetadata{
@@ -367,7 +367,7 @@ func columnFromSelector(
 		}
 
 		// we are assuming here that resultColumn always refers to an unaliased column because the cql grammar doesn't support alias recursion
-		aliasedColumn := resultColumn.Clone()
+		aliasedColumn := resultColumn.DeepCopy()
 		aliasedColumn.Name = s.alias
 		return aliasedColumn, isCountSelector, nil
 	default:
@@ -605,9 +605,9 @@ var (
 	serverIdPeersColumn               = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemPeersTableName, Name: "server_id", Type: datatype.Varchar}
 	storagePortPeersColumn            = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemPeersTableName, Name: "storage_port", Type: datatype.Int}
 	storagePortSslPeersColumn         = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemPeersTableName, Name: "storage_port_ssl", Type: datatype.Int}
-	tokensPeersColumn                 = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemPeersTableName, Name: "tokens", Type: datatype.NewSetType(datatype.Varchar)}
+	tokensPeersColumn                 = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemPeersTableName, Name: "tokens", Type: datatype.NewSet(datatype.Varchar)}
 	workloadPeersColumn               = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemPeersTableName, Name: "workload", Type: datatype.Varchar}
-	workloadsPeersColumn              = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemPeersTableName, Name: "workloads", Type: datatype.NewSetType(datatype.Varchar)}
+	workloadsPeersColumn              = &message.ColumnMetadata{Keyspace: systemKeyspaceName, Table: systemPeersTableName, Name: "workloads", Type: datatype.NewSet(datatype.Varchar)}
 )
 
 var systemPeersColumns = []*message.ColumnMetadata{

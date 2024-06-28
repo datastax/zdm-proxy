@@ -14,35 +14,41 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 const (
 	eventQueueLength = 2048
 
-	maxIncomingPending = 2048
-	maxOutgoingPending = 2048
+	maxIncomingPending   = 2048
+	maxIncomingPendingV2 = 128
+	maxOutgoingPending   = 2048
+	maxOutgoingPendingV2 = 128
 
 	timeOutsThreshold = 1024
 )
 
 type CqlConnection interface {
+	GetEndpoint() Endpoint
 	IsInitialized() bool
 	InitializeContext(version primitive.ProtocolVersion, ctx context.Context) error
 	SendAndReceive(request *frame.Frame, ctx context.Context) (*frame.Frame, error)
 	Close() error
 	Execute(msg message.Message, ctx context.Context) (message.Message, error)
-	Query(cql string, genericTypeCodec *GenericTypeCodec, version primitive.ProtocolVersion, ctx context.Context) (*ParsedRowSet, error)
+	Query(cql string, genericTypeCodec *GenericTypeCodec, ctx context.Context) (*ParsedRowSet, error)
 	SendHeartbeat(ctx context.Context) error
 	SetEventHandler(eventHandler func(f *frame.Frame, conn CqlConnection))
 	SubscribeToProtocolEvents(ctx context.Context, eventTypes []primitive.EventType) error
 	IsAuthEnabled() (bool, error)
+	GetProtocolVersion() *atomic.Value
 }
 
 // Not thread safe
 type cqlConn struct {
 	readTimeout           time.Duration
 	writeTimeout          time.Duration
+	endpoint              Endpoint
 	conn                  net.Conn
 	credentials           *AuthCredentials
 	initialized           bool
@@ -59,35 +65,42 @@ type cqlConn struct {
 	eventHandlerLock      *sync.Mutex
 	authEnabled           bool
 	frameProcessor        FrameProcessor
+	protocolVersion       *atomic.Value
 }
 
 var (
 	StreamIdMismatchErr = errors.New("stream id of the response is different from the stream id of the request")
 )
 
+func (c *cqlConn) GetEndpoint() Endpoint {
+	return c.endpoint
+}
+
 func (c *cqlConn) String() string {
 	return fmt.Sprintf("cqlConn{conn: %v}", c.conn.RemoteAddr().String())
 }
 
 func NewCqlConnection(
-	conn net.Conn,
+	endpoint Endpoint, conn net.Conn,
 	username string, password string,
 	readTimeout time.Duration, writeTimeout time.Duration,
-	conf *config.Config) CqlConnection {
+	conf *config.Config, protoVer primitive.ProtocolVersion) CqlConnection {
 	ctx, cFn := context.WithCancel(context.Background())
 	cqlConn := &cqlConn{
 		readTimeout:  readTimeout,
 		writeTimeout: writeTimeout,
+		endpoint:     endpoint,
 		conn:         conn,
 		credentials: &AuthCredentials{
 			Username: username,
 			Password: password,
 		},
-		initialized:           false,
-		ctx:                   ctx,
-		cancelFn:              cFn,
-		wg:                    &sync.WaitGroup{},
-		outgoingCh:            make(chan *frame.Frame, maxOutgoingPending),
+		initialized: false,
+		ctx:         ctx,
+		cancelFn:    cFn,
+		wg:          &sync.WaitGroup{},
+		// protoVer is the proposed protocol version using which we will try to establish connectivity
+		outgoingCh:            make(chan *frame.Frame, maxOutgoingPendingRequests(protoVer)),
 		eventsQueue:           make(chan *frame.Frame, eventQueueLength),
 		pendingOperations:     make(map[int16]chan *frame.Frame),
 		pendingOperationsLock: &sync.RWMutex{},
@@ -96,11 +109,20 @@ func NewCqlConnection(
 		eventHandlerLock:      &sync.Mutex{},
 		authEnabled:           true,
 		frameProcessor:        NewStreamIdProcessor(NewInternalStreamIdMapper(conf.ProxyMaxStreamIds, nil)),
+		protocolVersion:       &atomic.Value{},
 	}
 	cqlConn.StartRequestLoop()
 	cqlConn.StartResponseLoop()
 	cqlConn.StartEventLoop()
 	return cqlConn
+}
+
+func maxOutgoingPendingRequests(protocolVersion primitive.ProtocolVersion) int {
+	switch protocolVersion {
+	case primitive.ProtocolVersion2:
+		return maxOutgoingPendingV2
+	}
+	return maxOutgoingPending
 }
 
 func (c *cqlConn) SetEventHandler(eventHandler func(f *frame.Frame, conn CqlConnection)) {
@@ -231,12 +253,17 @@ func (c *cqlConn) IsAuthEnabled() (bool, error) {
 	return c.authEnabled, nil
 }
 
+func (c *cqlConn) GetProtocolVersion() *atomic.Value {
+	return c.protocolVersion
+}
+
 func (c *cqlConn) InitializeContext(version primitive.ProtocolVersion, ctx context.Context) error {
 	authEnabled, err := c.PerformHandshake(version, ctx)
 	if err != nil {
 		return fmt.Errorf("failed to perform handshake: %w", err)
 	}
 
+	c.protocolVersion.Store(version)
 	c.initialized = true
 	c.authEnabled = authEnabled
 	return nil
@@ -353,6 +380,8 @@ func (c *cqlConn) PerformHandshake(version primitive.ProtocolVersion, ctx contex
 					}
 				}
 			}
+		case *message.ProtocolError:
+			err = &ResponseError{Response: response}
 		default:
 			err = fmt.Errorf("expected AUTHENTICATE or READY, got %v", response.Body.Message)
 		}
@@ -367,15 +396,16 @@ func (c *cqlConn) PerformHandshake(version primitive.ProtocolVersion, ctx contex
 }
 
 func (c *cqlConn) Query(
-	cql string, genericTypeCodec *GenericTypeCodec, version primitive.ProtocolVersion, ctx context.Context) (*ParsedRowSet, error) {
+	cql string, genericTypeCodec *GenericTypeCodec, ctx context.Context) (*ParsedRowSet, error) {
 	queryMsg := &message.Query{
 		Query: cql,
 		Options: &message.QueryOptions{
-			Consistency: primitive.ConsistencyLevelLocalQuorum,
+			Consistency: primitive.ConsistencyLevelOne,
 		},
 	}
 
-	queryFrame := frame.NewFrame(ccProtocolVersion, -1, queryMsg)
+	version := c.protocolVersion.Load().(primitive.ProtocolVersion)
+	queryFrame := frame.NewFrame(version, -1, queryMsg)
 	var rowSet *ParsedRowSet
 	for {
 		localResponse, err := c.SendAndReceive(queryFrame, ctx)
@@ -429,7 +459,8 @@ func (c *cqlConn) Query(
 }
 
 func (c *cqlConn) Execute(msg message.Message, ctx context.Context) (message.Message, error) {
-	queryFrame := frame.NewFrame(ccProtocolVersion, -1, msg)
+	version := c.protocolVersion.Load().(primitive.ProtocolVersion)
+	queryFrame := frame.NewFrame(version, -1, msg)
 	localResponse, err := c.SendAndReceive(queryFrame, ctx)
 	if err != nil {
 		return nil, err
@@ -440,7 +471,8 @@ func (c *cqlConn) Execute(msg message.Message, ctx context.Context) (message.Mes
 
 func (c *cqlConn) SendHeartbeat(ctx context.Context) error {
 	optionsMsg := &message.Options{}
-	heartBeatFrame := frame.NewFrame(ccProtocolVersion, -1, optionsMsg)
+	version := c.protocolVersion.Load().(primitive.ProtocolVersion)
+	heartBeatFrame := frame.NewFrame(version, -1, optionsMsg)
 
 	response, err := c.SendAndReceive(heartBeatFrame, ctx)
 	if err != nil {

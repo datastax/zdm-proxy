@@ -891,7 +891,7 @@ func (ch *ClientHandler) processClientResponse(
 				return nil, fmt.Errorf("invalid cluster type: %v", responseClusterType)
 			}
 
-			newFrame = decodedFrame.Clone()
+			newFrame = decodedFrame.DeepCopy()
 			newUnprepared := &message.Unprepared{
 				ErrorMessage: fmt.Sprintf("Prepared query with ID %s not found (either the query was not prepared "+
 					"on this host (maybe the host has been restarted?) or you have prepared too many queries and it has "+
@@ -945,7 +945,7 @@ func (ch *ClientHandler) processPreparedResponse(
 				return nil, fmt.Errorf("replaced terms in the prepared statement but prepared result doesn't have variables metadata: %v", bodyMsg)
 			}
 
-			newResponse = response.Clone()
+			newResponse = response.DeepCopy()
 			newPreparedBody, ok := newResponse.Body.Message.(*message.PreparedResult)
 			if !ok {
 				return nil, fmt.Errorf("could not modify prepared result to remove generated parameters because "+
@@ -1655,7 +1655,7 @@ func (ch *ClientHandler) handleExecuteRequest(
 		}
 
 		replacementTimeUuids = ch.parameterModifier.generateTimeUuids(prepareRequestInfo)
-		newOriginRequest := clientRequest.Clone()
+		newOriginRequest := clientRequest.DeepCopy()
 		_, err = ch.parameterModifier.AddValuesToExecuteFrame(
 			newOriginRequest, prepareRequestInfo, preparedData.GetOriginVariablesMetadata(), replacementTimeUuids)
 		if err != nil {
@@ -1677,7 +1677,7 @@ func (ch *ClientHandler) handleExecuteRequest(
 			return nil, nil, nil, fmt.Errorf("could not decode execute raw frame: %w", err)
 		}
 
-		newTargetRequest := clientRequest.Clone()
+		newTargetRequest := clientRequest.DeepCopy()
 		var newTargetExecuteMsg *message.Execute
 		if len(replacedTerms) > 0 {
 			if replacementTimeUuids == nil {
@@ -1726,7 +1726,7 @@ func (ch *ClientHandler) handleBatchRequest(
 	var newOriginRequest *frame.Frame
 	var newOriginBatchMsg *message.Batch
 
-	newTargetRequest := decodedFrame.Clone()
+	newTargetRequest := decodedFrame.DeepCopy()
 	newTargetBatchMsg, ok := newTargetRequest.Body.Message.(*message.Batch)
 	if !ok {
 		return nil, nil, fmt.Errorf("expected Batch but got %v instead", newTargetRequest.Body.Message.GetOpCode())
@@ -1736,7 +1736,7 @@ func (ch *ClientHandler) handleBatchRequest(
 		prepareRequestInfo := preparedData.GetPrepareRequestInfo()
 		if len(prepareRequestInfo.GetReplacedTerms()) > 0 {
 			if newOriginRequest == nil {
-				newOriginRequest = decodedFrame.Clone()
+				newOriginRequest = decodedFrame.DeepCopy()
 				newOriginBatchMsg, ok = newOriginRequest.Body.Message.(*message.Batch)
 				if !ok {
 					return nil, nil, fmt.Errorf("expected Batch but got %v instead", newOriginRequest.Body.Message.GetOpCode())
@@ -1754,8 +1754,8 @@ func (ch *ClientHandler) handleBatchRequest(
 			}
 		}
 
-		originalQueryId := newTargetBatchMsg.Children[stmtIdx].QueryOrId.([]byte)
-		newTargetBatchMsg.Children[stmtIdx].QueryOrId = preparedData.GetTargetPreparedId()
+		originalQueryId := newTargetBatchMsg.Children[stmtIdx].Id
+		newTargetBatchMsg.Children[stmtIdx].Id = preparedData.GetTargetPreparedId()
 		log.Tracef("Replacing prepared ID %s within a BATCH with %s for target cluster.",
 			hex.EncodeToString(originalQueryId), hex.EncodeToString(preparedData.GetTargetPreparedId()))
 	}
@@ -1803,7 +1803,7 @@ func (ch *ClientHandler) sendToAsyncConnector(
 	}
 
 	if sendAlsoToAsync {
-		asyncRequest = asyncRequest.Clone() // forwardToAsyncOnly requests don't need to be cloned because they are only sent to 1 connector
+		asyncRequest = asyncRequest.DeepCopy() // forwardToAsyncOnly requests don't need to be cloned because they are only sent to 1 connector
 	}
 
 	if isFireAndForget {

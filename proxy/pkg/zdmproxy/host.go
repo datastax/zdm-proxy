@@ -7,6 +7,8 @@ import (
 	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
 	"net"
+	"strconv"
+	"strings"
 )
 
 type Host struct {
@@ -48,7 +50,7 @@ func (recv *Host) String() string {
 		hex.EncodeToString(recv.HostId[:]))
 }
 
-func ParseSystemLocalResult(rs *ParsedRowSet, defaultPort int) (map[string]*optionalColumn, *Host, error) {
+func ParseSystemLocalResult(rs *ParsedRowSet, ccEndpoint Endpoint, defaultPort int) (map[string]*optionalColumn, *Host, error) {
 	if len(rs.Rows) < 1 {
 		return nil, nil, fmt.Errorf("could not parse system local query result: query returned %d rows", len(rs.Rows))
 	}
@@ -60,6 +62,10 @@ func ParseSystemLocalResult(rs *ParsedRowSet, defaultPort int) (map[string]*opti
 	row := rs.Rows[0]
 
 	addr, port, err := ParseRpcAddress(false, row, defaultPort)
+	if addr == nil {
+		// could not resolve address from system.local table (e.g. not present in C* 2.0.0)
+		addr, port, err = ParseEndpoint(ccEndpoint)
+	}
 	if err != nil {
 		return nil, nil, err
 	}
@@ -179,6 +185,9 @@ func ParseRpcAddress(isPeersV2 bool, row *ParsedRow, defaultPort int) (net.IP, i
 	} else {
 		addr = parseRpcAddressLocalOrPeersV1(row)
 	}
+	if addr == nil {
+		return nil, -1, nil
+	}
 
 	if addr.IsUnspecified() {
 		peer, peerExists := row.GetByColumn("peer")
@@ -213,6 +222,20 @@ func ParseRpcAddress(isPeersV2 bool, row *ParsedRow, defaultPort int) (net.IP, i
 	}
 
 	return addr, rpcPort, nil
+}
+
+func ParseEndpoint(endpoint Endpoint) (net.IP, int, error) {
+	socketEndpoint := endpoint.GetSocketEndpoint()
+	parts := strings.Split(socketEndpoint, ":")
+	if len(parts) != 2 {
+		return nil, -1, fmt.Errorf("invalid endpoint: %s", socketEndpoint)
+	}
+	addr := parts[0]
+	port, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return nil, -1, fmt.Errorf("invalid endpoint: %s", socketEndpoint)
+	}
+	return net.ParseIP(addr), port, nil
 }
 
 func parseRpcPortPeersV2(row *ParsedRow) (int, bool) {

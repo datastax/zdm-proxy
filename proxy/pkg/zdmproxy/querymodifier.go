@@ -89,7 +89,7 @@ func (recv *QueryModifier) replaceQueryInBatchMessage(
 		return decodedFrame, []*statementReplacedTerms{}, statementsQueryData, nil
 	}
 
-	newFrame := decodedFrame.Clone()
+	newFrame := decodedFrame.DeepCopy()
 	newBatchMsg, ok := newFrame.Body.Message.(*message.Batch)
 	if !ok {
 		return nil, nil, nil, fmt.Errorf("expected Batch in cloned frame but got %v instead", newFrame.Body.Message.GetOpCode())
@@ -100,7 +100,7 @@ func (recv *QueryModifier) replaceQueryInBatchMessage(
 			return nil, nil, nil, fmt.Errorf("new query data statement index (%v) is greater or equal than "+
 				"number of batch child statements (%v)", newStmtQueryData.statementIndex, len(newBatchMsg.Children))
 		}
-		newBatchMsg.Children[newStmtQueryData.statementIndex].QueryOrId = newStmtQueryData.queryData.getQuery()
+		newBatchMsg.Children[newStmtQueryData.statementIndex].Query = newStmtQueryData.queryData.getQuery()
 	}
 
 	return newFrame, statementsReplacedTerms, newStatementsQueryData, nil
@@ -117,7 +117,7 @@ func (recv *QueryModifier) replaceQueryInQueryMessage(
 		return decodedFrame, []*statementReplacedTerms{}, statementsQueryData, nil
 	}
 	newQueryData, replacedTerms := stmtQueryData.queryData.replaceNowFunctionCallsWithLiteral()
-	newFrame := decodedFrame.Clone()
+	newFrame := decodedFrame.DeepCopy()
 	newQueryMsg, ok := newFrame.Body.Message.(*message.Query)
 	if !ok {
 		return nil, nil, nil, fmt.Errorf("expected Query in cloned frame but got %v instead", newFrame.Body.Message.GetOpCode())
@@ -143,7 +143,7 @@ func (recv *QueryModifier) replaceQueryInPrepareMessage(
 	} else {
 		newQueryData, replacedTerms = stmtQueryData.queryData.replaceNowFunctionCallsWithPositionalBindMarkers()
 	}
-	newFrame := decodedFrame.Clone()
+	newFrame := decodedFrame.DeepCopy()
 	newPrepareMsg, ok := newFrame.Body.Message.(*message.Prepare)
 	if !ok {
 		return nil, nil, nil, fmt.Errorf("expected Prepare in cloned frame but got %v instead", newFrame.Body.Message.GetOpCode())

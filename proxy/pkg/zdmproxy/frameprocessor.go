@@ -84,7 +84,7 @@ func setRawFrameStreamId(f *frame.RawFrame, id int16) *frame.RawFrame {
 	if f.Header.StreamId == id {
 		return f
 	}
-	newHeader := f.Header.Clone()
+	newHeader := f.Header.DeepCopy()
 	newHeader.StreamId = id
 	return &frame.RawFrame{
 		Header: newHeader,
@@ -98,7 +98,7 @@ func setFrameStreamId(f *frame.Frame, id int16) *frame.Frame {
 	if f.Header.StreamId == id {
 		return f
 	}
-	newHeader := f.Header.Clone()
+	newHeader := f.Header.DeepCopy()
 	newHeader.StreamId = id
 	return &frame.Frame{
 		Header: newHeader,

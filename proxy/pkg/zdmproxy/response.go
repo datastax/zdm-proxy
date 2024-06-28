@@ -1,6 +1,10 @@
 package zdmproxy
 
-import "github.com/datastax/go-cassandra-native-protocol/frame"
+import (
+	"fmt"
+	"github.com/datastax/go-cassandra-native-protocol/frame"
+	"github.com/datastax/go-cassandra-native-protocol/message"
+)
 
 type Response struct {
 	responseFrame *frame.RawFrame
@@ -35,5 +39,22 @@ func (r *Response) GetStreamId() int16 {
 		return r.responseFrame.Header.StreamId
 	} else {
 		return r.requestFrame.Header.StreamId
+	}
+}
+
+type ResponseError struct {
+	Response *frame.Frame
+}
+
+func (pre *ResponseError) Error() string {
+	return fmt.Sprintf("%v", pre.Response.Body.Message)
+}
+
+func (pre *ResponseError) IsProtocolError() bool {
+	switch pre.Response.Body.Message.(type) {
+	case *message.ProtocolError:
+		return true
+	default:
+		return false
 	}
 }
