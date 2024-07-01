@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"github.com/datastax/zdm-proxy/proxy/pkg/common"
 	"github.com/kelseyhightower/envconfig"
+	def "github.com/mcuadros/go-defaults"
 	log "github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v3"
 	"net"
 	"os"
+	"reflect"
 	"strconv"
 	"strings"
 )
@@ -125,6 +127,14 @@ type Config struct {
 	AsyncConnectorWriteBufferSizeBytes int `default:"4096" split_words:"true" yaml:"async_connector_write_buffer_size_bytes"`
 }
 
+var DefaultConfig *Config = nil
+
+func init() {
+	c := &Config{}
+	def.SetDefaults(c)
+	DefaultConfig = c
+}
+
 func (c *Config) String() string {
 	serializedConfig, _ := json.Marshal(c)
 	return string(serializedConfig)
@@ -148,10 +158,39 @@ func (c *Config) loadFromFiles() error {
 		defer file.Close()
 
 		dec := yaml.NewDecoder(file)
-		if err = dec.Decode(c); err != nil {
+		pc := &Config{}
+		def.SetDefaults(pc) // apply default tag, YAML decoder does not support it
+		if err = dec.Decode(pc); err != nil {
 			return fmt.Errorf("could not parse yaml file %v: %w", path, err)
 		}
+		err = c.mergeConfig(pc)
+		if err != nil {
+			return err
+		}
 	}
+	return nil
+}
+
+func (c *Config) mergeConfig(other *Config) error {
+	cRef := reflect.ValueOf(c).Elem()
+	otherRef := reflect.ValueOf(*other)
+	defaultRef := reflect.ValueOf(*DefaultConfig)
+	for i := 0; i < cRef.NumField(); i++ {
+		field := cRef.Type().Field(i).Tag.Get("yaml")
+		cVal := cRef.Field(i).Interface()
+		otherVal := otherRef.Field(i).Interface()
+		defaultVal := defaultRef.Field(i).Interface()
+
+		if otherVal != defaultVal {
+			// other value is different from the default
+			if cVal != defaultVal && cVal != otherVal {
+				return fmt.Errorf("inconsistent values [%v] and [%v] for parameter %v", cVal, otherVal, field)
+			} else {
+				cRef.Field(i).Set(otherRef.Field(i))
+			}
+		}
+	}
+
 	return nil
 }
 

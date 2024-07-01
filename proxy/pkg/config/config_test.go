@@ -159,7 +159,6 @@ origin_password: bar1
 	f2, err := createConfigFile(`
 target_username: foo2
 target_password: bar2
-target_contact_points: secret.hostname.com
 `)
 	defer removeConfigFile(f2)
 	require.Nil(t, err)
@@ -173,5 +172,30 @@ target_contact_points: secret.hostname.com
 	require.Equal(t, "foo2", c.TargetUsername)
 	require.Equal(t, "bar2", c.TargetPassword)
 	require.Equal(t, "origin.hostname.com", c.OriginContactPoints)
-	require.Equal(t, "secret.hostname.com", c.TargetContactPoints) // file value overrides env var
+	require.Equal(t, "target.hostname.com", c.TargetContactPoints)
+}
+
+func TestConfig_FailOnDuplicateValuePresent(t *testing.T) {
+	defer clearAllEnvVars()
+	clearAllEnvVars()
+
+	// publicly available information stored as environment variables
+	setOriginCredentialsEnvVars()
+	setTargetCredentialsEnvVars()
+	setOriginContactPointsAndPortEnvVars()
+	setTargetContactPointsAndPortEnvVars()
+
+	// try to overriding values should raise error
+	f, err := createConfigFile(`
+origin_username: different
+origin_password: different
+`)
+	defer removeConfigFile(f)
+	require.Nil(t, err)
+
+	setConfigFilesEnvVar(f.Name())
+
+	_, err = New().LoadConfig()
+	require.NotNil(t, err)
+	require.Contains(t, err.Error(), "inconsistent values [originUser] and [different] for parameter origin_username")
 }
