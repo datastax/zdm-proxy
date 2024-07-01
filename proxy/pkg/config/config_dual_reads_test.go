@@ -62,7 +62,7 @@ func TestConfig_ParseReadMode(t *testing.T) {
 			setOriginContactPointsAndPortEnvVars()
 			setTargetContactPointsAndPortEnvVars()
 
-			conf, err := New().LoadConfig()
+			conf, err := New().LoadConfig("")
 			if err != nil {
 				if tt.errExpected {
 					require.Equal(t, tt.errMsg, err.Error())

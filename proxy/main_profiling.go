@@ -15,6 +15,7 @@ import (
 
 var cpuProfile = flag.String("cpu_profile", "", "write cpu profile to the specified file")
 var memProfile = flag.String("mem_profile", "", "write memory profile to the specified file")
+var configFile = flag.String("config", "", "specify path to ZDM configuration file")
 
 func main() {
 
@@ -61,5 +62,5 @@ func main() {
 		}()
 	}
 
-	launchProxy(true)
+	launchProxy(true, configFile)
 }

@@ -17,7 +17,7 @@ func TestTargetConfig_WithBundleOnly(t *testing.T) {
 	// test-specific setup
 	setEnvVar("ZDM_TARGET_SECURE_CONNECT_BUNDLE_PATH", "/path/to/target/bundle")
 
-	conf, err := New().LoadConfig()
+	conf, err := New().LoadConfig("")
 	require.Nil(t, err)
 	require.Equal(t, conf.TargetSecureConnectBundlePath, "/path/to/target/bundle")
 	require.Empty(t, conf.TargetContactPoints)
@@ -36,7 +36,7 @@ func TestTargetConfig_WithHostnameAndPortOnly(t *testing.T) {
 	// test-specific setup
 	setTargetContactPointsAndPortEnvVars()
 
-	conf, err := New().LoadConfig()
+	conf, err := New().LoadConfig("")
 	require.Nil(t, err)
 	require.Equal(t, conf.TargetContactPoints, "target.hostname.com")
 	require.Equal(t, conf.TargetPort, 5647)
@@ -56,7 +56,7 @@ func TestTargetConfig_WithBundleAndHostname(t *testing.T) {
 	setTargetContactPointsAndPortEnvVars()
 	setTargetSecureConnectBundleEnvVar()
 
-	_, err := New().LoadConfig()
+	_, err := New().LoadConfig("")
 	require.Error(t, err, "TargetSecureConnectBundlePath and TargetContactPoints are "+
 		"mutually exclusive. Please specify only one of them.")
 }
@@ -72,7 +72,7 @@ func TestTargetConfig_WithoutBundleAndHostname(t *testing.T) {
 
 	// no test-specific setup in this case
 
-	_, err := New().LoadConfig()
+	_, err := New().LoadConfig("")
 	require.Error(t, err, "Both TargetSecureConnectBundlePath and TargetContactPoints are "+
 		"empty. Please specify either one of them.")
 }
@@ -89,7 +89,7 @@ func TestTargetConfig_WithHostnameButWithoutPort(t *testing.T) {
 	//test-specific setup
 	setEnvVar("ZDM_TARGET_CONTACT_POINTS", "target.hostname.com")
 
-	c, err := New().LoadConfig()
+	c, err := New().LoadConfig("")
 	require.Nil(t, err)
 	require.Equal(t, 9042, c.TargetPort)
 }
@@ -98,9 +98,7 @@ func TestConfig_LoadNotExistingFile(t *testing.T) {
 	defer clearAllEnvVars()
 	clearAllEnvVars()
 
-	setConfigFilesEnvVar("/not/existing/file")
-
-	_, err := New().LoadConfig()
+	_, err := New().LoadConfig("/not/existing/file")
 	require.NotNil(t, err)
 	require.Contains(t, err.Error(), "could not read configuration file /not/existing/file")
 }
@@ -125,9 +123,8 @@ proxy_listen_port: 39042
 `)
 	defer removeConfigFile(f)
 	require.Nil(t, err)
-	setConfigFilesEnvVar(f.Name())
 
-	c, err := New().LoadConfig()
+	c, err := New().LoadConfig(f.Name())
 	require.Nil(t, err)
 	require.Equal(t, "ORIGIN", c.PrimaryCluster)
 	require.Equal(t, "foo1", c.OriginUsername)
@@ -139,63 +136,5 @@ proxy_listen_port: 39042
 	require.Equal(t, "192.168.100.102", c.TargetContactPoints)
 	require.Equal(t, 29042, c.TargetPort)
 	require.Equal(t, 39042, c.ProxyListenPort)
-}
-
-func TestConfig_LoadConfigFromFileAndEnvVars(t *testing.T) {
-	defer clearAllEnvVars()
-	clearAllEnvVars()
-
-	// publicly available information stored as environment variables
-	setOriginContactPointsAndPortEnvVars()
-	setTargetContactPointsAndPortEnvVars()
-
-	// sensitive username and passwords stored inside two files
-	f1, err := createConfigFile(`
-origin_username: foo1
-origin_password: bar1
-`)
-	defer removeConfigFile(f1)
-	require.Nil(t, err)
-	f2, err := createConfigFile(`
-target_username: foo2
-target_password: bar2
-`)
-	defer removeConfigFile(f2)
-	require.Nil(t, err)
-
-	setConfigFilesEnvVar(f1.Name(), f2.Name())
-
-	c, err := New().LoadConfig()
-	require.Nil(t, err)
-	require.Equal(t, "foo1", c.OriginUsername)
-	require.Equal(t, "bar1", c.OriginPassword)
-	require.Equal(t, "foo2", c.TargetUsername)
-	require.Equal(t, "bar2", c.TargetPassword)
-	require.Equal(t, "origin.hostname.com", c.OriginContactPoints)
-	require.Equal(t, "target.hostname.com", c.TargetContactPoints)
-}
-
-func TestConfig_FailOnDuplicateValuePresent(t *testing.T) {
-	defer clearAllEnvVars()
-	clearAllEnvVars()
-
-	// publicly available information stored as environment variables
-	setOriginCredentialsEnvVars()
-	setTargetCredentialsEnvVars()
-	setOriginContactPointsAndPortEnvVars()
-	setTargetContactPointsAndPortEnvVars()
-
-	// try to overriding values should raise error
-	f, err := createConfigFile(`
-origin_username: different
-origin_password: different
-`)
-	defer removeConfigFile(f)
-	require.Nil(t, err)
-
-	setConfigFilesEnvVar(f.Name())
-
-	_, err = New().LoadConfig()
-	require.NotNil(t, err)
-	require.Contains(t, err.Error(), "inconsistent values [originUser] and [different] for parameter origin_username")
+	require.Equal(t, 4000, c.AsyncHandshakeTimeoutMs) // verify that defaults were applied
 }

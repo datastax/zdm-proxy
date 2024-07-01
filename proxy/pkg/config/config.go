@@ -10,7 +10,6 @@ import (
 	"gopkg.in/yaml.v3"
 	"net"
 	"os"
-	"reflect"
 	"strconv"
 	"strings"
 )
@@ -38,8 +37,8 @@ type Config struct {
 	OriginPort                    int    `default:"9042" split_words:"true" yaml:"origin_port"`
 	OriginSecureConnectBundlePath string `split_words:"true" yaml:"origin_secure_connect_bundle_path"`
 	OriginLocalDatacenter         string `split_words:"true" yaml:"origin_local_datacenter"`
-	OriginUsername                string `split_words:"true" yaml:"origin_username"`
-	OriginPassword                string `split_words:"true" json:"-" yaml:"origin_password"`
+	OriginUsername                string `required:"true" split_words:"true" yaml:"origin_username"`
+	OriginPassword                string `required:"true" split_words:"true" json:"-" yaml:"origin_password"`
 	OriginConnectionTimeoutMs     int    `default:"30000" split_words:"true" yaml:"origin_connection_timeout_ms"`
 
 	OriginTlsServerCaPath   string `split_words:"true" yaml:"origin_tls_server_ca_path"`
@@ -52,8 +51,8 @@ type Config struct {
 	TargetPort                    int    `default:"9042" split_words:"true" yaml:"target_port"`
 	TargetSecureConnectBundlePath string `split_words:"true" yaml:"target_secure_connect_bundle_path"`
 	TargetLocalDatacenter         string `split_words:"true" yaml:"target_local_datacenter"`
-	TargetUsername                string `split_words:"true" yaml:"target_username"`
-	TargetPassword                string `split_words:"true" json:"-" yaml:"target_password"`
+	TargetUsername                string `required:"true" split_words:"true" yaml:"target_username"`
+	TargetPassword                string `required:"true" split_words:"true" json:"-" yaml:"target_password"`
 	TargetConnectionTimeoutMs     int    `default:"30000" split_words:"true" yaml:"target_connection_timeout_ms"`
 
 	TargetTlsServerCaPath   string `split_words:"true" yaml:"target_tls_server_ca_path"`
@@ -127,14 +126,6 @@ type Config struct {
 	AsyncConnectorWriteBufferSizeBytes int `default:"4096" split_words:"true" yaml:"async_connector_write_buffer_size_bytes"`
 }
 
-var DefaultConfig *Config = nil
-
-func init() {
-	c := &Config{}
-	def.SetDefaults(c)
-	DefaultConfig = c
-}
-
 func (c *Config) String() string {
 	serializedConfig, _ := json.Marshal(c)
 	return string(serializedConfig)
@@ -145,52 +136,18 @@ func New() *Config {
 	return &Config{}
 }
 
-func (c *Config) loadFromFiles() error {
-	paths := os.Getenv("ZDM_CONFIG_FILES")
-	for _, path := range strings.Split(paths, ",") {
-		if len(path) == 0 {
-			continue
-		}
-		file, err := os.Open(path)
-		if err != nil {
-			return fmt.Errorf("could not read configuration file %v: %w", path, err)
-		}
-		defer file.Close()
-
-		dec := yaml.NewDecoder(file)
-		pc := &Config{}
-		def.SetDefaults(pc) // apply default tag, YAML decoder does not support it
-		if err = dec.Decode(pc); err != nil {
-			return fmt.Errorf("could not parse yaml file %v: %w", path, err)
-		}
-		err = c.mergeConfig(pc)
-		if err != nil {
-			return err
-		}
+func (c *Config) loadFromFile(configFile string) error {
+	file, err := os.Open(configFile)
+	if err != nil {
+		return fmt.Errorf("could not read configuration file %v: %w", configFile, err)
 	}
-	return nil
-}
+	defer file.Close()
 
-func (c *Config) mergeConfig(other *Config) error {
-	cRef := reflect.ValueOf(c).Elem()
-	otherRef := reflect.ValueOf(*other)
-	defaultRef := reflect.ValueOf(*DefaultConfig)
-	for i := 0; i < cRef.NumField(); i++ {
-		field := cRef.Type().Field(i).Tag.Get("yaml")
-		cVal := cRef.Field(i).Interface()
-		otherVal := otherRef.Field(i).Interface()
-		defaultVal := defaultRef.Field(i).Interface()
-
-		if otherVal != defaultVal {
-			// other value is different from the default
-			if cVal != defaultVal && cVal != otherVal {
-				return fmt.Errorf("inconsistent values [%v] and [%v] for parameter %v", cVal, otherVal, field)
-			} else {
-				cRef.Field(i).Set(otherRef.Field(i))
-			}
-		}
+	def.SetDefaults(c) // apply default tag, it is not supported by YAML decoder
+	dec := yaml.NewDecoder(file)
+	if err = dec.Decode(c); err != nil {
+		return fmt.Errorf("could not parse yaml file %v: %w", configFile, err)
 	}
-
 	return nil
 }
 
@@ -205,13 +162,14 @@ func (c *Config) parseEnvVars() error {
 	return nil
 }
 
-func (c *Config) LoadConfig() (*Config, error) {
-	err := c.parseEnvVars()
-	if err != nil {
-		return nil, err
-	}
+func (c *Config) LoadConfig(configFile string) (*Config, error) {
+	var err error
 
-	err = c.loadFromFiles()
+	if configFile != "" {
+		err = c.loadFromFile(configFile)
+	} else {
+		err = c.parseEnvVars()
+	}
 	if err != nil {
 		return nil, err
 	}
