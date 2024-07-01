@@ -191,7 +191,7 @@ func TestOriginConfig_ClusterTlsConfig(t *testing.T) {
 			setTargetContactPointsAndPortEnvVars()
 
 			var tlsConf *common.ClusterTlsConfig
-			conf, err := New().ParseEnvVars()
+			conf, err := New().LoadConfig()
 			if err != nil {
 				if tt.errExpected {
 					require.Equal(t, tt.errMsg, err.Error())
@@ -389,7 +389,7 @@ func TestTargetConfig_ClusterTlsConfig(t *testing.T) {
 			setOriginContactPointsAndPortEnvVars()
 
 			var tlsConf *common.ClusterTlsConfig
-			conf, err := New().ParseEnvVars()
+			conf, err := New().LoadConfig()
 			if err != nil {
 				if tt.errExpected {
 					// Expected configuration validation error

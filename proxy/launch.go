@@ -24,7 +24,8 @@ func runSignalListener(cancelFunc context.CancelFunc) {
 }
 
 func launchProxy(profilingSupported bool) {
-	conf, err := config.New().ParseEnvVars()
+	conf, err := config.New().LoadConfig()
+
 	if err != nil {
 		log.Errorf("Error loading configuration: %v. Aborting startup.", err)
 		os.Exit(-1)

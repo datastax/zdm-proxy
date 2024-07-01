@@ -6,7 +6,9 @@ import (
 	"github.com/datastax/zdm-proxy/proxy/pkg/common"
 	"github.com/kelseyhightower/envconfig"
 	log "github.com/sirupsen/logrus"
+	"gopkg.in/yaml.v3"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 )
@@ -16,111 +18,111 @@ type Config struct {
 
 	// Global bucket
 
-	PrimaryCluster          string `default:"ORIGIN" split_words:"true"`
-	ReadMode                string `default:"PRIMARY_ONLY" split_words:"true"`
-	ReplaceCqlFunctions     bool   `default:"false" split_words:"true"`
-	AsyncHandshakeTimeoutMs int    `default:"4000" split_words:"true"`
-	LogLevel                string `default:"INFO" split_words:"true"`
+	PrimaryCluster          string `default:"ORIGIN" split_words:"true" yaml:"primary_cluster"`
+	ReadMode                string `default:"PRIMARY_ONLY" split_words:"true" yaml:"read_mode"`
+	ReplaceCqlFunctions     bool   `default:"false" split_words:"true" yaml:"replace_cql_functions"`
+	AsyncHandshakeTimeoutMs int    `default:"4000" split_words:"true" yaml:"async_handshake_timeout_ms"`
+	LogLevel                string `default:"INFO" split_words:"true" yaml:"log_level"`
 
 	// Proxy Topology (also known as system.peers "virtualization") bucket
 
-	ProxyTopologyIndex     int    `default:"0" split_words:"true"`
-	ProxyTopologyAddresses string `split_words:"true"`
-	ProxyTopologyNumTokens int    `default:"8" split_words:"true"`
+	ProxyTopologyIndex     int    `default:"0" split_words:"true" yaml:"proxy_topology_index"`
+	ProxyTopologyAddresses string `split_words:"true" yaml:"proxy_topology_addresses"`
+	ProxyTopologyNumTokens int    `default:"8" split_words:"true" yaml:"proxy_topology_num_tokens"`
 
 	// Origin bucket
 
-	OriginContactPoints           string `split_words:"true"`
-	OriginPort                    int    `default:"9042" split_words:"true"`
-	OriginSecureConnectBundlePath string `split_words:"true"`
-	OriginLocalDatacenter         string `split_words:"true"`
-	OriginUsername                string `required:"true" split_words:"true"`
-	OriginPassword                string `required:"true" split_words:"true" json:"-"`
-	OriginConnectionTimeoutMs     int    `default:"30000" split_words:"true"`
+	OriginContactPoints           string `split_words:"true" yaml:"origin_contact_points"`
+	OriginPort                    int    `default:"9042" split_words:"true" yaml:"origin_port"`
+	OriginSecureConnectBundlePath string `split_words:"true" yaml:"origin_secure_connect_bundle_path"`
+	OriginLocalDatacenter         string `split_words:"true" yaml:"origin_local_datacenter"`
+	OriginUsername                string `split_words:"true" yaml:"origin_username"`
+	OriginPassword                string `split_words:"true" json:"-" yaml:"origin_password"`
+	OriginConnectionTimeoutMs     int    `default:"30000" split_words:"true" yaml:"origin_connection_timeout_ms"`
 
-	OriginTlsServerCaPath   string `split_words:"true"`
-	OriginTlsClientCertPath string `split_words:"true"`
-	OriginTlsClientKeyPath  string `split_words:"true"`
+	OriginTlsServerCaPath   string `split_words:"true" yaml:"origin_tls_server_ca_path"`
+	OriginTlsClientCertPath string `split_words:"true" yaml:"origin_tls_client_cert_path"`
+	OriginTlsClientKeyPath  string `split_words:"true" yaml:"origin_tls_client_key_path"`
 
 	// Target bucket
 
-	TargetContactPoints           string `split_words:"true"`
-	TargetPort                    int    `default:"9042" split_words:"true"`
-	TargetSecureConnectBundlePath string `split_words:"true"`
-	TargetLocalDatacenter         string `split_words:"true"`
-	TargetUsername                string `required:"true" split_words:"true"`
-	TargetPassword                string `required:"true" split_words:"true" json:"-"`
-	TargetConnectionTimeoutMs     int    `default:"30000" split_words:"true"`
+	TargetContactPoints           string `split_words:"true" yaml:"target_contact_points"`
+	TargetPort                    int    `default:"9042" split_words:"true" yaml:"target_port"`
+	TargetSecureConnectBundlePath string `split_words:"true" yaml:"target_secure_connect_bundle_path"`
+	TargetLocalDatacenter         string `split_words:"true" yaml:"target_local_datacenter"`
+	TargetUsername                string `split_words:"true" yaml:"target_username"`
+	TargetPassword                string `split_words:"true" json:"-" yaml:"target_password"`
+	TargetConnectionTimeoutMs     int    `default:"30000" split_words:"true" yaml:"target_connection_timeout_ms"`
 
-	TargetTlsServerCaPath   string `split_words:"true"`
-	TargetTlsClientCertPath string `split_words:"true"`
-	TargetTlsClientKeyPath  string `split_words:"true"`
+	TargetTlsServerCaPath   string `split_words:"true" yaml:"target_tls_server_ca_path"`
+	TargetTlsClientCertPath string `split_words:"true" yaml:"target_tls_client_cert_path"`
+	TargetTlsClientKeyPath  string `split_words:"true" yaml:"target_tls_client_key_path"`
 
 	// Proxy bucket
 
-	ProxyListenAddress        string `default:"localhost" split_words:"true"`
-	ProxyListenPort           int    `default:"14002" split_words:"true"`
-	ProxyRequestTimeoutMs     int    `default:"10000" split_words:"true"`
-	ProxyMaxClientConnections int    `default:"1000" split_words:"true"`
-	ProxyMaxStreamIds         int    `default:"2048" split_words:"true"`
+	ProxyListenAddress        string `default:"localhost" split_words:"true" yaml:"proxy_listen_address"`
+	ProxyListenPort           int    `default:"14002" split_words:"true" yaml:"proxy_listen_port"`
+	ProxyRequestTimeoutMs     int    `default:"10000" split_words:"true" yaml:"proxy_request_timeout_ms"`
+	ProxyMaxClientConnections int    `default:"1000" split_words:"true" yaml:"proxy_max_client_connections"`
+	ProxyMaxStreamIds         int    `default:"2048" split_words:"true" yaml:"proxy_max_stream_ids"`
 
-	ProxyTlsCaPath            string `split_words:"true"`
-	ProxyTlsCertPath          string `split_words:"true"`
-	ProxyTlsKeyPath           string `split_words:"true"`
-	ProxyTlsRequireClientAuth bool   `split_words:"true"`
+	ProxyTlsCaPath            string `split_words:"true" yaml:"proxy_tls_ca_path"`
+	ProxyTlsCertPath          string `split_words:"true" yaml:"proxy_tls_cert_path"`
+	ProxyTlsKeyPath           string `split_words:"true" yaml:"proxy_tls_key_path"`
+	ProxyTlsRequireClientAuth bool   `split_words:"true" yaml:"proxy_tls_require_client_auth"`
 
 	// Metrics bucket
 
-	MetricsEnabled bool   `default:"true" split_words:"true"`
-	MetricsAddress string `default:"localhost" split_words:"true"`
-	MetricsPort    int    `default:"14001" split_words:"true"`
-	MetricsPrefix  string `default:"zdm" split_words:"true"`
+	MetricsEnabled bool   `default:"true" split_words:"true" yaml:"metrics_enabled"`
+	MetricsAddress string `default:"localhost" split_words:"true" yaml:"metrics_address"`
+	MetricsPort    int    `default:"14001" split_words:"true" yaml:"metrics_port"`
+	MetricsPrefix  string `default:"zdm" split_words:"true" yaml:"metrics_prefix"`
 
-	MetricsOriginLatencyBucketsMs    string `default:"1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000" split_words:"true"`
-	MetricsTargetLatencyBucketsMs    string `default:"1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000" split_words:"true"`
-	MetricsAsyncReadLatencyBucketsMs string `default:"1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000" split_words:"true"`
+	MetricsOriginLatencyBucketsMs    string `default:"1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000" split_words:"true" yaml:"metrics_origin_latency_buckets_ms"`
+	MetricsTargetLatencyBucketsMs    string `default:"1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000" split_words:"true" yaml:"metrics_target_latency_buckets_ms"`
+	MetricsAsyncReadLatencyBucketsMs string `default:"1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000" split_words:"true" yaml:"metrics_async_read_latency_buckets_ms"`
 
 	// Heartbeat bucket
 
-	HeartbeatIntervalMs int `default:"30000" split_words:"true"`
+	HeartbeatIntervalMs int `default:"30000" split_words:"true" yaml:"heartbeat_interval_ms"`
 
-	HeartbeatRetryIntervalMinMs int     `default:"250" split_words:"true"`
-	HeartbeatRetryIntervalMaxMs int     `default:"30000" split_words:"true"`
-	HeartbeatRetryBackoffFactor float64 `default:"2" split_words:"true"`
-	HeartbeatFailureThreshold   int     `default:"1" split_words:"true"`
+	HeartbeatRetryIntervalMinMs int     `default:"250" split_words:"true" yaml:"heartbeat_retry_interval_min_ms"`
+	HeartbeatRetryIntervalMaxMs int     `default:"30000" split_words:"true" yaml:"heartbeat_retry_interval_max_ms"`
+	HeartbeatRetryBackoffFactor float64 `default:"2" split_words:"true" yaml:"heartbeat_retry_backoff_factor"`
+	HeartbeatFailureThreshold   int     `default:"1" split_words:"true" yaml:"heartbeat_failure_threshold"`
 
 	//////////////////////////////////////////////////////////////////////
 	/// THE SETTINGS BELOW AREN'T SUPPORTED AND MAY CHANGE AT ANY TIME ///
 	//////////////////////////////////////////////////////////////////////
 
-	SystemQueriesMode string `default:"ORIGIN" split_words:"true"`
+	SystemQueriesMode string `default:"ORIGIN" split_words:"true" yaml:"system_queries_mode"`
 
-	ForwardClientCredentialsToOrigin bool `default:"false" split_words:"true"` // only takes effect if both clusters have auth enabled
+	ForwardClientCredentialsToOrigin bool `default:"false" split_words:"true" yaml:"forward_client_credentials_to_origin"` // only takes effect if both clusters have auth enabled
 
-	OriginEnableHostAssignment bool `default:"true" split_words:"true"`
-	TargetEnableHostAssignment bool `default:"true" split_words:"true"`
+	OriginEnableHostAssignment bool `default:"true" split_words:"true" yaml:"origin_enable_host_assignment"`
+	TargetEnableHostAssignment bool `default:"true" split_words:"true" yaml:"target_enable_host_assignment"`
 
 	//////////////////////////////////////////////////////////////////////////////////////////////////////////
 	/// THE SETTINGS BELOW ARE FOR PERFORMANCE TUNING; THEY AREN'T SUPPORTED AND MAY CHANGE AT ANY TIME //////
 	//////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-	RequestWriteQueueSizeFrames int `default:"128" split_words:"true"`
-	RequestWriteBufferSizeBytes int `default:"4096" split_words:"true"`
-	RequestReadBufferSizeBytes  int `default:"32768" split_words:"true"`
+	RequestWriteQueueSizeFrames int `default:"128" split_words:"true" yaml:"request_write_queue_size_frames"`
+	RequestWriteBufferSizeBytes int `default:"4096" split_words:"true" yaml:"request_write_buffer_size_bytes"`
+	RequestReadBufferSizeBytes  int `default:"32768" split_words:"true" yaml:"request_read_buffer_size_bytes"`
 
-	ResponseWriteQueueSizeFrames int `default:"128" split_words:"true"`
-	ResponseWriteBufferSizeBytes int `default:"8192" split_words:"true"`
-	ResponseReadBufferSizeBytes  int `default:"32768" split_words:"true"`
+	ResponseWriteQueueSizeFrames int `default:"128" split_words:"true" yaml:"response_write_queue_size_frames"`
+	ResponseWriteBufferSizeBytes int `default:"8192" split_words:"true" yaml:"response_write_buffer_size_bytes"`
+	ResponseReadBufferSizeBytes  int `default:"32768" split_words:"true" yaml:"response_read_buffer_size_bytes"`
 
-	RequestResponseMaxWorkers int `default:"-1" split_words:"true"`
-	WriteMaxWorkers           int `default:"-1" split_words:"true"`
-	ReadMaxWorkers            int `default:"-1" split_words:"true"`
-	ListenerMaxWorkers        int `default:"-1" split_words:"true"`
+	RequestResponseMaxWorkers int `default:"-1" split_words:"true" yaml:"request_response_max_workers"`
+	WriteMaxWorkers           int `default:"-1" split_words:"true" yaml:"write_max_workers"`
+	ReadMaxWorkers            int `default:"-1" split_words:"true" yaml:"read_max_workers"`
+	ListenerMaxWorkers        int `default:"-1" split_words:"true" yaml:"listener_max_workers"`
 
-	EventQueueSizeFrames int `default:"12" split_words:"true"`
+	EventQueueSizeFrames int `default:"12" split_words:"true" yaml:"event_queue_size_frames"`
 
-	AsyncConnectorWriteQueueSizeFrames int `default:"2048" split_words:"true"`
-	AsyncConnectorWriteBufferSizeBytes int `default:"4096" split_words:"true"`
+	AsyncConnectorWriteQueueSizeFrames int `default:"2048" split_words:"true" yaml:"async_connector_write_queue_size_frames"`
+	AsyncConnectorWriteBufferSizeBytes int `default:"4096" split_words:"true" yaml:"async_connector_write_buffer_size_bytes"`
 }
 
 func (c *Config) String() string {
@@ -133,12 +135,46 @@ func New() *Config {
 	return &Config{}
 }
 
+func (c *Config) loadFromFiles() error {
+	paths := os.Getenv("ZDM_CONFIG_FILES")
+	for _, path := range strings.Split(paths, ",") {
+		if len(path) == 0 {
+			continue
+		}
+		file, err := os.Open(path)
+		if err != nil {
+			return fmt.Errorf("could not read configuration file %v: %w", path, err)
+		}
+		defer file.Close()
+
+		dec := yaml.NewDecoder(file)
+		if err = dec.Decode(c); err != nil {
+			return fmt.Errorf("could not parse yaml file %v: %w", path, err)
+		}
+	}
+	return nil
+}
+
 // ParseEnvVars fills out the fields of the Config struct according to envconfig rules
 // See: Usage @ https://github.com/kelseyhightower/envconfig
-func (c *Config) ParseEnvVars() (*Config, error) {
+func (c *Config) parseEnvVars() error {
 	err := envconfig.Process("ZDM", c)
 	if err != nil {
-		return nil, fmt.Errorf("could not load environment variables: %w", err)
+		return fmt.Errorf("could not load environment variables: %w", err)
+	}
+
+	return nil
+}
+
+func (c *Config) LoadConfig() (*Config, error) {
+	err := c.parseEnvVars()
+	if err != nil {
+		return nil, err
+	}
+
+	err = c.loadFromFiles()
+	if err != nil {
+		return nil, err
 	}
 
 	err = c.Validate()
@@ -148,7 +184,7 @@ func (c *Config) ParseEnvVars() (*Config, error) {
 
 	log.Infof("Parsed configuration: %v", c)
 
-	return c, nil
+	return c, err
 }
 
 func lookupFirstIp4(host string) (net.IP, error) {

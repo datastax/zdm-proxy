@@ -1,6 +1,9 @@
 package config
 
-import "os"
+import (
+	"os"
+	"strings"
+)
 
 type envVar struct {
 	vName  string
@@ -33,6 +36,24 @@ func setOriginSecureConnectBundleEnvVar() {
 
 func setTargetSecureConnectBundleEnvVar() {
 	setEnvVar("ZDM_TARGET_SECURE_CONNECT_BUNDLE_PATH", "/path/to/origin/bundle")
+}
+
+func setConfigFilesEnvVar(paths ...string) {
+	setEnvVar("ZDM_CONFIG_FILES", strings.Join(paths[:], ","))
+}
+
+func createConfigFile(content string) (*os.File, error) {
+	f, err := os.CreateTemp("", "config.*.yml")
+	if err == nil {
+		_, err = f.WriteString(content)
+	}
+	return f, err
+}
+
+func removeConfigFile(f *os.File) {
+	if f != nil {
+		_ = os.Remove(f.Name())
+	}
 }
 
 func setEnvVar(key string, value string) {
