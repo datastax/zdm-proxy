@@ -1,0 +1,164 @@
+# This variable determines which cluster is currently considered the primary cluster.
+# At the start of the migration, the primary cluster is Origin, as it contains all the data.
+# In Phase 4 of the migration, once all the existing data has been transferred and any validation/reconciliation
+# step has been successfully executed, you can switch the primary cluster to be Target.
+# Valid values: ORIGIN, TARGET.
+primary_cluster: ORIGIN
+
+# This variable determines how reads are handled by the ZDM Proxy. Valid values:
+# PRIMARY_ONLY - reads are only sent synchronously to the primary cluster. This is the default behavior.
+# DUAL_ASYNC_ON_SECONDARY - reads are sent synchronously to the primary cluster and also asynchronously
+# to the secondary cluster. See Phase 3: Enable asynchronous dual reads.
+read_mode: PRIMARY_ONLY
+
+# Whether the ZDM Proxy should replace standard CQL function calls in write
+# requests with a value computed at proxy level. Currently, only the replacement
+# of now() is supported. Disabled by default. Enabling this will have a noticeable performance impact.
+replace_cql_functions: false
+
+# Timeout (in ms) when performing the initialization (handshake) of a proxy-to-secondary cluster
+# connection that will be used solely for asynchronous dual reads. If this timeout occurs, the asynchronous
+# reads will not be sent. This has no impact on the handling of synchronous requests: the ZDM Proxy will
+# continue to handle all synchronous reads and writes normally.
+async_handshake_timeout_ms: 4000
+
+# Specifies logging level.
+log_level: INFO
+
+# TODO: ProxyTopologyIndex
+# TODO: ProxyTopologyAddresses
+# TODO: ProxyTopologyNumTokens
+
+# Comma separated list of origin cluster contact points.
+origin_contact_points: origin.datastax.com
+
+# Port used when connecting to nodes from origin cluster.
+origin_port: 9042
+
+# If origin cluster is DataStax Astra, path to secure connection bundle.
+# origin_secure_connect_bundle_path:
+
+# Local data center for origin cluster.
+# origin_local_datacenter:
+
+# Origin cluster username.
+origin_username: user1
+
+# Origin cluster password.
+origin_password: pass1
+
+# Timeout (in ms) when attempting to establish a connection from the proxy to origin cluster.
+origin_connection_timeout_ms: 30000
+
+# CA certificate used when verifying identity of origin nodes.
+# origin_tls_server_ca_path:
+
+# Public key used when establishing connectivity with origin cluster.
+# origin_tls_client_cert_path:
+
+# Private key used to secure communication with origin cluster.
+# origin_tls_client_key_path:
+
+# Comma separated ist of target cluster contact points.
+target_contact_points: target.datastax.com
+
+# If target cluster is DataStax Astra, path to secure connection bundle.
+# target_secure_connect_bundle_path:
+
+# Local data center for target cluster.
+# target_local_datacenter: DC1
+
+# Port used when connecting to nodes from target cluster.
+target_port: 9042
+
+# Target cluster username.
+target_username: user2
+
+# Target cluster password.
+target_password: pass2
+
+# Timeout (in ms) when attempting to establish a connection from the proxy to target cluster.
+target_connection_timeout_ms: 30000
+
+# CA certificate used when verifying identity of target nodes.
+# target_tls_server_ca_path:
+
+# Public key used when establishing connectivity with target cluster.
+# target_tls_client_cert_path:
+
+# Private key used to secure communication with target cluster.
+# target_tls_client_key_path:
+
+# Listen address of ZDM proxy.
+proxy_listen_address: localhost
+
+# Port number on which ZDM proxy is listening.
+proxy_listen_port: 14002
+
+# Global timeout (in ms) of a request at proxy level. This variable determines how long the
+# ZDM Proxy will wait for one cluster (in case of reads) or both clusters (in case of writes)
+# to reply to a request. If this timeout is reached, the ZDM Proxy will abandon that request
+# and no longer consider it as pending, thus freeing up the corresponding internal resources.
+# Note that, in this case, the ZDM Proxy will not return any result or error: when the client
+# application’s own timeout is reached, the driver will time out the request on its side.
+proxy_request_timeout_ms: 10000
+
+# Defines hot many clients may connect to single ZDM proxy instance. ZDM proxy closes
+# connection if threshold is reached.
+proxy_max_client_connections: 1000
+
+# In the CQL protocol every request has a unique id, named stream id. This variable allows
+# you to tune the maximum pool size of the available stream ids managed by the ZDM Proxy
+# per client connection. In the application client, the stream ids are managed internally
+# by the driver, and in most drivers the max number is 2048 (the same default value used
+# in the proxy). If you have a custom driver configuration with a higher value, you should
+# change this property accordingly.
+proxy_max_stream_ids: 2048
+
+# CA certificate used when verifying identity of connecting client applications.
+# proxy_tls_ca_path:
+
+# Public key used when establishing connectivity with client applications.
+# proxy_tls_cert_path:
+
+# Private key used by ZDM proxy to encrypt connection between itself and client applications
+# proxy_tls_key_path:
+
+# If true enforces mutual TLS between proxy and client applications
+# proxy_tls_require_client_auth: false
+
+# If true ZDM proxy exposes performance metrics in Prometheus format.
+metrics_enabled: true
+
+# Network interface used to expose Prometheus metrics.
+metrics_address: localhost
+
+# Port used to expose Prometheus metrics.
+metrics_port: 14001
+
+# Prefix prepended to each metric name.
+metrics_prefix: zdm
+
+# List of histogram buckets for measuring latency of origin cluster
+metrics_origin_latency_buckets_ms: 1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000
+
+# List of histogram buckets for measuring latency of target cluster
+metrics_target_latency_buckets_ms: 1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000
+
+# List of histogram buckets for measuring latency of asynchronous
+# read requests routed to target cluster. See parameter read_mode.
+metrics_async_read_latency_buckets_ms: 1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000
+
+# Frequency (in ms) with which heartbeats will be sent on cluster connections
+# (i.e. all control and request connections to Origin and Target). Heartbeats
+# keep idle connections alive.
+heartbeat_interval_ms: 30000
+
+# Below properties define reconnection strategy for establishing control connection.
+heartbeat_retry_interval_min_ms: 250
+heartbeat_retry_interval_max_ms: 30000
+heartbeat_retry_backoff_factor: 2
+
+# Control connection failure threshold. If threshold is exceeded,
+# readiness probe of ZDM will report failure and pod will be recreated.
+heartbeat_failure_threshold: 1
