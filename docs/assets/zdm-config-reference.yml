@@ -25,14 +25,18 @@ read_mode: PRIMARY_ONLY
 # Specifies logging level.
 # log_level: INFO
 
-# List of peer ZDM proxy instances. This configuration parameter should be identical through all ZDM proxies.
+# List of peer ZDM proxy instances. This configuration parameter should be *identical*
+# (elements form the list placed in the same order) through all ZDM proxies.
 # proxy_topology_addresses: 127.0.1.1, 127.0.1.2, 127.0.1.3
 
 # Index of local ZDM proxy instance within "proxy_topology_addresses" list.
+# Given "proxy_topology_addresses: 127.0.1.1, 127.0.1.2, 127.0.1.3", value of
+# "proxy_topology_index" should equal "0" in the configuration file present on server
+# 127.0.1.1, "1" on 127.0.1.2 and "2" on 127.0.1.3.
 # proxy_topology_index: 0
 
-# Number of tokens each proxy isntance owns. The default value of 8 should workf for majority of use-case.
-# To learn more about this concept, look into "virtual nodes" in Apache Cassandra.
+# Number of tokens each proxy instance owns. The default value of 8 should work for
+# the majority of use case. To learn more about this concept, look into "virtual nodes" in Apache Cassandra.
 # proxy_topology_num_tokens: 8
 
 # Comma separated list of origin cluster contact points.
