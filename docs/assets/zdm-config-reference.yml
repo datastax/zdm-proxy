@@ -40,12 +40,16 @@ read_mode: PRIMARY_ONLY
 # proxy_topology_num_tokens: 8
 
 # Comma separated list of origin cluster contact points.
+# When this configuration is present, "origin_secure_connect_bundle_path"
+# should be left blank.
 origin_contact_points: 127.0.0.1
 
 # Port used when connecting to nodes from origin cluster.
 origin_port: 9042
 
 # If origin cluster is DataStax Astra, path to secure connection bundle.
+# Users do not need to list contact points ("origin_contact_points") when
+# they leverage connection bundle mechanism.
 # origin_secure_connect_bundle_path:
 
 # Local data center for origin cluster.
@@ -70,9 +74,13 @@ origin_password: pass1
 # origin_tls_client_key_path:
 
 # Comma separated ist of target cluster contact points.
+# When this configuration is present, "target_secure_connect_bundle_path"
+# should be left blank.
 target_contact_points: 127.0.0.2
 
 # If target cluster is DataStax Astra, path to secure connection bundle.
+# Users do not need to list contact points ("target_contact_points") when
+# they leverage connection bundle mechanism.
 # target_secure_connect_bundle_path:
 
 # Local data center for target cluster.
