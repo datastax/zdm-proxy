@@ -10,10 +10,7 @@ import (
 )
 
 func main() {
-
 	flag.Parse()
 
-	displayVersion()
-
-	launchProxy(false, *configFileOpt)
+	launchProxy(false)
 }

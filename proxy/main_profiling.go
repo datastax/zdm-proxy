@@ -17,10 +17,7 @@ var cpuProfile = flag.String("cpu_profile", "", "write cpu profile to the specif
 var memProfile = flag.String("mem_profile", "", "write memory profile to the specified file")
 
 func main() {
-
 	flag.Parse()
-
-	displayVersion()
 
 	// the cpu profiling is enabled at startup and is periodically collected while the proxy is running
 	// if cpu profiling is requested, any error configuring or starting it will cause the proxy startup to fail
@@ -63,5 +60,5 @@ func main() {
 		}()
 	}
 
-	launchProxy(true, configFileOpt)
+	launchProxy(true)
 }

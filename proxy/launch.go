@@ -15,8 +15,8 @@ import (
 // TODO: to be managed externally
 const ZdmVersionString = "2.2.0"
 
-var displayVersionOpt = flag.Bool("version", false, "display the ZDM proxy version and exit")
-var configFileOpt = flag.String("config", "", "specify path to ZDM configuration file")
+var displayVersion = flag.Bool("version", false, "display the ZDM proxy version and exit")
+var configFile = flag.String("config", "", "specify path to ZDM configuration file")
 
 func runSignalListener(cancelFunc context.CancelFunc) {
 	sigCh := make(chan os.Signal, 1)
@@ -31,18 +31,16 @@ func runSignalListener(cancelFunc context.CancelFunc) {
 	}()
 }
 
-func displayVersion() {
-	if *displayVersionOpt {
+func launchProxy(profilingSupported bool) {
+	if *displayVersion {
 		fmt.Printf("ZDM proxy version %v\n", ZdmVersionString)
-		os.Exit(0)
+		return
 	}
 
 	// Always record version information (very) early in the log
 	log.Infof("Starting ZDM proxy version %v", ZdmVersionString)
-}
 
-func launchProxy(profilingSupported bool, configFile string) {
-	conf, err := config.New().LoadConfig(configFile)
+	conf, err := config.New().LoadConfig(*configFile)
 
 	if err != nil {
 		log.Errorf("Error loading configuration: %v. Aborting startup.", err)

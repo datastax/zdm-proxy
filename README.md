@@ -56,7 +56,7 @@ export ZDM_TARGET_PASSWORD=cassandra \
 ./zdm-proxy-v2.0.0 # run the ZDM proxy executable
 ```
 
-If you prefer to use YAML configuration file, analogical setup would look like:
+If you prefer to use YAML configuration file, an equivalent setup would look like:
 
 ```shell
 $ cat zdm-config.yml
