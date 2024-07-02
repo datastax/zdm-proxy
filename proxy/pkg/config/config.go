@@ -181,7 +181,7 @@ func (c *Config) LoadConfig(configFile string) (*Config, error) {
 
 	log.Infof("Parsed configuration: %v", c)
 
-	return c, err
+	return c, nil
 }
 
 func lookupFirstIp4(host string) (net.IP, error) {
