@@ -14,23 +14,29 @@ read_mode: PRIMARY_ONLY
 # Whether the ZDM Proxy should replace standard CQL function calls in write
 # requests with a value computed at proxy level. Currently, only the replacement
 # of now() is supported. Disabled by default. Enabling this will have a noticeable performance impact.
-replace_cql_functions: false
+# replace_cql_functions: false
 
 # Timeout (in ms) when performing the initialization (handshake) of a proxy-to-secondary cluster
 # connection that will be used solely for asynchronous dual reads. If this timeout occurs, the asynchronous
 # reads will not be sent. This has no impact on the handling of synchronous requests: the ZDM Proxy will
 # continue to handle all synchronous reads and writes normally.
-async_handshake_timeout_ms: 4000
+# async_handshake_timeout_ms: 4000
 
 # Specifies logging level.
-log_level: INFO
+# log_level: INFO
 
-# TODO: ProxyTopologyIndex
-# TODO: ProxyTopologyAddresses
-# TODO: ProxyTopologyNumTokens
+# List of peer ZDM proxy instances. This configuration parameter should be identical through all ZDM proxies.
+# proxy_topology_addresses: 127.0.1.1, 127.0.1.2, 127.0.1.3
+
+# Index of local ZDM proxy instance within "proxy_topology_addresses" list.
+# proxy_topology_index: 0
+
+# Number of tokens each proxy isntance owns. The default value of 8 should workf for majority of use-case.
+# To learn more about this concept, look into "virtual nodes" in Apache Cassandra.
+# proxy_topology_num_tokens: 8
 
 # Comma separated list of origin cluster contact points.
-origin_contact_points: origin.datastax.com
+origin_contact_points: 127.0.0.1
 
 # Port used when connecting to nodes from origin cluster.
 origin_port: 9042
@@ -48,7 +54,7 @@ origin_username: user1
 origin_password: pass1
 
 # Timeout (in ms) when attempting to establish a connection from the proxy to origin cluster.
-origin_connection_timeout_ms: 30000
+# origin_connection_timeout_ms: 30000
 
 # CA certificate used when verifying identity of origin nodes.
 # origin_tls_server_ca_path:
@@ -60,7 +66,7 @@ origin_connection_timeout_ms: 30000
 # origin_tls_client_key_path:
 
 # Comma separated ist of target cluster contact points.
-target_contact_points: target.datastax.com
+target_contact_points: 127.0.0.2
 
 # If target cluster is DataStax Astra, path to secure connection bundle.
 # target_secure_connect_bundle_path:
@@ -78,7 +84,7 @@ target_username: user2
 target_password: pass2
 
 # Timeout (in ms) when attempting to establish a connection from the proxy to target cluster.
-target_connection_timeout_ms: 30000
+# target_connection_timeout_ms: 30000
 
 # CA certificate used when verifying identity of target nodes.
 # target_tls_server_ca_path:
@@ -101,11 +107,11 @@ proxy_listen_port: 14002
 # and no longer consider it as pending, thus freeing up the corresponding internal resources.
 # Note that, in this case, the ZDM Proxy will not return any result or error: when the client
 # application’s own timeout is reached, the driver will time out the request on its side.
-proxy_request_timeout_ms: 10000
+# proxy_request_timeout_ms: 10000
 
 # Defines hot many clients may connect to single ZDM proxy instance. ZDM proxy closes
 # connection if threshold is reached.
-proxy_max_client_connections: 1000
+# proxy_max_client_connections: 1000
 
 # In the CQL protocol every request has a unique id, named stream id. This variable allows
 # you to tune the maximum pool size of the available stream ids managed by the ZDM Proxy
@@ -113,7 +119,7 @@ proxy_max_client_connections: 1000
 # by the driver, and in most drivers the max number is 2048 (the same default value used
 # in the proxy). If you have a custom driver configuration with a higher value, you should
 # change this property accordingly.
-proxy_max_stream_ids: 2048
+# proxy_max_stream_ids: 2048
 
 # CA certificate used when verifying identity of connecting client applications.
 # proxy_tls_ca_path:
@@ -128,37 +134,37 @@ proxy_max_stream_ids: 2048
 # proxy_tls_require_client_auth: false
 
 # If true ZDM proxy exposes performance metrics in Prometheus format.
-metrics_enabled: true
+# metrics_enabled: true
 
 # Network interface used to expose Prometheus metrics.
-metrics_address: localhost
+# metrics_address: localhost
 
 # Port used to expose Prometheus metrics.
-metrics_port: 14001
+# metrics_port: 14001
 
 # Prefix prepended to each metric name.
-metrics_prefix: zdm
+# metrics_prefix: zdm
 
 # List of histogram buckets for measuring latency of origin cluster
-metrics_origin_latency_buckets_ms: 1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000
+# metrics_origin_latency_buckets_ms: 1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000
 
 # List of histogram buckets for measuring latency of target cluster
-metrics_target_latency_buckets_ms: 1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000
+# metrics_target_latency_buckets_ms: 1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000
 
 # List of histogram buckets for measuring latency of asynchronous
-# read requests routed to target cluster. See parameter read_mode.
-metrics_async_read_latency_buckets_ms: 1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000
+# read requests routed to target cluster. See parameter "read_mode".
+# metrics_async_read_latency_buckets_ms: 1, 4, 7, 10, 25, 40, 60, 80, 100, 150, 250, 500, 1000, 2500, 5000, 10000, 15000
 
 # Frequency (in ms) with which heartbeats will be sent on cluster connections
 # (i.e. all control and request connections to Origin and Target). Heartbeats
 # keep idle connections alive.
-heartbeat_interval_ms: 30000
+# heartbeat_interval_ms: 30000
 
 # Below properties define reconnection strategy for establishing control connection.
-heartbeat_retry_interval_min_ms: 250
-heartbeat_retry_interval_max_ms: 30000
-heartbeat_retry_backoff_factor: 2
+# heartbeat_retry_interval_min_ms: 250
+# heartbeat_retry_interval_max_ms: 30000
+# heartbeat_retry_backoff_factor: 2
 
 # Control connection failure threshold. If threshold is exceeded,
 # readiness probe of ZDM will report failure and pod will be recreated.
-heartbeat_failure_threshold: 1
+# heartbeat_failure_threshold: 1
