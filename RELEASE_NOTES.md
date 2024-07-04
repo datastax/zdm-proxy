@@ -6,6 +6,12 @@ Build artifacts are available at [Docker Hub](https://hub.docker.com/repository/
 
 For additional details on the changes included in a specific release, see the associated CHANGELOG-x.x.md file.
 
+## v2.3.0 - 2024-07-04
+
+Support providing configuration of ZDM with YAML file.
+
+[Changelog](CHANGELOG/CHANGELOG-2.3.md#v230---2024-07-04)
+
 ## v2.2.0 - 2024-06-11
 
 Support SAI queries and third-party authenticators.
