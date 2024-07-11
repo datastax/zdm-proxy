@@ -8,6 +8,7 @@ import (
 	"github.com/kelseyhightower/envconfig"
 	def "github.com/mcuadros/go-defaults"
 	log "github.com/sirupsen/logrus"
+	"gopkg.in/yaml.v3"
 	"net"
 	"os"
 	"strconv"
