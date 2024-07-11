@@ -95,12 +95,11 @@ func NewCqlConnection(
 			Username: username,
 			Password: password,
 		},
-		initialized: false,
-		ctx:         ctx,
-		cancelFn:    cFn,
-		wg:          &sync.WaitGroup{},
-		// protoVer is the proposed protocol version using which we will try to establish connectivity
-		outgoingCh:            make(chan *frame.Frame, maxOutgoingPendingRequests(protoVer)),
+		initialized:           false,
+		ctx:                   ctx,
+		cancelFn:              cFn,
+		wg:                    &sync.WaitGroup{},
+		outgoingCh:            make(chan *frame.Frame, maxOutgoingPending),
 		eventsQueue:           make(chan *frame.Frame, eventQueueLength),
 		pendingOperations:     make(map[int16]chan *frame.Frame),
 		pendingOperationsLock: &sync.RWMutex{},
@@ -108,21 +107,14 @@ func NewCqlConnection(
 		closed:                false,
 		eventHandlerLock:      &sync.Mutex{},
 		authEnabled:           true,
-		frameProcessor:        NewStreamIdProcessor(NewInternalStreamIdMapper(conf.ProxyMaxStreamIds, nil)),
-		protocolVersion:       &atomic.Value{},
+		// protoVer is the proposed protocol version using which we will try to establish connectivity
+		frameProcessor:  NewStreamIdProcessor(NewInternalStreamIdMapper(maxStreamIds(protoVer, protoVer, conf), nil)),
+		protocolVersion: &atomic.Value{},
 	}
 	cqlConn.StartRequestLoop()
 	cqlConn.StartResponseLoop()
 	cqlConn.StartEventLoop()
 	return cqlConn
-}
-
-func maxOutgoingPendingRequests(protocolVersion primitive.ProtocolVersion) int {
-	switch protocolVersion {
-	case primitive.ProtocolVersion2:
-		return maxOutgoingPendingV2
-	}
-	return maxOutgoingPending
 }
 
 func (c *cqlConn) SetEventHandler(eventHandler func(f *frame.Frame, conn CqlConnection)) {

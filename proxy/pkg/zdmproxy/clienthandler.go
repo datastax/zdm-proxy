@@ -168,9 +168,12 @@ func NewClientHandler(
 	requestsDoneCtx, requestsDoneCancelFn := context.WithCancel(context.Background())
 
 	// Initialize stream id processors to manage the ids sent to the clusters
-	originFrameProcessor := newFrameProcessor(conf, nodeMetrics, ClusterConnectorTypeOrigin)
-	targetFrameProcessor := newFrameProcessor(conf, nodeMetrics, ClusterConnectorTypeTarget)
-	asyncFrameProcessor := newFrameProcessor(conf, nodeMetrics, ClusterConnectorTypeAsync)
+	originCCProtoVer := originControlConn.cqlConn.GetProtocolVersion().Load().(primitive.ProtocolVersion)
+	targetCCProtoVer := targetControlConn.cqlConn.GetProtocolVersion().Load().(primitive.ProtocolVersion)
+	streamIds := maxStreamIds(originCCProtoVer, targetCCProtoVer, conf)
+	originFrameProcessor := newFrameProcessor(streamIds, nodeMetrics, ClusterConnectorTypeOrigin)
+	targetFrameProcessor := newFrameProcessor(streamIds, nodeMetrics, ClusterConnectorTypeTarget)
+	asyncFrameProcessor := newFrameProcessor(streamIds, nodeMetrics, ClusterConnectorTypeAsync)
 
 	closeFrameProcessors := func() {
 		originFrameProcessor.Close()
@@ -2230,7 +2233,7 @@ func GetNodeMetricsByClusterConnector(nodeMetrics *metrics.NodeMetrics, connecto
 	}
 }
 
-func newFrameProcessor(conf *config.Config, nodeMetrics *metrics.NodeMetrics, connectorType ClusterConnectorType) FrameProcessor {
+func newFrameProcessor(maxStreamIds int, nodeMetrics *metrics.NodeMetrics, connectorType ClusterConnectorType) FrameProcessor {
 	var streamIdsMetric metrics.Gauge
 	connectorMetrics, err := GetNodeMetricsByClusterConnector(nodeMetrics, connectorType)
 	if err != nil {
@@ -2241,9 +2244,30 @@ func newFrameProcessor(conf *config.Config, nodeMetrics *metrics.NodeMetrics, co
 	}
 	var mapper StreamIdMapper
 	if connectorType == ClusterConnectorTypeAsync {
-		mapper = NewInternalStreamIdMapper(conf.ProxyMaxStreamIds, streamIdsMetric)
+		mapper = NewInternalStreamIdMapper(maxStreamIds, streamIdsMetric)
 	} else {
-		mapper = NewStreamIdMapper(conf.ProxyMaxStreamIds, streamIdsMetric)
+		mapper = NewStreamIdMapper(maxStreamIds, streamIdsMetric)
 	}
 	return NewStreamIdProcessor(mapper)
+}
+
+// Calculate maximum number of stream IDs. Take the oldest protocol version negotiated between two clusters
+// and apply limit defined in proxy configuration. If origin or target cluster are still running protocol V2,
+// we will limit maximum number of stream IDs to 128 on both clusters. Logic is based on Java driver version 3.x.
+// Java driver 3.x was the last one supporting protocol V2. It establishes control connection first, and then
+// uses negotiated protocol version to configure maximum number of stream IDs on node connections. Driver does NOT
+// change the number of stream IDs on per node basis.
+func maxStreamIds(originProtoVer primitive.ProtocolVersion, targetProtoVer primitive.ProtocolVersion, conf *config.Config) int {
+	maxSupported := maxOutgoingPending
+	protoVer := originProtoVer
+	if targetProtoVer < originProtoVer {
+		protoVer = targetProtoVer
+	}
+	if protoVer == primitive.ProtocolVersion2 {
+		maxSupported = maxOutgoingPendingV2
+	}
+	if maxSupported < conf.ProxyMaxStreamIds {
+		return maxSupported
+	}
+	return conf.ProxyMaxStreamIds
 }

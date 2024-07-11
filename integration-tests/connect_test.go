@@ -3,7 +3,7 @@ package integration_tests
 import (
 	"bytes"
 	"context"
-	client2 "github.com/datastax/go-cassandra-native-protocol/client"
+	cqlClient "github.com/datastax/go-cassandra-native-protocol/client"
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
@@ -82,27 +82,40 @@ func TestProtocolVersionNegotiation(t *testing.T) {
 			require.Nil(t, err)
 			defer testSetup.Cleanup()
 
-			// Connect to proxy as a "client"
-			proxy, err := utils.ConnectToClusterUsingVersion("127.0.0.1", "", "", 14002, 3)
+			query := "SELECT * FROM test"
+			expectedRows := simulacron.NewRowsResult(
+				map[string]simulacron.DataType{
+					"company": simulacron.DataTypeText,
+				}).WithRow(map[string]interface{}{
+				"company": "TBD",
+			})
 
-			if err != nil {
-				t.Fatal("Unable to connect to proxy session.")
-			}
-			defer proxy.Close()
+			err = testSetup.Origin.Prime(simulacron.WhenQuery(
+				query,
+				simulacron.NewWhenQueryOptions()).
+				ThenRowsSuccess(expectedRows))
+			require.Nil(t, err)
+
+			// Connect to proxy as a "client"
+			client := cqlClient.NewCqlClient("127.0.0.1:14002", nil)
+			cqlClientConn, err := client.ConnectAndInit(context.Background(), tt.negotiatedProtocolVersion, 0)
+			require.Nil(t, err)
+			defer cqlClientConn.Close()
 
 			cqlConn, _ := testSetup.Proxy.GetOriginControlConn().GetConnAndContactPoint()
 			negotiatedProto := cqlConn.GetProtocolVersion().Load().(primitive.ProtocolVersion)
-
 			require.Equal(t, tt.negotiatedProtocolVersion, negotiatedProto)
 
-			iter := proxy.Query("SELECT * FROM fakeks.faketb").Iter()
-			result, err := iter.SliceMap()
-
+			queryMsg := &message.Query{
+				Query:   "SELECT * FROM test",
+				Options: &message.QueryOptions{Consistency: primitive.ConsistencyLevelOne},
+			}
+			rsp, err := cqlClientConn.SendAndReceive(frame.NewFrame(primitive.ProtocolVersion3, 0, queryMsg))
 			if err != nil {
 				t.Fatal("query failed:", err)
 			}
 
-			require.Equal(t, 0, len(result))
+			require.Equal(t, 1, len(rsp.Body.Message.(*message.RowsResult).Data))
 		})
 	}
 }
@@ -179,8 +192,8 @@ func TestRequestedProtocolVersionUnsupportedByProxy(t *testing.T) {
 			require.Nil(t, err)
 			defer testSetup.Cleanup()
 
-			testSetup.Origin.CqlServer.RequestHandlers = []client2.RequestHandler{client2.NewDriverConnectionInitializationHandler("origin", "dc1", func(_ string) {})}
-			testSetup.Target.CqlServer.RequestHandlers = []client2.RequestHandler{client2.NewDriverConnectionInitializationHandler("target", "dc1", func(_ string) {})}
+			testSetup.Origin.CqlServer.RequestHandlers = []cqlClient.RequestHandler{cqlClient.NewDriverConnectionInitializationHandler("origin", "dc1", func(_ string) {})}
+			testSetup.Target.CqlServer.RequestHandlers = []cqlClient.RequestHandler{cqlClient.NewDriverConnectionInitializationHandler("target", "dc1", func(_ string) {})}
 
 			err = testSetup.Start(cfg, false, primitive.ProtocolVersion3)
 			require.Nil(t, err)
@@ -234,7 +247,7 @@ func TestReturnedProtocolVersionUnsupportedByProxy(t *testing.T) {
 		enableHandlers := atomic.Value{}
 		enableHandlers.Store(false)
 
-		rawHandler := func(request *frame.Frame, conn *client2.CqlServerConnection, ctx client2.RequestHandlerContext) (response []byte) {
+		rawHandler := func(request *frame.Frame, conn *cqlClient.CqlServerConnection, ctx cqlClient.RequestHandlerContext) (response []byte) {
 			if enableHandlers.Load().(bool) && request.Header.Version == test.requestVersion {
 				encodedFrame, err := createFrameWithUnsupportedVersion(test.returnedVersion, request.Header.StreamId, true)
 				if err != nil {
@@ -246,8 +259,8 @@ func TestReturnedProtocolVersionUnsupportedByProxy(t *testing.T) {
 			return nil
 		}
 
-		testSetup.Origin.CqlServer.RequestRawHandlers = []client2.RawRequestHandler{rawHandler}
-		testSetup.Target.CqlServer.RequestRawHandlers = []client2.RawRequestHandler{rawHandler}
+		testSetup.Origin.CqlServer.RequestRawHandlers = []cqlClient.RawRequestHandler{rawHandler}
+		testSetup.Target.CqlServer.RequestRawHandlers = []cqlClient.RawRequestHandler{rawHandler}
 
 		err = testSetup.Start(cfg, false, primitive.ProtocolVersion4)
 		require.Nil(t, err)

@@ -116,20 +116,15 @@ func CheckMetricsEndpointResult(httpAddr string, success bool) error {
 	return nil
 }
 
-func ConnectToClusterUsingVersion(hostname string, username string, password string, port int, protoVersion int) (*gocql.Session, error) {
+// ConnectToCluster is used to connect to source and destination clusters
+func ConnectToCluster(hostname string, username string, password string, port int) (*gocql.Session, error) {
 	cluster := NewCluster(hostname, username, password, port)
-	cluster.ProtoVersion = protoVersion
 	session, err := cluster.CreateSession()
 	log.Debugf("Connection established with Cluster: %s:%d", cluster.Hosts[0], cluster.Port)
 	if err != nil {
 		return nil, err
 	}
 	return session, nil
-}
-
-// ConnectToCluster is used to connect to source and destination clusters
-func ConnectToCluster(hostname string, username string, password string, port int) (*gocql.Session, error) {
-	return ConnectToClusterUsingVersion(hostname, username, password, port, 4)
 }
 
 // NewCluster initializes a ClusterConfig object with common settings

@@ -22,7 +22,7 @@ type Config struct {
 	ReplaceCqlFunctions           bool   `default:"false" split_words:"true"`
 	AsyncHandshakeTimeoutMs       int    `default:"4000" split_words:"true"`
 	LogLevel                      string `default:"DEBUG" split_words:"true"`
-	ControlConnMaxProtocolVersion string `default:"3" split_words:"true"` // Numeric Cassandra OSS protocol version or Dse1 / Dse2
+	ControlConnMaxProtocolVersion string `default:"3" split_words:"true"` // Numeric Cassandra OSS protocol version or DseV1 / DseV2
 
 	// Proxy Topology (also known as system.peers "virtualization") bucket
 
