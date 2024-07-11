@@ -16,9 +16,10 @@ An overview of the proxy architecture and logical flow can be viewed [here](http
 
 ## Quick Start
 
-In order to run the proxy, you'll need to set some environment variables to configure it properly.
+In order to run the proxy, you'll need to set some environment variables or pass reference to YAML configuration file.
 Below you'll find a list with the most important variables along with their default values.
-The required ones are marked with a comment.
+The required ones are marked with a comment. Variable names for YAML configuration file do not have `ZDM_` prefix and
+are lower-cased.
 
 ```shell
 ZDM_ORIGIN_CONTACT_POINTS=10.0.0.1  #required
@@ -36,7 +37,7 @@ ZDM_READ_MODE=PRIMARY_ONLY
 ZDM_LOG_LEVEL=INFO
 ```
 
-The environment variables must be set and exported for the proxy to work.
+The environment variables (or YAM configuration file) must be set for the proxy to work.
 
 In order to get started quickly, in your local environment, grab a copy of the binary distribution in the
 [Releases](https://github.com/datastax/zdm-proxy/releases) page. For the recommended installation in a production
@@ -53,6 +54,19 @@ export ZDM_ORIGIN_PASSWORD=cassandra \
 export ZDM_TARGET_USERNAME=cassandra \
 export ZDM_TARGET_PASSWORD=cassandra \
 ./zdm-proxy-v2.0.0 # run the ZDM proxy executable
+```
+
+If you prefer to use YAML configuration file, an equivalent setup would look like:
+
+```shell
+$ cat zdm-config.yml
+origin_contact_points: 10.0.0.1
+target_contact_points: 10.0.0.2
+origin_username: cassandra
+origin_password: cassandra
+target_username: cassandra
+target_password: cassandra
+$ ./zdm-proxy-v2.0.0 --config=./zdm-config.yml # run the ZDM proxy executable
 ```
 
 At this point, you should be able to connect some client such as [CQLSH](https://downloads.datastax.com/#cqlsh) to the proxy

@@ -6,9 +6,9 @@ All published container images can be found at [https://hub.docker.com/r/datasta
 
 ### Before publishing an official release
 
-Before triggering the build and publish process for an official/stable release, three files need to be updated, the `RELEASE_NOTES`, `CHANGELOG` and `main.go`.
+Before triggering the build and publish process for an official/stable release, three files need to be updated, the `RELEASE_NOTES`, `CHANGELOG` and `launch.go`.
 
-Please update the ZDM version displayed during component startup in `main.go`:
+Please update the ZDM version displayed during component startup in `launch.go`:
 ```go
 const ZdmVersionString = "2.0.0"
 ```
