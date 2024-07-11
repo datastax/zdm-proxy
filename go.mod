@@ -15,7 +15,6 @@ require (
 	github.com/rs/zerolog v1.20.0
 	github.com/sirupsen/logrus v1.6.0
 	github.com/stretchr/testify v1.8.0
-	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -35,4 +34,5 @@ require (
 	github.com/prometheus/procfs v0.0.8 // indirect
 	golang.org/x/sys v0.3.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
