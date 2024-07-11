@@ -107,7 +107,7 @@ func TestTargetConfig_ParsingControlConnMaxProtocolVersion(t *testing.T) {
 	// test-specific setup
 	setTargetContactPointsAndPortEnvVars()
 
-	conf, _ := New().ParseEnvVars()
+	conf := New().parseEnvVars()
 
 	tests := []struct {
 		name                          string
