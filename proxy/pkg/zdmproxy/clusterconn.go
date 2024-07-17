@@ -394,17 +394,18 @@ func (cc *ClusterConnector) handleAsyncResponse(response *frame.RawFrame) *frame
 	return nil
 }
 
-func (cc *ClusterConnector) sendRequestToCluster(frame *frame.RawFrame) {
+func (cc *ClusterConnector) sendRequestToCluster(frame *frame.RawFrame) error {
 	var err error
 	if cc.frameProcessor != nil {
 		frame, err = cc.frameProcessor.AssignUniqueId(frame)
 	}
 	if err != nil {
 		log.Errorf("[%v] Couldn't assign stream id to frame %v: %v", string(cc.connectorType), frame.Header.OpCode, err)
-		return
+		return err
 	} else {
 		cc.writeCoalescer.Enqueue(frame)
 	}
+	return nil
 }
 
 func (cc *ClusterConnector) validateAsyncStateForRequest(frame *frame.RawFrame) bool {

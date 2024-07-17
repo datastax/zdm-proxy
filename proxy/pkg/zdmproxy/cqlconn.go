@@ -21,10 +21,11 @@ import (
 const (
 	eventQueueLength = 2048
 
-	maxIncomingPending   = 2048
-	maxIncomingPendingV2 = 128
-	maxOutgoingPending   = 2048
-	maxOutgoingPendingV2 = 128
+	maxIncomingPending = 2048
+	maxOutgoingPending = 2048
+
+	maxStreamIdsV3 = 2048
+	maxStreamIdsV2 = 127
 
 	timeOutsThreshold = 1024
 )
@@ -41,7 +42,7 @@ type CqlConnection interface {
 	SetEventHandler(eventHandler func(f *frame.Frame, conn CqlConnection))
 	SubscribeToProtocolEvents(ctx context.Context, eventTypes []primitive.EventType) error
 	IsAuthEnabled() (bool, error)
-	GetProtocolVersion() *atomic.Value
+	GetProtocolVersion() primitive.ProtocolVersion
 }
 
 // Not thread safe
@@ -245,8 +246,8 @@ func (c *cqlConn) IsAuthEnabled() (bool, error) {
 	return c.authEnabled, nil
 }
 
-func (c *cqlConn) GetProtocolVersion() *atomic.Value {
-	return c.protocolVersion
+func (c *cqlConn) GetProtocolVersion() primitive.ProtocolVersion {
+	return c.protocolVersion.Load().(primitive.ProtocolVersion)
 }
 
 func (c *cqlConn) InitializeContext(version primitive.ProtocolVersion, ctx context.Context) error {

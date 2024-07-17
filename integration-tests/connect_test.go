@@ -46,7 +46,9 @@ func TestGoCqlConnect(t *testing.T) {
 	require.Equal(t, "fake", iter.Columns()[0].Name)
 }
 
-func TestProtocolVersionNegotiation(t *testing.T) {
+// Simulacron-based test to make sure that we can handle invalid protocol error and downgrade
+// used protocol on control connection. ORIGIN and TARGET are using the same C* version
+func TestControlConnectionProtocolVersionNegotiation(t *testing.T) {
 	tests := []struct {
 		name                          string
 		clusterVersion                string
@@ -63,13 +65,13 @@ func TestProtocolVersionNegotiation(t *testing.T) {
 			name:                          "Cluster3.0_MaxCCProtoVer4_NegotiatedProtoVer4",
 			clusterVersion:                "3.0",
 			controlConnMaxProtocolVersion: "4",
-			negotiatedProtocolVersion:     primitive.ProtocolVersion4,
+			negotiatedProtocolVersion:     primitive.ProtocolVersion4, // make sure that protocol negotiation does not fail if it is not actually needed
 		},
 		{
-			name:                          "Cluster4.0_MaxCCProtoVer4_NegotiatedProtoVer4",
-			clusterVersion:                "4.0",
-			controlConnMaxProtocolVersion: "4",
-			negotiatedProtocolVersion:     primitive.ProtocolVersion4,
+			name:                          "Cluster3.0_MaxCCProtoVer3_NegotiatedProtoVer3",
+			clusterVersion:                "3.0",
+			controlConnMaxProtocolVersion: "3",
+			negotiatedProtocolVersion:     primitive.ProtocolVersion3, // protocol V3 applied as it is the maximum configured
 		},
 	}
 
@@ -103,7 +105,7 @@ func TestProtocolVersionNegotiation(t *testing.T) {
 			defer cqlClientConn.Close()
 
 			cqlConn, _ := testSetup.Proxy.GetOriginControlConn().GetConnAndContactPoint()
-			negotiatedProto := cqlConn.GetProtocolVersion().Load().(primitive.ProtocolVersion)
+			negotiatedProto := cqlConn.GetProtocolVersion()
 			require.Equal(t, tt.negotiatedProtocolVersion, negotiatedProto)
 
 			queryMsg := &message.Query{

@@ -362,7 +362,7 @@ func (cc *ControlConn) openInternal(endpoints []Endpoint, ctx context.Context) (
 
 		conn = newConn
 		log.Infof("Successfully opened control connection to %v using endpoint %v with %v.",
-			cc.connConfig.GetClusterType(), endpoint.String(), newConn.GetProtocolVersion().Load().(primitive.ProtocolVersion))
+			cc.connConfig.GetClusterType(), endpoint.String(), newConn.GetProtocolVersion())
 		break
 	}
 

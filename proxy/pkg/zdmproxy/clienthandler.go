@@ -168,8 +168,8 @@ func NewClientHandler(
 	requestsDoneCtx, requestsDoneCancelFn := context.WithCancel(context.Background())
 
 	// Initialize stream id processors to manage the ids sent to the clusters
-	originCCProtoVer := originControlConn.cqlConn.GetProtocolVersion().Load().(primitive.ProtocolVersion)
-	targetCCProtoVer := targetControlConn.cqlConn.GetProtocolVersion().Load().(primitive.ProtocolVersion)
+	originCCProtoVer := originControlConn.cqlConn.GetProtocolVersion()
+	targetCCProtoVer := targetControlConn.cqlConn.GetProtocolVersion()
 	streamIds := maxStreamIds(originCCProtoVer, targetCCProtoVer, conf)
 	originFrameProcessor := newFrameProcessor(streamIds, nodeMetrics, ClusterConnectorTypeOrigin)
 	targetFrameProcessor := newFrameProcessor(streamIds, nodeMetrics, ClusterConnectorTypeTarget)
@@ -1485,17 +1485,27 @@ func (ch *ClientHandler) executeRequest(
 	case forwardToBoth:
 		log.Tracef("Forwarding request with opcode %v for stream %v to %v and %v",
 			f.Header.OpCode, f.Header.StreamId, common.ClusterTypeOrigin, common.ClusterTypeTarget)
-		ch.originCassandraConnector.sendRequestToCluster(originRequest)
-		ch.targetCassandraConnector.sendRequestToCluster(targetRequest)
+		sendErr := ch.originCassandraConnector.sendRequestToCluster(originRequest)
+		if sendErr != nil {
+			ch.clientConnector.sendOverloadedToClient(frameContext.frame)
+		} else {
+			ch.targetCassandraConnector.sendRequestToCluster(targetRequest)
+		}
 	case forwardToOrigin:
 		log.Tracef("Forwarding request with opcode %v for stream %v to %v",
 			f.Header.OpCode, f.Header.StreamId, common.ClusterTypeOrigin)
-		ch.originCassandraConnector.sendRequestToCluster(originRequest)
+		sendErr := ch.originCassandraConnector.sendRequestToCluster(originRequest)
+		if sendErr != nil {
+			ch.clientConnector.sendOverloadedToClient(frameContext.frame)
+		}
 		ch.targetCassandraConnector.sendHeartbeat(startupFrameVersion, ch.conf.HeartbeatIntervalMs)
 	case forwardToTarget:
 		log.Tracef("Forwarding request with opcode %v for stream %v to %v",
 			f.Header.OpCode, f.Header.StreamId, common.ClusterTypeTarget)
-		ch.targetCassandraConnector.sendRequestToCluster(targetRequest)
+		sendErr := ch.targetCassandraConnector.sendRequestToCluster(targetRequest)
+		if sendErr != nil {
+			ch.clientConnector.sendOverloadedToClient(frameContext.frame)
+		}
 		ch.originCassandraConnector.sendHeartbeat(startupFrameVersion, ch.conf.HeartbeatIntervalMs)
 	case forwardToAsyncOnly:
 	default:
@@ -2258,13 +2268,13 @@ func newFrameProcessor(maxStreamIds int, nodeMetrics *metrics.NodeMetrics, conne
 // uses negotiated protocol version to configure maximum number of stream IDs on node connections. Driver does NOT
 // change the number of stream IDs on per node basis.
 func maxStreamIds(originProtoVer primitive.ProtocolVersion, targetProtoVer primitive.ProtocolVersion, conf *config.Config) int {
-	maxSupported := maxOutgoingPending
+	maxSupported := maxStreamIdsV3
 	protoVer := originProtoVer
 	if targetProtoVer < originProtoVer {
 		protoVer = targetProtoVer
 	}
 	if protoVer == primitive.ProtocolVersion2 {
-		maxSupported = maxOutgoingPendingV2
+		maxSupported = maxStreamIdsV2
 	}
 	if maxSupported < conf.ProxyMaxStreamIds {
 		return maxSupported

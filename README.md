@@ -101,6 +101,18 @@ It technically doesn't support v5, but handles protocol negotiation so that the 
 the protocol version to v4 if v5 is requested. This means that any client application using a recent driver that supports
 protocol version v5 can be migrated using the ZDM Proxy (as long as it does not use v5-specific functionality).
 
+ZDM Proxy requires origin and target clusters to have at least one protocol version in common. It is therefore not feasible
+to configure Apache Cassandra 2.0 as origin and 3.x / 4.x as target. Below table displays protocol versions supported by
+various C* versions:
+
+| Apache Cassandra | Protocol Version |
+|------------------|------------------|
+| 2.0              | V2               |
+| 2.1              | V2, V3           |
+| 2.2              | V3, V4           |
+| 3.x              | V3, V4           |
+| 4.x              | V3, V4, V5       |
+
 ---
 :warning: **Thrift is not supported by ZDM Proxy.** If you are using a very old driver or cluster version that only supports Thrift
 then you need to change your client application to use CQL and potentially upgrade your cluster before starting the 
@@ -110,7 +122,8 @@ migration process.
 
 In practice this means that ZDM Proxy supports the following cluster versions (as Origin and / or Target):
 
-- Apache Cassandra from 2.0+ up to (and including) Apache Cassandra 4.x.
+- Apache Cassandra from 2.1+ up to (and including) Apache Cassandra 4.x.
+- Apache Cassandra 2.0 up to 2.1.
 - DataStax Enterprise 4.8+. DataStax Enterprise 4.6 and 4.7 support will be introduced when protocol version v2 is supported.
 - DataStax Astra DB (both Serverless and Classic)
 
