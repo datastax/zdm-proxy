@@ -110,7 +110,7 @@ func TestMaxStreamIds(t *testing.T) {
 	require.True(t, len(originRequestHandler.usedStreamIdsPerConn) >= 1)
 	for _, idMap := range originRequestHandler.usedStreamIdsPerConn {
 		maxId := int16(0)
-		for streamId, _ := range idMap {
+		for streamId := range idMap {
 			if streamId > maxId {
 				maxId = streamId
 			}
