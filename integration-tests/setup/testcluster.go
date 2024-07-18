@@ -452,7 +452,7 @@ func NewTestConfig(originHost string, targetHost string) *config.Config {
 	conf.ReadMode = config.ReadModePrimaryOnly
 	conf.SystemQueriesMode = config.SystemQueriesModeOrigin
 	conf.AsyncHandshakeTimeoutMs = 4000
-	conf.ControlConnMaxProtocolVersion = "3"
+	conf.ControlConnMaxProtocolVersion = "DseV2"
 
 	conf.ProxyRequestTimeoutMs = 10000
 

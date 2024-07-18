@@ -25,7 +25,7 @@ type Config struct {
 	ReplaceCqlFunctions           bool   `default:"false" split_words:"true" yaml:"replace_cql_functions"`
 	AsyncHandshakeTimeoutMs       int    `default:"4000" split_words:"true" yaml:"async_handshake_timeout_ms"`
 	LogLevel                      string `default:"INFO" split_words:"true" yaml:"log_level"`
-	ControlConnMaxProtocolVersion string `default:"3" split_words:"true" yaml:"control_conn_max_protocol_version"` // Numeric Cassandra OSS protocol version or DseV1 / DseV2
+	ControlConnMaxProtocolVersion string `default:"DseV2" split_words:"true" yaml:"control_conn_max_protocol_version"` // Numeric Cassandra OSS protocol version or DseV1 / DseV2
 
 	// Proxy Topology (also known as system.peers "virtualization") bucket
 

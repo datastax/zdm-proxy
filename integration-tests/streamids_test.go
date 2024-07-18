@@ -23,7 +23,7 @@ import (
 // if we notice greater stream ID value than expected. We cannot easily test
 // exceeding 127 stream IDs allowed in protocol V2, because clients will
 // fail serializing the frame
-func TestMaxStreamIds(t *testing.T) {
+func TestLimitStreamIdsGeneration(t *testing.T) {
 	originAddress := "127.0.1.1"
 	targetAddress := "127.0.1.2"
 	originProtoVer := primitive.ProtocolVersion2
