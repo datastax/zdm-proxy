@@ -1,8 +1,10 @@
 bindings:
   seq_key: Mod(TEMPLATE(keycount,1000000000)); ToInt();
   seq_value: Hash(); Mod(TEMPLATE(valuecount,1000000000)); ToString() -> String
-  rw_key: TEMPLATE(keydist,Uniform(0,1000000000)->int);
-  rw_value: Hash(); TEMPLATE(valdist,Uniform(0,1000000000)->int); ToString() -> String
+#  rw_key: TEMPLATE(keydist,Uniform(0,1000000000)->int);
+  rw_key: Uniform(0,1000000000)->int
+#  rw_value: Hash(); TEMPLATE(valdist,Uniform(0,1000000000)->int); ToString() -> String
+  rw_value: Hash(); Uniform(0,1000000000)->int; ToString() -> String
 
 scenarios:
   rampup: run driver=cqld4 tags=block:rampup cycles=20000

@@ -29,7 +29,7 @@ cat /source/nb-tests/schema.cql | cqlsh zdm_tests_proxy
 echo "Running NoSQLBench RAMPUP job"
 java -jar /nb5.jar \
   --show-stacktraces \
-  /source/nb-tests/cql-nb-activity.yaml \
+  /source/nb-tests/cql_nb_activity.yaml \
   rampup \
   hosts=zdm_tests_proxy \
   localdc=datacenter1 \
@@ -39,7 +39,7 @@ java -jar /nb5.jar \
 echo "Running NoSQLBench WRITE job"
 java -jar /nb5.jar \
   --show-stacktraces \
-  /source/nb-tests/cql-nb-activity.yaml \
+  /source/nb-tests/cql_nb_activity.yaml \
   write \
   hosts=zdm_tests_proxy \
   localdc=datacenter1 \
@@ -49,7 +49,7 @@ java -jar /nb5.jar \
 echo "Running NoSQLBench READ job"
 java -jar /nb5.jar \
   --show-stacktraces \
-  /source/nb-tests/cql-nb-activity.yaml \
+  /source/nb-tests/cql_nb_activity.yaml \
   read \
   hosts=zdm_tests_proxy \
   localdc=datacenter1 \
@@ -60,7 +60,7 @@ echo "Running NoSQLBench VERIFY job on ORIGIN"
 java -jar /nb5.jar \
   --show-stacktraces \
   --report-csv-to /source/verify-origin \
-  /source/nb-tests/cql-nb-activity.yaml \
+  /source/nb-tests/cql_nb_activity.yaml \
   verify \
   hosts=zdm_tests_origin \
   localdc=datacenter1 \
@@ -70,7 +70,7 @@ echo "Running NoSQLBench VERIFY job on TARGET"
 java -jar /nb5.jar \
   --show-stacktraces \
   --report-csv-to /source/verify-target \
-  /source/nb-tests/cql-nb-activity.yaml \
+  /source/nb-tests/cql_nb_activity.yaml \
   verify \
   hosts=zdm_tests_target \
   localdc=datacenter1 \
