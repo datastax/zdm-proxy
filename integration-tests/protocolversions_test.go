@@ -20,65 +20,92 @@ import (
 // client driver can connect and successfully insert or query data.
 func TestProtocolNegotiationDifferentClusters(t *testing.T) {
 	tests := []struct {
-		name              string
-		proxyMaxProtoVer  string
-		originProtoVer    []primitive.ProtocolVersion
-		targetProtoVer    []primitive.ProtocolVersion
-		clientProtoVer    primitive.ProtocolVersion
-		failClientConnect bool
+		name                   string
+		proxyMaxProtoVer       string
+		proxyOriginContConnVer primitive.ProtocolVersion
+		proxyTargetContConnVer primitive.ProtocolVersion
+		originProtoVer         []primitive.ProtocolVersion
+		targetProtoVer         []primitive.ProtocolVersion
+		clientProtoVer         primitive.ProtocolVersion
+		failClientConnect      bool
+		failProxyStartup       bool
 	}{
 		{
-			name:             "OriginV2_TargetV2_ClientV2",
-			proxyMaxProtoVer: "2",
-			originProtoVer:   []primitive.ProtocolVersion{primitive.ProtocolVersion2},
-			targetProtoVer:   []primitive.ProtocolVersion{primitive.ProtocolVersion2},
-			clientProtoVer:   primitive.ProtocolVersion2,
+			name:                   "OriginV2_TargetV2_ClientV2",
+			proxyMaxProtoVer:       "2",
+			proxyOriginContConnVer: primitive.ProtocolVersion2,
+			proxyTargetContConnVer: primitive.ProtocolVersion2,
+			originProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion2},
+			targetProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion2},
+			clientProtoVer:         primitive.ProtocolVersion2,
 		},
 		{
-			name:             "OriginV2_TargetV2_ClientV2_ProxyControlConnNegotiation",
-			proxyMaxProtoVer: "4",
-			originProtoVer:   []primitive.ProtocolVersion{primitive.ProtocolVersion2},
-			targetProtoVer:   []primitive.ProtocolVersion{primitive.ProtocolVersion2},
-			clientProtoVer:   primitive.ProtocolVersion2,
+			name:                   "OriginV2_TargetV2_ClientV2_ProxyControlConnNegotiation",
+			proxyMaxProtoVer:       "4",
+			proxyOriginContConnVer: primitive.ProtocolVersion2,
+			proxyTargetContConnVer: primitive.ProtocolVersion2,
+			originProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion2},
+			targetProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion2},
+			clientProtoVer:         primitive.ProtocolVersion2,
 		},
 		{
-			name:             "OriginV2_TargetV23_ClientV2",
-			proxyMaxProtoVer: "3",
-			originProtoVer:   []primitive.ProtocolVersion{primitive.ProtocolVersion2},
-			targetProtoVer:   []primitive.ProtocolVersion{primitive.ProtocolVersion2, primitive.ProtocolVersion3},
-			clientProtoVer:   primitive.ProtocolVersion2,
+			name:                   "OriginV2_TargetV23_ClientV2",
+			proxyMaxProtoVer:       "3",
+			proxyOriginContConnVer: primitive.ProtocolVersion2,
+			proxyTargetContConnVer: primitive.ProtocolVersion3,
+			originProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion2},
+			targetProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion2, primitive.ProtocolVersion3},
+			clientProtoVer:         primitive.ProtocolVersion2,
 		},
 		{
-			name:             "OriginV23_TargetV2_ClientV2",
-			proxyMaxProtoVer: "3",
-			originProtoVer:   []primitive.ProtocolVersion{primitive.ProtocolVersion2, primitive.ProtocolVersion3},
-			targetProtoVer:   []primitive.ProtocolVersion{primitive.ProtocolVersion2},
-			clientProtoVer:   primitive.ProtocolVersion2,
+			name:                   "OriginV23_TargetV2_ClientV2",
+			proxyMaxProtoVer:       "3",
+			proxyOriginContConnVer: primitive.ProtocolVersion3,
+			proxyTargetContConnVer: primitive.ProtocolVersion2,
+			originProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion2, primitive.ProtocolVersion3},
+			targetProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion2},
+			clientProtoVer:         primitive.ProtocolVersion2,
 		},
 		{
 			// most common setup with OSS Cassandra
-			name:             "OriginV345_TargetV345_ClientV4",
-			proxyMaxProtoVer: "3",
-			originProtoVer:   []primitive.ProtocolVersion{primitive.ProtocolVersion3, primitive.ProtocolVersion4, primitive.ProtocolVersion5},
-			targetProtoVer:   []primitive.ProtocolVersion{primitive.ProtocolVersion3, primitive.ProtocolVersion4, primitive.ProtocolVersion5},
-			clientProtoVer:   primitive.ProtocolVersion4,
+			name:                   "OriginV345_TargetV345_ClientV4",
+			proxyMaxProtoVer:       "DseV2",
+			proxyOriginContConnVer: primitive.ProtocolVersion4,
+			proxyTargetContConnVer: primitive.ProtocolVersion4,
+			originProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion3, primitive.ProtocolVersion4, primitive.ProtocolVersion5},
+			targetProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion3, primitive.ProtocolVersion4, primitive.ProtocolVersion5},
+			clientProtoVer:         primitive.ProtocolVersion4,
 		},
 		{
 			// most common setup with DSE
-			name:             "OriginV345_TargetV34Dse1Dse2_ClientV4",
-			proxyMaxProtoVer: "3",
-			originProtoVer:   []primitive.ProtocolVersion{primitive.ProtocolVersion3, primitive.ProtocolVersion4, primitive.ProtocolVersion5},
-			targetProtoVer:   []primitive.ProtocolVersion{primitive.ProtocolVersion3, primitive.ProtocolVersion4, primitive.ProtocolVersionDse1, primitive.ProtocolVersionDse2},
-			clientProtoVer:   primitive.ProtocolVersion4,
+			name:                   "OriginV345_TargetV34Dse1Dse2_ClientV4",
+			proxyMaxProtoVer:       "DseV2",
+			proxyOriginContConnVer: primitive.ProtocolVersion4,
+			proxyTargetContConnVer: primitive.ProtocolVersionDse2,
+			originProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion3, primitive.ProtocolVersion4, primitive.ProtocolVersion5},
+			targetProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion3, primitive.ProtocolVersion4, primitive.ProtocolVersionDse1, primitive.ProtocolVersionDse2},
+			clientProtoVer:         primitive.ProtocolVersion4,
 		},
 		{
-			name:             "OriginV2_TargetV3_ClientV2",
-			proxyMaxProtoVer: "3",
-			originProtoVer:   []primitive.ProtocolVersion{primitive.ProtocolVersion2},
-			targetProtoVer:   []primitive.ProtocolVersion{primitive.ProtocolVersion3},
-			clientProtoVer:   primitive.ProtocolVersion2,
+			name:                   "OriginV2_TargetV3_ClientV2",
+			proxyMaxProtoVer:       "3",
+			proxyOriginContConnVer: primitive.ProtocolVersion2,
+			proxyTargetContConnVer: primitive.ProtocolVersion3,
+			originProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion2},
+			targetProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion3},
+			clientProtoVer:         primitive.ProtocolVersion2,
 			// client connection should fail as there is no common protocol version between origin and target
 			failClientConnect: true,
+		}, {
+			name:                   "OriginV3_TargetV3_ClientV3_Too_Low_Proto_Configured",
+			proxyMaxProtoVer:       "2",
+			proxyOriginContConnVer: primitive.ProtocolVersion3,
+			proxyTargetContConnVer: primitive.ProtocolVersion3,
+			originProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion3},
+			targetProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion3},
+			clientProtoVer:         primitive.ProtocolVersion2,
+			// client proxy startup, because configured protocol version is too low
+			failProxyStartup: true,
 		},
 	}
 
@@ -121,7 +148,12 @@ func TestProtocolNegotiationDifferentClusters(t *testing.T) {
 			if proxy != nil {
 				defer proxy.Shutdown()
 			}
-			require.Nil(t, err)
+			if test.failProxyStartup {
+				require.NotNil(t, err)
+				return
+			} else {
+				require.Nil(t, err)
+			}
 
 			cqlConn, err := testSetup.Client.CqlClient.ConnectAndInit(context.Background(), test.clientProtoVer, 0)
 			if test.failClientConnect {
@@ -139,6 +171,11 @@ func TestProtocolNegotiationDifferentClusters(t *testing.T) {
 			require.Nil(t, err)
 			resultSet := response.Body.Message.(*message.RowsResult).Data
 			require.Equal(t, 1, len(resultSet))
+
+			proxyCqlConn, _ := proxy.GetOriginControlConn().GetConnAndContactPoint()
+			require.Equal(t, test.proxyOriginContConnVer, proxyCqlConn.GetProtocolVersion())
+			proxyCqlConn, _ = proxy.GetTargetControlConn().GetConnAndContactPoint()
+			require.Equal(t, test.proxyTargetContConnVer, proxyCqlConn.GetProtocolVersion())
 		})
 	}
 }
