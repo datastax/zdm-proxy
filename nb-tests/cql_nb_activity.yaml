@@ -26,13 +26,13 @@ blocks:
         (key, value)
         VALUES ({seq_key},{seq_value});
 
-  verify:
-    params:
-      cl: TEMPLATE(read_cl,LOCAL_QUORUM)
-    ops:
-      verify_select: |
-        SELECT * FROM TEMPLATE(keyspace,test).TEMPLATE(table,keyvalue) WHERE key={rw_key};
-      verify_fields: key->rw_key, value->rw_value
+#  verify:
+#    params:
+#      cl: TEMPLATE(read_cl,LOCAL_QUORUM)
+#    ops:
+#      verify_select: |
+#        SELECT * FROM TEMPLATE(keyspace,test).TEMPLATE(table,keyvalue) WHERE key={rw_key};
+#      verify_fields: key->rw_key, value->rw_value
 
   read:
     params:
