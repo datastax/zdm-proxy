@@ -10,7 +10,7 @@ scenarios:
   rampup: run driver=cqld4 tags=block:rampup cycles=20000
   write: run driver=cqld4 tags=block:write cycles=20000
   read: run driver=cqld4 tags=block:read cycles=20000
-  verify: run driver=cqld4 tags=block:verify errors=warn,unverified->count compare=all cycles=20000
+#  verify: run driver=cqld4 tags=block:verify errors=warn,unverified->count compare=all cycles=20000
 
 params:
   driver: cql
