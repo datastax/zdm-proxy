@@ -7,7 +7,7 @@ echo "deb https://downloads.datastax.com/deb stable main" | tee -a /etc/apt/sour
 curl -sL https://downloads.datastax.com/deb/doc/apt_key.gpg | apt-key add -
 pip install cqlsh
 
-function test_conn {
+test_conn() {
 	nc -z -v  $1 9042;
 	while [ $? -ne 0 ];
 		do echo "CQL port not ready on $1";
