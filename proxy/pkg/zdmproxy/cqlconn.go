@@ -109,7 +109,7 @@ func NewCqlConnection(
 		eventHandlerLock:      &sync.Mutex{},
 		authEnabled:           true,
 		// protoVer is the proposed protocol version using which we will try to establish connectivity
-		frameProcessor:  NewStreamIdProcessor(NewInternalStreamIdMapper(maxStreamIds(protoVer, protoVer, conf), nil)),
+		frameProcessor:  NewStreamIdProcessor(NewInternalStreamIdMapper(protoVer, conf, nil)),
 		protocolVersion: &atomic.Value{},
 	}
 	cqlConn.StartRequestLoop()

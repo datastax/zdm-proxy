@@ -75,6 +75,8 @@ type ClusterConnector struct {
 
 	lastHeartbeatTime *atomic.Value
 	lastHeartbeatLock sync.Mutex
+
+	ccProtoVer primitive.ProtocolVersion
 }
 
 func NewClusterConnectionInfo(connConfig ConnectionConfig, endpointConfig Endpoint, isOriginCassandra bool) *ClusterConnectionInfo {
@@ -101,7 +103,8 @@ func NewClusterConnector(
 	asyncConnector bool,
 	asyncPendingRequests *pendingRequests,
 	handshakeDone *atomic.Value,
-	frameProcessor FrameProcessor) (*ClusterConnector, error) {
+	frameProcessor FrameProcessor,
+	ccProtoVer primitive.ProtocolVersion) (*ClusterConnector, error) {
 
 	var connectorType ClusterConnectorType
 	var clusterType common.ClusterType
@@ -181,6 +184,7 @@ func NewClusterConnector(
 		asyncPendingRequests:        asyncPendingRequests,
 		handshakeDone:               handshakeDone,
 		lastHeartbeatTime:           lastHeartbeatTime,
+		ccProtoVer:                  ccProtoVer,
 	}, nil
 }
 
@@ -247,7 +251,7 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 		protocolErrOccurred := false
 		for {
 			response, err := readRawFrame(bufferedReader, connectionAddr, cc.clusterConnContext)
-			protocolErrResponseFrame, err, errCode := checkProtocolError(response, err, protocolErrOccurred, string(cc.connectorType))
+			protocolErrResponseFrame, err, errCode := checkProtocolError(response, cc.ccProtoVer, err, protocolErrOccurred, string(cc.connectorType))
 
 			if err != nil {
 				handleConnectionError(

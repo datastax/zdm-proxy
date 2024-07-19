@@ -56,6 +56,8 @@ type ClientConnector struct {
 	readScheduler *Scheduler
 
 	shutdownRequestCtx context.Context
+
+	minProtoVer primitive.ProtocolVersion
 }
 
 func NewClientConnector(
@@ -71,7 +73,8 @@ func NewClientConnector(
 	readScheduler *Scheduler,
 	writeScheduler *Scheduler,
 	shutdownRequestCtx context.Context,
-	clientHandlerShutdownRequestCancelFn context.CancelFunc) *ClientConnector {
+	clientHandlerShutdownRequestCancelFn context.CancelFunc,
+	minProtoVer primitive.ProtocolVersion) *ClientConnector {
 
 	return &ClientConnector{
 		connection:              connection,
@@ -97,6 +100,7 @@ func NewClientConnector(
 		readScheduler:                        readScheduler,
 		shutdownRequestCtx:                   shutdownRequestCtx,
 		clientHandlerShutdownRequestCancelFn: clientHandlerShutdownRequestCancelFn,
+		minProtoVer:                          minProtoVer,
 	}
 }
 
@@ -176,7 +180,7 @@ func (cc *ClientConnector) listenForRequests() {
 		for cc.clientHandlerContext.Err() == nil {
 			f, err := readRawFrame(bufferedReader, connectionAddr, cc.clientHandlerContext)
 
-			protocolErrResponseFrame, err, _ := checkProtocolError(f, err, protocolErrOccurred, ClientConnectorLogPrefix)
+			protocolErrResponseFrame, err, _ := checkProtocolError(f, cc.minProtoVer, err, protocolErrOccurred, ClientConnectorLogPrefix)
 			if err != nil {
 				handleConnectionError(
 					err, cc.clientHandlerContext, cc.clientHandlerCancelFunc, ClientConnectorLogPrefix, "reading", connectionAddr)
@@ -224,7 +228,7 @@ func (cc *ClientConnector) sendOverloadedToClient(request *frame.RawFrame) {
 	}
 }
 
-func checkProtocolError(f *frame.RawFrame, connErr error, protocolErrorOccurred bool, prefix string) (protocolErrResponse *frame.RawFrame, fatalErr error, errorCode int8) {
+func checkProtocolError(f *frame.RawFrame, protoVer primitive.ProtocolVersion, connErr error, protocolErrorOccurred bool, prefix string) (protocolErrResponse *frame.RawFrame, fatalErr error, errorCode int8) {
 	var protocolErrMsg *message.ProtocolError
 	var streamId int16
 	var logMsg string
@@ -244,7 +248,7 @@ func checkProtocolError(f *frame.RawFrame, connErr error, protocolErrorOccurred 
 		if !protocolErrorOccurred {
 			log.Debugf("[%v] %v Returning a protocol error to the client to force a downgrade: %v.", prefix, logMsg, protocolErrMsg)
 		}
-		rawProtocolErrResponse, err := generateProtocolErrorResponseFrame(streamId, protocolErrMsg)
+		rawProtocolErrResponse, err := generateProtocolErrorResponseFrame(streamId, protoVer, protocolErrMsg)
 		if err != nil {
 			return nil, fmt.Errorf("could not generate protocol error response raw frame (%v): %v", protocolErrMsg, err), -1
 		} else {
@@ -255,10 +259,8 @@ func checkProtocolError(f *frame.RawFrame, connErr error, protocolErrorOccurred 
 	}
 }
 
-func generateProtocolErrorResponseFrame(streamId int16, protocolErrMsg *message.ProtocolError) (*frame.RawFrame, error) {
-	// ideally we would use the maximum version between the versions used by both control connections if
-	// control connections implemented protocol version negotiation
-	response := frame.NewFrame(primitive.ProtocolVersion4, streamId, protocolErrMsg)
+func generateProtocolErrorResponseFrame(streamId int16, protoVer primitive.ProtocolVersion, protocolErrMsg *message.ProtocolError) (*frame.RawFrame, error) {
+	response := frame.NewFrame(protoVer, streamId, protocolErrMsg)
 	rawResponse, err := defaultCodec.ConvertToRawFrame(response)
 	if err != nil {
 		return nil, err

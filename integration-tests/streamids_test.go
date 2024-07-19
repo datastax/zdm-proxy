@@ -119,6 +119,53 @@ func TestLimitStreamIdsGeneration(t *testing.T) {
 	}
 }
 
+func TestFailOnNegativeStreamIDsFromClient(t *testing.T) {
+	originAddress := "127.0.1.1"
+	targetAddress := "127.0.1.2"
+	originProtoVer := primitive.ProtocolVersion2
+	targetProtoVer := primitive.ProtocolVersion2
+	serverConf := setup.NewTestConfig(originAddress, targetAddress)
+	proxyConf := setup.NewTestConfig(originAddress, targetAddress)
+
+	queryInsert := &message.Query{
+		Query: "INSERT INTO test_ks.test(key, value) VALUES(1, '1')", // use INSERT to route request to both clusters
+	}
+
+	testSetup, err := setup.NewCqlServerTestSetup(t, serverConf, false, false, false)
+	require.Nil(t, err)
+	defer testSetup.Cleanup()
+
+	originRequestHandler := NewMaxStreamIdsRequestHandler("origin", "dc1", originAddress, 100)
+	targetRequestHandler := NewProtocolNegotiationRequestHandler("target", "dc1", targetAddress, []primitive.ProtocolVersion{targetProtoVer})
+
+	testSetup.Origin.CqlServer.RequestHandlers = []client.RequestHandler{
+		originRequestHandler.HandleRequest,
+		client.NewDriverConnectionInitializationHandler("origin", "dc1", func(_ string) {}),
+	}
+	testSetup.Target.CqlServer.RequestHandlers = []client.RequestHandler{
+		targetRequestHandler.HandleRequest,
+		client.NewDriverConnectionInitializationHandler("target", "dc1", func(_ string) {}),
+	}
+
+	err = testSetup.Start(nil, false, originProtoVer)
+	require.Nil(t, err)
+
+	proxyConf.ProxyMaxStreamIds = 100
+	proxy, err := setup.NewProxyInstanceWithConfig(proxyConf) // starts the proxy
+	if proxy != nil {
+		defer proxy.Shutdown()
+	}
+	require.Nil(t, err)
+
+	cqlConn, err := testSetup.Client.CqlClient.ConnectAndInit(context.Background(), originProtoVer, 0)
+	require.Nil(t, err)
+	defer cqlConn.Close()
+
+	response, _ := cqlConn.SendAndReceive(frame.NewFrame(originProtoVer, -1, queryInsert))
+	require.IsType(t, response.Body.Message, &message.ProtocolError{})
+	require.Equal(t, "negative stream id: -1", response.Body.Message.(*message.ProtocolError).ErrorMessage)
+}
+
 type MaxStreamIdsRequestHandler struct {
 	lock                 sync.Mutex
 	cluster              string

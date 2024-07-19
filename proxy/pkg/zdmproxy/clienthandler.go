@@ -16,6 +16,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"net"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -170,10 +171,16 @@ func NewClientHandler(
 	// Initialize stream id processors to manage the ids sent to the clusters
 	originCCProtoVer := originControlConn.cqlConn.GetProtocolVersion()
 	targetCCProtoVer := targetControlConn.cqlConn.GetProtocolVersion()
-	streamIds := maxStreamIds(originCCProtoVer, targetCCProtoVer, conf)
-	originFrameProcessor := newFrameProcessor(streamIds, nodeMetrics, ClusterConnectorTypeOrigin)
-	targetFrameProcessor := newFrameProcessor(streamIds, nodeMetrics, ClusterConnectorTypeTarget)
-	asyncFrameProcessor := newFrameProcessor(streamIds, nodeMetrics, ClusterConnectorTypeAsync)
+	// Calculate maximum number of stream IDs. Take the oldest protocol version negotiated between two clusters
+	// and apply limit defined in proxy configuration. If origin or target cluster are still running protocol V2,
+	// we will limit maximum number of stream IDs to 127 on both clusters. Logic is based on Java driver version 3.x.
+	// Java driver 3.x was the last one supporting protocol V2. It establishes control connection first, and then
+	// uses negotiated protocol version to configure maximum number of stream IDs on node connections. Driver does NOT
+	// change the number of stream IDs on per node basis. Maximum stream ID is calculated while creating stream ID mapper.
+	minimalProtoVer := minProtoVer(originCCProtoVer, targetCCProtoVer)
+	originFrameProcessor := newFrameProcessor(minimalProtoVer, conf, nodeMetrics, ClusterConnectorTypeOrigin)
+	targetFrameProcessor := newFrameProcessor(minimalProtoVer, conf, nodeMetrics, ClusterConnectorTypeTarget)
+	asyncFrameProcessor := newFrameProcessor(minimalProtoVer, conf, nodeMetrics, ClusterConnectorTypeAsync)
 
 	closeFrameProcessors := func() {
 		originFrameProcessor.Close()
@@ -200,7 +207,7 @@ func NewClientHandler(
 	originConnector, err := NewClusterConnector(
 		originCassandraConnInfo, conf, psCache, nodeMetrics, localClientHandlerWg, clientHandlerRequestWg,
 		clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler, requestsDoneCtx,
-		false, nil, handshakeDone, originFrameProcessor)
+		false, nil, handshakeDone, originFrameProcessor, originCCProtoVer)
 	if err != nil {
 		clientHandlerCancelFunc()
 		return nil, err
@@ -209,7 +216,7 @@ func NewClientHandler(
 	targetConnector, err := NewClusterConnector(
 		targetCassandraConnInfo, conf, psCache, nodeMetrics, localClientHandlerWg, clientHandlerRequestWg,
 		clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler, requestsDoneCtx,
-		false, nil, handshakeDone, targetFrameProcessor)
+		false, nil, handshakeDone, targetFrameProcessor, targetCCProtoVer)
 	if err != nil {
 		clientHandlerCancelFunc()
 		return nil, err
@@ -227,7 +234,7 @@ func NewClientHandler(
 		asyncConnector, err = NewClusterConnector(
 			asyncConnInfo, conf, psCache, nodeMetrics, localClientHandlerWg, clientHandlerRequestWg,
 			clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler, requestsDoneCtx,
-			true, asyncPendingRequests, handshakeDone, asyncFrameProcessor)
+			true, asyncPendingRequests, handshakeDone, asyncFrameProcessor, originCCProtoVer)
 		if err != nil {
 			log.Errorf("Could not create async cluster connector to %s, async requests will not be forwarded: %s", asyncConnInfo.connConfig.GetClusterType(), err.Error())
 			asyncConnector = nil
@@ -263,7 +270,8 @@ func NewClientHandler(
 			readScheduler,
 			writeScheduler,
 			clientHandlerShutdownRequestContext,
-			clientHandlerShutdownRequestCancelFn),
+			clientHandlerShutdownRequestCancelFn,
+			minProtoVer(originCCProtoVer, targetCCProtoVer)),
 
 		asyncConnector:                       asyncConnector,
 		originCassandraConnector:             originConnector,
@@ -1487,7 +1495,7 @@ func (ch *ClientHandler) executeRequest(
 			f.Header.OpCode, f.Header.StreamId, common.ClusterTypeOrigin, common.ClusterTypeTarget)
 		sendErr := ch.originCassandraConnector.sendRequestToCluster(originRequest)
 		if sendErr != nil {
-			ch.clientConnector.sendOverloadedToClient(frameContext.frame)
+			ch.handleRequestSendFailure(sendErr, frameContext)
 		} else {
 			ch.targetCassandraConnector.sendRequestToCluster(targetRequest)
 		}
@@ -1496,7 +1504,7 @@ func (ch *ClientHandler) executeRequest(
 			f.Header.OpCode, f.Header.StreamId, common.ClusterTypeOrigin)
 		sendErr := ch.originCassandraConnector.sendRequestToCluster(originRequest)
 		if sendErr != nil {
-			ch.clientConnector.sendOverloadedToClient(frameContext.frame)
+			ch.handleRequestSendFailure(sendErr, frameContext)
 		}
 		ch.targetCassandraConnector.sendHeartbeat(startupFrameVersion, ch.conf.HeartbeatIntervalMs)
 	case forwardToTarget:
@@ -1504,7 +1512,7 @@ func (ch *ClientHandler) executeRequest(
 			f.Header.OpCode, f.Header.StreamId, common.ClusterTypeTarget)
 		sendErr := ch.targetCassandraConnector.sendRequestToCluster(targetRequest)
 		if sendErr != nil {
-			ch.clientConnector.sendOverloadedToClient(frameContext.frame)
+			ch.handleRequestSendFailure(sendErr, frameContext)
 		}
 		ch.originCassandraConnector.sendHeartbeat(startupFrameVersion, ch.conf.HeartbeatIntervalMs)
 	case forwardToAsyncOnly:
@@ -1524,6 +1532,20 @@ func (ch *ClientHandler) executeRequest(
 	return ch.sendToAsyncConnector(
 		frameContext, originRequest, targetRequest, fwdDecision, reqCtx, holder, sendAlsoToAsync,
 		overallRequestStartTime, requestTimeout)
+}
+
+func (ch *ClientHandler) handleRequestSendFailure(err error, frameContext *frameDecodeContext) {
+	if strings.Contains(err.Error(), "no stream id available") {
+		ch.clientConnector.sendOverloadedToClient(frameContext.frame)
+	} else if strings.Contains(err.Error(), "negative stream id") {
+		responseMessage := &message.ProtocolError{ErrorMessage: err.Error()}
+		responseFrame, err := generateProtocolErrorResponseFrame(
+			frameContext.frame.Header.StreamId, frameContext.frame.Header.Version, responseMessage)
+		if err != nil {
+			log.Errorf("could not generate protocol error response raw frame (%v): %v", responseMessage, err)
+		}
+		ch.clientConnector.sendResponseToClient(responseFrame)
+	}
 }
 
 func (ch *ClientHandler) handleInterceptedRequest(
@@ -2243,7 +2265,8 @@ func GetNodeMetricsByClusterConnector(nodeMetrics *metrics.NodeMetrics, connecto
 	}
 }
 
-func newFrameProcessor(maxStreamIds int, nodeMetrics *metrics.NodeMetrics, connectorType ClusterConnectorType) FrameProcessor {
+func newFrameProcessor(protoVer primitive.ProtocolVersion, config *config.Config, nodeMetrics *metrics.NodeMetrics,
+	connectorType ClusterConnectorType) FrameProcessor {
 	var streamIdsMetric metrics.Gauge
 	connectorMetrics, err := GetNodeMetricsByClusterConnector(nodeMetrics, connectorType)
 	if err != nil {
@@ -2254,30 +2277,16 @@ func newFrameProcessor(maxStreamIds int, nodeMetrics *metrics.NodeMetrics, conne
 	}
 	var mapper StreamIdMapper
 	if connectorType == ClusterConnectorTypeAsync {
-		mapper = NewInternalStreamIdMapper(maxStreamIds, streamIdsMetric)
+		mapper = NewInternalStreamIdMapper(protoVer, config, streamIdsMetric)
 	} else {
-		mapper = NewStreamIdMapper(maxStreamIds, streamIdsMetric)
+		mapper = NewStreamIdMapper(protoVer, config, streamIdsMetric)
 	}
 	return NewStreamIdProcessor(mapper)
 }
 
-// Calculate maximum number of stream IDs. Take the oldest protocol version negotiated between two clusters
-// and apply limit defined in proxy configuration. If origin or target cluster are still running protocol V2,
-// we will limit maximum number of stream IDs to 128 on both clusters. Logic is based on Java driver version 3.x.
-// Java driver 3.x was the last one supporting protocol V2. It establishes control connection first, and then
-// uses negotiated protocol version to configure maximum number of stream IDs on node connections. Driver does NOT
-// change the number of stream IDs on per node basis.
-func maxStreamIds(originProtoVer primitive.ProtocolVersion, targetProtoVer primitive.ProtocolVersion, conf *config.Config) int {
-	maxSupported := maxStreamIdsV3
-	protoVer := originProtoVer
-	if targetProtoVer < originProtoVer {
-		protoVer = targetProtoVer
+func minProtoVer(version1 primitive.ProtocolVersion, version2 primitive.ProtocolVersion) primitive.ProtocolVersion {
+	if version1 < version2 {
+		return version1
 	}
-	if protoVer == primitive.ProtocolVersion2 {
-		maxSupported = maxStreamIdsV2
-	}
-	if maxSupported < conf.ProxyMaxStreamIds {
-		return maxSupported
-	}
-	return conf.ProxyMaxStreamIds
+	return version2
 }

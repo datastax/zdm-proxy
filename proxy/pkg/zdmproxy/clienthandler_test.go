@@ -27,7 +27,7 @@ func TestMaxStreamIds(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ids := maxStreamIds(tt.args.originProtoVer, tt.args.targetProtoVer, tt.args.config)
+			ids := maxStreamIds(minProtoVer(tt.args.originProtoVer, tt.args.targetProtoVer), tt.args.config)
 			require.Equal(t, tt.expectedMaxStreamIds, ids)
 		})
 	}

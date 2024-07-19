@@ -159,20 +159,23 @@ func TestMaxClientsThreshold(t *testing.T) {
 
 func TestRequestedProtocolVersionUnsupportedByProxy(t *testing.T) {
 	tests := []struct {
-		name            string
-		requestVersion  primitive.ProtocolVersion
-		expectedVersion primitive.ProtocolVersion
-		errExpected     string
+		name              string
+		requestVersion    primitive.ProtocolVersion
+		negotiatedVersion string
+		expectedVersion   primitive.ProtocolVersion
+		errExpected       string
 	}{
 		{
 			"request v5, response v4",
 			primitive.ProtocolVersion5,
+			"4",
 			primitive.ProtocolVersion4,
 			"Invalid or unsupported protocol version (5)",
 		},
 		{
 			"request v1, response v4",
 			primitive.ProtocolVersion(0x1),
+			"4",
 			primitive.ProtocolVersion4,
 			"Invalid or unsupported protocol version (1)",
 		},
@@ -189,6 +192,7 @@ func TestRequestedProtocolVersionUnsupportedByProxy(t *testing.T) {
 			defer zerolog.SetGlobalLevel(oldZeroLogLevel)
 
 			cfg := setup.NewTestConfig("127.0.1.1", "127.0.1.2")
+			cfg.ControlConnMaxProtocolVersion = test.negotiatedVersion
 			cfg.LogLevel = "TRACE" // saw 1 test failure here once but logs didn't show enough info
 			testSetup, err := setup.NewCqlServerTestSetup(t, cfg, false, false, false)
 			require.Nil(t, err)
@@ -218,16 +222,18 @@ func TestRequestedProtocolVersionUnsupportedByProxy(t *testing.T) {
 
 func TestReturnedProtocolVersionUnsupportedByProxy(t *testing.T) {
 	type test struct {
-		name            string
-		requestVersion  primitive.ProtocolVersion
-		returnedVersion primitive.ProtocolVersion
-		expectedVersion primitive.ProtocolVersion
-		errExpected     string
+		name              string
+		requestVersion    primitive.ProtocolVersion
+		negotiatedVersion string
+		returnedVersion   primitive.ProtocolVersion
+		expectedVersion   primitive.ProtocolVersion
+		errExpected       string
 	}
 	tests := []*test{
 		{
 			"DSE_V2 request, v5 returned, v4 expected",
 			primitive.ProtocolVersionDse2,
+			"4",
 			primitive.ProtocolVersion5,
 			primitive.ProtocolVersion4,
 			"Invalid or unsupported protocol version (5)",
@@ -235,6 +241,7 @@ func TestReturnedProtocolVersionUnsupportedByProxy(t *testing.T) {
 		{
 			"DSE_V2 request, v1 returned, v4 expected",
 			primitive.ProtocolVersionDse2,
+			"4",
 			primitive.ProtocolVersion(0x01),
 			primitive.ProtocolVersion4,
 			"Invalid or unsupported protocol version (1)",
@@ -242,6 +249,7 @@ func TestReturnedProtocolVersionUnsupportedByProxy(t *testing.T) {
 	}
 
 	runTestFunc := func(t *testing.T, test *test, cfg *config.Config) {
+		cfg.ControlConnMaxProtocolVersion = test.negotiatedVersion // simulate what version was negotiated on control connection
 		testSetup, err := setup.NewCqlServerTestSetup(t, cfg, false, false, false)
 		require.Nil(t, err)
 		defer testSetup.Cleanup()
@@ -299,7 +307,7 @@ func TestReturnedProtocolVersionUnsupportedByProxy(t *testing.T) {
 }
 
 func createFrameWithUnsupportedVersion(version primitive.ProtocolVersion, streamId int16, isResponse bool) ([]byte, error) {
-	mostSimilarVersion := primitive.ProtocolVersion4
+	mostSimilarVersion := version
 	if version > primitive.ProtocolVersionDse2 {
 		mostSimilarVersion = primitive.ProtocolVersionDse2
 	} else if version < primitive.ProtocolVersion2 {
