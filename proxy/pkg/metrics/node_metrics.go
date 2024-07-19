@@ -280,7 +280,8 @@ type NodeMetricsInstance struct {
 	UnavailableErrors Counter
 	OtherErrors       Counter
 
-	RequestDuration map[string]Histogram
+	ReadDurations  Histogram
+	WriteDurations Histogram
 
 	OpenConnections Gauge
 
@@ -309,18 +310,6 @@ func CreateHistogramNodeMetric(metricFactory MetricFactory, nodeDescription stri
 		return nil, err
 	}
 	return m, nil
-}
-
-func CreateHistogramNodeRequestDurationMetrics(metricFactory MetricFactory, nodeDescription string, mn Metric, buckets []float64) (map[string]Histogram, error) {
-	requestDuration := make(map[string]Histogram)
-	for _, stmtCtg := range StatementCategories {
-		item, err := CreateHistogramNodeMetric(metricFactory, nodeDescription, mn, buckets, RequestDurationTypeLabel, stmtCtg)
-		if err != nil {
-			return nil, err
-		}
-		requestDuration[stmtCtg] = item
-	}
-	return requestDuration, nil
 }
 
 func CreateGaugeNodeMetric(metricFactory MetricFactory, nodeDescription string, mn Metric) (Gauge, error) {

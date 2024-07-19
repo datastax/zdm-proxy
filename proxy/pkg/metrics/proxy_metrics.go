@@ -28,10 +28,6 @@ const (
 )
 
 var (
-	StatementCategories = []string{TypeWrites, TypeReads}
-)
-
-var (
 	FailedReadsOrigin = NewMetricWithLabels(
 		failedReadsName,
 		failedReadsDescription,
