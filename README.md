@@ -109,7 +109,7 @@ various C* versions:
 |------------------|------------------|
 | 2.0              | V2               |
 | 2.1              | V2, V3           |
-| 2.2              | V3, V4           |
+| 2.2              | V2, V3, V4       |
 | 3.x              | V3, V4           |
 | 4.x              | V3, V4, V5       |
 
@@ -122,8 +122,7 @@ migration process.
 
 In practice this means that ZDM Proxy supports the following cluster versions (as Origin and / or Target):
 
-- Apache Cassandra from 2.1+ up to (and including) Apache Cassandra 4.x.
-- Apache Cassandra 2.0 up to 2.1.
+- Apache Cassandra from 2.0+ up to (and including) Apache Cassandra 4.x. (although both clusters have to support a common protocol version as mentioned above).
 - DataStax Enterprise 4.8+. DataStax Enterprise 4.6 and 4.7 support will be introduced when protocol version v2 is supported.
 - DataStax Astra DB (both Serverless and Classic)
 
