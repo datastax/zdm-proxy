@@ -299,13 +299,9 @@ func CreateCounterNodeMetric(metricFactory MetricFactory, nodeDescription string
 	return m, nil
 }
 
-func CreateHistogramNodeMetric(metricFactory MetricFactory, nodeDescription string, mn Metric, buckets []float64, labels ...string) (Histogram, error) {
-	customLabels := make(map[string]string)
-	for i := 0; i < len(labels); i = i + 2 {
-		customLabels[labels[i]] = labels[i+1]
-	}
+func CreateHistogramNodeMetric(metricFactory MetricFactory, nodeDescription string, mn Metric, buckets []float64, labels map[string]string) (Histogram, error) {
 	m, err := metricFactory.GetOrCreateHistogram(
-		mn.WithLabels(map[string]string{nodeLabel: nodeDescription}).WithLabels(customLabels), buckets)
+		mn.WithLabels(map[string]string{nodeLabel: nodeDescription}).WithLabels(labels), buckets)
 	if err != nil {
 		return nil, err
 	}

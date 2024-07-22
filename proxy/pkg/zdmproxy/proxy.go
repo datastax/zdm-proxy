@@ -826,12 +826,12 @@ func (p *ZdmProxy) CreateOriginNodeMetrics(
 		return nil, err
 	}
 
-	originReadRequestDuration, err := metrics.CreateHistogramNodeMetric(metricFactory, originNodeDescription, metrics.OriginRequestDuration, originBuckets, metrics.RequestDurationTypeLabel, metrics.TypeReads)
+	originReadRequestDuration, err := metrics.CreateHistogramNodeMetric(metricFactory, originNodeDescription, metrics.OriginRequestDuration, originBuckets, map[string]string{metrics.RequestDurationTypeLabel: metrics.TypeReads})
 	if err != nil {
 		return nil, err
 	}
 
-	originWriteRequestDuration, err := metrics.CreateHistogramNodeMetric(metricFactory, originNodeDescription, metrics.OriginRequestDuration, originBuckets, metrics.RequestDurationTypeLabel, metrics.TypeWrites)
+	originWriteRequestDuration, err := metrics.CreateHistogramNodeMetric(metricFactory, originNodeDescription, metrics.OriginRequestDuration, originBuckets, map[string]string{metrics.RequestDurationTypeLabel: metrics.TypeWrites})
 	if err != nil {
 		return nil, err
 	}
@@ -917,12 +917,12 @@ func (p *ZdmProxy) CreateAsyncNodeMetrics(
 		return nil, err
 	}
 
-	asyncReadRequestDuration, err := metrics.CreateHistogramNodeMetric(metricFactory, asyncNodeDescription, metrics.AsyncRequestDuration, asyncBuckets, metrics.RequestDurationTypeLabel, metrics.TypeReads)
+	asyncReadRequestDuration, err := metrics.CreateHistogramNodeMetric(metricFactory, asyncNodeDescription, metrics.AsyncRequestDuration, asyncBuckets, map[string]string{metrics.RequestDurationTypeLabel: metrics.TypeReads})
 	if err != nil {
 		return nil, err
 	}
 
-	asyncWriteRequestDuration, err := metrics.CreateHistogramNodeMetric(metricFactory, asyncNodeDescription, metrics.AsyncRequestDuration, asyncBuckets, metrics.RequestDurationTypeLabel, metrics.TypeWrites)
+	asyncWriteRequestDuration, err := metrics.CreateHistogramNodeMetric(metricFactory, asyncNodeDescription, metrics.AsyncRequestDuration, asyncBuckets, map[string]string{metrics.RequestDurationTypeLabel: metrics.TypeWrites})
 	if err != nil {
 		return nil, err
 	}
@@ -1007,12 +1007,12 @@ func (p *ZdmProxy) CreateTargetNodeMetrics(
 		return nil, err
 	}
 
-	targetReadRequestDuration, err := metrics.CreateHistogramNodeMetric(metricFactory, targetNodeDescription, metrics.TargetRequestDuration, targetBuckets, metrics.RequestDurationTypeLabel, metrics.TypeReads)
+	targetReadRequestDuration, err := metrics.CreateHistogramNodeMetric(metricFactory, targetNodeDescription, metrics.TargetRequestDuration, targetBuckets, map[string]string{metrics.RequestDurationTypeLabel: metrics.TypeReads})
 	if err != nil {
 		return nil, err
 	}
 
-	targetWriteRequestDuration, err := metrics.CreateHistogramNodeMetric(metricFactory, targetNodeDescription, metrics.TargetRequestDuration, targetBuckets, metrics.RequestDurationTypeLabel, metrics.TypeWrites)
+	targetWriteRequestDuration, err := metrics.CreateHistogramNodeMetric(metricFactory, targetNodeDescription, metrics.TargetRequestDuration, targetBuckets, map[string]string{metrics.RequestDurationTypeLabel: metrics.TypeWrites})
 	if err != nil {
 		return nil, err
 	}
