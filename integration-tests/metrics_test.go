@@ -375,38 +375,34 @@ func checkMetrics(
 		require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithNodeLabel(prefix, metrics.OriginUnpreparedErrors, originHost)))
 		require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithNodeLabel(prefix, metrics.TargetUnpreparedErrors, targetHost)))
 		if (successTarget + successBoth) == 0 {
-			require.Contains(t, lines, fmt.Sprintf("%v{node=\"%v\"} 0", getPrometheusNameWithSuffix(prefix, metrics.TargetRequestDuration, "sum"), targetHost))
+			require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithSuffixAndNodeLabel(prefix, metrics.TargetRequestDuration, "sum", targetHost, "type", "writes")))
+			require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithSuffixAndNodeLabel(prefix, metrics.TargetRequestDuration, "sum", targetHost, "type", "reads")))
 		} else {
 			if successBoth != 0 || !handshakeOnlyTarget {
-				value, err := findMetricValue(lines, fmt.Sprintf("%v{node=\"%v\"} ", getPrometheusNameWithSuffix(prefix, metrics.TargetRequestDuration, "sum"), targetHost))
-				require.Nil(t, err)
+				value := sumAllRequestsFromNode(lines, prefix, metrics.TargetRequestDuration, "sum", targetHost)
 				require.Greater(t, value, 0.0)
 			}
 		}
 
 		if (successOrigin + successBoth) == 0 {
-			require.Contains(t, lines, fmt.Sprintf("%v{node=\"%v\"} 0", getPrometheusNameWithSuffix(prefix, metrics.OriginRequestDuration, "sum"), originHost))
+			require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithSuffixAndNodeLabel(prefix, metrics.OriginRequestDuration, "sum", originHost, "type", "reads")))
+			require.Contains(t, lines, fmt.Sprintf("%v 0", getPrometheusNameWithSuffixAndNodeLabel(prefix, metrics.OriginRequestDuration, "sum", originHost, "type", "writes")))
 		} else {
 			if successBoth != 0 || !handshakeOnlyOrigin {
-				value, err := findMetricValue(lines, fmt.Sprintf("%v{node=\"%v\"} ", getPrometheusNameWithSuffix(prefix, metrics.OriginRequestDuration, "sum"), originHost))
-				require.Nil(t, err)
+				value := sumAllRequestsFromNode(lines, prefix, metrics.OriginRequestDuration, "sum", originHost)
 				require.Greater(t, value, 0.0)
 			}
 		}
 
 		if successAsync == 0 || !asyncEnabled {
 			if asyncEnabled {
-				requireEventuallyContainsLine(t, lines, fmt.Sprintf("%v{node=\"%v\"} 0", getPrometheusNameWithSuffix(prefix, metrics.AsyncRequestDuration, "sum"), asyncHost))
+				requireEventuallyContainsLine(t, lines, fmt.Sprintf("%v{node=\"%v\",type=\"writes\"} 0", getPrometheusNameWithSuffix(prefix, metrics.AsyncRequestDuration, "sum"), asyncHost))
 			} else {
 				require.NotContains(t, lines, fmt.Sprintf("%v", getPrometheusNameWithSuffix(prefix, metrics.AsyncRequestDuration, "sum")))
 			}
 		} else {
 			utils.RequireWithRetries(t, func() (err error, fatal bool) {
-				prefix := fmt.Sprintf("%v{node=\"%v\"} ", getPrometheusNameWithSuffix(prefix, metrics.AsyncRequestDuration, "sum"), asyncHost)
-				value, err := findMetricValue(lines, prefix)
-				if err != nil {
-					return err, false
-				}
+				value := sumAllRequestsFromNode(lines, prefix, metrics.AsyncRequestDuration, "sum", asyncHost)
 				if value <= 0.0 {
 					return fmt.Errorf("%v expected greater than 0.0 but was %v", prefix, value), false
 				}
@@ -415,10 +411,10 @@ func checkMetrics(
 			}, 25, 200*time.Millisecond)
 		}
 
-		require.Contains(t, lines, fmt.Sprintf("%v{node=\"%v\"} %v", getPrometheusNameWithSuffix(prefix, metrics.TargetRequestDuration, "count"), targetHost, successTarget+successBoth))
-		require.Contains(t, lines, fmt.Sprintf("%v{node=\"%v\"} %v", getPrometheusNameWithSuffix(prefix, metrics.OriginRequestDuration, "count"), originHost, successOrigin+successBoth))
+		require.Equal(t, float64(successTarget+successBoth), sumAllRequestsFromNode(lines, prefix, metrics.TargetRequestDuration, "count", targetHost))
+		require.Equal(t, float64(successOrigin+successBoth), sumAllRequestsFromNode(lines, prefix, metrics.OriginRequestDuration, "count", originHost))
 		if asyncEnabled {
-			requireEventuallyContainsLine(t, lines, fmt.Sprintf("%v{node=\"%v\"} %v", getPrometheusNameWithSuffix(prefix, metrics.AsyncRequestDuration, "count"), asyncHost, successAsync))
+			requireEventuallyContainsLine(t, lines, fmt.Sprintf("%v{node=\"%v\",type=\"reads\"} %v", getPrometheusNameWithSuffix(prefix, metrics.AsyncRequestDuration, "count"), asyncHost, successAsync))
 		} else {
 			require.NotContains(t, lines, fmt.Sprintf("%v", getPrometheusNameWithSuffix(prefix, metrics.OriginRequestDuration, "count")))
 		}
@@ -432,12 +428,16 @@ func checkMetrics(
 }
 
 func findMetricValue(lines []string, prefix string) (float64, error) {
+	return findMetricValueWithDefault(lines, prefix, -1)
+}
+
+func findMetricValueWithDefault(lines []string, prefix string, defaultValue float64) (float64, error) {
 	for _, line := range lines {
 		if strings.HasPrefix(line, prefix) {
-			return strconv.ParseFloat(strings.TrimPrefix(line, prefix), 64)
+			return strconv.ParseFloat(strings.Trim(strings.TrimPrefix(line, prefix), " "), 64)
 		}
 	}
-	return -1, fmt.Errorf("no line with prefix: %v", prefix)
+	return defaultValue, fmt.Errorf("no line with prefix: %v", prefix)
 }
 
 func handleReads(request *frame.Frame, _ *client.CqlServerConnection, _ client.RequestHandlerContext) (response *frame.Frame) {
@@ -477,7 +477,7 @@ func getPrometheusNameWithNodeLabel(prefix string, mn metrics.Metric, node strin
 	return getPrometheusNameWithSuffixAndNodeLabel(prefix, mn, "", node)
 }
 
-func getPrometheusNameWithSuffixAndNodeLabel(prefix string, mn metrics.Metric, suffix string, node string) string {
+func getPrometheusNameWithSuffixAndNodeLabel(prefix string, mn metrics.Metric, suffix string, node string, customLabels ...string) string {
 	if suffix != "" {
 		suffix = "_" + suffix
 	}
@@ -486,6 +486,9 @@ func getPrometheusNameWithSuffixAndNodeLabel(prefix string, mn metrics.Metric, s
 	newLabels := make(map[string]string)
 	for key, value := range labels {
 		newLabels[key] = value
+	}
+	for i := 0; i < len(customLabels); i = i + 2 {
+		newLabels[customLabels[i]] = customLabels[i+1]
 	}
 	if node != "" {
 		newLabels["node"] = node
@@ -518,4 +521,12 @@ func getPrometheusNameWithSuffixAndNodeLabel(prefix string, mn metrics.Metric, s
 
 func getPrometheusNameWithSuffix(prefix string, mn metrics.Metric, suffix string) string {
 	return getPrometheusNameWithSuffixAndNodeLabel(prefix, mn, suffix, "")
+}
+
+func sumAllRequestsFromNode(lines []string, prefix string, metric metrics.Metric, suffix string, host string) float64 {
+	writesMetric := getPrometheusNameWithSuffixAndNodeLabel(prefix, metric, suffix, host, "type", "writes")
+	valueWrites, _ := findMetricValueWithDefault(lines, writesMetric, 0)
+	readsMetric := getPrometheusNameWithSuffixAndNodeLabel(prefix, metric, suffix, host, "type", "reads")
+	valueReads, _ := findMetricValueWithDefault(lines, readsMetric, 0)
+	return valueWrites + valueReads
 }

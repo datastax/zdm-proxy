@@ -193,9 +193,17 @@ func (recv *requestContextImpl) SetResponse(nodeMetrics *metrics.NodeMetrics, f 
 	if recv.GetRequestInfo().ShouldBeTrackedInMetrics() {
 		switch connectorType {
 		case ClusterConnectorTypeOrigin:
-			nodeMetrics.OriginMetrics.RequestDuration.Track(recv.startTime)
+			if isWriteStatement(recv.GetRequestInfo()) {
+				nodeMetrics.OriginMetrics.WriteDurations.Track(recv.startTime)
+			} else {
+				nodeMetrics.OriginMetrics.ReadDurations.Track(recv.startTime)
+			}
 		case ClusterConnectorTypeTarget:
-			nodeMetrics.TargetMetrics.RequestDuration.Track(recv.startTime)
+			if isWriteStatement(recv.GetRequestInfo()) {
+				nodeMetrics.TargetMetrics.WriteDurations.Track(recv.startTime)
+			} else {
+				nodeMetrics.TargetMetrics.ReadDurations.Track(recv.startTime)
+			}
 		case ClusterConnectorTypeAsync:
 		default:
 			log.Errorf("could not recognize connector type %v", connectorType)
@@ -203,6 +211,10 @@ func (recv *requestContextImpl) SetResponse(nodeMetrics *metrics.NodeMetrics, f 
 	}
 
 	return finished
+}
+
+func isWriteStatement(req RequestInfo) bool {
+	return req.GetForwardDecision() == forwardToBoth
 }
 
 func (recv *requestContextImpl) updateInternalState(f *frame.RawFrame, cluster common.ClusterType) (state int, updated bool) {
@@ -331,7 +343,11 @@ func (recv *asyncRequestContextImpl) SetResponse(
 	}
 
 	if recv.GetRequestInfo().ShouldBeTrackedInMetrics() {
-		nodeMetrics.AsyncMetrics.RequestDuration.Track(recv.startTime)
+		if isWriteStatement(recv.GetRequestInfo()) {
+			nodeMetrics.AsyncMetrics.WriteDurations.Track(recv.startTime)
+		} else {
+			nodeMetrics.AsyncMetrics.ReadDurations.Track(recv.startTime)
+		}
 		nodeMetrics.AsyncMetrics.InFlightRequests.Subtract(1)
 	}
 

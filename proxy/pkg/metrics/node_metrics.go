@@ -280,7 +280,8 @@ type NodeMetricsInstance struct {
 	UnavailableErrors Counter
 	OtherErrors       Counter
 
-	RequestDuration Histogram
+	ReadDurations  Histogram
+	WriteDurations Histogram
 
 	OpenConnections Gauge
 
@@ -298,9 +299,9 @@ func CreateCounterNodeMetric(metricFactory MetricFactory, nodeDescription string
 	return m, nil
 }
 
-func CreateHistogramNodeMetric(metricFactory MetricFactory, nodeDescription string, mn Metric, buckets []float64) (Histogram, error) {
+func CreateHistogramNodeMetric(metricFactory MetricFactory, nodeDescription string, mn Metric, buckets []float64, labels map[string]string) (Histogram, error) {
 	m, err := metricFactory.GetOrCreateHistogram(
-		mn.WithLabels(map[string]string{nodeLabel: nodeDescription}), buckets)
+		mn.WithLabels(map[string]string{nodeLabel: nodeDescription}).WithLabels(labels), buckets)
 	if err != nil {
 		return nil, err
 	}

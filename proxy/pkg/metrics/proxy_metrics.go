@@ -3,7 +3,8 @@ package metrics
 const (
 	typeReadsOrigin = "reads_origin"
 	typeReadsTarget = "reads_target"
-	typeWrites      = "writes"
+	TypeWrites      = "writes"
+	TypeReads       = "reads"
 
 	failedRequestsClusterOrigin = "origin"
 	failedRequestsClusterTarget = "target"
@@ -18,7 +19,7 @@ const (
 	failedWritesFailedOnClusterTypeLabel = "failed_on"
 
 	requestDurationName        = "proxy_request_duration_seconds"
-	requestDurationTypeLabel   = "type"
+	RequestDurationTypeLabel   = "type"
 	requestDurationDescription = "Histogram that tracks the latency of requests at proxy entry point"
 
 	inFlightRequestsName        = "proxy_inflight_requests_total"
@@ -76,21 +77,21 @@ var (
 		requestDurationName,
 		requestDurationDescription,
 		map[string]string{
-			requestDurationTypeLabel: typeReadsOrigin,
+			RequestDurationTypeLabel: typeReadsOrigin,
 		},
 	)
 	ProxyReadsTargetDuration = NewMetricWithLabels(
 		requestDurationName,
 		requestDurationDescription,
 		map[string]string{
-			requestDurationTypeLabel: typeReadsTarget,
+			RequestDurationTypeLabel: typeReadsTarget,
 		},
 	)
 	ProxyWritesDuration = NewMetricWithLabels(
 		requestDurationName,
 		requestDurationDescription,
 		map[string]string{
-			requestDurationTypeLabel: typeWrites,
+			RequestDurationTypeLabel: TypeWrites,
 		},
 	)
 
@@ -112,7 +113,7 @@ var (
 		inFlightRequestsName,
 		inFlightRequestsDescription,
 		map[string]string{
-			inFlightRequestsTypeLabel: typeWrites,
+			inFlightRequestsTypeLabel: TypeWrites,
 		},
 	)
 
