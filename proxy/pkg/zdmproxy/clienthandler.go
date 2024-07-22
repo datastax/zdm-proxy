@@ -1543,8 +1543,9 @@ func (ch *ClientHandler) handleRequestSendFailure(err error, frameContext *frame
 			frameContext.frame.Header.StreamId, frameContext.frame.Header.Version, responseMessage)
 		if err != nil {
 			log.Errorf("could not generate protocol error response raw frame (%v): %v", responseMessage, err)
+		} else {
+			ch.clientConnector.sendResponseToClient(responseFrame)
 		}
-		ch.clientConnector.sendResponseToClient(responseFrame)
 	}
 }
 
