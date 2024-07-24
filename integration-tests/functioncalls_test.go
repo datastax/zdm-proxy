@@ -854,7 +854,7 @@ func TestNowFunctionReplacementPreparedStatement(t *testing.T) {
 					isReplacedNow:   false,
 					value:           []int{11, 22, 33},
 					valueSimulacron: []int{11, 22, 33},
-					dataType:        datatype.NewListType(datatype.Int),
+					dataType:        datatype.NewList(datatype.Int),
 					simulacronType:  "list<int>",
 				},
 				{
@@ -880,7 +880,7 @@ func TestNowFunctionReplacementPreparedStatement(t *testing.T) {
 						{1, 2, 3},
 						{2, 3, 4},
 					},
-					dataType:       datatype.NewListType(datatype.NewTupleType(datatype.Int, datatype.Int, datatype.Int)),
+					dataType:       datatype.NewList(datatype.NewTuple(datatype.Int, datatype.Int, datatype.Int)),
 					simulacronType: "list<tuple<int, int, int>>",
 				},
 				{
@@ -2261,7 +2261,7 @@ func TestNowFunctionReplacementBatchStatement(t *testing.T) {
 					}
 					expectedBatchChildQueries = append(expectedBatchChildQueries, expectedBatchChildQuery)
 
-					var queryOrId interface{}
+					var batchChild *message.BatchChild
 					if childStatement.prepared {
 						when := simulacron.NewWhenQueryOptions()
 						for _, p := range expectedChildQueryParams {
@@ -2285,18 +2285,21 @@ func TestNowFunctionReplacementBatchStatement(t *testing.T) {
 						require.Nil(t, err)
 						prepared, ok := resp.Body.Message.(*message.PreparedResult)
 						require.True(t, ok)
-						queryOrId = prepared.PreparedQueryId
+						batchChild = &message.BatchChild{
+							Id:     prepared.PreparedQueryId,
+							Values: positionalValues,
+						}
 
 						validateForwardedPrepare(simulacronSetup.Origin, childStatement)
 						validateForwardedPrepare(simulacronSetup.Target, childStatement)
 					} else {
-						queryOrId = childStatement.originalQuery
+						batchChild = &message.BatchChild{
+							Query:  childStatement.originalQuery,
+							Values: positionalValues,
+						}
 					}
 
-					batchChildStatements = append(batchChildStatements, &message.BatchChild{
-						QueryOrId: queryOrId,
-						Values:    positionalValues,
-					})
+					batchChildStatements = append(batchChildStatements, batchChild)
 				}
 
 				batchMsg := &message.Batch{
@@ -2325,7 +2328,7 @@ func TestNowFunctionReplacementBatchStatement(t *testing.T) {
 						actualStmt := matching[0].QueriesOrIds[idx]
 						actualParams := matching[0].Values[idx]
 						if childStatement.prepared {
-							b64ExpectedValue := base64.StdEncoding.EncodeToString(batchChildStatements[idx].QueryOrId.([]byte))
+							b64ExpectedValue := base64.StdEncoding.EncodeToString(batchChildStatements[idx].Id)
 							require.Equal(t, b64ExpectedValue, actualStmt, idx)
 						} else {
 							if enableNowReplacement {

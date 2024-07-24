@@ -2,6 +2,7 @@ package zdmproxy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
@@ -58,7 +59,6 @@ type ControlConn struct {
 
 const ProxyVirtualRack = "rack0"
 const ProxyVirtualPartitioner = "org.apache.cassandra.dht.Murmur3Partitioner"
-const ccProtocolVersion = primitive.ProtocolVersion3
 const ccWriteTimeout = 5 * time.Second
 const ccReadTimeout = 10 * time.Second
 
@@ -125,7 +125,7 @@ func (cc *ControlConn) Start(wg *sync.WaitGroup, ctx context.Context) error {
 
 			log.Infof("Received topology event from %v, refreshing topology.", cc.connConfig.GetClusterType())
 
-			conn, _ := cc.getConnAndContactPoint()
+			conn, _ := cc.GetConnAndContactPoint()
 			if conn == nil {
 				log.Debugf("Topology refresh scheduled but the control connection isn't open. " +
 					"Falling back to the connection where the event was received.")
@@ -162,7 +162,7 @@ func (cc *ControlConn) Start(wg *sync.WaitGroup, ctx context.Context) error {
 				cc.Close()
 			}
 
-			conn, _ := cc.getConnAndContactPoint()
+			conn, _ := cc.GetConnAndContactPoint()
 			if conn == nil {
 				useContactPointsOnly := false
 				if !lastOpenSuccessful {
@@ -251,7 +251,7 @@ func (cc *ControlConn) ReadFailureCounter() int {
 }
 
 func (cc *ControlConn) Open(contactPointsOnly bool, ctx context.Context) (CqlConnection, error) {
-	oldConn, _ := cc.getConnAndContactPoint()
+	oldConn, _ := cc.GetConnAndContactPoint()
 	if oldConn != nil {
 		cc.Close()
 		oldConn = nil
@@ -320,15 +320,10 @@ func (cc *ControlConn) openInternal(endpoints []Endpoint, ctx context.Context) (
 
 		currentIndex := (firstEndpointIndex + i) % len(endpoints)
 		endpoint = endpoints[currentIndex]
-		tcpConn, _, err := openConnection(cc.connConfig, endpoint, ctx, false)
-		if err != nil {
-			log.Warnf("Failed to open control connection to %v using endpoint %v: %v",
-				cc.connConfig.GetClusterType(), endpoint.GetEndpointIdentifier(), err)
-			continue
-		}
 
-		newConn := NewCqlConnection(tcpConn, cc.username, cc.password, ccReadTimeout, ccWriteTimeout, cc.conf)
-		err = newConn.InitializeContext(ccProtocolVersion, ctx)
+		maxProtoVer, _ := cc.conf.ParseControlConnMaxProtocolVersion()
+		newConn, err := cc.connAndNegotiateProtoVer(endpoint, maxProtoVer, ctx)
+
 		if err == nil {
 			newConn.SetEventHandler(func(f *frame.Frame, c CqlConnection) {
 				switch f.Body.Message.(type) {
@@ -355,21 +350,69 @@ func (cc *ControlConn) openInternal(endpoints []Endpoint, ctx context.Context) (
 				log.Warnf("Error while initializing a new cql connection for the control connection of %v: %v",
 					cc.connConfig.GetClusterType(), err)
 			}
-			err2 := newConn.Close()
-			if err2 != nil {
-				log.Errorf("Failed to close cql connection: %v", err2)
+			if newConn != nil {
+				err2 := newConn.Close()
+				if err2 != nil {
+					log.Errorf("Failed to close cql connection: %v", err2)
+				}
 			}
 
 			continue
 		}
 
 		conn = newConn
-		log.Infof("Successfully opened control connection to %v using endpoint %v.",
-			cc.connConfig.GetClusterType(), endpoint.String())
+		log.Infof("Successfully opened control connection to %v using endpoint %v with %v.",
+			cc.connConfig.GetClusterType(), endpoint.String(), newConn.GetProtocolVersion())
 		break
 	}
 
 	return conn, endpoint
+}
+
+func (cc *ControlConn) connAndNegotiateProtoVer(endpoint Endpoint, initialProtoVer primitive.ProtocolVersion, ctx context.Context) (CqlConnection, error) {
+	protoVer := initialProtoVer
+	for {
+		tcpConn, _, err := openConnection(cc.connConfig, endpoint, ctx, false)
+		if err != nil {
+			log.Warnf("Failed to open control connection to %v using endpoint %v: %v",
+				cc.connConfig.GetClusterType(), endpoint.GetEndpointIdentifier(), err)
+			return nil, err
+		}
+		newConn := NewCqlConnection(endpoint, tcpConn, cc.username, cc.password, ccReadTimeout, ccWriteTimeout, cc.conf, protoVer)
+		err = newConn.InitializeContext(protoVer, ctx)
+		var respErr *ResponseError
+		if err != nil && errors.As(err, &respErr) && respErr.IsProtocolError() && strings.Contains(err.Error(), "Invalid or unsupported protocol version") {
+			// unsupported protocol version
+			// protocol renegotiation requires opening a new TCP connection
+			err2 := newConn.Close()
+			if err2 != nil {
+				log.Errorf("Failed to close cql connection: %v", err2)
+			}
+			protoVer = downgradeProtocol(protoVer)
+			log.Debugf("Downgrading protocol version: %v", protoVer)
+			if protoVer == 0 {
+				// we cannot downgrade anymore
+				return nil, err
+			}
+			continue // retry lower protocol version
+		} else {
+			return newConn, err // we may have successfully established connection or faced other error
+		}
+	}
+}
+
+func downgradeProtocol(version primitive.ProtocolVersion) primitive.ProtocolVersion {
+	switch version {
+	case primitive.ProtocolVersionDse2:
+		return primitive.ProtocolVersionDse1
+	case primitive.ProtocolVersionDse1:
+		return primitive.ProtocolVersion4
+	case primitive.ProtocolVersion4:
+		return primitive.ProtocolVersion3
+	case primitive.ProtocolVersion3:
+		return primitive.ProtocolVersion2
+	}
+	return 0
 }
 
 func (cc *ControlConn) Close() {
@@ -387,12 +430,12 @@ func (cc *ControlConn) Close() {
 }
 
 func (cc *ControlConn) RefreshHosts(conn CqlConnection, ctx context.Context) ([]*Host, error) {
-	localQueryResult, err := conn.Query("SELECT * FROM system.local", GetDefaultGenericTypeCodec(), ccProtocolVersion, ctx)
+	localQueryResult, err := conn.Query("SELECT * FROM system.local", GetDefaultGenericTypeCodec(), ctx)
 	if err != nil {
 		return nil, fmt.Errorf("could not fetch information from system.local table: %w", err)
 	}
 
-	localInfo, localHost, err := ParseSystemLocalResult(localQueryResult, cc.defaultPort)
+	localInfo, localHost, err := ParseSystemLocalResult(localQueryResult, conn.GetEndpoint(), cc.defaultPort)
 	if err != nil {
 		return nil, err
 	}
@@ -410,7 +453,7 @@ func (cc *ControlConn) RefreshHosts(conn CqlConnection, ctx context.Context) ([]
 		}
 	}
 
-	peersQuery, err := conn.Query("SELECT * FROM system.peers", GetDefaultGenericTypeCodec(), ccProtocolVersion, ctx)
+	peersQuery, err := conn.Query("SELECT * FROM system.peers", GetDefaultGenericTypeCodec(), ctx)
 	if err != nil {
 		return nil, fmt.Errorf("could not fetch information from system.peers table: %w", err)
 	}
@@ -636,7 +679,7 @@ func (cc *ControlConn) setConn(oldConn CqlConnection, newConn CqlConnection, new
 	return cc.cqlConn, cc.currentContactPoint
 }
 
-func (cc *ControlConn) getConnAndContactPoint() (CqlConnection, Endpoint) {
+func (cc *ControlConn) GetConnAndContactPoint() (CqlConnection, Endpoint) {
 	cc.cqlConnLock.Lock()
 	conn := cc.cqlConn
 	contactPoint := cc.currentContactPoint

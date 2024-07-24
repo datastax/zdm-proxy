@@ -3,12 +3,13 @@ package integration_tests
 import (
 	"bytes"
 	"context"
-	client2 "github.com/datastax/go-cassandra-native-protocol/client"
+	cqlClient "github.com/datastax/go-cassandra-native-protocol/client"
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
 	"github.com/datastax/zdm-proxy/integration-tests/client"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
+	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
 	"github.com/datastax/zdm-proxy/integration-tests/utils"
 	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 	"github.com/rs/zerolog"
@@ -43,6 +44,82 @@ func TestGoCqlConnect(t *testing.T) {
 
 	// simulacron generates fake response metadata when queries aren't primed
 	require.Equal(t, "fake", iter.Columns()[0].Name)
+}
+
+// Simulacron-based test to make sure that we can handle invalid protocol error and downgrade
+// used protocol on control connection. ORIGIN and TARGET are using the same C* version
+func TestControlConnectionProtocolVersionNegotiation(t *testing.T) {
+	tests := []struct {
+		name                          string
+		clusterVersion                string
+		controlConnMaxProtocolVersion string
+		negotiatedProtocolVersion     primitive.ProtocolVersion
+	}{
+		{
+			name:                          "Cluster2.1_MaxCCProtoVer4_NegotiatedProtoVer3",
+			clusterVersion:                "2.1",
+			controlConnMaxProtocolVersion: "4",
+			negotiatedProtocolVersion:     primitive.ProtocolVersion3, // protocol downgraded to V3, V4 is not supported
+		},
+		{
+			name:                          "Cluster3.0_MaxCCProtoVer4_NegotiatedProtoVer4",
+			clusterVersion:                "3.0",
+			controlConnMaxProtocolVersion: "4",
+			negotiatedProtocolVersion:     primitive.ProtocolVersion4, // make sure that protocol negotiation does not fail if it is not actually needed
+		},
+		{
+			name:                          "Cluster3.0_MaxCCProtoVer3_NegotiatedProtoVer3",
+			clusterVersion:                "3.0",
+			controlConnMaxProtocolVersion: "3",
+			negotiatedProtocolVersion:     primitive.ProtocolVersion3, // protocol V3 applied as it is the maximum configured
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := setup.NewTestConfig("", "")
+			c.ControlConnMaxProtocolVersion = tt.controlConnMaxProtocolVersion
+			testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodesAndConfig(t, true, false, 1, c,
+				&simulacron.ClusterVersion{tt.clusterVersion, tt.clusterVersion})
+			require.Nil(t, err)
+			defer testSetup.Cleanup()
+
+			query := "SELECT * FROM test"
+			expectedRows := simulacron.NewRowsResult(
+				map[string]simulacron.DataType{
+					"company": simulacron.DataTypeText,
+				}).WithRow(map[string]interface{}{
+				"company": "TBD",
+			})
+
+			err = testSetup.Origin.Prime(simulacron.WhenQuery(
+				query,
+				simulacron.NewWhenQueryOptions()).
+				ThenRowsSuccess(expectedRows))
+			require.Nil(t, err)
+
+			// Connect to proxy as a "client"
+			client := cqlClient.NewCqlClient("127.0.0.1:14002", nil)
+			cqlClientConn, err := client.ConnectAndInit(context.Background(), tt.negotiatedProtocolVersion, 0)
+			require.Nil(t, err)
+			defer cqlClientConn.Close()
+
+			cqlConn, _ := testSetup.Proxy.GetOriginControlConn().GetConnAndContactPoint()
+			negotiatedProto := cqlConn.GetProtocolVersion()
+			require.Equal(t, tt.negotiatedProtocolVersion, negotiatedProto)
+
+			queryMsg := &message.Query{
+				Query:   "SELECT * FROM test",
+				Options: &message.QueryOptions{Consistency: primitive.ConsistencyLevelOne},
+			}
+			rsp, err := cqlClientConn.SendAndReceive(frame.NewFrame(primitive.ProtocolVersion3, 0, queryMsg))
+			if err != nil {
+				t.Fatal("query failed:", err)
+			}
+
+			require.Equal(t, 1, len(rsp.Body.Message.(*message.RowsResult).Data))
+		})
+	}
 }
 
 func TestMaxClientsThreshold(t *testing.T) {
@@ -82,20 +159,23 @@ func TestMaxClientsThreshold(t *testing.T) {
 
 func TestRequestedProtocolVersionUnsupportedByProxy(t *testing.T) {
 	tests := []struct {
-		name            string
-		requestVersion  primitive.ProtocolVersion
-		expectedVersion primitive.ProtocolVersion
-		errExpected     string
+		name              string
+		requestVersion    primitive.ProtocolVersion
+		negotiatedVersion string
+		expectedVersion   primitive.ProtocolVersion
+		errExpected       string
 	}{
 		{
 			"request v5, response v4",
 			primitive.ProtocolVersion5,
+			"4",
 			primitive.ProtocolVersion4,
 			"Invalid or unsupported protocol version (5)",
 		},
 		{
 			"request v1, response v4",
 			primitive.ProtocolVersion(0x1),
+			"4",
 			primitive.ProtocolVersion4,
 			"Invalid or unsupported protocol version (1)",
 		},
@@ -112,13 +192,14 @@ func TestRequestedProtocolVersionUnsupportedByProxy(t *testing.T) {
 			defer zerolog.SetGlobalLevel(oldZeroLogLevel)
 
 			cfg := setup.NewTestConfig("127.0.1.1", "127.0.1.2")
+			cfg.ControlConnMaxProtocolVersion = test.negotiatedVersion
 			cfg.LogLevel = "TRACE" // saw 1 test failure here once but logs didn't show enough info
 			testSetup, err := setup.NewCqlServerTestSetup(t, cfg, false, false, false)
 			require.Nil(t, err)
 			defer testSetup.Cleanup()
 
-			testSetup.Origin.CqlServer.RequestHandlers = []client2.RequestHandler{client2.NewDriverConnectionInitializationHandler("origin", "dc1", func(_ string) {})}
-			testSetup.Target.CqlServer.RequestHandlers = []client2.RequestHandler{client2.NewDriverConnectionInitializationHandler("target", "dc1", func(_ string) {})}
+			testSetup.Origin.CqlServer.RequestHandlers = []cqlClient.RequestHandler{cqlClient.NewDriverConnectionInitializationHandler("origin", "dc1", func(_ string) {})}
+			testSetup.Target.CqlServer.RequestHandlers = []cqlClient.RequestHandler{cqlClient.NewDriverConnectionInitializationHandler("target", "dc1", func(_ string) {})}
 
 			err = testSetup.Start(cfg, false, primitive.ProtocolVersion3)
 			require.Nil(t, err)
@@ -141,16 +222,18 @@ func TestRequestedProtocolVersionUnsupportedByProxy(t *testing.T) {
 
 func TestReturnedProtocolVersionUnsupportedByProxy(t *testing.T) {
 	type test struct {
-		name            string
-		requestVersion  primitive.ProtocolVersion
-		returnedVersion primitive.ProtocolVersion
-		expectedVersion primitive.ProtocolVersion
-		errExpected     string
+		name              string
+		requestVersion    primitive.ProtocolVersion
+		negotiatedVersion string
+		returnedVersion   primitive.ProtocolVersion
+		expectedVersion   primitive.ProtocolVersion
+		errExpected       string
 	}
 	tests := []*test{
 		{
 			"DSE_V2 request, v5 returned, v4 expected",
 			primitive.ProtocolVersionDse2,
+			"4",
 			primitive.ProtocolVersion5,
 			primitive.ProtocolVersion4,
 			"Invalid or unsupported protocol version (5)",
@@ -158,6 +241,7 @@ func TestReturnedProtocolVersionUnsupportedByProxy(t *testing.T) {
 		{
 			"DSE_V2 request, v1 returned, v4 expected",
 			primitive.ProtocolVersionDse2,
+			"4",
 			primitive.ProtocolVersion(0x01),
 			primitive.ProtocolVersion4,
 			"Invalid or unsupported protocol version (1)",
@@ -165,6 +249,7 @@ func TestReturnedProtocolVersionUnsupportedByProxy(t *testing.T) {
 	}
 
 	runTestFunc := func(t *testing.T, test *test, cfg *config.Config) {
+		cfg.ControlConnMaxProtocolVersion = test.negotiatedVersion // simulate what version was negotiated on control connection
 		testSetup, err := setup.NewCqlServerTestSetup(t, cfg, false, false, false)
 		require.Nil(t, err)
 		defer testSetup.Cleanup()
@@ -172,7 +257,7 @@ func TestReturnedProtocolVersionUnsupportedByProxy(t *testing.T) {
 		enableHandlers := atomic.Value{}
 		enableHandlers.Store(false)
 
-		rawHandler := func(request *frame.Frame, conn *client2.CqlServerConnection, ctx client2.RequestHandlerContext) (response []byte) {
+		rawHandler := func(request *frame.Frame, conn *cqlClient.CqlServerConnection, ctx cqlClient.RequestHandlerContext) (response []byte) {
 			if enableHandlers.Load().(bool) && request.Header.Version == test.requestVersion {
 				encodedFrame, err := createFrameWithUnsupportedVersion(test.returnedVersion, request.Header.StreamId, true)
 				if err != nil {
@@ -184,8 +269,8 @@ func TestReturnedProtocolVersionUnsupportedByProxy(t *testing.T) {
 			return nil
 		}
 
-		testSetup.Origin.CqlServer.RequestRawHandlers = []client2.RawRequestHandler{rawHandler}
-		testSetup.Target.CqlServer.RequestRawHandlers = []client2.RawRequestHandler{rawHandler}
+		testSetup.Origin.CqlServer.RequestRawHandlers = []cqlClient.RawRequestHandler{rawHandler}
+		testSetup.Target.CqlServer.RequestRawHandlers = []cqlClient.RawRequestHandler{rawHandler}
 
 		err = testSetup.Start(cfg, false, primitive.ProtocolVersion4)
 		require.Nil(t, err)
@@ -222,7 +307,7 @@ func TestReturnedProtocolVersionUnsupportedByProxy(t *testing.T) {
 }
 
 func createFrameWithUnsupportedVersion(version primitive.ProtocolVersion, streamId int16, isResponse bool) ([]byte, error) {
-	mostSimilarVersion := primitive.ProtocolVersion4
+	mostSimilarVersion := version
 	if version > primitive.ProtocolVersionDse2 {
 		mostSimilarVersion = primitive.ProtocolVersionDse2
 	} else if version < primitive.ProtocolVersion2 {

@@ -83,14 +83,14 @@ func (baseSimulacron *baseSimulacron) GetId() string {
 	return baseSimulacron.id
 }
 
-func GetNewCluster(startSession bool, numberOfNodes int) (*Cluster, error) {
+func GetNewCluster(startSession bool, numberOfNodes int, version *ClusterVersion) (*Cluster, error) {
 	process, err := GetOrCreateGlobalSimulacronProcess()
 
 	if err != nil {
 		return nil, err
 	}
 
-	cluster, createErr := process.Create(startSession, numberOfNodes)
+	cluster, createErr := process.Create(startSession, numberOfNodes, version)
 
 	if createErr != nil {
 		return nil, createErr

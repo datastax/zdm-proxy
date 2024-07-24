@@ -1,6 +1,7 @@
 package config
 
 import (
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
 	"github.com/stretchr/testify/require"
 	"testing"
 )
@@ -92,6 +93,98 @@ func TestTargetConfig_WithHostnameButWithoutPort(t *testing.T) {
 	c, err := New().LoadConfig("")
 	require.Nil(t, err)
 	require.Equal(t, 9042, c.TargetPort)
+}
+
+func TestTargetConfig_ParsingControlConnMaxProtocolVersion(t *testing.T) {
+	defer clearAllEnvVars()
+
+	// general setup
+	clearAllEnvVars()
+	setOriginCredentialsEnvVars()
+	setTargetCredentialsEnvVars()
+	setOriginContactPointsAndPortEnvVars()
+
+	// test-specific setup
+	setTargetContactPointsAndPortEnvVars()
+
+	conf := New()
+	err := conf.parseEnvVars()
+	require.Nil(t, err)
+
+	tests := []struct {
+		name                          string
+		controlConnMaxProtocolVersion string
+		parsedProtocolVersion         primitive.ProtocolVersion
+		errorMessage                  string
+	}{
+		{
+			name:                          "ParsedV2",
+			controlConnMaxProtocolVersion: "2",
+			parsedProtocolVersion:         primitive.ProtocolVersion2,
+			errorMessage:                  "",
+		},
+		{
+			name:                          "ParsedV3",
+			controlConnMaxProtocolVersion: "3",
+			parsedProtocolVersion:         primitive.ProtocolVersion3,
+			errorMessage:                  "",
+		},
+		{
+			name:                          "ParsedV4",
+			controlConnMaxProtocolVersion: "4",
+			parsedProtocolVersion:         primitive.ProtocolVersion4,
+			errorMessage:                  "",
+		},
+		{
+			name:                          "ParsedDse1",
+			controlConnMaxProtocolVersion: "DseV1",
+			parsedProtocolVersion:         primitive.ProtocolVersionDse1,
+			errorMessage:                  "",
+		},
+		{
+			name:                          "ParsedDse2",
+			controlConnMaxProtocolVersion: "DseV2",
+			parsedProtocolVersion:         primitive.ProtocolVersionDse2,
+			errorMessage:                  "",
+		},
+		{
+			name:                          "ParsedDse2CaseInsensitive",
+			controlConnMaxProtocolVersion: "dsev2",
+			parsedProtocolVersion:         primitive.ProtocolVersionDse2,
+			errorMessage:                  "",
+		},
+		{
+			name:                          "UnsupportedCassandraV5",
+			controlConnMaxProtocolVersion: "5",
+			parsedProtocolVersion:         0,
+			errorMessage:                  "invalid control connection max protocol version, valid values are 2, 3, 4, DseV1, DseV2",
+		},
+		{
+			name:                          "UnsupportedCassandraV1",
+			controlConnMaxProtocolVersion: "1",
+			parsedProtocolVersion:         0,
+			errorMessage:                  "invalid control connection max protocol version, valid values are 2, 3, 4, DseV1, DseV2",
+		},
+		{
+			name:                          "InvalidValue",
+			controlConnMaxProtocolVersion: "Dsev123",
+			parsedProtocolVersion:         0,
+			errorMessage:                  "could not parse control connection max protocol version, valid values are 2, 3, 4, DseV1, DseV2",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			conf.ControlConnMaxProtocolVersion = tt.controlConnMaxProtocolVersion
+			ver, err := conf.ParseControlConnMaxProtocolVersion()
+			if ver == 0 {
+				require.NotNil(t, err)
+				require.Contains(t, err.Error(), tt.errorMessage)
+			} else {
+				require.Equal(t, tt.parsedProtocolVersion, ver)
+			}
+		})
+	}
 }
 
 func TestConfig_LoadNotExistingFile(t *testing.T) {

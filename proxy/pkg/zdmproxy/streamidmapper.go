@@ -2,7 +2,10 @@ package zdmproxy
 
 import (
 	"fmt"
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
+	"math"
 	"sync"
 )
 
@@ -17,30 +20,35 @@ type StreamIdMapper interface {
 
 type streamIdMapper struct {
 	sync.Mutex
-	idMapper   map[int16]int16
-	clusterIds chan int16
-	metrics    metrics.Gauge
+	idMapper        map[int16]int16
+	clusterIds      chan int16
+	metrics         metrics.Gauge
+	protocolVersion primitive.ProtocolVersion
 }
 
 type internalStreamIdMapper struct {
-	clusterIds chan int16
-	metrics    metrics.Gauge
+	clusterIds      chan int16
+	metrics         metrics.Gauge
+	protocolVersion primitive.ProtocolVersion
 }
 
 // NewInternalStreamIdMapper is used to assign unique ids to frames that have no initial stream id defined, such as
 // CQL queries initiated by the proxy or ASYNC requests.
-func NewInternalStreamIdMapper(maxStreamIds int, metrics metrics.Gauge) StreamIdMapper {
-	streamIdsQueue := make(chan int16, maxStreamIds)
-	for i := int16(0); i < int16(maxStreamIds); i++ {
+func NewInternalStreamIdMapper(protocolVersion primitive.ProtocolVersion, config *config.Config, metrics metrics.Gauge) StreamIdMapper {
+	maximumStreamIds := maxStreamIds(protocolVersion, config)
+	streamIdsQueue := make(chan int16, maximumStreamIds)
+	for i := int16(0); i < int16(maximumStreamIds); i++ {
 		streamIdsQueue <- i
 	}
 	return &internalStreamIdMapper{
-		clusterIds: streamIdsQueue,
-		metrics:    metrics,
+		protocolVersion: protocolVersion,
+		clusterIds:      streamIdsQueue,
+		metrics:         metrics,
 	}
 }
 
 func (csid *internalStreamIdMapper) GetNewIdFor(_ int16) (int16, error) {
+	// do not validate provided stream ID
 	select {
 	case id := <-csid.clusterIds:
 		if csid.metrics != nil {
@@ -73,20 +81,25 @@ func (csid *internalStreamIdMapper) Close() {
 	}
 }
 
-func NewStreamIdMapper(maxStreamIds int, metrics metrics.Gauge) StreamIdMapper {
+func NewStreamIdMapper(protocolVersion primitive.ProtocolVersion, config *config.Config, metrics metrics.Gauge) StreamIdMapper {
+	maximumStreamIds := maxStreamIds(protocolVersion, config)
 	idMapper := make(map[int16]int16)
-	streamIdsQueue := make(chan int16, maxStreamIds)
-	for i := int16(0); i < int16(maxStreamIds); i++ {
+	streamIdsQueue := make(chan int16, maximumStreamIds)
+	for i := int16(0); i < int16(maximumStreamIds); i++ {
 		streamIdsQueue <- i
 	}
 	return &streamIdMapper{
-		idMapper:   idMapper,
-		clusterIds: streamIdsQueue,
-		metrics:    metrics,
+		protocolVersion: protocolVersion,
+		idMapper:        idMapper,
+		clusterIds:      streamIdsQueue,
+		metrics:         metrics,
 	}
 }
 
 func (sim *streamIdMapper) GetNewIdFor(streamId int16) (int16, error) {
+	if err := validateStreamId(sim.protocolVersion, streamId); err != nil {
+		return -1, err
+	}
 	select {
 	case id := <-sim.clusterIds:
 		if sim.metrics != nil {
@@ -133,4 +146,27 @@ func (sim *streamIdMapper) Close() {
 	if sim.metrics != nil && cap(sim.clusterIds) != len(sim.clusterIds) {
 		sim.metrics.Subtract(cap(sim.clusterIds) - len(sim.clusterIds))
 	}
+}
+
+func maxStreamIds(protoVer primitive.ProtocolVersion, conf *config.Config) int {
+	maxSupported := maxStreamIdsV3
+	if protoVer == primitive.ProtocolVersion2 {
+		maxSupported = maxStreamIdsV2
+	}
+	if maxSupported < conf.ProxyMaxStreamIds {
+		return maxSupported
+	}
+	return conf.ProxyMaxStreamIds
+}
+
+func validateStreamId(version primitive.ProtocolVersion, streamId int16) error {
+	if version < primitive.ProtocolVersion3 {
+		if streamId > math.MaxInt8 || streamId < math.MinInt8 {
+			return fmt.Errorf("stream id out of range for %v: %v", version, streamId)
+		}
+	}
+	if streamId < 0 {
+		return fmt.Errorf("negative stream id: %v", streamId)
+	}
+	return nil
 }

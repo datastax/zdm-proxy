@@ -16,6 +16,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"net"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -168,9 +169,18 @@ func NewClientHandler(
 	requestsDoneCtx, requestsDoneCancelFn := context.WithCancel(context.Background())
 
 	// Initialize stream id processors to manage the ids sent to the clusters
-	originFrameProcessor := newFrameProcessor(conf, nodeMetrics, ClusterConnectorTypeOrigin)
-	targetFrameProcessor := newFrameProcessor(conf, nodeMetrics, ClusterConnectorTypeTarget)
-	asyncFrameProcessor := newFrameProcessor(conf, nodeMetrics, ClusterConnectorTypeAsync)
+	originCCProtoVer := originControlConn.cqlConn.GetProtocolVersion()
+	targetCCProtoVer := targetControlConn.cqlConn.GetProtocolVersion()
+	// Calculate maximum number of stream IDs. Take the oldest protocol version negotiated between two clusters
+	// and apply limit defined in proxy configuration. If origin or target cluster are still running protocol V2,
+	// we will limit maximum number of stream IDs to 127 on both clusters. Logic is based on Java driver version 3.x.
+	// Java driver 3.x was the last one supporting protocol V2. It establishes control connection first, and then
+	// uses negotiated protocol version to configure maximum number of stream IDs on node connections. Driver does NOT
+	// change the number of stream IDs on per node basis. Maximum stream ID is calculated while creating stream ID mapper.
+	minimalProtoVer := minProtoVer(originCCProtoVer, targetCCProtoVer)
+	originFrameProcessor := newFrameProcessor(minimalProtoVer, conf, nodeMetrics, ClusterConnectorTypeOrigin)
+	targetFrameProcessor := newFrameProcessor(minimalProtoVer, conf, nodeMetrics, ClusterConnectorTypeTarget)
+	asyncFrameProcessor := newFrameProcessor(minimalProtoVer, conf, nodeMetrics, ClusterConnectorTypeAsync)
 
 	closeFrameProcessors := func() {
 		originFrameProcessor.Close()
@@ -197,7 +207,7 @@ func NewClientHandler(
 	originConnector, err := NewClusterConnector(
 		originCassandraConnInfo, conf, psCache, nodeMetrics, localClientHandlerWg, clientHandlerRequestWg,
 		clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler, requestsDoneCtx,
-		false, nil, handshakeDone, originFrameProcessor)
+		false, nil, handshakeDone, originFrameProcessor, originCCProtoVer)
 	if err != nil {
 		clientHandlerCancelFunc()
 		return nil, err
@@ -206,7 +216,7 @@ func NewClientHandler(
 	targetConnector, err := NewClusterConnector(
 		targetCassandraConnInfo, conf, psCache, nodeMetrics, localClientHandlerWg, clientHandlerRequestWg,
 		clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler, requestsDoneCtx,
-		false, nil, handshakeDone, targetFrameProcessor)
+		false, nil, handshakeDone, targetFrameProcessor, targetCCProtoVer)
 	if err != nil {
 		clientHandlerCancelFunc()
 		return nil, err
@@ -224,7 +234,7 @@ func NewClientHandler(
 		asyncConnector, err = NewClusterConnector(
 			asyncConnInfo, conf, psCache, nodeMetrics, localClientHandlerWg, clientHandlerRequestWg,
 			clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler, requestsDoneCtx,
-			true, asyncPendingRequests, handshakeDone, asyncFrameProcessor)
+			true, asyncPendingRequests, handshakeDone, asyncFrameProcessor, originCCProtoVer)
 		if err != nil {
 			log.Errorf("Could not create async cluster connector to %s, async requests will not be forwarded: %s", asyncConnInfo.connConfig.GetClusterType(), err.Error())
 			asyncConnector = nil
@@ -260,7 +270,8 @@ func NewClientHandler(
 			readScheduler,
 			writeScheduler,
 			clientHandlerShutdownRequestContext,
-			clientHandlerShutdownRequestCancelFn),
+			clientHandlerShutdownRequestCancelFn,
+			minProtoVer(originCCProtoVer, targetCCProtoVer)),
 
 		asyncConnector:                       asyncConnector,
 		originCassandraConnector:             originConnector,
@@ -891,7 +902,7 @@ func (ch *ClientHandler) processClientResponse(
 				return nil, fmt.Errorf("invalid cluster type: %v", responseClusterType)
 			}
 
-			newFrame = decodedFrame.Clone()
+			newFrame = decodedFrame.DeepCopy()
 			newUnprepared := &message.Unprepared{
 				ErrorMessage: fmt.Sprintf("Prepared query with ID %s not found (either the query was not prepared "+
 					"on this host (maybe the host has been restarted?) or you have prepared too many queries and it has "+
@@ -945,7 +956,7 @@ func (ch *ClientHandler) processPreparedResponse(
 				return nil, fmt.Errorf("replaced terms in the prepared statement but prepared result doesn't have variables metadata: %v", bodyMsg)
 			}
 
-			newResponse = response.Clone()
+			newResponse = response.DeepCopy()
 			newPreparedBody, ok := newResponse.Body.Message.(*message.PreparedResult)
 			if !ok {
 				return nil, fmt.Errorf("could not modify prepared result to remove generated parameters because "+
@@ -1482,17 +1493,27 @@ func (ch *ClientHandler) executeRequest(
 	case forwardToBoth:
 		log.Tracef("Forwarding request with opcode %v for stream %v to %v and %v",
 			f.Header.OpCode, f.Header.StreamId, common.ClusterTypeOrigin, common.ClusterTypeTarget)
-		ch.originCassandraConnector.sendRequestToCluster(originRequest)
-		ch.targetCassandraConnector.sendRequestToCluster(targetRequest)
+		sendErr := ch.originCassandraConnector.sendRequestToCluster(originRequest)
+		if sendErr != nil {
+			ch.handleRequestSendFailure(sendErr, frameContext)
+		} else {
+			ch.targetCassandraConnector.sendRequestToCluster(targetRequest)
+		}
 	case forwardToOrigin:
 		log.Tracef("Forwarding request with opcode %v for stream %v to %v",
 			f.Header.OpCode, f.Header.StreamId, common.ClusterTypeOrigin)
-		ch.originCassandraConnector.sendRequestToCluster(originRequest)
+		sendErr := ch.originCassandraConnector.sendRequestToCluster(originRequest)
+		if sendErr != nil {
+			ch.handleRequestSendFailure(sendErr, frameContext)
+		}
 		ch.targetCassandraConnector.sendHeartbeat(startupFrameVersion, ch.conf.HeartbeatIntervalMs)
 	case forwardToTarget:
 		log.Tracef("Forwarding request with opcode %v for stream %v to %v",
 			f.Header.OpCode, f.Header.StreamId, common.ClusterTypeTarget)
-		ch.targetCassandraConnector.sendRequestToCluster(targetRequest)
+		sendErr := ch.targetCassandraConnector.sendRequestToCluster(targetRequest)
+		if sendErr != nil {
+			ch.handleRequestSendFailure(sendErr, frameContext)
+		}
 		ch.originCassandraConnector.sendHeartbeat(startupFrameVersion, ch.conf.HeartbeatIntervalMs)
 	case forwardToAsyncOnly:
 	default:
@@ -1511,6 +1532,21 @@ func (ch *ClientHandler) executeRequest(
 	return ch.sendToAsyncConnector(
 		frameContext, originRequest, targetRequest, fwdDecision, reqCtx, holder, sendAlsoToAsync,
 		overallRequestStartTime, requestTimeout)
+}
+
+func (ch *ClientHandler) handleRequestSendFailure(err error, frameContext *frameDecodeContext) {
+	if strings.Contains(err.Error(), "no stream id available") {
+		ch.clientConnector.sendOverloadedToClient(frameContext.frame)
+	} else if strings.Contains(err.Error(), "negative stream id") {
+		responseMessage := &message.ProtocolError{ErrorMessage: err.Error()}
+		responseFrame, err := generateProtocolErrorResponseFrame(
+			frameContext.frame.Header.StreamId, frameContext.frame.Header.Version, responseMessage)
+		if err != nil {
+			log.Errorf("could not generate protocol error response raw frame (%v): %v", responseMessage, err)
+		} else {
+			ch.clientConnector.sendResponseToClient(responseFrame)
+		}
+	}
 }
 
 func (ch *ClientHandler) handleInterceptedRequest(
@@ -1655,7 +1691,7 @@ func (ch *ClientHandler) handleExecuteRequest(
 		}
 
 		replacementTimeUuids = ch.parameterModifier.generateTimeUuids(prepareRequestInfo)
-		newOriginRequest := clientRequest.Clone()
+		newOriginRequest := clientRequest.DeepCopy()
 		_, err = ch.parameterModifier.AddValuesToExecuteFrame(
 			newOriginRequest, prepareRequestInfo, preparedData.GetOriginVariablesMetadata(), replacementTimeUuids)
 		if err != nil {
@@ -1677,7 +1713,7 @@ func (ch *ClientHandler) handleExecuteRequest(
 			return nil, nil, nil, fmt.Errorf("could not decode execute raw frame: %w", err)
 		}
 
-		newTargetRequest := clientRequest.Clone()
+		newTargetRequest := clientRequest.DeepCopy()
 		var newTargetExecuteMsg *message.Execute
 		if len(replacedTerms) > 0 {
 			if replacementTimeUuids == nil {
@@ -1726,7 +1762,7 @@ func (ch *ClientHandler) handleBatchRequest(
 	var newOriginRequest *frame.Frame
 	var newOriginBatchMsg *message.Batch
 
-	newTargetRequest := decodedFrame.Clone()
+	newTargetRequest := decodedFrame.DeepCopy()
 	newTargetBatchMsg, ok := newTargetRequest.Body.Message.(*message.Batch)
 	if !ok {
 		return nil, nil, fmt.Errorf("expected Batch but got %v instead", newTargetRequest.Body.Message.GetOpCode())
@@ -1736,7 +1772,7 @@ func (ch *ClientHandler) handleBatchRequest(
 		prepareRequestInfo := preparedData.GetPrepareRequestInfo()
 		if len(prepareRequestInfo.GetReplacedTerms()) > 0 {
 			if newOriginRequest == nil {
-				newOriginRequest = decodedFrame.Clone()
+				newOriginRequest = decodedFrame.DeepCopy()
 				newOriginBatchMsg, ok = newOriginRequest.Body.Message.(*message.Batch)
 				if !ok {
 					return nil, nil, fmt.Errorf("expected Batch but got %v instead", newOriginRequest.Body.Message.GetOpCode())
@@ -1754,8 +1790,8 @@ func (ch *ClientHandler) handleBatchRequest(
 			}
 		}
 
-		originalQueryId := newTargetBatchMsg.Children[stmtIdx].QueryOrId.([]byte)
-		newTargetBatchMsg.Children[stmtIdx].QueryOrId = preparedData.GetTargetPreparedId()
+		originalQueryId := newTargetBatchMsg.Children[stmtIdx].Id
+		newTargetBatchMsg.Children[stmtIdx].Id = preparedData.GetTargetPreparedId()
 		log.Tracef("Replacing prepared ID %s within a BATCH with %s for target cluster.",
 			hex.EncodeToString(originalQueryId), hex.EncodeToString(preparedData.GetTargetPreparedId()))
 	}
@@ -1803,7 +1839,7 @@ func (ch *ClientHandler) sendToAsyncConnector(
 	}
 
 	if sendAlsoToAsync {
-		asyncRequest = asyncRequest.Clone() // forwardToAsyncOnly requests don't need to be cloned because they are only sent to 1 connector
+		asyncRequest = asyncRequest.DeepCopy() // forwardToAsyncOnly requests don't need to be cloned because they are only sent to 1 connector
 	}
 
 	if isFireAndForget {
@@ -2230,7 +2266,8 @@ func GetNodeMetricsByClusterConnector(nodeMetrics *metrics.NodeMetrics, connecto
 	}
 }
 
-func newFrameProcessor(conf *config.Config, nodeMetrics *metrics.NodeMetrics, connectorType ClusterConnectorType) FrameProcessor {
+func newFrameProcessor(protoVer primitive.ProtocolVersion, config *config.Config, nodeMetrics *metrics.NodeMetrics,
+	connectorType ClusterConnectorType) FrameProcessor {
 	var streamIdsMetric metrics.Gauge
 	connectorMetrics, err := GetNodeMetricsByClusterConnector(nodeMetrics, connectorType)
 	if err != nil {
@@ -2241,9 +2278,16 @@ func newFrameProcessor(conf *config.Config, nodeMetrics *metrics.NodeMetrics, co
 	}
 	var mapper StreamIdMapper
 	if connectorType == ClusterConnectorTypeAsync {
-		mapper = NewInternalStreamIdMapper(conf.ProxyMaxStreamIds, streamIdsMetric)
+		mapper = NewInternalStreamIdMapper(protoVer, config, streamIdsMetric)
 	} else {
-		mapper = NewStreamIdMapper(conf.ProxyMaxStreamIds, streamIdsMetric)
+		mapper = NewStreamIdMapper(protoVer, config, streamIdsMetric)
 	}
 	return NewStreamIdProcessor(mapper)
+}
+
+func minProtoVer(version1 primitive.ProtocolVersion, version2 primitive.ProtocolVersion) primitive.ProtocolVersion {
+	if version1 < version2 {
+		return version1
+	}
+	return version2
 }
