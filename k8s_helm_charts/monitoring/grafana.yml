@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: zdm-proxy
+spec:
+  selector:
+    matchLabels:
+      app: grafana
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+      - name: grafana
+        env:
+          - name: GF_AUTH_ANONYMOUS_ENABLED
+            value: "true"
+        image: grafana/grafana
+        ports:
+        - containerPort: 3000
+          name: client
+        resources:
+          requests:
+            cpu: 500m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+        volumeMounts:
+        - name: grafana-datasources
+          mountPath: /etc/grafana/provisioning/datasources/
+      volumes:
+        - name: grafana-datasources
+          configMap:
+            name: grafana-datasources

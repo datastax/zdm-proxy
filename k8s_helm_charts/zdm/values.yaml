@@ -1,48 +1,127 @@
-# Default values for zdm.
-# This is a YAML-formatted file.
-# Declare variables to be passed into your templates.
+global:
+  # Name of ZDM Proxy repository to pull the image from
+  imageRepository: datastax/zdm-proxy
 
-# namespace to deploy zdm objects in
-namespace: zdmproxy
+  # Image tag to use. Defaults to chart appVersion
+  imageTag: "2.3.0"
 
-# count is the number of zdm proxy pods (and corresponding services)
-count: 3
+zdm:
+  # Total number of ZDM Proxy pods (and corresponding Kubernetes services)
+  count: 3
 
-# logLevel is logging level for zdm proxy, available options are: PANIC, FATAL, ERROR, WARN or WARNING, INFO, DEBUG and TRACE 
-logLevel: "INFO"
+  # Logging level used by ZDM Proxy. Available options are: PANIC, FATAL, ERROR, WARN or WARNING, INFO, DEBUG and TRACE
+  logLevel: "INFO"
 
-# readMode has two options: PRIMARY_ONLY and ASYNC_READS_ON_SECONDARY
-readMode: "PRIMARY_ONLY"
+  # ZDM read mode. Possible options: PRIMARY_ONLY, ASYNC_READS_ON_SECONDARY
+  readMode: "PRIMARY_ONLY"
 
-# primaryCluster has two options: ORIGIN and TARGET
-primaryCluster: "ORIGIN"
+  # Primary cluster, Possible options: ORIGIN, TARGET
+  primaryCluster: "ORIGIN"
 
-# maxClientConnections is the limit on maximum number of client connections per proxy
-maxClientConnections: "1000"
+  # Limit on maximum number of client connections per proxy instance
+  # maxClientConnections: "1000"
 
-# metricsEnabled is whether to enable metrics/http port on proxy
-metricsEnabled: "true"
+  # Flag to enable exposing performance metrics via Prometheus
+  metricsEnabled: "true"
 
-# resources request and limit for zdm proxy pods
+  # Flag to enable replacement of CQL functions (e.g. now())
+  replaceCqlFunctions: "false"
+
+  # Timeout settings
+  # proxyRequestTimeoutMs: 10000
+  # asyncHandshakeTimeoutMs: 4000
+  # originConnectionTimeoutMs: 30000
+  # targetConnectionTimeoutMs: 30000
+
+  # TLS settings for CQL service exposed by ZDM proxy
+  # tls:
+    # Flag to enforce mutual TLS
+    # requireClientAuth: false
+    # CA certificate
+    # caCert: "rootcaproxy.crt"
+    # ZDM Proxy public certificate
+    # serverCert: "proxycert.crt"
+    # ZDM Proxy private key
+    # serverKey: "proxycert.key"
+
+# Connectivity details to origin cluster
+# Connection to standalone C* cluster requires specification of:
+# - contactPoints
+# - port
+# - username
+# - password
+# - tls
+# Connection to DataStax Astra cluster requires specification of:
+# - secureBundle
+# - username
+# - password
+# Please do not specify TLS configuration and contact points as it is already defined in secure connection bundle
+origin:
+  # Array of seed contact points to standalone C* cluster
+  contactPoints: [ "127.0.0.1" ]
+  # CQL port to use when connecting to C* nodes
+  port: "9042"
+  # Credentials
+  username: "cassandra"
+  password: "cassandra"
+  # Path to DataStax Astra secure connect bundle
+  # secureBundle: "secure-connect-bundle-origin.zip"
+  tls:
+    # CA certificate used to verify C* node public key
+    caCert: "ca.crt"
+    # Public certificate for the client. Comment out for one-way SSL configuration
+    clientCert: "client1.crt"
+    # Public key for the client. Comment out for one-way SSL configuration
+    clientKey: "client1.key"
+
+# Connectivity details to target cluster
+# Connection to standalone C* cluster requires specification of:
+# - contactPoints
+# - port
+# - username
+# - password
+# - tls
+# Connection to DataStax Astra cluster requires specification of:
+# - secureBundle
+# - username
+# - password
+# Please do not specify TLS configuration and contact points as it is already defined in secure connection bundle
+target:
+  # Array of seed contact points to standalone C* cluster
+  # contactPoints: [ "127.0.0.1" ]
+  # CQL port to use when connecting to C* nodes
+  # port: 9042
+  # Credentials
+  username: "scb-user"
+  password: "scb-pass"
+  # Path to DataStax Astra secure connect bundle
+  secureBundle: "secure-connect-bundle-target.zip"
+  # tls:
+    # CA certificate used to verify C* node public key
+    # caCert: "ca.crt"
+    # Public certificate for the client. Comment out for one-way SSL configuration
+    # clientCert: "client2.crt"
+    # Public key for the client. Comment out for one-way SSL configuration
+    # clientKey: "client2.key"
+
+# Resources request and limit for ZDM Proxy pods
 resources:
   limits:
-    cpu: 4000m
-    memory: 2048Mi
+    cpu: 1000m
+    memory: 1024Mi
   requests:
-    cpu: 4000m
-    memory: 2048Mi
+    cpu: 1000m
+    memory: 1024Mi
 
-# imageRepository is the dockerhub repository to pull zdm-proxy image from
-imageRepository: datastax/zdm-proxy
+network:
+  # Type of service used for ZDM Proxy pod's associated CQL service. Supported values: ClusterIP, NodePort
+  serviceType: ClusterIP
 
-# imageTag defines the tag on dockerhub repo for pulling zdm-proxy image, it overrides the image tag whose default is the chart appVersion.
-imageTag: ""
+  # Listen port of CQL service exposed to the rest of the cluster
+  servicePort: 9042
 
-# serviceType is the type of service used for zdm-proxy pod's associated CQL service
-serviceType: ClusterIP
-
-# servicePort is the CQL port exposed to the rest of the k8s cluster from the zdm-proxy service
-servicePort: 9942
+  # Listen port of Prometheus metrics exposed by ZDM Proxy
+  metricsPort: 14001
 
 nameOverride: ""
 fullnameOverride: ""

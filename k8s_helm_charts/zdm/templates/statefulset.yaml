@@ -1,0 +1,287 @@
+# pull in these templates outside of range loop
+{{ $zdm_fullname := include "zdm.fullname" . -}}
+{{ $zdm_labels := include "zdm.labels" . -}}
+{{ $zdm_selectorLabels := include "zdm.selectorLabels" . -}}
+
+# calculate a variable that contains all proxy service addresses
+{{ $service_addresses := "" -}}
+{{- range $index := until (.Values.zdm.count | int) -}}
+    {{- $service_addresses = printf "%s,$(%s_%s_SERVICE_HOST)" $service_addresses ($zdm_fullname | upper | replace "-" "_") ($index | toString) -}}
+{{- end -}}
+{{ $service_addresses = $service_addresses | trimPrefix "," -}}
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  labels:
+    {{- $zdm_labels | nindent 4 }}
+    app: {{ $zdm_fullname }}
+  name: {{ $zdm_fullname }}
+  namespace: {{ $.Release.Namespace }}
+spec:
+  serviceName: {{ $zdm_fullname }}
+  replicas: {{ $.Values.zdm.count | int }}
+  selector:
+    matchLabels:
+      {{- $zdm_selectorLabels | nindent 6 }}
+      app: {{ $zdm_fullname }}
+  template:
+    metadata:
+      labels:
+        {{- $zdm_selectorLabels | nindent 8 }}
+        app: {{ $zdm_fullname }}
+    spec:
+      containers:
+      - image: "{{ $.Values.global.imageRepository }}:{{ $.Values.global.imageTag | default $.Chart.AppVersion }}"
+        name: {{ $zdm_fullname }}
+        command:
+        - sh
+        - "-c"
+        - "ZDM_PROXY_TOPOLOGY_INDEX=`echo ${HOSTNAME##*-}` /main"
+        livenessProbe:
+          httpGet:
+            path: /health/liveness
+            port: metrics
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health/readiness
+            port: metrics
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        ports:
+          - name: metrics
+            containerPort: {{ $.Values.network.metricsPort }}
+            protocol: TCP
+          - name: cql
+            containerPort: {{ $.Values.network.servicePort }}
+            protocol: TCP
+        resources:
+        {{- toYaml .Values.resources | nindent 10 }}
+        env:
+        - name: ZDM_PRIMARY_CLUSTER
+          value: {{ $.Values.zdm.primaryCluster | upper | quote }}
+        - name: ZDM_READ_MODE
+          value: {{ $.Values.zdm.readMode | upper | quote }}
+        - name: ZDM_LOG_LEVEL
+          value: {{ $.Values.zdm.logLevel | upper | quote }}
+        - name: ZDM_PROXY_MAX_CLIENT_CONNECTIONS
+          value: {{ $.Values.zdm.maxClientConnections | quote }}
+        - name: ZDM_METRICS_ENABLED
+          value: {{ $.Values.zdm.metricsEnabled | quote }}
+        - name: ZDM_REPLACE_CQL_FUNCTIONS
+          value: {{ $.Values.zdm.replaceCqlFunctions | quote }}
+        - name: ZDM_PROXY_REQUEST_TIMEOUT_MS
+          value: {{ $.Values.zdm.proxyRequestTimeoutMs | quote }}
+        - name: ZDM_ASYNC_HANDSHAKE_TIMEOUT_MS
+          value: {{ $.Values.zdm.asyncHandshakeTimeoutMs | quote }}
+        - name: ZDM_ORIGIN_CONNECTION_TIMEOUT_MS
+          value: {{ $.Values.zdm.originConnectionTimeoutMs | quote }}
+        - name: ZDM_TARGET_CONNECTION_TIMEOUT_MS
+          value: {{ $.Values.zdm.targetConnectionTimeoutMs | quote }}
+        - name: ZDM_PROXY_LISTEN_ADDRESS
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: ZDM_PROXY_LISTEN_PORT
+          value: {{ $.Values.network.servicePort | quote }}
+        - name: ZDM_METRICS_ADDRESS
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: ZDM_METRICS_PORT
+          value: {{ $.Values.network.metricsPort | quote }}
+        - name: ZDM_PROXY_TOPOLOGY_ADDRESSES
+          value: {{ $service_addresses }}
+        {{- if $.Values.origin.secureBundle }}
+        - name: ZDM_ORIGIN_SECURE_CONNECT_BUNDLE_PATH
+          value: /tmp/scb/origin/scb.zip
+        {{- else }}
+        - name: ZDM_ORIGIN_CONTACT_POINTS
+          valueFrom:
+            secretKeyRef:
+              name: {{ $zdm_fullname }}
+              key: origin_contact_points
+        - name: ZDM_ORIGIN_PORT
+          valueFrom:
+            secretKeyRef:
+              name: {{ $zdm_fullname }}
+              key: origin_port
+        {{- end }}
+        {{- if $.Values.origin.tls }}
+        {{- if $.Values.origin.tls.caCert }}
+        - name: ZDM_ORIGIN_TLS_SERVER_CA_PATH
+          value: /tmp/tls/origin/caCert
+        {{- end }}
+        {{- if $.Values.origin.tls.clientCert }}
+        - name: ZDM_ORIGIN_TLS_CLIENT_CERT_PATH
+          value: /tmp/tls/origin/clientCert
+        {{- end }}
+        {{- if $.Values.origin.tls.clientKey }}
+        - name: ZDM_ORIGIN_TLS_CLIENT_KEY_PATH
+          value: /tmp/tls/origin/clientKey
+        {{- end }}
+        {{- end }}
+        - name: ZDM_ORIGIN_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: {{ $zdm_fullname }}
+              key: origin_username
+        - name: ZDM_ORIGIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ $zdm_fullname }}
+              key: origin_password
+        {{- if $.Values.target.secureBundle }}
+        - name: ZDM_TARGET_SECURE_CONNECT_BUNDLE_PATH
+          value: /tmp/scb/target/scb.zip
+        {{- else }}
+        - name: ZDM_TARGET_CONTACT_POINTS
+          valueFrom:
+            secretKeyRef:
+              name: {{ $zdm_fullname }}
+              key: target_contact_points
+        - name: ZDM_TARGET_PORT
+          valueFrom:
+            secretKeyRef:
+              name: {{ $zdm_fullname }}
+              key: target_port
+        {{- end }}
+        {{- if $.Values.target.tls }}
+        {{- if $.Values.target.tls.caCert }}
+        - name: ZDM_TARGET_TLS_SERVER_CA_PATH
+          value: /tmp/tls/target/caCert
+        {{- end }}
+        {{- if $.Values.target.tls.clientCert }}
+        - name: ZDM_TARGET_TLS_CLIENT_CERT_PATH
+          value: /tmp/tls/target/clientCert
+        {{- end }}
+        {{- if $.Values.target.tls.clientKey }}
+        - name: ZDM_TARGET_TLS_CLIENT_KEY_PATH
+          value: /tmp/tls/target/clientKey
+        {{- end }}
+        {{- end }}
+        - name: ZDM_TARGET_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: {{ $zdm_fullname }}
+              key: target_username
+        - name: ZDM_TARGET_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ $zdm_fullname }}
+              key: target_password
+        {{- if $.Values.zdm.tls }}
+        {{- if $.Values.zdm.tls.caCert }}
+        - name: ZDM_PROXY_TLS_CA_PATH
+          value: /tmp/tls/proxy/caCert
+        {{- end }}
+        {{- if $.Values.zdm.tls.serverCert }}
+        - name: ZDM_PROXY_TLS_CERT_PATH
+          value: /tmp/tls/proxy/cert
+        {{- end }}
+        {{- if $.Values.zdm.tls.serverKey }}
+        - name: ZDM_PROXY_TLS_KEY_PATH
+          value: /tmp/tls/proxy/key
+        {{- end }}
+        - name: ZDM_PROXY_TLS_REQUIRE_CLIENT_AUTH
+          value: {{ $.Values.zdm.tls.requireClientAuth | default false | quote }}
+        {{- end }}
+        volumeMounts:
+        {{- if $.Values.origin.secureBundle }}
+        - name: origin-scb
+          mountPath: "/tmp/scb/origin"
+          readOnly: true
+        {{- end }}
+        {{- if $.Values.origin.tls }}
+        - name: origin-tls
+          mountPath: "/tmp/tls/origin"
+          readOnly: true
+        {{- end }}
+        {{- if $.Values.target.secureBundle }}
+        - name: target-scb
+          mountPath: "/tmp/scb/target"
+          readOnly: true
+        {{- end }}
+        {{- if $.Values.target.tls }}
+        - name: target-tls
+          mountPath: "/tmp/tls/target"
+          readOnly: true
+        {{- end }}
+        {{- if $.Values.zdm.tls }}
+        - name: proxy-tls
+          mountPath: "/tmp/tls/proxy"
+          readOnly: true
+        {{- end }}
+      volumes:
+      {{- if $.Values.origin.secureBundle }}
+      - name: origin-scb
+        secret:
+          secretName: {{ $zdm_fullname }}-origin-sb
+          items:
+          - key: {{ $.Values.origin.secureBundle }}
+            path: scb.zip
+      {{- end }}
+      {{- if $.Values.origin.tls }}
+      - name: origin-tls
+        secret:
+          secretName: {{ $zdm_fullname }}-origin-tls
+          items:
+          {{- if $.Values.origin.tls.caCert }}
+          - key: {{ $.Values.origin.tls.caCert }}
+            path: caCert
+          {{- end }}
+          {{- if $.Values.origin.tls.clientCert }}
+          - key: {{ $.Values.origin.tls.clientCert }}
+            path: clientCert
+          {{- end }}
+          {{- if $.Values.origin.tls.clientKey }}
+          - key: {{ $.Values.origin.tls.clientKey }}
+            path: clientKey
+          {{- end }}
+      {{- end }}
+      {{- if $.Values.target.secureBundle }}
+      - name: target-scb
+        secret:
+          secretName: {{ $zdm_fullname }}-target-sb
+          items:
+          - key: {{ $.Values.target.secureBundle }}
+            path: scb.zip
+      {{- end }}
+      {{- if $.Values.target.tls }}
+      - name: target-tls
+        secret:
+          secretName: {{ $zdm_fullname }}-target-tls
+          items:
+          {{- if $.Values.target.tls.caCert }}
+          - key: {{ $.Values.target.tls.caCert }}
+            path: caCert
+          {{- end }}
+          {{- if $.Values.target.tls.clientCert }}
+          - key: {{ $.Values.target.tls.clientCert }}
+            path: clientCert
+          {{- end }}
+          {{- if $.Values.target.tls.clientKey }}
+          - key: {{ $.Values.target.tls.clientKey }}
+            path: clientKey
+          {{- end }}
+      {{- end }}
+      {{- if $.Values.zdm.tls }}
+      - name: proxy-tls
+        secret:
+          secretName: {{ $zdm_fullname }}-tls
+          items:
+          {{- if $.Values.zdm.tls.caCert }}
+            - key: {{ $.Values.zdm.tls.caCert }}
+              path: caCert
+          {{- end }}
+          {{- if $.Values.zdm.tls.clientCert }}
+            - key: {{ $.Values.zdm.tls.clientCert }}
+              path: cert
+          {{- end }}
+          {{- if $.Values.zdm.tls.clientKey }}
+            - key: {{ $.Values.zdm.tls.clientKey }}
+              path: key
+          {{- end }}
+      {{- end }}
