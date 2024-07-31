@@ -1,48 +1,89 @@
-# Default values for zdm.
-# This is a YAML-formatted file.
-# Declare variables to be passed into your templates.
+# TODO: Start thread in zdm room and maybe move k8s charts to zdm automation repo.annotations:
+# TODO: kubernetes/helm-charts directory?
+# TODO: Grafana dashboards compatible with Mission Control dashboard. All Hands demo last week 22-07. #mission-control-feedback
+# TODO: Optionally create Prometheus and Grafana pods.
 
-# namespace to deploy zdm objects in
-namespace: zdmproxy
+global:
+  # Name of ZDM Proxy repository to pull the image from
+  imageRepository: datastax/zdm-proxy
 
-# count is the number of zdm proxy pods (and corresponding services)
-count: 3
+  # Image tag to use. Defaults to chart appVersion
+  imageTag: ""
 
-# logLevel is logging level for zdm proxy, available options are: PANIC, FATAL, ERROR, WARN or WARNING, INFO, DEBUG and TRACE 
-logLevel: "INFO"
+zdm:
+  # Total number of ZDM PRoxy pods (and corresponding services)
+  count: 3
 
-# readMode has two options: PRIMARY_ONLY and ASYNC_READS_ON_SECONDARY
-readMode: "PRIMARY_ONLY"
+  # Logging level used by ZDM Proxy. Available options are: PANIC, FATAL, ERROR, WARN or WARNING, INFO, DEBUG and TRACE
+  logLevel: "INFO"
 
-# primaryCluster has two options: ORIGIN and TARGET
-primaryCluster: "ORIGIN"
+  # ZDM read mode. Possible options: PRIMARY_ONLY, ASYNC_READS_ON_SECONDARY
+  readMode: "PRIMARY_ONLY"
 
-# maxClientConnections is the limit on maximum number of client connections per proxy
-maxClientConnections: "1000"
+  # Primary cluster, Possible options: ORIGIN, TARGET
+  primaryCluster: "ORIGIN"
 
-# metricsEnabled is whether to enable metrics/http port on proxy
-metricsEnabled: "true"
+  # Limit on maximum number of client connections per proxy instance
+  maxClientConnections: "1000"
 
-# resources request and limit for zdm proxy pods
+  # Flag to enable exposing performance metrics via Prometheus
+  metricsEnabled: "true"
+
+  # Flag to enable replacement of CQL functions (e.g. now())
+  replaceCqlFunctions: "false"
+
+  # Timeout settings
+  proxyRequestTimeoutMs: 10000
+  asyncHandshakeTimeoutMs: 4000
+  originConnectionTimeoutMs: 30000
+  targetConnectionTimeoutMs: 30000
+
+#  tls:
+#    requireClientAuth: false
+#    caCert: "rootcaproxy.crt"
+#    clientCert: "proxycert.crt"
+#    clientKey: "proxycert.key"
+
+origin:
+  contactPoints: [ "192.168.65.254" ] # "host.minikube.internal"
+  port: "9042"
+  username: "cassandra"
+  password: "cassandra"
+  # secureBundle: "secure-connect-sstslmrtest.zip"
+  tls:
+    caCert: "rootcazdm.crt"
+    clientCert: "client1-zdm.crt"
+    clientKey: "client1-zdm.key"
+
+target:
+  # contactPoints: [ "127.0.0.2" ]
+  # port: 9042
+  username: "pcmcskohEskqRlzUbdGuMCAj"
+  password: "JkPkvzZoICxR0Rb-S_SrbniqW9T8ZUTH9HTxlS9oJtaJ7Jldovk7wiDaTGjM4x2we.YLrj+jzrm2GJg7RiCO9S8wZDYqbqBOfx8zRcMSSsLkZA+.nqsuoGxW4RiAxS1M"
+  secureBundle: "secure-connect-test.zip"
+  # tls:
+  #   caCert: ""
+  #   clientCert: ""
+  #   clientKey: ""
+
+# Resources request and limit for ZDM Proxy pods
 resources:
   limits:
-    cpu: 4000m
-    memory: 2048Mi
+    cpu: 1000m
+    memory: 1024Mi
   requests:
-    cpu: 4000m
-    memory: 2048Mi
+    cpu: 1000m
+    memory: 1024Mi
 
-# imageRepository is the dockerhub repository to pull zdm-proxy image from
-imageRepository: datastax/zdm-proxy
+network:
+  # Type of service used for ZDM Proxy pod's associated CQL service
+  serviceType: ClusterIP # NodePort
 
-# imageTag defines the tag on dockerhub repo for pulling zdm-proxy image, it overrides the image tag whose default is the chart appVersion.
-imageTag: ""
+  # Listen port of CQL service exposed to the rest of the cluster
+  servicePort: 9042
 
-# serviceType is the type of service used for zdm-proxy pod's associated CQL service
-serviceType: ClusterIP
-
-# servicePort is the CQL port exposed to the rest of the k8s cluster from the zdm-proxy service
-servicePort: 9942
+  # Listen port of Prometheus metrics exposed by ZDM Proxy
+  metricsPort: 14001
 
 nameOverride: ""
 fullnameOverride: ""
