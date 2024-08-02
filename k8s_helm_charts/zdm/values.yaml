@@ -1,17 +1,12 @@
-# TODO: Start thread in zdm room and maybe move k8s charts to zdm automation repo.annotations:
-# TODO: kubernetes/helm-charts directory?
-# TODO: Grafana dashboards compatible with Mission Control dashboard. All Hands demo last week 22-07. #mission-control-feedback
-# TODO: Optionally create Prometheus and Grafana pods.
-
 global:
   # Name of ZDM Proxy repository to pull the image from
   imageRepository: datastax/zdm-proxy
 
   # Image tag to use. Defaults to chart appVersion
-  imageTag: ""
+  imageTag: "2.3.0"
 
 zdm:
-  # Total number of ZDM PRoxy pods (and corresponding services)
+  # Total number of ZDM Proxy pods (and corresponding Kubernetes services)
   count: 3
 
   # Logging level used by ZDM Proxy. Available options are: PANIC, FATAL, ERROR, WARN or WARNING, INFO, DEBUG and TRACE
@@ -24,7 +19,7 @@ zdm:
   primaryCluster: "ORIGIN"
 
   # Limit on maximum number of client connections per proxy instance
-  maxClientConnections: "1000"
+  # maxClientConnections: "1000"
 
   # Flag to enable exposing performance metrics via Prometheus
   metricsEnabled: "true"
@@ -33,38 +28,81 @@ zdm:
   replaceCqlFunctions: "false"
 
   # Timeout settings
-  proxyRequestTimeoutMs: 10000
-  asyncHandshakeTimeoutMs: 4000
-  originConnectionTimeoutMs: 30000
-  targetConnectionTimeoutMs: 30000
+  # proxyRequestTimeoutMs: 10000
+  # asyncHandshakeTimeoutMs: 4000
+  # originConnectionTimeoutMs: 30000
+  # targetConnectionTimeoutMs: 30000
 
-#  tls:
-#    requireClientAuth: false
-#    caCert: "rootcaproxy.crt"
-#    clientCert: "proxycert.crt"
-#    clientKey: "proxycert.key"
+  # TLS settings for CQL service exposed by ZDM proxy
+  # tls:
+    # Flag to enforce mutual TLS
+    # requireClientAuth: false
+    # CA certificate
+    # caCert: "rootcaproxy.crt"
+    # ZDM Proxy public certificate
+    # serverCert: "proxycert.crt"
+    # ZDM Proxy private key
+    # serverKey: "proxycert.key"
 
+# Connectivity details to origin cluster
+# Connection to standalone C* cluster requires specification of:
+# - contactPoints
+# - port
+# - username
+# - password
+# - tls
+# Connection to DataStax Astra cluster requires specification of:
+# - secureBundle
+# - username
+# - password
+# Please do not specify TLS configuration and contact points as it is already defined in secure connection bundle
 origin:
-  contactPoints: [ "192.168.65.254" ] # "host.minikube.internal"
+  # Array of seed contact points to standalone C* cluster
+  contactPoints: [ "127.0.0.1" ]
+  # CQL port to use when connecting to C* nodes
   port: "9042"
+  # Credentials
   username: "cassandra"
   password: "cassandra"
-  # secureBundle: "secure-connect-sstslmrtest.zip"
+  # Path to DataStax Astra secure connect bundle
+  # secureBundle: "secure-connect-bundle-origin.zip"
   tls:
-    caCert: "rootcazdm.crt"
-    clientCert: "client1-zdm.crt"
-    clientKey: "client1-zdm.key"
+    # CA certificate used to verify C* node public key
+    caCert: "ca.crt"
+    # Public certificate for the client. Comment out for one-way SSL configuration
+    clientCert: "client1.crt"
+    # Public key for the client. Comment out for one-way SSL configuration
+    clientKey: "client1.key"
 
+# Connectivity details to target cluster
+# Connection to standalone C* cluster requires specification of:
+# - contactPoints
+# - port
+# - username
+# - password
+# - tls
+# Connection to DataStax Astra cluster requires specification of:
+# - secureBundle
+# - username
+# - password
+# Please do not specify TLS configuration and contact points as it is already defined in secure connection bundle
 target:
-  # contactPoints: [ "127.0.0.2" ]
+  # Array of seed contact points to standalone C* cluster
+  # contactPoints: [ "127.0.0.1" ]
+  # CQL port to use when connecting to C* nodes
   # port: 9042
-  username: "pcmcskohEskqRlzUbdGuMCAj"
-  password: "JkPkvzZoICxR0Rb-S_SrbniqW9T8ZUTH9HTxlS9oJtaJ7Jldovk7wiDaTGjM4x2we.YLrj+jzrm2GJg7RiCO9S8wZDYqbqBOfx8zRcMSSsLkZA+.nqsuoGxW4RiAxS1M"
-  secureBundle: "secure-connect-test.zip"
+  # Credentials
+  username: "scb-user"
+  password: "scb-pass"
+  # Path to DataStax Astra secure connect bundle
+  secureBundle: "secure-connect-bundle-target.zip"
   # tls:
-  #   caCert: ""
-  #   clientCert: ""
-  #   clientKey: ""
+    # CA certificate used to verify C* node public key
+    # caCert: "ca.crt"
+    # Public certificate for the client. Comment out for one-way SSL configuration
+    # clientCert: "client2.crt"
+    # Public key for the client. Comment out for one-way SSL configuration
+    # clientKey: "client2.key"
 
 # Resources request and limit for ZDM Proxy pods
 resources:
@@ -76,8 +114,8 @@ resources:
     memory: 1024Mi
 
 network:
-  # Type of service used for ZDM Proxy pod's associated CQL service
-  serviceType: ClusterIP # NodePort
+  # Type of service used for ZDM Proxy pod's associated CQL service. Supported values: ClusterIP, NodePort
+  serviceType: ClusterIP
 
   # Listen port of CQL service exposed to the rest of the cluster
   servicePort: 9042

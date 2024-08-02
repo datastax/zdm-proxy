@@ -23,4 +23,25 @@ spec:
     {{- $zdm_selectorLabels | nindent 4 }}
     statefulset.kubernetes.io/pod-name: {{ $zdm_fullname }}-{{ $index }}
 ---
+
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: {{ $.Release.Namespace }}
+  name: {{ $zdm_fullname }}-metrics-{{ $index }}
+  labels:
+    {{- $zdm_labels | nindent 4 }}
+    app: {{ $zdm_fullname }}-{{ $index }}
+    role: zdmproxy
+spec:
+  type: {{ $.Values.network.serviceType }}
+  ports:
+    - port: {{ $.Values.network.metricsPort | int }}
+      targetPort: 14001
+      protocol: TCP
+      name: metrics
+  selector:
+    {{- $zdm_selectorLabels | nindent 4 }}
+    statefulset.kubernetes.io/pod-name: {{ $zdm_fullname }}-{{ $index }}
+---
 {{- end -}}

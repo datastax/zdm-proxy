@@ -177,11 +177,11 @@ spec:
         - name: ZDM_PROXY_TLS_CA_PATH
           value: /tmp/tls/proxy/caCert
         {{- end }}
-        {{- if $.Values.zdm.tls.clientCert }}
+        {{- if $.Values.zdm.tls.serverCert }}
         - name: ZDM_PROXY_TLS_CERT_PATH
           value: /tmp/tls/proxy/cert
         {{- end }}
-        {{- if $.Values.zdm.tls.clientKey }}
+        {{- if $.Values.zdm.tls.serverKey }}
         - name: ZDM_PROXY_TLS_KEY_PATH
           value: /tmp/tls/proxy/key
         {{- end }}
