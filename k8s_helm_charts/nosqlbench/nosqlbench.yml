@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nosqlbench
+  namespace: zdm-proxy
+spec:
+  selector:
+    matchLabels:
+      app: nosqlbench
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: nosqlbench
+    spec:
+      containers:
+      - name: nosqlbench
+        image: nosqlbench/nosqlbench:4.15.101
+        imagePullPolicy: IfNotPresent
+        command: ["/source/nosqlbench-entrypoint.sh"]
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1024Mi
+          limits:
+            cpu: 1000m
+            memory: 1024Mi
+        env:
+          - name: CQL_USERNAME
+            value: 'cassandra'
+          - name: CQL_PASSWORD
+            value: 'cassandra'
+          - name: CQL_KEYSPACE
+            value: 'test'
+        volumeMounts:
+        - name: nosqlbench-config
+          mountPath: /source
+      volumes:
+        - name: nosqlbench-config
+          configMap:
+            name: nosqlbench-config
+            defaultMode: 0755

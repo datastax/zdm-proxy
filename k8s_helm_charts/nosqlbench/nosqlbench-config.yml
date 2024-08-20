@@ -1,0 +1,123 @@
+kind: ConfigMap
+metadata:
+  name: nosqlbench-config
+  namespace: zdm-proxy
+apiVersion: v1
+data:
+  nosqlbench-entrypoint.sh: |+
+    #!/bin/sh
+    apk add --no-cache netcat-openbsd
+    apk add py3-pip
+    pip install cqlsh
+    
+    set -e
+    
+    echo "Creating schema"
+    cat /source/schema.cql | cqlsh zdm-proxy-0 -u "$CQL_USERNAME" -p "$CQL_PASSWORD" -k "$CQL_KEYSPACE"
+
+    echo "Running NoSQLBench RAMPUP job"
+    java -jar /nb.jar \
+      --show-stacktraces \
+      /source/activity.yaml \
+      rampup \
+      threads=10 \
+      driver=cqld3 \
+      hosts=zdm-proxy-0,zdm-proxy-1,zdm-proxy-2 \
+      username="$CQL_USERNAME" \
+      password="$CQL_PASSWORD" \
+      keyspace="$CQL_KEYSPACE" \
+      errors=retry
+    
+    echo "Running NoSQLBench WRITE job"
+    java -jar /nb.jar \
+      --show-stacktraces \
+      --progress console:5s \
+      /source/activity.yaml \
+      write \
+      threads=10 \
+      driver=cqld3 \
+      hosts=zdm-proxy-0,zdm-proxy-1,zdm-proxy-2 \
+      username="$CQL_USERNAME" \
+      password="$CQL_PASSWORD" \
+      keyspace="$CQL_KEYSPACE" \
+      errors=retry
+    
+    echo "Running NoSQLBench READ job"
+    java -jar /nb.jar \
+      --show-stacktraces \
+      --progress console:5s \
+      /source/activity.yaml \
+      read \
+      threads=10 \
+      driver=cqld3 \
+      hosts=zdm-proxy-0,zdm-proxy-1,zdm-proxy-2 \
+      username="$CQL_USERNAME" \
+      password="$CQL_PASSWORD" \
+      keyspace="$CQL_KEYSPACE" \
+      errors=retry
+    
+    echo "Finished"
+    
+    sleep infinity
+    
+  schema.cql: |+
+    use test;
+    
+    create table if not exists test.keyvalue (
+      key int,
+      value text,
+      PRIMARY KEY (key));
+
+  activity.yaml: |+
+    bindings:
+      seq_key: Mod(<<keycount:1000000000>>); ToInt();
+      seq_value: Hash(); Mod(<<valuecount:1000000000>>); ToString() -> String
+      rw_key: <<keydist:Uniform(0,1000000000)->int>>;
+      rw_value: Hash(); <<valdist:Uniform(0,1000000000)->int>>; ToString() -> String
+    
+    scenarios:
+      rampup: run driver=cqld4 tags=phase:rampup cycles=10000
+      write: run driver=cqld4 tags=phase:write cycles=10000
+      read: run driver=cqld4 tags=phase:read cycles=10000
+    
+    blocks:
+      - name: rampup
+        tags:
+          phase: rampup
+        params:
+          cl: <<write_cl:QUORUM>>
+          prepared: true
+        statements:
+          - rampup-insert: |
+              insert into <<keyspace:test>>.<<table:keyvalue>>
+              (key, value)
+              values ({seq_key},{seq_value});
+            tags:
+              name: rampup-insert
+      - name: read
+        tags:
+          phase: read
+          type: read
+          prepared: true
+        params:
+          ratio: 1
+          cl: <<read_cl:QUORUM>>
+        statements:
+          - main-select: |
+              select * from <<keyspace:test>>.<<table:keyvalue>> where key={rw_key};
+            tags:
+              name: main-select
+      - name: write
+        tags:
+          phase: write
+          type: write
+          prepared: true
+        params:
+          ratio: 1
+          cl: <<write_cl:QUORUM>>
+        statements:
+          - main-insert: |
+              insert into <<keyspace:test>>.<<table:keyvalue>>
+              (key, value) values ({rw_key}, {rw_value});
+            tags:
+              name: main-insert
