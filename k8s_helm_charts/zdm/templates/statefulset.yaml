@@ -66,20 +66,30 @@ spec:
           value: {{ $.Values.zdm.readMode | upper | quote }}
         - name: ZDM_LOG_LEVEL
           value: {{ $.Values.zdm.logLevel | upper | quote }}
+        {{- if $.Values.zdm.maxClientConnections }}
         - name: ZDM_PROXY_MAX_CLIENT_CONNECTIONS
           value: {{ $.Values.zdm.maxClientConnections | quote }}
+        {{- end }}
         - name: ZDM_METRICS_ENABLED
           value: {{ $.Values.zdm.metricsEnabled | quote }}
         - name: ZDM_REPLACE_CQL_FUNCTIONS
           value: {{ $.Values.zdm.replaceCqlFunctions | quote }}
+        {{- if $.Values.zdm.proxyRequestTimeoutMs }}
         - name: ZDM_PROXY_REQUEST_TIMEOUT_MS
           value: {{ $.Values.zdm.proxyRequestTimeoutMs | quote }}
+        {{- end }}
+        {{- if $.Values.zdm.asyncHandshakeTimeoutMs }}
         - name: ZDM_ASYNC_HANDSHAKE_TIMEOUT_MS
           value: {{ $.Values.zdm.asyncHandshakeTimeoutMs | quote }}
+        {{- end }}
+        {{- if $.Values.zdm.originConnectionTimeoutMs }}
         - name: ZDM_ORIGIN_CONNECTION_TIMEOUT_MS
           value: {{ $.Values.zdm.originConnectionTimeoutMs | quote }}
+        {{- end }}
+        {{- if $.Values.zdm.targetConnectionTimeoutMs }}
         - name: ZDM_TARGET_CONNECTION_TIMEOUT_MS
           value: {{ $.Values.zdm.targetConnectionTimeoutMs | quote }}
+        {{- end }}
         - name: ZDM_PROXY_LISTEN_ADDRESS
           valueFrom:
             fieldRef:
