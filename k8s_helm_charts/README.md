@@ -52,3 +52,5 @@ Usage:
 8. When you're done, run helm uninstall to remove all objects.
 
     ```helm -n zdmproxy uninstall zdm-proxy```
+
+![Demo](zdm-k8s-ccm-astra.gif)
