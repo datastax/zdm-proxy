@@ -3,7 +3,7 @@
 
 Usage:
 
-1. Install [NoSQL Bench](https://docs.nosqlbench.io/) and run a simple workload towards ZDM proxy. Note that
+1. Install [NoSQLBench](https://docs.nosqlbench.io/) and run a simple workload towards ZDM proxy. Note that
    after completing the test, pod is not terminated.
 
    ```

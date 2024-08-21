@@ -34,7 +34,9 @@ Usage:
 
 5. Optionally you can install monitoring components defined in `monitoring` subfolder.
 
-6. Basic ZDM Proxy operations.
+6. To generate example load, you can use [NoSQLBench](https://docs.nosqlbench.io/) tool. Check out deployment scripts in `nosqlbench` subfolder.
+
+7. Basic ZDM Proxy operations.
 
    - Switch primary cluster to target (all proxy pods will automatically roll-restart after the change).
 
@@ -47,6 +49,6 @@ Usage:
       Note: if you've already switched primary cluster to target, make sure you add `--set primaryCluster=TARGET`
       in this command line as well. An alternative is to directly edit `zdm/values.yaml` then run Helm upgrade.
 
-7. When you're done, run helm uninstall to remove all objects.
+8. When you're done, run helm uninstall to remove all objects.
 
     ```helm -n zdmproxy uninstall zdm-proxy```
