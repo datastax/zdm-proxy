@@ -1,7 +1,10 @@
+# record with: $ vhs demo.tape
+
 Output zdm-k8s-ccm-astra.gif
 
-Set Width 1000
-Set Height 1000
+Set FontSize 12
+Set Width 800
+Set Height 600
 
 Type "ls"
 Enter
@@ -97,5 +100,5 @@ Sleep 3s
 
 Type "kubectl get pods -n zdm-proxy"
 Enter
-Sleep 5ms
+Sleep 5s
 
