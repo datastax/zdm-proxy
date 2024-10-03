@@ -249,7 +249,7 @@ func (p *ZdmProxy) initializeControlConnections(ctx context.Context) error {
 
 	originControlConn := NewControlConn(
 		p.controlConnShutdownCtx, p.Conf.OriginPort, p.originConnectionConfig,
-		p.Conf.OriginUsername, p.Conf.OriginPassword, p.Conf, topologyConfig, p.proxyRand, p.metricHandler)
+		p.Conf.OriginUsername, p.Conf.OriginPassword, p.Conf, topologyConfig, p.proxyRand, p.metricHandler, p.Conf.OriginPreferIpFromSystemLocal)
 
 	if err := originControlConn.Start(p.controlConnShutdownWg, ctx); err != nil {
 		return fmt.Errorf("failed to initialize origin control connection: %w", err)
@@ -261,7 +261,7 @@ func (p *ZdmProxy) initializeControlConnections(ctx context.Context) error {
 
 	targetControlConn := NewControlConn(
 		p.controlConnShutdownCtx, p.Conf.TargetPort, p.targetConnectionConfig,
-		p.Conf.TargetUsername, p.Conf.TargetPassword, p.Conf, topologyConfig, p.proxyRand, p.metricHandler)
+		p.Conf.TargetUsername, p.Conf.TargetPassword, p.Conf, topologyConfig, p.proxyRand, p.metricHandler, p.Conf.TargetPreferIpFromSystemLocal)
 
 	if err := targetControlConn.Start(p.controlConnShutdownWg, ctx); err != nil {
 		return fmt.Errorf("failed to initialize target control connection: %w", err)
