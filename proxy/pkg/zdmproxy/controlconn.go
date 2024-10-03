@@ -55,6 +55,7 @@ type ControlConn struct {
 	protocolEventSubscribers map[ProtocolEventObserver]interface{}
 	authEnabled              *atomic.Value
 	metricsHandler           *metrics.MetricHandler
+	preferIpFromSystemLocal  bool
 }
 
 const ProxyVirtualRack = "rack0"
@@ -64,7 +65,7 @@ const ccReadTimeout = 10 * time.Second
 
 func NewControlConn(ctx context.Context, defaultPort int, connConfig ConnectionConfig,
 	username string, password string, conf *config.Config, topologyConfig *common.TopologyConfig, proxyRand *rand.Rand,
-	metricsHandler *metrics.MetricHandler) *ControlConn {
+	metricsHandler *metrics.MetricHandler, preferIpFromSystemLocal bool) *ControlConn {
 	authEnabled := &atomic.Value{}
 	authEnabled.Store(true)
 	return &ControlConn{
@@ -102,6 +103,7 @@ func NewControlConn(ctx context.Context, defaultPort int, connConfig ConnectionC
 		protocolEventSubscribers: map[ProtocolEventObserver]interface{}{},
 		authEnabled:              authEnabled,
 		metricsHandler:           metricsHandler,
+		preferIpFromSystemLocal:  preferIpFromSystemLocal,
 	}
 }
 
@@ -445,6 +447,7 @@ func (cc *ControlConn) RefreshHosts(conn CqlConnection, ctx context.Context) ([]
 	if partitionerExists {
 		partitioner = partitionerColValue.AsNillableString()
 	}
+
 	if partitioner != nil && !strings.Contains(*partitioner, "Murmur3Partitioner") && cc.topologyConfig.VirtualizationEnabled {
 		if strings.Contains(*partitioner, "RandomPartitioner") {
 			log.Debugf("Cluster %v uses the Random partitioner, but the proxy will return Murmur3 to the client instead. This is the expected behaviour.", cc.connConfig.GetClusterType())
@@ -475,11 +478,19 @@ func (cc *ControlConn) RefreshHosts(conn CqlConnection, ctx context.Context) ([]
 		}
 	}
 
-	oldLocalhost, localHostExists := hostsById[localHost.HostId]
-	if localHostExists {
-		log.Warnf("Local host is also on the peers list: %v vs %v, ignoring the former one.", oldLocalhost, localHost)
+	peersListLocalHost, peersListContainsLocalHost := hostsById[localHost.HostId]
+	if cc.preferIpFromSystemLocal {
+		if peersListContainsLocalHost {
+			log.Warnf("Local host is also on the peers list: %v vs %v, ignoring the former one.", peersListLocalHost, localHost)
+		}
+		hostsById[localHost.HostId] = localHost
+	} else if peersListContainsLocalHost {
+		log.Infof("Local host is on the peers list aswell, the peers list will be used as the source of truth: %v vs %v, ignoring the latter one.", peersListLocalHost, localHost)
+	} else {
+		log.Warnf("Local host is not on the peers list, it will be added: %v.", localHost)
+		hostsById[localHost.HostId] = localHost
 	}
-	hostsById[localHost.HostId] = localHost
+
 	orderedLocalHosts := make([]*Host, 0, len(hostsById))
 	for _, h := range hostsById {
 		orderedLocalHosts = append(orderedLocalHosts, h)
