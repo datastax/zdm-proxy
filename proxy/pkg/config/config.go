@@ -29,9 +29,10 @@ type Config struct {
 
 	// Proxy Topology (also known as system.peers "virtualization") bucket
 
-	ProxyTopologyIndex     int    `default:"0" split_words:"true" yaml:"proxy_topology_index"`
-	ProxyTopologyAddresses string `split_words:"true" yaml:"proxy_topology_addresses"`
-	ProxyTopologyNumTokens int    `default:"8" split_words:"true" yaml:"proxy_topology_num_tokens"`
+	ProxyTopologyIndex             int    `default:"0" split_words:"true" yaml:"proxy_topology_index"`
+	ProxyTopologyAddresses         string `split_words:"true" yaml:"proxy_topology_addresses"`
+	ProxyTopologyNumTokens         int    `default:"8" split_words:"true" yaml:"proxy_topology_num_tokens"`
+	ProxyTopologyKubernetesService string `split_words:"true" yaml:"proxy_topology_kubernetes_service"`
 
 	// Origin bucket
 
@@ -238,7 +239,7 @@ func (c *Config) ParseTopologyConfig() (*common.TopologyConfig, error) {
 
 	proxyInstanceCount := len(proxyAddressesTyped)
 	proxyIndex := c.ProxyTopologyIndex
-	if proxyIndex < 0 || proxyIndex >= proxyInstanceCount {
+	if c.ProxyTopologyKubernetesService == "" && (proxyIndex < 0 || proxyIndex >= proxyInstanceCount) {
 		return nil, fmt.Errorf("invalid ZDM_PROXY_TOPOLOGY_INDEX and ZDM_PROXY_TOPOLOGY_ADDRESSES values; "+
 			"proxy index (%d) must be less than length of addresses (%d) and non negative", proxyIndex, proxyInstanceCount)
 	}
@@ -253,6 +254,7 @@ func (c *Config) ParseTopologyConfig() (*common.TopologyConfig, error) {
 		Index:                 proxyIndex,
 		Count:                 proxyInstanceCount,
 		NumTokens:             c.ProxyTopologyNumTokens,
+		KubernetesService:     c.ProxyTopologyKubernetesService,
 	}, nil
 }
 

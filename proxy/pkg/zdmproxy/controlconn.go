@@ -4,15 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/datastax/go-cassandra-native-protocol/frame"
-	"github.com/datastax/go-cassandra-native-protocol/message"
-	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/datastax/zdm-proxy/proxy/pkg/common"
-	"github.com/datastax/zdm-proxy/proxy/pkg/config"
-	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
-	"github.com/google/uuid"
-	"github.com/jpillora/backoff"
-	log "github.com/sirupsen/logrus"
 	"math"
 	"math/big"
 	"math/rand"
@@ -22,11 +13,23 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/datastax/go-cassandra-native-protocol/frame"
+	"github.com/datastax/go-cassandra-native-protocol/message"
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/datastax/zdm-proxy/proxy/pkg/common"
+	"github.com/datastax/zdm-proxy/proxy/pkg/config"
+	"github.com/datastax/zdm-proxy/proxy/pkg/kubernetes"
+	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
+	"github.com/google/uuid"
+	"github.com/jpillora/backoff"
+	log "github.com/sirupsen/logrus"
 )
 
 type ControlConn struct {
 	conf                     *config.Config
 	topologyConfig           *common.TopologyConfig
+	topologyRegistry         *kubernetes.TopologyRegistry
 	cqlConn                  CqlConnection
 	retryBackoffPolicy       *backoff.Backoff
 	heartbeatPeriod          time.Duration
@@ -62,15 +65,25 @@ const ProxyVirtualPartitioner = "org.apache.cassandra.dht.Murmur3Partitioner"
 const ccWriteTimeout = 5 * time.Second
 const ccReadTimeout = 10 * time.Second
 
-func NewControlConn(ctx context.Context, defaultPort int, connConfig ConnectionConfig,
-	username string, password string, conf *config.Config, topologyConfig *common.TopologyConfig, proxyRand *rand.Rand,
-	metricsHandler *metrics.MetricHandler) *ControlConn {
+func NewControlConn(
+	ctx context.Context,
+	defaultPort int,
+	connConfig ConnectionConfig,
+	username string,
+	password string,
+	conf *config.Config,
+	topologyConfig *common.TopologyConfig,
+	topologyRegistry *kubernetes.TopologyRegistry,
+	proxyRand *rand.Rand,
+	metricsHandler *metrics.MetricHandler,
+) *ControlConn {
 	authEnabled := &atomic.Value{}
 	authEnabled.Store(true)
 	return &ControlConn{
-		conf:           conf,
-		topologyConfig: topologyConfig,
-		cqlConn:        nil,
+		conf:             conf,
+		topologyConfig:   topologyConfig,
+		topologyRegistry: topologyRegistry,
+		cqlConn:          nil,
 		retryBackoffPolicy: &backoff.Backoff{
 			Factor: conf.HeartbeatRetryBackoffFactor,
 			Jitter: true,
@@ -339,6 +352,28 @@ func (cc *ControlConn) openInternal(endpoints []Endpoint, ctx context.Context) (
 				}
 			})
 
+			if cc.topologyConfig.VirtualizationEnabled && cc.topologyConfig.KubernetesService != "" {
+				go func() {
+					eventChannel := make(chan kubernetes.TopologyEvent)
+					defer close(eventChannel)
+
+					cc.topologyRegistry.Subscribe(eventChannel)
+					defer cc.topologyRegistry.Unsubscribe(eventChannel)
+
+					for {
+						select {
+						case <-ctx.Done():
+							return
+						case <-eventChannel:
+							select {
+							case cc.refreshHostsDebouncer <- newConn:
+							default:
+							}
+						}
+					}
+				}()
+			}
+
 			err = newConn.SubscribeToProtocolEvents(ctx, []primitive.EventType{primitive.EventTypeTopologyChange})
 			if err == nil {
 				_, err = cc.RefreshHosts(newConn, ctx)
@@ -502,12 +537,19 @@ func (cc *ControlConn) RefreshHosts(conn CqlConnection, ctx context.Context) ([]
 		return orderedLocalHosts[i].Rack < orderedLocalHosts[j].Rack
 	})
 
-	assignedHosts := computeAssignedHosts(cc.topologyConfig.Index, cc.topologyConfig.Count, orderedLocalHosts)
+	topologyCount := cc.topologyConfig.Count
+	if cc.topologyConfig.VirtualizationEnabled && cc.topologyConfig.KubernetesService != "" {
+		nodes := cc.topologyRegistry.Peers()
+		nodes = append(nodes, cc.topologyRegistry.Local())
+		topologyCount = len(nodes)
+	}
+
+	assignedHosts := computeAssignedHosts(cc.topologyConfig.Index, topologyCount, orderedLocalHosts)
 	shuffleHosts(cc.proxyRand, assignedHosts)
 
 	var virtualHosts []*VirtualHost
 	if cc.topologyConfig.VirtualizationEnabled {
-		virtualHosts, err = computeVirtualHosts(cc.topologyConfig, orderedLocalHosts)
+		virtualHosts, err = computeVirtualHosts(cc.topologyConfig, cc.topologyRegistry, orderedLocalHosts)
 		if err != nil {
 			return nil, err
 		}
@@ -740,8 +782,17 @@ func shuffleHosts(rnd *rand.Rand, hosts []*Host) {
 	})
 }
 
-func computeVirtualHosts(topologyConfig *common.TopologyConfig, orderedHosts []*Host) ([]*VirtualHost, error) {
+func computeVirtualHosts(
+	topologyConfig *common.TopologyConfig,
+	topologyRegistry *kubernetes.TopologyRegistry,
+	orderedHosts []*Host,
+) ([]*VirtualHost, error) {
 	proxyAddresses := topologyConfig.Addresses
+	if topologyConfig.KubernetesService != "" {
+		nodes := topologyRegistry.Peers()
+		nodes = append(nodes, topologyRegistry.Local())
+		proxyAddresses = nodes
+	}
 	numTokens := topologyConfig.NumTokens
 	twoPow64 := new(big.Int).Exp(big.NewInt(2), big.NewInt(64), nil)
 	twoPow63 := new(big.Int).Exp(big.NewInt(2), big.NewInt(63), nil)

@@ -5,25 +5,29 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"github.com/datastax/zdm-proxy/proxy/pkg/common"
-	"github.com/datastax/zdm-proxy/proxy/pkg/config"
-	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
-	"github.com/datastax/zdm-proxy/proxy/pkg/metrics/noopmetrics"
-	"github.com/datastax/zdm-proxy/proxy/pkg/metrics/prommetrics"
-	"github.com/jpillora/backoff"
-	"github.com/prometheus/client_golang/prometheus"
-	log "github.com/sirupsen/logrus"
 	"math/rand"
 	"net"
 	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/datastax/zdm-proxy/proxy/pkg/common"
+	"github.com/datastax/zdm-proxy/proxy/pkg/config"
+	"github.com/datastax/zdm-proxy/proxy/pkg/kubernetes"
+	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
+	"github.com/datastax/zdm-proxy/proxy/pkg/metrics/noopmetrics"
+	"github.com/datastax/zdm-proxy/proxy/pkg/metrics/prommetrics"
+	"github.com/jpillora/backoff"
+	"github.com/prometheus/client_golang/prometheus"
+	log "github.com/sirupsen/logrus"
 )
 
 type ZdmProxy struct {
 	Conf           *config.Config
 	TopologyConfig *common.TopologyConfig
+
+	topologyRegistry *kubernetes.TopologyRegistry
 
 	originConnectionConfig ConnectionConfig
 	targetConnectionConfig ConnectionConfig
@@ -183,9 +187,19 @@ func (p *ZdmProxy) initializeControlConnections(ctx context.Context) error {
 		return fmt.Errorf("failed to parse topology config: %w", err)
 	}
 
+	var topologyRegistry *kubernetes.TopologyRegistry
+	if topologyConfig.VirtualizationEnabled && topologyConfig.KubernetesService != "" {
+		topologyRegistry, err = kubernetes.NewTopologyRegistry(topologyConfig.KubernetesService)
+		if err != nil {
+			return fmt.Errorf("failed to create topology registry: %w", err)
+		}
+		topologyRegistry.Start(ctx)
+	}
+
 	log.Infof("Parsed Topology Config: %v", topologyConfig)
 	p.lock.Lock()
 	p.TopologyConfig = topologyConfig
+	p.topologyRegistry = topologyRegistry
 	p.lock.Unlock()
 
 	parsedOriginContactPoints, err := p.Conf.ParseOriginContactPoints()
@@ -249,7 +263,8 @@ func (p *ZdmProxy) initializeControlConnections(ctx context.Context) error {
 
 	originControlConn := NewControlConn(
 		p.controlConnShutdownCtx, p.Conf.OriginPort, p.originConnectionConfig,
-		p.Conf.OriginUsername, p.Conf.OriginPassword, p.Conf, topologyConfig, p.proxyRand, p.metricHandler)
+		p.Conf.OriginUsername, p.Conf.OriginPassword, p.Conf, topologyConfig, p.topologyRegistry,
+		p.proxyRand, p.metricHandler)
 
 	if err := originControlConn.Start(p.controlConnShutdownWg, ctx); err != nil {
 		return fmt.Errorf("failed to initialize origin control connection: %w", err)
@@ -261,7 +276,8 @@ func (p *ZdmProxy) initializeControlConnections(ctx context.Context) error {
 
 	targetControlConn := NewControlConn(
 		p.controlConnShutdownCtx, p.Conf.TargetPort, p.targetConnectionConfig,
-		p.Conf.TargetUsername, p.Conf.TargetPassword, p.Conf, topologyConfig, p.proxyRand, p.metricHandler)
+		p.Conf.TargetUsername, p.Conf.TargetPassword, p.Conf, topologyConfig, p.topologyRegistry,
+		p.proxyRand, p.metricHandler)
 
 	if err := targetControlConn.Start(p.controlConnShutdownWg, ctx); err != nil {
 		return fmt.Errorf("failed to initialize target control connection: %w", err)
@@ -550,6 +566,7 @@ func (p *ZdmProxy) handleNewConnection(clientConn net.Conn) {
 		p.targetControlConn,
 		p.Conf,
 		p.TopologyConfig,
+		p.topologyRegistry,
 		p.Conf.TargetUsername,
 		p.Conf.TargetPassword,
 		p.Conf.OriginUsername,

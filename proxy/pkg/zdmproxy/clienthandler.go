@@ -6,20 +6,22 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"github.com/datastax/go-cassandra-native-protocol/frame"
-	"github.com/datastax/go-cassandra-native-protocol/message"
-	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/datastax/zdm-proxy/proxy/pkg/common"
-	"github.com/datastax/zdm-proxy/proxy/pkg/config"
-	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
-	"github.com/google/uuid"
-	log "github.com/sirupsen/logrus"
 	"net"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/datastax/go-cassandra-native-protocol/frame"
+	"github.com/datastax/go-cassandra-native-protocol/message"
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/datastax/zdm-proxy/proxy/pkg/common"
+	"github.com/datastax/zdm-proxy/proxy/pkg/config"
+	"github.com/datastax/zdm-proxy/proxy/pkg/kubernetes"
+	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
+	"github.com/google/uuid"
+	log "github.com/sirupsen/logrus"
 )
 
 /*
@@ -98,6 +100,11 @@ type ClientHandler struct {
 	conf           *config.Config
 	topologyConfig *common.TopologyConfig
 
+	topologyRegistry *kubernetes.TopologyRegistry
+
+	clientSubscribedEventTypes     map[kubernetes.TopologyEventType]struct{}
+	clientSubscribedEventTypesLock sync.RWMutex
+
 	localClientHandlerWg *sync.WaitGroup
 
 	originHost *Host
@@ -129,6 +136,7 @@ func NewClientHandler(
 	targetControlConn *ControlConn,
 	conf *config.Config,
 	topologyConfig *common.TopologyConfig,
+	topologyRegistry *kubernetes.TopologyRegistry,
 	targetUsername string,
 	targetPassword string,
 	originUsername string,
@@ -306,6 +314,8 @@ func NewClientHandler(
 		conf:                                 conf,
 		localClientHandlerWg:                 localClientHandlerWg,
 		topologyConfig:                       topologyConfig,
+		topologyRegistry:                     topologyRegistry,
+		clientSubscribedEventTypes:           make(map[kubernetes.TopologyEventType]struct{}),
 		originHost:                           originHost,
 		targetHost:                           targetHost,
 		originObserver:                       originObserver,
@@ -334,6 +344,7 @@ func (ch *ClientHandler) run(activeClients *int32) {
 	}
 	ch.requestLoop()
 	ch.listenForEventMessages()
+	ch.listenForTopologyChanges()
 	ch.responseLoop()
 
 	addObserver(ch.originObserver, ch.originControlConn)
@@ -564,6 +575,90 @@ func (ch *ClientHandler) listenForEventMessages() {
 		}
 
 		log.Debugf("Shutting down client event messages listener.")
+	}()
+}
+
+// Listens for virtual topology changes using TopologyRegistry.
+func (ch *ClientHandler) listenForTopologyChanges() {
+	// TODO: Should really be part of `listenForEventMessages`, but keeping
+	// them separate for now to avoid heavy refactoring of
+	// `listenForEventMessages`.
+
+	if !ch.topologyConfig.VirtualizationEnabled || ch.topologyConfig.KubernetesService == "" {
+		return
+	}
+
+	ch.localClientHandlerWg.Add(1)
+	go func() {
+		log.Debug("listenForTopologyChanges starting now.")
+		defer log.Debugf("Shutting down listenForTopologyChanges.")
+
+		defer ch.localClientHandlerWg.Done()
+
+		eventChannel := make(chan kubernetes.TopologyEvent)
+		ch.topologyRegistry.Subscribe(eventChannel)
+		defer ch.topologyRegistry.Unsubscribe(eventChannel)
+
+		for {
+			var event kubernetes.TopologyEvent
+			select {
+			case <-ch.clientHandlerContext.Done():
+				return
+			case event = <-eventChannel:
+			}
+
+			ch.clientSubscribedEventTypesLock.RLock()
+			_, ok := ch.clientSubscribedEventTypes[event.Type]
+			ch.clientSubscribedEventTypesLock.RUnlock()
+			if !ok {
+				continue
+			}
+
+			var eventMessage message.Message
+			switch event.Type {
+			case kubernetes.AddedEvent:
+				eventMessage = &message.TopologyChangeEvent{
+					ChangeType: primitive.TopologyChangeTypeNewNode,
+					Address: &primitive.Inet{
+						Addr: event.Host,
+						Port: int32(ch.conf.ProxyListenPort),
+					},
+				}
+			case kubernetes.RemovedEvent:
+				eventMessage = &message.TopologyChangeEvent{
+					ChangeType: primitive.TopologyChangeTypeRemovedNode,
+					Address: &primitive.Inet{
+						Addr: event.Host,
+						Port: int32(ch.conf.ProxyListenPort),
+					},
+				}
+			case kubernetes.StatusChangedEvent:
+				changeType := primitive.StatusChangeTypeDown
+				if event.StatusUp {
+					changeType = primitive.StatusChangeTypeUp
+				}
+				eventMessage = &message.StatusChangeEvent{
+					ChangeType: changeType,
+					Address: &primitive.Inet{
+						Addr: event.Host,
+						Port: int32(ch.conf.ProxyListenPort),
+					},
+				}
+			default:
+				continue // Unknown event type. Ignore it.
+			}
+
+			eventMessageStreamId := int16(-1)
+			eventFrame := frame.NewFrame(
+				ch.originControlConn.cqlConn.GetProtocolVersion(),
+				eventMessageStreamId,
+				eventMessage,
+			)
+
+			if rawFrame, err := defaultCodec.ConvertToRawFrame(eventFrame); err == nil {
+				ch.clientConnector.sendResponseToClient(rawFrame)
+			}
+		}
 	}()
 }
 
@@ -1346,6 +1441,34 @@ func (ch *ClientHandler) handleRequest(f *frame.RawFrame) {
 		log.Warnf("error sending request with opcode %02x and streamid %d: %s", f.Header.OpCode, f.Header.StreamId, err.Error())
 		return
 	}
+
+	if f.Header.OpCode == primitive.OpCodeRegister {
+		if !ch.topologyConfig.VirtualizationEnabled || ch.topologyConfig.KubernetesService == "" {
+			return
+		}
+
+		decodedFrame, err := defaultCodec.ConvertFromRawFrame(f)
+		if err != nil {
+			return
+		}
+
+		message, ok := decodedFrame.Body.Message.(*message.Register)
+		if !ok {
+			return
+		}
+
+		ch.clientSubscribedEventTypesLock.Lock()
+		for _, eventType := range message.EventTypes {
+			switch eventType {
+			case primitive.EventTypeTopologyChange:
+				ch.clientSubscribedEventTypes[kubernetes.AddedEvent] = struct{}{}
+				ch.clientSubscribedEventTypes[kubernetes.RemovedEvent] = struct{}{}
+			case primitive.EventTypeStatusChange:
+				ch.clientSubscribedEventTypes[kubernetes.StatusChangedEvent] = struct{}{}
+			}
+		}
+		ch.clientSubscribedEventTypesLock.Unlock()
+	}
 }
 
 // Forwards the request, parsing it and enqueuing it to the appropriate cluster connector(s)' write queue(s).
@@ -1581,6 +1704,7 @@ func (ch *ClientHandler) handleInterceptedRequest(
 	if err != nil {
 		return nil, err
 	}
+	log.Debugf("VirtualHosts: %v", virtualHosts)
 
 	typeCodec := GetDefaultGenericTypeCodec()
 

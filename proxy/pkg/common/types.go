@@ -10,6 +10,7 @@ import (
 //   - Assignment of C* hosts per proxy instance for request connections
 type TopologyConfig struct {
 	VirtualizationEnabled bool     // enabled if ZDM_PROXY_TOPOLOGY_ADDRESSES is not empty
+	KubernetesService     string   // comes from ZDM_PROXY_TOPOLOGY_KUBERNETES_SERVICE
 	Addresses             []net.IP // comes from ZDM_PROXY_TOPOLOGY_ADDRESSES
 	Count                 int      // comes from length of ZDM_PROXY_TOPOLOGY_ADDRESSES
 	Index                 int      // comes from ZDM_PROXY_TOPOLOGY_INDEX
