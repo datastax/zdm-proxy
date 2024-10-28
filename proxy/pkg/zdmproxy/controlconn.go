@@ -538,13 +538,15 @@ func (cc *ControlConn) RefreshHosts(conn CqlConnection, ctx context.Context) ([]
 	})
 
 	topologyCount := cc.topologyConfig.Count
+	localIndex := cc.topologyConfig.Index
 	if cc.topologyConfig.VirtualizationEnabled && cc.topologyConfig.KubernetesService != "" {
 		nodes := cc.topologyRegistry.Peers()
 		nodes = append(nodes, cc.topologyRegistry.Local())
 		topologyCount = len(nodes)
+		localIndex = topologyCount - 1
 	}
 
-	assignedHosts := computeAssignedHosts(cc.topologyConfig.Index, topologyCount, orderedLocalHosts)
+	assignedHosts := computeAssignedHosts(localIndex, topologyCount, orderedLocalHosts)
 	shuffleHosts(cc.proxyRand, assignedHosts)
 
 	var virtualHosts []*VirtualHost
@@ -629,6 +631,11 @@ func (cc *ControlConn) GetVirtualHosts() ([]*VirtualHost, error) {
 }
 
 func (cc *ControlConn) GetLocalVirtualHostIndex() int {
+	if cc.topologyConfig.KubernetesService != "" {
+		// TODO: Ideally we shouldn't rely on indices at all, but this is the
+		// least intrusive way I could think of.
+		return len(cc.virtualHosts) - 1 // Local node is the last one.
+	}
 	return cc.topologyConfig.Index
 }
 
