@@ -481,13 +481,13 @@ func (cc *ControlConn) RefreshHosts(conn CqlConnection, ctx context.Context) ([]
 	peersListLocalHost, peersListContainsLocalHost := hostsById[localHost.HostId]
 	if cc.preferIpFromSystemLocal {
 		if peersListContainsLocalHost {
-			log.Warnf("Local host is also on the peers list: %v vs %v, ignoring the former one.", peersListLocalHost, localHost)
+			log.Warnf("Local host is also on the peers list, local host will be used as the source of truth: %v vs %v, ignoring the former one.", peersListLocalHost, localHost)
 		}
 		hostsById[localHost.HostId] = localHost
 	} else if peersListContainsLocalHost {
-		log.Infof("Local host is on the peers list aswell, the peers list will be used as the source of truth: %v vs %v, ignoring the latter one.", peersListLocalHost, localHost)
+		log.Warnf("Local host is also on the peers list, the peers list will be used as the source of truth: %v vs %v, ignoring the latter one.", peersListLocalHost, localHost)
 	} else {
-		log.Warnf("Local host is not on the peers list, it will be added: %v.", localHost)
+		log.Tracef("Local host is not on the peers list, it will be added: %v.", localHost)
 		hostsById[localHost.HostId] = localHost
 	}
 
