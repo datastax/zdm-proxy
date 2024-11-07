@@ -20,7 +20,7 @@ jobs:
       - name: Start docker-compose
         id: compose
         run: |
-          docker-compose -f docker-compose-tests.yml up --abort-on-container-exit --exit-code-from=nosqlbench
+          docker compose -f docker-compose-tests.yml up --abort-on-container-exit --exit-code-from=nosqlbench
       - name: Test Summary
         if: ${{ failure() }}
         run: |
@@ -36,7 +36,7 @@ jobs:
         run: |
           sudo apt update
           sudo apt -y install default-jre gcc git wget
-          wget https://go.dev/dl/go1.19.linux-amd64.tar.gz
+          wget https://go.dev/dl/go1.22.8.linux-amd64.tar.gz
           sudo tar -xzf go*.tar.gz -C /usr/local/
           export PATH=$PATH:/usr/local/go/bin
           export PATH=$PATH:`go env GOPATH`/bin
@@ -59,7 +59,7 @@ jobs:
         run: |
           sudo apt update
           sudo apt -y install openjdk-8-jdk gcc git wget
-          wget https://go.dev/dl/go1.19.linux-amd64.tar.gz
+          wget https://go.dev/dl/go1.22.8.linux-amd64.tar.gz
           sudo tar -xzf go*.tar.gz -C /usr/local/
           export PATH=$PATH:/usr/local/go/bin
           export PATH=$PATH:`go env GOPATH`/bin
@@ -83,7 +83,7 @@ jobs:
         run: |
           sudo apt update
           sudo apt -y install openjdk-8-jdk gcc git wget pip
-          wget https://go.dev/dl/go1.19.linux-amd64.tar.gz
+          wget https://go.dev/dl/go1.22.8.linux-amd64.tar.gz
           sudo tar -xzf go*.tar.gz -C /usr/local/
           export PATH=$PATH:/usr/local/go/bin
           export PATH=$PATH:`go env GOPATH`/bin
@@ -113,7 +113,7 @@ jobs:
         run: |
           sudo apt update
           sudo apt -y install openjdk-8-jdk gcc git pip wget
-          wget https://go.dev/dl/go1.19.linux-amd64.tar.gz
+          wget https://go.dev/dl/go1.22.8.linux-amd64.tar.gz
           sudo tar -xzf go*.tar.gz -C /usr/local/
           export PATH=$PATH:/usr/local/go/bin
           export PATH=$PATH:`go env GOPATH`/bin
@@ -138,7 +138,7 @@ jobs:
         run: |
           sudo apt update
           sudo apt -y install openjdk-8-jdk gcc git pip wget
-          wget https://go.dev/dl/go1.19.linux-amd64.tar.gz
+          wget https://go.dev/dl/go1.22.8.linux-amd64.tar.gz
           sudo tar -xzf go*.tar.gz -C /usr/local/
           export PATH=$PATH:/usr/local/go/bin
           export PATH=$PATH:`go env GOPATH`/bin
