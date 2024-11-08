@@ -47,6 +47,8 @@ type Config struct {
 	OriginTlsClientCertPath string `split_words:"true" yaml:"origin_tls_client_cert_path"`
 	OriginTlsClientKeyPath  string `split_words:"true" yaml:"origin_tls_client_key_path"`
 
+	OriginPreferIpFromSystemLocal bool `default:"true" split_words:"true" yaml:"origin_prefer_ip_from_system_local"`
+
 	// Target bucket
 
 	TargetContactPoints           string `split_words:"true" yaml:"target_contact_points"`
@@ -60,6 +62,8 @@ type Config struct {
 	TargetTlsServerCaPath   string `split_words:"true" yaml:"target_tls_server_ca_path"`
 	TargetTlsClientCertPath string `split_words:"true" yaml:"target_tls_client_cert_path"`
 	TargetTlsClientKeyPath  string `split_words:"true" yaml:"target_tls_client_key_path"`
+
+	TargetPreferIpFromSystemLocal bool `default:"true" split_words:"true" yaml:"target_prefer_ip_from_system_local"`
 
 	// Proxy bucket
 
