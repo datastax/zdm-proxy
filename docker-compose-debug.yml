@@ -29,7 +29,7 @@ services:
         ipv4_address: 192.168.100.102
 
   proxy:
-    image: golang:1.21.11-bookworm
+    image: golang:1.22.8-bookworm
     restart: unless-stopped
     tty: true
     ports:
