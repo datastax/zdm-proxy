@@ -6,6 +6,15 @@ Build artifacts are available at [Docker Hub](https://hub.docker.com/repository/
 
 For additional details on the changes included in a specific release, see the associated CHANGELOG-x.x.md file.
 
+## v2.3.1 - 2024-11-08
+
+Upgrade software dependencies to resolve vulnerabilities:
+- GoLang to 1.22
+- _github.com/prometheus/client_golang_ to 1.11.1
+- _google.golang.org/protobuf_ to 1.33.0
+
+[Changelog](CHANGELOG/CHANGELOG-2.3.md#v231---2024-11-08)
+
 ## v2.3.0 - 2024-07-04
 
 Support providing configuration of ZDM with YAML file.
