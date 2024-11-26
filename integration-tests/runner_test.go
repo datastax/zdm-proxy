@@ -220,8 +220,14 @@ func testMetricsWithUnavailableNode(
 		statusCode, rspStr, err := utils.GetMetrics(httpAddr)
 		require.Nil(t, err)
 		require.Equal(t, http.StatusOK, statusCode)
+		originEndpoint := fmt.Sprintf("%v:9042", simulacronSetup.Origin.GetInitialContactPoint())
+		// search for:
+		// zdm_proxy_failed_connections_total{cluster="origin"} 1
+		// zdm_origin_failed_connections_total{node="127.0.0.40:9042"} 1
 		if !strings.Contains(rspStr, fmt.Sprintf("%v 1", getPrometheusName("zdm", metrics.FailedConnectionsOrigin))) {
-			err = fmt.Errorf("did not observe failed connection attempts")
+			err = fmt.Errorf("did not observe failed connection attempts at proxy metric")
+		} else if !strings.Contains(rspStr, fmt.Sprintf("%v 1", getPrometheusNameWithNodeLabel("zdm", metrics.FailedOriginConnections, originEndpoint))) {
+			err = fmt.Errorf("did not observe failed connection attempts at node metric")
 		} else {
 			err = nil
 		}
