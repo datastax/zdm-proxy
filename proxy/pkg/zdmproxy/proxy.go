@@ -687,6 +687,16 @@ func sleepWithContext(d time.Duration, ctx context.Context, reconnectCh chan boo
 }
 
 func (p *ZdmProxy) CreateProxyMetrics(metricFactory metrics.MetricFactory) (*metrics.ProxyMetrics, error) {
+	failedConnectionsOrigin, err := metricFactory.GetOrCreateCounter(metrics.FailedConnectionsOrigin)
+	if err != nil {
+		return nil, err
+	}
+
+	failedConnectionsTarget, err := metricFactory.GetOrCreateCounter(metrics.FailedConnectionsTarget)
+	if err != nil {
+		return nil, err
+	}
+
 	failedReadsOrigin, err := metricFactory.GetOrCreateCounter(metrics.FailedReadsOrigin)
 	if err != nil {
 		return nil, err
@@ -760,6 +770,8 @@ func (p *ZdmProxy) CreateProxyMetrics(metricFactory metrics.MetricFactory) (*met
 	}
 
 	proxyMetrics := &metrics.ProxyMetrics{
+		FailedConnectionsOrigin:  failedConnectionsOrigin,
+		FailedConnectionsTarget:  failedConnectionsTarget,
 		FailedReadsOrigin:        failedReadsOrigin,
 		FailedReadsTarget:        failedReadsTarget,
 		FailedWritesOnOrigin:     failedWritesOnOrigin,

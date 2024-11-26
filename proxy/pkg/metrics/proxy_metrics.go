@@ -10,6 +10,10 @@ const (
 	failedRequestsClusterTarget = "target"
 	failedRequestsClusterBoth   = "both"
 
+	failedConnectionsName         = "proxy_failed_connections_total"
+	failedConnectionsDescription  = "Running total of failed requests due to inability to connect to given cluster"
+	failedConnectionsClusterLabel = "cluster"
+
 	failedReadsName         = "proxy_failed_reads_total"
 	failedReadsDescription  = "Running total of failed reads"
 	failedReadsClusterLabel = "cluster"
@@ -28,6 +32,20 @@ const (
 )
 
 var (
+	FailedConnectionsOrigin = NewMetricWithLabels(
+		failedConnectionsName,
+		failedConnectionsDescription,
+		map[string]string{
+			failedConnectionsClusterLabel: failedRequestsClusterOrigin,
+		},
+	)
+	FailedConnectionsTarget = NewMetricWithLabels(
+		failedConnectionsName,
+		failedConnectionsDescription,
+		map[string]string{
+			failedConnectionsClusterLabel: failedRequestsClusterTarget,
+		},
+	)
 	FailedReadsOrigin = NewMetricWithLabels(
 		failedReadsName,
 		failedReadsDescription,
@@ -124,11 +142,13 @@ var (
 )
 
 type ProxyMetrics struct {
-	FailedReadsOrigin    Counter
-	FailedReadsTarget    Counter
-	FailedWritesOnOrigin Counter
-	FailedWritesOnTarget Counter
-	FailedWritesOnBoth   Counter
+	FailedConnectionsOrigin Counter
+	FailedConnectionsTarget Counter
+	FailedReadsOrigin       Counter
+	FailedReadsTarget       Counter
+	FailedWritesOnOrigin    Counter
+	FailedWritesOnTarget    Counter
+	FailedWritesOnBoth      Counter
 
 	PSCacheSize      GaugeFunc
 	PSCacheMissCount Counter

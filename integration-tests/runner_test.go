@@ -3,6 +3,9 @@ package integration_tests
 import (
 	"context"
 	"fmt"
+	"github.com/datastax/go-cassandra-native-protocol/message"
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/datastax/zdm-proxy/integration-tests/client"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/integration-tests/utils"
 	"github.com/datastax/zdm-proxy/proxy/pkg/config"
@@ -10,9 +13,14 @@ import (
 	"github.com/datastax/zdm-proxy/proxy/pkg/httpzdmproxy"
 	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
 	"github.com/datastax/zdm-proxy/proxy/pkg/runner"
+	"github.com/datastax/zdm-proxy/proxy/pkg/zdmproxy"
+	"github.com/jpillora/backoff"
+	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
 	"net/http"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -41,6 +49,10 @@ func TestWithHttpHandlers(t *testing.T) {
 
 	t.Run("testHttpEndpointsWithUnavailableNode", func(t *testing.T) {
 		testHttpEndpointsWithUnavailableNode(t, metricsHandler, readinessHandler)
+	})
+
+	t.Run("testMetricsWithUnavailableNode", func(t *testing.T) {
+		testMetricsWithUnavailableNode(t, metricsHandler)
 	})
 }
 
@@ -135,6 +147,86 @@ func testHttpEndpointsWithProxyInitialized(
 		Status:                health.UP,
 	}, report.TargetStatus)
 	require.Equal(t, health.UP, report.Status)
+}
+
+func testMetricsWithUnavailableNode(
+	t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback) {
+
+	simulacronSetup, err := setup.NewSimulacronTestSetupWithSession(t, false, false)
+	require.Nil(t, err)
+	defer simulacronSetup.Cleanup()
+
+	conf := setup.NewTestConfig(simulacronSetup.Origin.GetInitialContactPoint(), simulacronSetup.Target.GetInitialContactPoint())
+	modifyConfForHealthTests(conf, 2)
+
+	waitGroup := &sync.WaitGroup{}
+	ctx, cancelFunc := context.WithCancel(context.Background())
+
+	defer waitGroup.Wait()
+	defer cancelFunc()
+
+	srv := httpzdmproxy.StartHttpServer(fmt.Sprintf("%s:%d", conf.MetricsAddress, conf.MetricsPort), waitGroup)
+	defer func(srv *http.Server, ctx context.Context) {
+		err := srv.Shutdown(ctx)
+		if err != nil {
+			log.Error("Failed to shutdown metrics server:", err.Error())
+		}
+	}(srv, ctx)
+
+	b := &backoff.Backoff{
+		Factor: 2,
+		Jitter: false,
+		Min:    100 * time.Millisecond,
+		Max:    500 * time.Millisecond,
+	}
+	proxy := atomic.Value{}
+	waitGroup.Add(1)
+	go func() {
+		defer waitGroup.Done()
+		p, err := zdmproxy.RunWithRetries(conf, ctx, b)
+		if err == nil {
+			metricsHandler.SetHandler(p.GetMetricHandler().GetHttpHandler())
+			proxy.Store(&p)
+			<-ctx.Done()
+			p.Shutdown()
+		}
+	}()
+
+	httpAddr := fmt.Sprintf("%s:%d", conf.MetricsAddress, conf.MetricsPort)
+
+	// check that metrics endpoint has been initialized
+	utils.RequireWithRetries(t, func() (err error, fatal bool) {
+		fatal = false
+		err = utils.CheckMetricsEndpointResult(httpAddr, true)
+		return
+	}, 10, 100*time.Millisecond)
+
+	// stop origin cluster
+	err = simulacronSetup.Origin.DisableConnectionListener()
+	require.Nil(t, err, "failed to disable origin connection listener: %v", err)
+	err = simulacronSetup.Origin.DropAllConnections()
+	require.Nil(t, err, "failed to drop origin connections: %v", err)
+
+	// send a request
+	testClient, err := client.NewTestClient(context.Background(), "127.0.0.1:14002")
+	require.Nil(t, err)
+	queryMsg := &message.Query{
+		Query: "SELECT * FROM table1",
+	}
+	_, _, _ = testClient.SendMessage(context.Background(), primitive.ProtocolVersion4, queryMsg)
+
+	utils.RequireWithRetries(t, func() (err error, fatal bool) {
+		// expect connection failure to origin cluster
+		statusCode, rspStr, err := utils.GetMetrics(httpAddr)
+		require.Nil(t, err)
+		require.Equal(t, http.StatusOK, statusCode)
+		if !strings.Contains(rspStr, fmt.Sprintf("%v 1", getPrometheusName("zdm", metrics.FailedConnectionsOrigin))) {
+			err = fmt.Errorf("did not observe failed connection attempts")
+		} else {
+			err = nil
+		}
+		return
+	}, 10, 500*time.Millisecond)
 }
 
 func testHttpEndpointsWithUnavailableNode(
