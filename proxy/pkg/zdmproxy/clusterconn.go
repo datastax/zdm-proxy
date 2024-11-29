@@ -196,15 +196,20 @@ func (cc *ClusterConnector) run() {
 func openConnectionToCluster(connInfo *ClusterConnectionInfo, context context.Context, connectorType ClusterConnectorType, nodeMetrics *metrics.NodeMetrics) (net.Conn, context.Context, error) {
 	clusterType := connInfo.connConfig.GetClusterType()
 	log.Infof("[%s] Opening request connection to %v (%v).", connectorType, clusterType, connInfo.endpoint.GetEndpointIdentifier())
+	nodeMetricsInstance, err := GetNodeMetricsByClusterConnector(nodeMetrics, connectorType)
+	if err != nil {
+		log.Errorf("Failed to track open connection metrics for endpoint %v: %v.", connInfo.endpoint.GetEndpointIdentifier(), err)
+	}
+
 	conn, timeoutCtx, err := openConnection(connInfo.connConfig, connInfo.endpoint, context, true)
 	if err != nil {
+		if nodeMetricsInstance != nil {
+			nodeMetricsInstance.FailedConnections.Add(1)
+		}
 		return nil, timeoutCtx, err
 	}
 
-	nodeMetricsInstance, err := GetNodeMetricsByClusterConnector(nodeMetrics, connectorType)
-	if err != nil {
-		log.Errorf("Failed to track open connection metrics for conn %v: %v.", conn.RemoteAddr().String(), err)
-	} else {
+	if nodeMetricsInstance != nil {
 		nodeMetricsInstance.OpenConnections.Add(1)
 	}
 

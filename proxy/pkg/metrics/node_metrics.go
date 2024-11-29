@@ -236,13 +236,25 @@ var (
 		"origin_connections_total",
 		"Number of connections to Origin Cassandra currently open",
 	)
+	FailedOriginConnections = NewMetric(
+		"origin_failed_connections_total",
+		"Number of failed connection attempts to Origin Cassandra",
+	)
 	OpenTargetConnections = NewMetric(
 		"target_connections_total",
 		"Number of connections to Target Cassandra currently open",
 	)
+	FailedTargetConnections = NewMetric(
+		"target_failed_connections_total",
+		"Number of failed connection attempts to Target Cassandra",
+	)
 	OpenAsyncConnections = NewMetric(
 		"async_connections_total",
 		"Number of connections currently open for async requests",
+	)
+	FailedAsyncConnections = NewMetric(
+		"async_failed_connections_total",
+		"Number of failed connection attempts for async requests",
 	)
 
 	InFlightRequestsAsync = NewMetric(
@@ -283,7 +295,8 @@ type NodeMetricsInstance struct {
 	ReadDurations  Histogram
 	WriteDurations Histogram
 
-	OpenConnections Gauge
+	OpenConnections   Gauge
+	FailedConnections Counter
 
 	InFlightRequests Gauge
 

@@ -687,6 +687,16 @@ func sleepWithContext(d time.Duration, ctx context.Context, reconnectCh chan boo
 }
 
 func (p *ZdmProxy) CreateProxyMetrics(metricFactory metrics.MetricFactory) (*metrics.ProxyMetrics, error) {
+	failedConnectionsOrigin, err := metricFactory.GetOrCreateCounter(metrics.FailedConnectionsOrigin)
+	if err != nil {
+		return nil, err
+	}
+
+	failedConnectionsTarget, err := metricFactory.GetOrCreateCounter(metrics.FailedConnectionsTarget)
+	if err != nil {
+		return nil, err
+	}
+
 	failedReadsOrigin, err := metricFactory.GetOrCreateCounter(metrics.FailedReadsOrigin)
 	if err != nil {
 		return nil, err
@@ -760,6 +770,8 @@ func (p *ZdmProxy) CreateProxyMetrics(metricFactory metrics.MetricFactory) (*met
 	}
 
 	proxyMetrics := &metrics.ProxyMetrics{
+		FailedConnectionsOrigin:  failedConnectionsOrigin,
+		FailedConnectionsTarget:  failedConnectionsTarget,
 		FailedReadsOrigin:        failedReadsOrigin,
 		FailedReadsTarget:        failedReadsTarget,
 		FailedWritesOnOrigin:     failedWritesOnOrigin,
@@ -841,6 +853,11 @@ func (p *ZdmProxy) CreateOriginNodeMetrics(
 		return nil, err
 	}
 
+	failedOriginConnections, err := metrics.CreateCounterNodeMetric(metricFactory, originNodeDescription, metrics.FailedOriginConnections)
+	if err != nil {
+		return nil, err
+	}
+
 	// inflight requests metric for non async requests are implemented as proxy level metrics (not node metrics)
 	inflightRequests, err := noopmetrics.NewNoopMetricFactory().GetOrCreateGauge(nil)
 	if err != nil {
@@ -865,6 +882,7 @@ func (p *ZdmProxy) CreateOriginNodeMetrics(
 		ReadDurations:     originReadRequestDuration,
 		WriteDurations:    originWriteRequestDuration,
 		OpenConnections:   openOriginConnections,
+		FailedConnections: failedOriginConnections,
 		InFlightRequests:  inflightRequests,
 		UsedStreamIds:     originUsedStreamIds,
 	}, nil
@@ -932,6 +950,11 @@ func (p *ZdmProxy) CreateAsyncNodeMetrics(
 		return nil, err
 	}
 
+	failedAsyncConnections, err := metrics.CreateCounterNodeMetric(metricFactory, asyncNodeDescription, metrics.FailedAsyncConnections)
+	if err != nil {
+		return nil, err
+	}
+
 	inflightRequestsAsync, err := metrics.CreateGaugeNodeMetric(metricFactory, asyncNodeDescription, metrics.InFlightRequestsAsync)
 	if err != nil {
 		return nil, err
@@ -955,6 +978,7 @@ func (p *ZdmProxy) CreateAsyncNodeMetrics(
 		ReadDurations:     asyncReadRequestDuration,
 		WriteDurations:    asyncWriteRequestDuration,
 		OpenConnections:   openAsyncConnections,
+		FailedConnections: failedAsyncConnections,
 		InFlightRequests:  inflightRequestsAsync,
 		UsedStreamIds:     asyncUsedStreamIds,
 	}, nil
@@ -1022,6 +1046,11 @@ func (p *ZdmProxy) CreateTargetNodeMetrics(
 		return nil, err
 	}
 
+	failedTargetConnections, err := metrics.CreateCounterNodeMetric(metricFactory, targetNodeDescription, metrics.FailedTargetConnections)
+	if err != nil {
+		return nil, err
+	}
+
 	// inflight requests metric for non async requests are implemented as proxy level metrics (not node metrics)
 	inflightRequests, err := noopmetrics.NewNoopMetricFactory().GetOrCreateGauge(nil)
 	if err != nil {
@@ -1046,6 +1075,7 @@ func (p *ZdmProxy) CreateTargetNodeMetrics(
 		ReadDurations:     targetReadRequestDuration,
 		WriteDurations:    targetWriteRequestDuration,
 		OpenConnections:   openTargetConnections,
+		FailedConnections: failedTargetConnections,
 		InFlightRequests:  inflightRequests,
 		UsedStreamIds:     targetUsedStreamIds,
 	}, nil

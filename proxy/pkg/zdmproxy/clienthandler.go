@@ -209,6 +209,7 @@ func NewClientHandler(
 		clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler, requestsDoneCtx,
 		false, nil, handshakeDone, originFrameProcessor, originCCProtoVer)
 	if err != nil {
+		metricHandler.GetProxyMetrics().FailedConnectionsOrigin.Add(1)
 		clientHandlerCancelFunc()
 		return nil, err
 	}
@@ -218,6 +219,7 @@ func NewClientHandler(
 		clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler, requestsDoneCtx,
 		false, nil, handshakeDone, targetFrameProcessor, targetCCProtoVer)
 	if err != nil {
+		metricHandler.GetProxyMetrics().FailedConnectionsTarget.Add(1)
 		clientHandlerCancelFunc()
 		return nil, err
 	}
