@@ -1,6 +1,7 @@
 {{ $zdm_secretName := include "zdm.secretName" . -}}
 {{- $zdm_secretScbName := include "zdm.secretScbName" . -}}
 
+{{- if eq (include "cdm.enabled" .) "true" }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -75,3 +76,4 @@ spec:
           items:
           - key: secure-connect-target.zip
             path: target.zip
+{{- end -}}

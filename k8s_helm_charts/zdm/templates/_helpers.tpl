@@ -72,3 +72,10 @@ Create name of the secret from which containers will be configured with SCB valu
 {{- define "zdm.secretScbName" -}}
 {{- .Values.secretScbNameOverride | default "zdmproxy-scb" }}
 {{- end }}
+
+{{/*
+Determine whether CDM should be created
+*/}}
+{{- define "cdm.enabled" -}}
+{{- .Values.cdm.enabled | default "true" | toString }}
+{{- end }}

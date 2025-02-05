@@ -27,6 +27,7 @@ proxy:
     tag: ""
 
 cdm:
+  enabled: "true"
   resources:
     limits:
       cpu: 16000m
