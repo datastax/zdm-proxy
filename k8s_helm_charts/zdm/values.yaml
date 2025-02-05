@@ -41,6 +41,11 @@ cdm:
 nameOverride: ""
 fullnameOverride: ""
 
+# Overrides expected secret name "zdmproxy"
+secretNameOverride: ""
+# Overrides expected secret name "zdmproxy-scb"
+secretScbNameOverride: ""
+
 service:
   type: ClusterIP
   port: 9942

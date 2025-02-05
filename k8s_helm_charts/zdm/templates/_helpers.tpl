@@ -58,3 +58,17 @@ Create the name of the service account to use
 {{- default "default" .Values.serviceAccount.name }}
 {{- end }}
 {{- end }}
+
+{{/*
+Create name of the secret from which container environment variables will be populated
+*/}}
+{{- define "zdm.secretName" -}}
+{{- .Values.secretNameOverride | default "zdmproxy" }}
+{{- end }}
+
+{{/*
+Create name of the secret from which containers will be configured with SCB values
+*/}}
+{{- define "zdm.secretScbName" -}}
+{{- .Values.secretScbNameOverride | default "zdmproxy-scb" }}
+{{- end }}

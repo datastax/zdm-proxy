@@ -2,6 +2,8 @@
 {{ $zdm_fullname := include "zdm.fullname" . -}}
 {{- $zdm_labels := include "zdm.labels" . -}}
 {{- $zdm_selectorLabels := include "zdm.selectorLabels" . -}}
+{{- $zdm_secretName := include "zdm.secretName" . -}}
+{{- $zdm_secretScbName := include "zdm.secretScbName" . -}}
 
 # calculate a variable that contains all proxy service addresses
 {{ $service_addresses := "" -}}
@@ -66,32 +68,32 @@ spec:
         - name: ZDM_ORIGIN_CONTACT_POINTS
           valueFrom:
             secretKeyRef:
-              name: zdmproxy
+              name: {{ $zdm_secretName }}
               key: origin_contact_points
         - name: ZDM_ORIGIN_PORT
           valueFrom:
             secretKeyRef:
-              name: zdmproxy
+              name: {{ $zdm_secretName }}
               key: origin_port
         - name: ZDM_ORIGIN_USERNAME
           valueFrom:
             secretKeyRef:
-              name: zdmproxy
+              name: {{ $zdm_secretName }}
               key: origin_username
         - name: ZDM_ORIGIN_PASSWORD
           valueFrom:
             secretKeyRef:
-              name: zdmproxy
+              name: {{ $zdm_secretName }}
               key: origin_password
         - name: ZDM_TARGET_USERNAME
           valueFrom:
             secretKeyRef:
-              name: zdmproxy
+              name: {{ $zdm_secretName }}
               key: target_username
         - name: ZDM_TARGET_PASSWORD
           valueFrom:
             secretKeyRef:
-              name: zdmproxy
+              name: {{ $zdm_secretName }}
               key: target_password
         ports:
         - containerPort: 9042
@@ -102,7 +104,7 @@ spec:
       volumes:
       - name: scb
         secret:
-          secretName: zdmproxy-scb
+          secretName: {{ $zdm_secretScbName }}
           items:
           - key: secure-connect-target.zip
             path: target.zip

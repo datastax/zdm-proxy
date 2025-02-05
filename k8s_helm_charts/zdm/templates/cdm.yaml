@@ -1,3 +1,6 @@
+{{ $zdm_secretName := include "zdm.secretName" . -}}
+{{- $zdm_secretScbName := include "zdm.secretScbName" . -}}
+
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -34,32 +37,32 @@ spec:
         - name: ZDM_ORIGIN_CONTACT_POINTS
           valueFrom:
             secretKeyRef:
-              name: zdmproxy
+              name: {{ $zdm_secretName }}
               key: origin_contact_points
         - name: ZDM_ORIGIN_PORT
           valueFrom:
             secretKeyRef:
-              name: zdmproxy
+              name: {{ $zdm_secretName }}
               key: origin_port
         - name: ZDM_ORIGIN_USERNAME
           valueFrom:
             secretKeyRef:
-              name: zdmproxy
+              name: {{ $zdm_secretName }}
               key: origin_username
         - name: ZDM_ORIGIN_PASSWORD
           valueFrom:
             secretKeyRef:
-              name: zdmproxy
+              name: {{ $zdm_secretName }}
               key: origin_password
         - name: ZDM_TARGET_USERNAME
           valueFrom:
             secretKeyRef:
-              name: zdmproxy
+              name: {{ $zdm_secretName }}
               key: target_username
         - name: ZDM_TARGET_PASSWORD
           valueFrom:
             secretKeyRef:
-              name: zdmproxy
+              name: {{ $zdm_secretName }}
               key: target_password
         volumeMounts:
         - name: scb
@@ -68,7 +71,7 @@ spec:
       volumes:
       - name: scb
         secret:
-          secretName: zdmproxy-scb
+          secretName: {{ $zdm_secretScbName }}
           items:
           - key: secure-connect-target.zip
             path: target.zip
