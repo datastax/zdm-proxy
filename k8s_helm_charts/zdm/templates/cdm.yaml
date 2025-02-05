@@ -1,7 +1,9 @@
 {{ $zdm_secretName := include "zdm.secretName" . -}}
 {{- $zdm_secretScbName := include "zdm.secretScbName" . -}}
+{{- $cdm_enabled := include "cdm.enabled" . -}}
+{{- $scb_enabled := include "scb.enabled" . -}}
 
-{{- if eq (include "cdm.enabled" .) "true" }}
+{{- if eq $cdm_enabled "true" }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -33,8 +35,16 @@ spec:
         - configMapRef:
             name: {{ include "zdm.fullname" . }}
         env:
+        {{- if eq ($scb_enabled) "true" }}
         - name: ZDM_TARGET_SECURE_CONNECT_BUNDLE_PATH
           value: /tmp/scb/target.zip
+        {{- else }}
+        - name: ZDM_TARGET_CONTACT_POINTS
+          valueFrom:
+            secretKeyRef:
+              name: {{ $zdm_secretName }}
+              key: target_contact_points
+        {{- end }}
         - name: ZDM_ORIGIN_CONTACT_POINTS
           valueFrom:
             secretKeyRef:
@@ -65,6 +75,7 @@ spec:
             secretKeyRef:
               name: {{ $zdm_secretName }}
               key: target_password
+      {{- if eq ($scb_enabled) "true" }}
         volumeMounts:
         - name: scb
           mountPath: "/tmp/scb"
@@ -76,4 +87,5 @@ spec:
           items:
           - key: secure-connect-target.zip
             path: target.zip
+      {{- end }}
 {{- end -}}

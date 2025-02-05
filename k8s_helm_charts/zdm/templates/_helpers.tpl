@@ -79,3 +79,10 @@ Determine whether CDM should be created
 {{- define "cdm.enabled" -}}
 {{- .Values.cdm.enabled | default "true" | toString }}
 {{- end }}
+
+{{/*
+Determine whether SCB volume & mounts should be created from expected secret
+*/}}
+{{- define "scb.enabled" -}}
+{{- .Values.scb.enabled | default "true" | toString }}
+{{- end }}

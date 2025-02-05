@@ -42,6 +42,10 @@ cdm:
 nameOverride: ""
 fullnameOverride: ""
 
+# Enables connection via expected Secure Connect Bundle secret
+scb:
+  enabled: "true"
+
 # Overrides expected secret name "zdmproxy"
 secretNameOverride: ""
 # Overrides expected secret name "zdmproxy-scb"
