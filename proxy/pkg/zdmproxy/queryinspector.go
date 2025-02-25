@@ -20,6 +20,7 @@ const (
 	statementTypeBatch  = statementType("batch")
 	statementTypeSelect = statementType("select")
 	statementTypeUse    = statementType("use")
+	statementTypeCall   = statementType("call")
 	statementTypeOther  = statementType("other")
 
 	zdmNowNamedMarker = "zdm__now"
@@ -51,6 +52,7 @@ type QueryInfo interface {
 	getStatementType() statementType
 	getKeyspaceName() string
 	getTableName() string
+	getCallRpcName() string
 
 	// Returns the "current" keyspace when this request was parsed. This could have been set by a "USE" request beforehand
 	// or by using the keyspace query/prepare flag in v5 or DseV2.
@@ -326,6 +328,7 @@ type cqlListener struct {
 	timeUuidGenerator TimeUuidGenerator
 
 	requestKeyspace string
+	callRpcName     string
 }
 
 func (l *cqlListener) getQuery() string {
@@ -342,6 +345,10 @@ func (l *cqlListener) getKeyspaceName() string {
 
 func (l *cqlListener) getTableName() string {
 	return l.tableName
+}
+
+func (l *cqlListener) getCallRpcName() string {
+	return l.callRpcName
 }
 
 func (l *cqlListener) getRequestKeyspace() string {
@@ -395,6 +402,21 @@ func (l *cqlListener) EnterCqlStatement(ctx *parser.CqlStatementContext) {
 		l.statementType = statementTypeSelect
 	case parser.IUseStatementContext:
 		l.statementType = statementTypeUse
+	case parser.ICallStatementContext:
+		l.statementType = statementTypeCall
+	}
+}
+
+func (l *cqlListener) EnterCallStatement(ctx *parser.CallStatementContext) {
+	if ctx.GetChildCount() < 2 {
+		return
+	}
+
+	// RPC name will be present as second child: CALL <rpc_name>.<rpc_method>(<params>)
+	token := ctx.GetChild(1)
+	switch token.(type) {
+	case *parser.IdentifierContext:
+		l.callRpcName = token.(*parser.IdentifierContext).GetText()
 	}
 }
 
