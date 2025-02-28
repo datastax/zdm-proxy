@@ -1,4 +1,4 @@
-// Code generated from SimplifiedCql.g4 by ANTLR 4.9.3. DO NOT EDIT.
+// Code generated from antlr/SimplifiedCql.g4 by ANTLR 4.9.3. DO NOT EDIT.
 
 package parser // SimplifiedCql
 
@@ -55,6 +55,9 @@ type SimplifiedCqlListener interface {
 
 	// EnterUseStatement is called when entering the useStatement production.
 	EnterUseStatement(c *UseStatementContext)
+
+	// EnterCallStatement is called when entering the callStatement production.
+	EnterCallStatement(c *CallStatementContext)
 
 	// EnterOrderByClause is called when entering the orderByClause production.
 	EnterOrderByClause(c *OrderByClauseContext)
@@ -259,6 +262,9 @@ type SimplifiedCqlListener interface {
 
 	// ExitUseStatement is called when exiting the useStatement production.
 	ExitUseStatement(c *UseStatementContext)
+
+	// ExitCallStatement is called when exiting the callStatement production.
+	ExitCallStatement(c *CallStatementContext)
 
 	// ExitOrderByClause is called when exiting the orderByClause production.
 	ExitOrderByClause(c *OrderByClauseContext)

@@ -23,6 +23,10 @@ const (
 	forwardToAsyncOnly = forwardDecision("async") // for "synchronous" requests that should be sent to the async connector (handshake requests)
 )
 
+const (
+	insightsRpcName = "InsightsRpc"
+)
+
 type interceptedQueryType string
 
 const (
@@ -180,6 +184,7 @@ func getRequestInfoFromQueryInfo(
 
 	var sendAlsoToAsync bool
 	forwardDecision := forwardToBoth
+	trackMetrics := true
 	if queryInfo.getStatementType() == statementTypeSelect {
 		if virtualizationEnabled {
 			parsedSelectClause := queryInfo.getParsedSelectClause()
@@ -213,13 +218,20 @@ func getRequestInfoFromQueryInfo(
 		}
 	} else if queryInfo.getStatementType() == statementTypeUse {
 		sendAlsoToAsync = true
+	} else if queryInfo.getStatementType() == statementTypeCall {
+		if strings.EqualFold(queryInfo.getCallRpcName(), insightsRpcName) {
+			// ignore Insights client calls
+			forwardDecision = forwardToNone
+			trackMetrics = false
+			sendAlsoToAsync = false
+		}
 	} else {
 		sendAlsoToAsync = false
 	}
 
 	log.Tracef("Forward decision: %s", forwardDecision)
 
-	return NewGenericRequestInfo(forwardDecision, sendAlsoToAsync, true)
+	return NewGenericRequestInfo(forwardDecision, sendAlsoToAsync, trackMetrics)
 }
 
 func isSystemQuery(info QueryInfo) bool {

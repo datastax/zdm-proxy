@@ -93,6 +93,9 @@ func TestInspectFrame(t *testing.T) {
 		{"OpCodeQuery INSERT INTO asd (a, b) VALUES (1, 2)", args{mockQueryFrame(t, "INSERT INTO asd (a, b) VALUES (1, 2)"), []*term{}, primaryClusterOrigin, forwardSystemQueriesToOrigin, forwardAuthToOrigin}, NewGenericRequestInfo(forwardToBoth, false, true)},
 		{"OpCodeQuery UPDATE asd SET b = 2 WHERE a = 1", args{mockQueryFrame(t, "UPDATE asd SET b = 2 WHERE a = 1"), []*term{}, primaryClusterOrigin, forwardSystemQueriesToOrigin, forwardAuthToOrigin}, NewGenericRequestInfo(forwardToBoth, false, true)},
 		{"OpCodeQuery UNKNOWN", args{mockQueryFrame(t, "UNKNOWN"), []*term{}, primaryClusterOrigin, forwardSystemQueriesToOrigin, forwardAuthToOrigin}, NewGenericRequestInfo(forwardToBoth, false, true)},
+		{"OpCodeQuery CALL InsightsRpc.reportInsight(?)", args{mockQueryFrame(t, "CALL InsightsRpc.reportInsight(?)"), []*term{}, primaryClusterOrigin, forwardSystemQueriesToOrigin, forwardAuthToOrigin}, NewGenericRequestInfo(forwardToNone, false, false)},
+		{"OpCodeQuery CALL insightsrpc.reportinsight('a', 1, -2.3, true, '2020-01-01')", args{mockQueryFrame(t, "CALL InsightsRpc.reportInsight('a', 1, -2.3, true, '2020-01-01')"), []*term{}, primaryClusterOrigin, forwardSystemQueriesToOrigin, forwardAuthToOrigin}, NewGenericRequestInfo(forwardToNone, false, false)},
+		{"OpCodeQuery CALL DseGraphRpc.getSchemaBlob(?)", args{mockQueryFrame(t, "CALL DseGraphRpc.getSchemaBlob(?)"), []*term{}, primaryClusterOrigin, forwardSystemQueriesToOrigin, forwardAuthToOrigin}, NewGenericRequestInfo(forwardToBoth, false, true)},
 
 		// PREPARE
 		{"OpCodePrepare SELECT", args{mockPrepareFrame(t, "SELECT blah FROM ks1.t1"), []*term{}, primaryClusterOrigin, forwardSystemQueriesToOrigin, forwardAuthToOrigin}, NewPrepareRequestInfo(NewGenericRequestInfo(forwardToOrigin, true, true), []*term{}, false, "SELECT blah FROM ks1.t1", "")},
