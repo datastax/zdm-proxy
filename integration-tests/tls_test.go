@@ -1244,7 +1244,7 @@ func createTestClientConnection(endpoint string, tlsCfg *tls.Config) (*client.Cq
 
 func sendRequest(cqlConn *client.CqlClientConnection, cqlRequest string, isSchemaChange bool, t *testing.T) {
 	requestMsg := &message.Query{
-		Query: fmt.Sprintf(cqlRequest),
+		Query: fmt.Sprint(cqlRequest),
 		Options: &message.QueryOptions{
 			Consistency: primitive.ConsistencyLevelOne,
 		},

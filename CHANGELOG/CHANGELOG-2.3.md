@@ -7,6 +7,7 @@ When cutting a new release, update the `unreleased` heading to the tag being gen
 ## Unreleased
 
 * [#139](https://github.com/datastax/zdm-proxy/pull/139): Ignore forwarding CQL requests for DSE Insights Client to target cluster
+* [#140](https://github.com/datastax/zdm-proxy/issues/140): Upgrade go version to fix CVE-2025-22871
 
 ---
 
