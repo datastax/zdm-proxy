@@ -6,7 +6,7 @@ Build artifacts are available at [Docker Hub](https://hub.docker.com/repository/
 
 For additional details on the changes included in a specific release, see the associated CHANGELOG-x.x.md file.
 
-## v2.3.2 - TBD
+## v2.3.2 - 2025-04-14
 
 Ignore forwarding CQL requests for DSE Insights Client to target cluster
 
