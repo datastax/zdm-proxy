@@ -4,9 +4,10 @@ Changelog for the ZDM Proxy, new PRs should update the `unreleased` section.
 
 When cutting a new release, update the `unreleased` heading to the tag being generated and date, like `## vX.Y.Z - YYYY-MM-DD` and create a new placeholder section for `unreleased` entries.
 
-## Unreleased
+## v2.3.2 - 2025-04-14
 
 * [#139](https://github.com/datastax/zdm-proxy/pull/139): Ignore forwarding CQL requests for DSE Insights Client to target cluster
+* [#140](https://github.com/datastax/zdm-proxy/issues/140): Upgrade go version to fix CVE-2025-22871
 
 ---
 
