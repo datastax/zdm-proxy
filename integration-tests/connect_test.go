@@ -46,6 +46,31 @@ func TestGoCqlConnect(t *testing.T) {
 	require.Equal(t, "fake", iter.Columns()[0].Name)
 }
 
+func TestCannotConnectWithoutControlConnection(t *testing.T) {
+	c := setup.NewTestConfig("", "")
+	testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodesAndConfig(t, true, false, 1, c, nil)
+	require.Nil(t, err)
+	defer testSetup.Cleanup()
+
+	// try to force a scenario where the control connection is reconnecting (cqlConn is nil)
+	// when a new client handler is being created
+	// controlConn.Open() triggers a cqlConn.Close() on the existing connection (and making it nil) before it opens a new one
+	go func() {
+		_, err := testSetup.Proxy.GetOriginControlConn().Open(false, context.Background())
+		if err != nil {
+			t.Logf("err while opening cc in the background: %v", err)
+		}
+	}()
+
+	for i := 0; i < 1000; i++ {
+		// connect to proxy as a "client"
+		client := cqlClient.NewCqlClient("127.0.0.1:14002", nil)
+		conn, err := client.ConnectAndInit(context.Background(), primitive.ProtocolVersion4, 0)
+		require.Nil(t, err)
+		_ = conn.Close()
+	}
+}
+
 // Simulacron-based test to make sure that we can handle invalid protocol error and downgrade
 // used protocol on control connection. ORIGIN and TARGET are using the same C* version
 func TestControlConnectionProtocolVersionNegotiation(t *testing.T) {

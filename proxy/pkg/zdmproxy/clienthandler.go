@@ -159,6 +159,15 @@ func NewClientHandler(
 		}
 	}
 
+	originCCProtoVer, err := originControlConn.LoadProtoVersion()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load protocol version from %v: %w", common.ClusterTypeOrigin, err)
+	}
+	targetCCProtoVer, err := targetControlConn.LoadProtoVersion()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load protocol version from %v: %w", common.ClusterTypeTarget, err)
+	}
+
 	nodeMetrics, err := metricHandler.GetNodeMetrics(originEndpointId, targetEndpointId, asyncEndpointId)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create node metrics: %w", err)
@@ -169,8 +178,6 @@ func NewClientHandler(
 	requestsDoneCtx, requestsDoneCancelFn := context.WithCancel(context.Background())
 
 	// Initialize stream id processors to manage the ids sent to the clusters
-	originCCProtoVer := originControlConn.cqlConn.GetProtocolVersion()
-	targetCCProtoVer := targetControlConn.cqlConn.GetProtocolVersion()
 	// Calculate maximum number of stream IDs. Take the oldest protocol version negotiated between two clusters
 	// and apply limit defined in proxy configuration. If origin or target cluster are still running protocol V2,
 	// we will limit maximum number of stream IDs to 127 on both clusters. Logic is based on Java driver version 3.x.
