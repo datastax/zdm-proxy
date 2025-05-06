@@ -5,46 +5,71 @@
 
 # calculate a variable that contains all proxy service addresses
 {{ $service_addresses := "" -}}
-{{- range $index := until (.Values.proxy.count | int) -}}
+{{- range $index := until (.Values.count | int) -}}
     {{- $service_addresses = printf "%s,$(%s_%s_SERVICE_HOST)" $service_addresses ($zdm_fullname | upper | replace "-" "_") ($index | toString) -}}
 {{- end -}}
 {{- $service_addresses = $service_addresses | trimPrefix "," -}}
 
-{{- range $index := until (.Values.proxy.count | int) -}}
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   labels:
     {{- $zdm_labels | nindent 4 }}
-    app: {{ $zdm_fullname }}-{{ $index }}
-  name: {{ $zdm_fullname }}-{{ $index }}
+    app: {{ $zdm_fullname }}
+  name: {{ $zdm_fullname }}
   namespace: {{ $.Values.namespace }}
 spec:
-  replicas: 1
+  serviceName: {{ $zdm_fullname }}
+  replicas: {{ $.Values.count | int }}
   selector:
     matchLabels:
       {{- $zdm_selectorLabels | nindent 6 }}
-      app: {{ $zdm_fullname }}-{{ $index }}
+      app: {{ $zdm_fullname }}
   template:
     metadata:
       labels:
         {{- $zdm_selectorLabels | nindent 8 }}
-        app: {{ $zdm_fullname }}-{{ $index }}
+        app: {{ $zdm_fullname }}
     spec:
       containers:
-      - image: "{{ $.Values.proxy.image.repository }}:{{ $.Values.proxy.image.tag | default $.Chart.AppVersion }}"
-        name: {{ $zdm_fullname }}-{{ $index }}
+      - image: "{{ $.Values.imageRepository }}:{{ $.Values.imageTag | default $.Chart.AppVersion }}"
+        name: {{ $zdm_fullname }}
+        command:
+        - sh
+        - "-c"
+        - "ZDM_PROXY_TOPOLOGY_INDEX=`echo ${HOSTNAME##*-}` /main"
+        livenessProbe:
+          httpGet:
+            path: /health/liveness
+            port: httpproxy
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health/readiness
+            port: httpproxy
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        ports:
+          - name: httpproxy
+            containerPort: 14001
+            protocol: TCP
+          - name: cql
+            containerPort: 9042
+            protocol: TCP
         resources:
-          requests:
-            memory: {{ $.Values.proxy.resources.requests.memory | quote }}
-            cpu: {{ $.Values.proxy.resources.requests.cpu | quote }}
-          limits:
-            memory: {{ $.Values.proxy.resources.limits.memory | quote }}
-            cpu: {{ $.Values.proxy.resources.limits.cpu | quote }}
-        envFrom:
-        - configMapRef:
-            name: {{ $zdm_fullname }}
+        {{- toYaml .Values.resources | nindent 10 }}
         env:
+        - name: ZDM_PRIMARY_CLUSTER
+          value: {{ $.Values.primaryCluster | upper | quote }}
+        - name: ZDM_READ_MODE
+          value: {{ $.Values.readMode | upper | quote }}
+        - name: ZDM_LOG_LEVEL
+          value: {{ $.Values.logLevel | upper | quote }}
+        - name: ZDM_PROXY_MAX_CLIENT_CONNECTIONS
+          value: {{ $.Values.maxClientConnections | quote }}
+        - name: ZDM_METRICS_ENABLED
+          value: {{ $.Values.metricsEnabled | quote }}
         - name: ZDM_PROXY_LISTEN_ADDRESS
           valueFrom:
             fieldRef:
@@ -57,8 +82,6 @@ spec:
               fieldPath: status.podIP
         - name: ZDM_METRICS_PORT
           value: "14001"
-        - name: ZDM_PROXY_TOPOLOGY_INDEX
-          value: {{ $index | quote }}
         - name: ZDM_PROXY_TOPOLOGY_ADDRESSES
           value: {{ $service_addresses }}
         - name: ZDM_TARGET_SECURE_CONNECT_BUNDLE_PATH
@@ -93,8 +116,6 @@ spec:
             secretKeyRef:
               name: zdmproxy
               key: target_password
-        ports:
-        - containerPort: 9042
         volumeMounts:
         - name: scb
           mountPath: "/tmp/scb"
@@ -106,5 +127,3 @@ spec:
           items:
           - key: secure-connect-target.zip
             path: target.zip
----
-{{- end -}}
