@@ -3,7 +3,7 @@ module github.com/datastax/zdm-proxy
 go 1.24
 
 require (
-	github.com/antlr/antlr4/runtime/Go/antlr v0.0.0-20211106181442-e4c1a74c66bd
+	github.com/antlr4-go/antlr/v4 v4.13.1
 	github.com/datastax/go-cassandra-native-protocol v0.0.0-20240626123646-2abea740da8d
 	github.com/gocql/gocql v0.0.0-20200624222514-34081eda590e
 	github.com/google/uuid v1.1.1
@@ -32,6 +32,7 @@ require (
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/prometheus/common v0.26.0 // indirect
 	github.com/prometheus/procfs v0.6.0 // indirect
+	golang.org/x/exp v0.0.0-20240506185415-9bf2ced13842 // indirect
 	golang.org/x/sys v0.3.0 // indirect
 	google.golang.org/protobuf v1.33.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
