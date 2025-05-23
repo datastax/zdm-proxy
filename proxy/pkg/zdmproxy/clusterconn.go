@@ -26,6 +26,13 @@ type ClusterConnectionInfo struct {
 	isOriginCassandra bool
 }
 
+type RequestSource string
+
+const (
+	RequestSourceZdm    = RequestSource("zdm")
+	RequestSourceClient = RequestSource("client")
+)
+
 type ClusterConnectorType string
 
 const (
@@ -50,7 +57,8 @@ type ClusterConnector struct {
 	clusterType   common.ClusterType
 	connectorType ClusterConnectorType
 
-	psCache *PreparedStatementCache
+	psCache          *PreparedStatementCache
+	internalRequests map[int16]bool
 
 	clusterConnEventsChan  chan *frame.RawFrame
 	nodeMetrics            *metrics.NodeMetrics
@@ -159,6 +167,7 @@ func NewClusterConnector(
 		connectorType:          connectorType,
 		clusterConnEventsChan:  clusterConnEventsChan,
 		psCache:                psCache,
+		internalRequests:       make(map[int16]bool),
 		nodeMetrics:            nodeMetrics,
 		clientHandlerWg:        clientHandlerWg,
 		clientHandlerRequestWg: clientHandlerRequestWg,
@@ -257,7 +266,15 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 		for {
 			response, err := readRawFrame(bufferedReader, connectionAddr, cc.clusterConnContext)
 			protocolErrResponseFrame, err, errCode := checkProtocolError(response, cc.ccProtoVer, err, protocolErrOccurred, string(cc.connectorType))
-
+			if response != nil {
+				if _, ok := cc.internalRequests[response.Header.StreamId]; ok {
+					// received response for internal request (e.g. heartbeat)
+					log.Debugf("[%s] Received internal response from %v (%v): %v",
+						cc.connectorType, cc.clusterType, connectionAddr, response.Header)
+					delete(cc.internalRequests, response.Header.StreamId)
+					continue
+				}
+			}
 			if err != nil {
 				handleConnectionError(
 					err, cc.clusterConnContext, cc.cancelFunc, string(cc.connectorType), "reading", connectionAddr)
@@ -403,10 +420,13 @@ func (cc *ClusterConnector) handleAsyncResponse(response *frame.RawFrame) *frame
 	return nil
 }
 
-func (cc *ClusterConnector) sendRequestToCluster(frame *frame.RawFrame) error {
+func (cc *ClusterConnector) sendRequestToCluster(frame *frame.RawFrame, source RequestSource) error {
 	var err error
 	if cc.frameProcessor != nil {
-		frame, err = cc.frameProcessor.AssignUniqueId(frame)
+		frame, err = cc.frameProcessor.AssignUniqueId(frame, source)
+	}
+	if source == RequestSourceZdm {
+		cc.internalRequests[frame.Header.StreamId] = true
 	}
 	if err != nil {
 		log.Errorf("[%v] Couldn't assign stream id to frame %v: %v", string(cc.connectorType), frame.Header.OpCode, err)
@@ -484,7 +504,7 @@ func (cc *ClusterConnector) sendAsyncRequestToCluster(
 	asyncReqCtx := NewAsyncRequestContext(requestInfo, asyncRequest.Header.StreamId, expectedResponse, overallRequestStartTime)
 
 	var err error
-	asyncRequest, err = cc.frameProcessor.AssignUniqueId(asyncRequest)
+	asyncRequest, err = cc.frameProcessor.AssignUniqueId(asyncRequest, RequestSourceClient)
 	if err == nil {
 		err = cc.asyncPendingRequests.store(asyncReqCtx, asyncRequest)
 	}
@@ -543,7 +563,7 @@ func (cc *ClusterConnector) sendHeartbeat(version primitive.ProtocolVersion, hea
 		return
 	}
 	log.Debugf("Sending heartbeat to cluster %v", cc.clusterType)
-	cc.sendRequestToCluster(rawFrame)
+	cc.sendRequestToCluster(rawFrame, RequestSourceZdm)
 }
 
 // shouldSendHeartbeat looks up the value of the last heartbeat time in the atomic value

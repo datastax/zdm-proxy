@@ -1,6 +1,7 @@
 package integration_tests
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	cqlClient "github.com/datastax/go-cassandra-native-protocol/client"
@@ -17,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestGoCqlConnect(t *testing.T) {
@@ -359,4 +361,63 @@ func createFrameWithUnsupportedVersion(version primitive.ProtocolVersion, stream
 	}
 	encoded[1] = 0
 	return encoded, nil
+}
+
+func TestHandlingOfInternalHeartbeat(t *testing.T) {
+	oldLevel := log.GetLevel()
+	log.SetLevel(log.TraceLevel)
+	defer log.SetLevel(oldLevel)
+
+	var buff bytes.Buffer
+	buffWriter := bufio.NewWriter(&buff)
+	log.SetOutput(buffWriter)
+
+	c := setup.NewTestConfig("", "")
+	c.HeartbeatIntervalMs = 500
+	testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodesAndConfig(t, true, false, 1, c, nil)
+	require.Nil(t, err)
+	defer testSetup.Cleanup()
+
+	query := "SELECT * FROM test"
+	expectedRows := simulacron.NewRowsResult(
+		map[string]simulacron.DataType{
+			"company": simulacron.DataTypeText,
+		}).WithRow(map[string]interface{}{
+		"company": "TBD",
+	})
+
+	err = testSetup.Origin.Prime(simulacron.WhenQuery(
+		query,
+		simulacron.NewWhenQueryOptions()).
+		ThenRowsSuccess(expectedRows))
+	require.Nil(t, err)
+
+	// Connect to proxy as a "client"
+	proxyClient := cqlClient.NewCqlClient("127.0.0.1:14002", nil)
+	cqlClientConn, err := proxyClient.ConnectAndInit(context.Background(), primitive.ProtocolVersion4, 0)
+	require.Nil(t, err)
+	defer cqlClientConn.Close()
+
+	queryMsg := &message.Query{
+		Query:   query,
+		Options: nil,
+	}
+
+	_, err = cqlClientConn.SendAndReceive(frame.NewFrame(primitive.ProtocolVersion4, 0, queryMsg))
+	require.Nil(t, err)
+
+	// sleep longer than heartbeat interval
+	time.Sleep(550 * time.Millisecond)
+
+	_, err = cqlClientConn.SendAndReceive(frame.NewFrame(primitive.ProtocolVersion4, 0, queryMsg))
+	require.Nil(t, err)
+
+	err = buffWriter.Flush()
+	require.Nil(t, err)
+	allLogs := buff.String()
+	require.Contains(t, allLogs, "Sending heartbeat to cluster TARGET")
+	require.Contains(t, allLogs, "Received internal response from TARGET")
+	// below logs would indicate we have issues sending heartbeat messages or handling response
+	require.NotContains(t, allLogs, "negative stream id")
+	require.NotContains(t, allLogs, "Could not find request context for stream id")
 }

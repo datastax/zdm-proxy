@@ -8,7 +8,7 @@ import (
 // This is important to prevent overlapping ids of client-side requests and proxy internal requests (such as heartbeats)
 // that are written through the same connection to the cluster.
 type FrameProcessor interface {
-	AssignUniqueId(rawFrame *frame.RawFrame) (*frame.RawFrame, error)
+	AssignUniqueId(rawFrame *frame.RawFrame, source RequestSource) (*frame.RawFrame, error)
 	AssignUniqueIdFrame(frame *frame.Frame) (*frame.Frame, error)
 	ReleaseId(rawFrame *frame.RawFrame) (*frame.RawFrame, error)
 	ReleaseIdFrame(frame *frame.Frame) (*frame.Frame, error)
@@ -29,11 +29,17 @@ func NewStreamIdProcessor(mapper StreamIdMapper) FrameProcessor {
 	}
 }
 
-func (sip *streamIdProcessor) AssignUniqueId(rawFrame *frame.RawFrame) (*frame.RawFrame, error) {
+func (sip *streamIdProcessor) AssignUniqueId(rawFrame *frame.RawFrame, source RequestSource) (*frame.RawFrame, error) {
 	if rawFrame == nil {
 		return rawFrame, nil
 	}
-	var newId, err = sip.mapper.GetNewIdFor(rawFrame.Header.StreamId)
+	var newId int16
+	var err error
+	if source == RequestSourceZdm {
+		newId, err = sip.mapper.GetNewId()
+	} else {
+		newId, err = sip.mapper.GetNewIdFor(rawFrame.Header.StreamId)
+	}
 	if err != nil {
 		return rawFrame, err
 	}

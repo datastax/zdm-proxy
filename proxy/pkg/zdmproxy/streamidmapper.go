@@ -13,6 +13,8 @@ import (
 // This is required because we also generate requests inside the proxy that go to the cluster through the same connection,
 // hence they must have non-conflicting ids with user's requests.
 type StreamIdMapper interface {
+	// GetNewId shall be called to generate stream IDs for requests originated by ZDM internally
+	GetNewId() (int16, error)
 	GetNewIdFor(streamId int16) (int16, error)
 	ReleaseId(syntheticId int16) (int16, error)
 	Close()
@@ -45,6 +47,10 @@ func NewInternalStreamIdMapper(protocolVersion primitive.ProtocolVersion, config
 		clusterIds:      streamIdsQueue,
 		metrics:         metrics,
 	}
+}
+
+func (csid *internalStreamIdMapper) GetNewId() (int16, error) {
+	return csid.GetNewIdFor(-1)
 }
 
 func (csid *internalStreamIdMapper) GetNewIdFor(_ int16) (int16, error) {
@@ -96,9 +102,19 @@ func NewStreamIdMapper(protocolVersion primitive.ProtocolVersion, config *config
 	}
 }
 
+func (sim *streamIdMapper) GetNewId() (int16, error) {
+	return sim.getNewIdFor(-1, false)
+}
+
 func (sim *streamIdMapper) GetNewIdFor(streamId int16) (int16, error) {
-	if err := validateStreamId(sim.protocolVersion, streamId); err != nil {
-		return -1, err
+	return sim.getNewIdFor(streamId, true)
+}
+
+func (sim *streamIdMapper) getNewIdFor(streamId int16, validate bool) (int16, error) {
+	if validate {
+		if err := validateStreamId(sim.protocolVersion, streamId); err != nil {
+			return -1, err
+		}
 	}
 	select {
 	case id := <-sim.clusterIds:
