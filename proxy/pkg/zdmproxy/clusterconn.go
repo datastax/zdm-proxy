@@ -257,7 +257,6 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 		for {
 			response, err := readRawFrame(bufferedReader, connectionAddr, cc.clusterConnContext)
 			protocolErrResponseFrame, err, errCode := checkProtocolError(response, cc.ccProtoVer, err, protocolErrOccurred, string(cc.connectorType))
-
 			if err != nil {
 				handleConnectionError(
 					err, cc.clusterConnContext, cc.cancelFunc, string(cc.connectorType), "reading", connectionAddr)
@@ -293,6 +292,13 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 						continue
 					}
 				}
+			}
+
+			if response != nil && response.Header.StreamId == -1 && response.Header.OpCode != primitive.OpCodeEvent {
+				// received response for internal request (e.g. heartbeat)
+				log.Debugf("[%s] Received internal response from %v (%v): %v",
+					cc.connectorType, cc.clusterType, connectionAddr, response.Header)
+				continue
 			}
 
 			wg.Add(1)
@@ -403,10 +409,10 @@ func (cc *ClusterConnector) handleAsyncResponse(response *frame.RawFrame) *frame
 	return nil
 }
 
-func (cc *ClusterConnector) sendRequestToCluster(frame *frame.RawFrame) error {
+func (cc *ClusterConnector) sendRequestToCluster(frame *frame.RawFrame, internalRequest bool) error {
 	var err error
 	if cc.frameProcessor != nil {
-		frame, err = cc.frameProcessor.AssignUniqueId(frame)
+		frame, err = cc.frameProcessor.AssignUniqueId(frame, internalRequest)
 	}
 	if err != nil {
 		log.Errorf("[%v] Couldn't assign stream id to frame %v: %v", string(cc.connectorType), frame.Header.OpCode, err)
@@ -484,7 +490,7 @@ func (cc *ClusterConnector) sendAsyncRequestToCluster(
 	asyncReqCtx := NewAsyncRequestContext(requestInfo, asyncRequest.Header.StreamId, expectedResponse, overallRequestStartTime)
 
 	var err error
-	asyncRequest, err = cc.frameProcessor.AssignUniqueId(asyncRequest)
+	asyncRequest, err = cc.frameProcessor.AssignUniqueId(asyncRequest, false)
 	if err == nil {
 		err = cc.asyncPendingRequests.store(asyncReqCtx, asyncRequest)
 	}
@@ -543,7 +549,7 @@ func (cc *ClusterConnector) sendHeartbeat(version primitive.ProtocolVersion, hea
 		return
 	}
 	log.Debugf("Sending heartbeat to cluster %v", cc.clusterType)
-	cc.sendRequestToCluster(rawFrame)
+	cc.sendRequestToCluster(rawFrame, true)
 }
 
 // shouldSendHeartbeat looks up the value of the last heartbeat time in the atomic value
