@@ -9,6 +9,7 @@ cqlStatement
     | batchStatement EOS?
     | selectStatement EOS?
     | useStatement EOS?
+    | callStatement EOS?
     | unrecognizedStatement EOS?
     ;
 
@@ -117,6 +118,12 @@ unaliasedSelector
 
 useStatement
     : K_USE keyspaceName
+    ;
+
+// CALL
+
+callStatement
+    : K_CALL identifier '.' identifier '(' terms? ')'
     ;
 
 // CLAUSES
@@ -463,6 +470,7 @@ K_BIGINT:      B I G I N T;
 K_BLOB:        B L O B;
 K_BOOLEAN:     B O O L E A N;
 K_BY:          B Y;
+K_CALL:        C A L L;
 K_CAST:        C A S T;
 K_CLUSTERING:  C L U S T E R I N G;
 K_CONTAINS:    C O N T A I N S;

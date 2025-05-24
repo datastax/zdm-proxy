@@ -86,7 +86,7 @@ func TestLimitStreamIdsGeneration(t *testing.T) {
 			select {
 			case msg := <-response.Incoming():
 				if response.Err() != nil {
-					t.Fatalf(response.Err().Error())
+					t.Fatal(response.Err().Error())
 				}
 				switch msg.Body.Message.(type) {
 				case *message.VoidResult:
@@ -95,7 +95,7 @@ func TestLimitStreamIdsGeneration(t *testing.T) {
 				case *message.Overloaded:
 					// client received overloaded message due to insufficient stream ID pool, retry the request
 				default:
-					t.Fatalf(response.Err().Error())
+					t.Fatal(response.Err().Error())
 				}
 			}
 		}

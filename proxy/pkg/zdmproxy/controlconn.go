@@ -55,6 +55,7 @@ type ControlConn struct {
 	protocolEventSubscribers map[ProtocolEventObserver]interface{}
 	authEnabled              *atomic.Value
 	metricsHandler           *metrics.MetricHandler
+	controlConnProtoVersion  *atomic.Value
 }
 
 const ProxyVirtualRack = "rack0"
@@ -102,6 +103,7 @@ func NewControlConn(ctx context.Context, defaultPort int, connConfig ConnectionC
 		protocolEventSubscribers: map[ProtocolEventObserver]interface{}{},
 		authEnabled:              authEnabled,
 		metricsHandler:           metricsHandler,
+		controlConnProtoVersion:  &atomic.Value{},
 	}
 }
 
@@ -378,7 +380,7 @@ func (cc *ControlConn) connAndNegotiateProtoVer(endpoint Endpoint, initialProtoV
 				cc.connConfig.GetClusterType(), endpoint.GetEndpointIdentifier(), err)
 			return nil, err
 		}
-		newConn := NewCqlConnection(endpoint, tcpConn, cc.username, cc.password, ccReadTimeout, ccWriteTimeout, cc.conf, protoVer)
+		newConn := NewCqlConnection(cc, endpoint, tcpConn, cc.username, cc.password, ccReadTimeout, ccWriteTimeout, cc.conf, protoVer)
 		err = newConn.InitializeContext(protoVer, ctx)
 		var respErr *ResponseError
 		if err != nil && errors.As(err, &respErr) && respErr.IsProtocolError() && strings.Contains(err.Error(), "Invalid or unsupported protocol version") {
@@ -715,6 +717,26 @@ func (cc *ControlConn) RemoveObserver(observer ProtocolEventObserver) {
 	cc.topologyLock.Lock()
 	defer cc.topologyLock.Unlock()
 	delete(cc.protocolEventSubscribers, observer)
+}
+
+func (cc *ControlConn) StoreProtoVersion(protoVersion primitive.ProtocolVersion) {
+	cc.controlConnProtoVersion.Store(protoVersion)
+}
+
+func (cc *ControlConn) LoadProtoVersion() (primitive.ProtocolVersion, error) {
+	var protoVersion primitive.ProtocolVersion
+	protoVersionAny := cc.controlConnProtoVersion.Load()
+	if protoVersionAny == nil {
+		return protoVersion, errors.New("protocol version could not be retrieved")
+	}
+
+	var ok bool
+	protoVersion, ok = protoVersionAny.(primitive.ProtocolVersion)
+	if ok {
+		return protoVersion, nil
+	}
+
+	panic("invalid type for protocol version")
 }
 
 func computeAssignedHosts(index int, count int, orderedHosts []*Host) []*Host {

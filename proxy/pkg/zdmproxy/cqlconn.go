@@ -47,6 +47,7 @@ type CqlConnection interface {
 
 // Not thread safe
 type cqlConn struct {
+	controlConn           *ControlConn
 	readTimeout           time.Duration
 	writeTimeout          time.Duration
 	endpoint              Endpoint
@@ -82,12 +83,13 @@ func (c *cqlConn) String() string {
 }
 
 func NewCqlConnection(
-	endpoint Endpoint, conn net.Conn,
+	controlConn *ControlConn, endpoint Endpoint, conn net.Conn,
 	username string, password string,
 	readTimeout time.Duration, writeTimeout time.Duration,
 	conf *config.Config, protoVer primitive.ProtocolVersion) CqlConnection {
 	ctx, cFn := context.WithCancel(context.Background())
 	cqlConn := &cqlConn{
+		controlConn:  controlConn,
 		readTimeout:  readTimeout,
 		writeTimeout: writeTimeout,
 		endpoint:     endpoint,
@@ -257,6 +259,7 @@ func (c *cqlConn) InitializeContext(version primitive.ProtocolVersion, ctx conte
 	}
 
 	c.protocolVersion.Store(version)
+	c.controlConn.StoreProtoVersion(version)
 	c.initialized = true
 	c.authEnabled = authEnabled
 	return nil

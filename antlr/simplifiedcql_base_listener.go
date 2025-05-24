@@ -1,4 +1,4 @@
-// Code generated from SimplifiedCql.g4 by ANTLR 4.9.3. DO NOT EDIT.
+// Code generated from antlr/SimplifiedCql.g4 by ANTLR 4.9.3. DO NOT EDIT.
 
 package parser // SimplifiedCql
 
@@ -116,6 +116,12 @@ func (s *BaseSimplifiedCqlListener) EnterUseStatement(ctx *UseStatementContext) 
 
 // ExitUseStatement is called when production useStatement is exited.
 func (s *BaseSimplifiedCqlListener) ExitUseStatement(ctx *UseStatementContext) {}
+
+// EnterCallStatement is called when production callStatement is entered.
+func (s *BaseSimplifiedCqlListener) EnterCallStatement(ctx *CallStatementContext) {}
+
+// ExitCallStatement is called when production callStatement is exited.
+func (s *BaseSimplifiedCqlListener) ExitCallStatement(ctx *CallStatementContext) {}
 
 // EnterOrderByClause is called when production orderByClause is entered.
 func (s *BaseSimplifiedCqlListener) EnterOrderByClause(ctx *OrderByClauseContext) {}
