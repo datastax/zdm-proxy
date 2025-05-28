@@ -1502,16 +1502,16 @@ func (ch *ClientHandler) executeRequest(
 	case forwardToBoth:
 		log.Tracef("Forwarding request with opcode %v for stream %v to %v and %v",
 			f.Header.OpCode, f.Header.StreamId, common.ClusterTypeOrigin, common.ClusterTypeTarget)
-		sendErr := ch.originCassandraConnector.sendRequestToCluster(originRequest)
+		sendErr := ch.originCassandraConnector.sendRequestToCluster(originRequest, false)
 		if sendErr != nil {
 			ch.handleRequestSendFailure(sendErr, frameContext)
 		} else {
-			ch.targetCassandraConnector.sendRequestToCluster(targetRequest)
+			ch.targetCassandraConnector.sendRequestToCluster(targetRequest, false)
 		}
 	case forwardToOrigin:
 		log.Tracef("Forwarding request with opcode %v for stream %v to %v",
 			f.Header.OpCode, f.Header.StreamId, common.ClusterTypeOrigin)
-		sendErr := ch.originCassandraConnector.sendRequestToCluster(originRequest)
+		sendErr := ch.originCassandraConnector.sendRequestToCluster(originRequest, false)
 		if sendErr != nil {
 			ch.handleRequestSendFailure(sendErr, frameContext)
 		}
@@ -1519,7 +1519,7 @@ func (ch *ClientHandler) executeRequest(
 	case forwardToTarget:
 		log.Tracef("Forwarding request with opcode %v for stream %v to %v",
 			f.Header.OpCode, f.Header.StreamId, common.ClusterTypeTarget)
-		sendErr := ch.targetCassandraConnector.sendRequestToCluster(targetRequest)
+		sendErr := ch.targetCassandraConnector.sendRequestToCluster(targetRequest, false)
 		if sendErr != nil {
 			ch.handleRequestSendFailure(sendErr, frameContext)
 		}
