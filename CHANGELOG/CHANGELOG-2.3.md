@@ -6,7 +6,17 @@ When cutting a new release, update the `unreleased` heading to the tag being gen
 
 ## Unreleased
 
+---
+
+## v2.3.4 - 2025-05-29
+
+### Improvements
+
 * [#143](https://github.com/datastax/zdm-proxy/issues/143): Update ANTLR dependency
+
+### Bug Fixes
+
+* [#109](https://github.com/datastax/zdm-proxy/issues/109): Proxy heartbeat causes warning log message
 
 ---
 
