@@ -8,6 +8,7 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
 	"github.com/datastax/zdm-proxy/proxy/pkg/common"
+	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
 	"strings"
@@ -326,6 +327,17 @@ func (recv *frameDecodeContext) GetOrInspectAllStatements(currentKeyspace string
 	}
 
 	return recv.statementsQueryData, nil
+}
+
+func (recv *frameDecodeContext) GetRequestId(conf *config.Config) []byte {
+	decodedFrame, err := recv.GetOrDecodeFrame()
+	if err != nil {
+		return nil
+	}
+	if decodedFrame.Body == nil || decodedFrame.Body.CustomPayload == nil {
+		return nil
+	}
+	return recv.decodedFrame.Body.CustomPayload[conf.TracingRequestIdKey]
 }
 
 func (recv *frameDecodeContext) inspectStatements(currentKeyspace string, timeUuidGenerator TimeUuidGenerator) error {
