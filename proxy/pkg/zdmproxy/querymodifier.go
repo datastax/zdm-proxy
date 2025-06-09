@@ -6,26 +6,61 @@ import (
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/datastax/zdm-proxy/proxy/pkg/config"
+	"github.com/google/uuid"
 )
 
 type QueryModifier struct {
 	timeUuidGenerator TimeUuidGenerator
+	conf              *config.Config
 }
 
-func NewQueryModifier(timeUuidGenerator TimeUuidGenerator) *QueryModifier {
-	return &QueryModifier{timeUuidGenerator: timeUuidGenerator}
+func NewQueryModifier(timeUuidGenerator TimeUuidGenerator, conf *config.Config) *QueryModifier {
+	return &QueryModifier{timeUuidGenerator: timeUuidGenerator, conf: conf}
+}
+
+func (recv *QueryModifier) enrichRequest(currentKeyspace string, context *frameDecodeContext) (*frameDecodeContext, []*statementReplacedTerms, error) {
+	replacedTerms := []*statementReplacedTerms{}
+	var err error
+	reEnc := false
+
+	// replace CQL functions
+	if recv.conf.ReplaceCqlFunctions {
+		reEnc, context, replacedTerms, err = recv.replaceQueryString(currentKeyspace, context)
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// add request ID for distributed tracing
+	if recv.conf.EnableTracing {
+		reEnc, err = recv.assignRequestId(context)
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if reEnc {
+		newRawFrame, err := defaultCodec.ConvertToRawFrame(context.decodedFrame)
+		if err != nil {
+			return nil, nil, fmt.Errorf("could not convert modified frame to raw frame: %w", err)
+		}
+		return NewInitializedFrameDecodeContext(newRawFrame, context.decodedFrame, context.statementsQueryData), replacedTerms, nil
+	}
+
+	return context, replacedTerms, err
 }
 
 // replaceQueryString modifies the incoming request in certain conditions:
 //   - the request is a QUERY or PREPARE
 //   - and it contains now() function calls
-func (recv *QueryModifier) replaceQueryString(currentKeyspace string, context *frameDecodeContext) (*frameDecodeContext, []*statementReplacedTerms, error) {
+func (recv *QueryModifier) replaceQueryString(currentKeyspace string, context *frameDecodeContext) (bool, *frameDecodeContext, []*statementReplacedTerms, error) {
 	decodedFrame, statementsQueryData, err := context.GetOrDecodeAndInspect(currentKeyspace, recv.timeUuidGenerator)
 	if err != nil {
 		if errors.Is(err, NotInspectableErr) {
-			return context, []*statementReplacedTerms{}, nil
+			return false, context, []*statementReplacedTerms{}, nil
 		}
-		return nil, nil, fmt.Errorf("could not check whether query needs replacement for a '%v' request: %w",
+		return false, nil, nil, fmt.Errorf("could not check whether query needs replacement for a '%v' request: %w",
 			context.GetRawFrame().Header.OpCode.String(), err)
 	}
 
@@ -48,14 +83,10 @@ func (recv *QueryModifier) replaceQueryString(currentKeyspace string, context *f
 	}
 
 	if err != nil {
-		return nil, nil, fmt.Errorf("could not replace query string in request '%v': %w", requestType, err)
+		return false, nil, nil, fmt.Errorf("could not replace query string in request '%v': %w", requestType, err)
 	}
 
-	newRawFrame, err := defaultCodec.ConvertToRawFrame(newFrame)
-	if err != nil {
-		return nil, nil, fmt.Errorf("could not convert modified frame to raw frame: %w", err)
-	}
-	return NewInitializedFrameDecodeContext(newRawFrame, newFrame, newStatementsQueryData), replacedTerms, nil
+	return true, NewInitializedFrameDecodeContext(context.frame, newFrame, newStatementsQueryData), replacedTerms, nil
 }
 
 func (recv *QueryModifier) replaceQueryInBatchMessage(
@@ -162,4 +193,31 @@ func queryOrPrepareRequiresQueryReplacement(statementsQueryData []*statementQuer
 	}
 
 	return requiresQueryReplacement(statementsQueryData[0]), statementsQueryData[0], nil
+}
+
+func (recv *QueryModifier) assignRequestId(context *frameDecodeContext) (bool, error) {
+	op := context.frame.Header.OpCode
+	if op != primitive.OpCodePrepare && op != primitive.OpCodeExecute && op != primitive.OpCodeQuery && op != primitive.OpCodeBatch {
+		return false, nil
+	}
+
+	decodedFrame, err := context.GetOrDecodeFrame()
+	if err != nil {
+		return false, fmt.Errorf("could not decode frame: %w", err)
+	}
+	customPayload := decodedFrame.Body.CustomPayload
+	if customPayload == nil {
+		customPayload = make(map[string][]byte)
+	}
+	if _, ok := customPayload["request-id"]; !ok {
+		// generate new request ID
+		reqId, err := uuid.New().MarshalBinary()
+		if err != nil {
+			return false, err
+		}
+		customPayload["request-id"] = reqId
+		context.decodedFrame.SetCustomPayload(customPayload)
+		return true, nil
+	}
+	return false, nil
 }

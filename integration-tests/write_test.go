@@ -1,10 +1,13 @@
 package integration_tests
 
 import (
+	"bufio"
+	"bytes"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
 	"github.com/datastax/zdm-proxy/integration-tests/utils"
 	"github.com/gocql/gocql"
+	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
 	"testing"
 )
@@ -206,4 +209,49 @@ func TestWriteSuccessful(t *testing.T) {
 	if err != nil {
 		t.Fatal("query failed: ", err.Error())
 	}
+}
+
+func TestPrepareAndExecuteTracing(t *testing.T) {
+	var buff bytes.Buffer
+	buffWriter := bufio.NewWriter(&buff)
+	log.SetOutput(buffWriter)
+
+	c := setup.NewTestConfig("", "")
+	c.EnableTracing = true
+	testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodesAndConfig(t, true, false, 1, c, nil)
+	require.Nil(t, err)
+	defer testSetup.Cleanup()
+
+	// Connect to proxy as a "client"
+	proxy, err := utils.ConnectToCluster("127.0.0.1", "", "", 14002)
+
+	if err != nil {
+		t.Log("Unable to connect to proxy session.")
+		t.Fatal(err)
+	}
+	defer proxy.Close()
+
+	queryPrime :=
+		simulacron.WhenQuery(
+			"INSERT INTO myks.users (name) VALUES (?)",
+			simulacron.
+				NewWhenQueryOptions().
+				WithPositionalParameter(simulacron.DataTypeText, "john")).
+			ThenSuccess()
+
+	err = testSetup.Origin.Prime(queryPrime)
+	require.Nil(t, err)
+	err = testSetup.Target.Prime(queryPrime)
+	require.Nil(t, err)
+
+	err = proxy.Query("INSERT INTO myks.users (name) VALUES (?)", "john").Exec()
+	require.Nil(t, err)
+
+	err = buffWriter.Flush()
+	require.Nil(t, err)
+	allLogs := buff.String()
+	require.Regexp(t, "(.*)Request id (.){32} \\(hex\\) for query with stream id (.){1,3} and OpCode PREPARE \\[0x09\\](.*)", allLogs)
+	require.Regexp(t, "(.*)Request id (.){32} \\(hex\\) for query with stream id (.){1,3} and OpCode EXECUTE \\[0x0A\\](.*)", allLogs)
+	require.Regexp(t, "(.*)Received response from ORIGIN-CONNECTOR for query with stream id (.){1,3} and request id (.){32} \\(hex\\)", allLogs)
+	require.Regexp(t, "(.*)Received response from TARGET-CONNECTOR for query with stream id (.){1,3} and request id (.){32} \\(hex\\)", allLogs)
 }

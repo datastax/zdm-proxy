@@ -1,10 +1,16 @@
 package integration_tests
 
 import (
+	"bufio"
+	"bytes"
+	"encoding/base64"
+	"encoding/hex"
+	"fmt"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
 	"github.com/datastax/zdm-proxy/integration-tests/utils"
 	"github.com/gocql/gocql"
+	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
 	"testing"
 )
@@ -153,6 +159,54 @@ func TestBatchWriteSuccessful(t *testing.T) {
 	err = proxy.ExecuteBatch(batch)
 
 	require.True(t, err == nil, "batch shouldn't have failed but it did")
+}
+
+func TestBatchTracingWithClientId(t *testing.T) {
+	var buff bytes.Buffer
+	buffWriter := bufio.NewWriter(&buff)
+	log.SetOutput(buffWriter)
+
+	c := setup.NewTestConfig("", "")
+	c.EnableTracing = true
+	testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodesAndConfig(t, true, false, 1, c, nil)
+	require.Nil(t, err)
+	defer testSetup.Cleanup()
+
+	// Connect to proxy as a "client"
+	proxy, err := utils.ConnectToCluster("127.0.0.1", "", "", 14002)
+
+	if err != nil {
+		t.Log("Unable to connect to proxy session.")
+		t.Fatal(err)
+	}
+	defer proxy.Close()
+
+	options := newBatchOptions()
+
+	queryPrimeOrigin := simulacron.WhenBatch(options).ThenSuccess()
+	queryPrimeTarget := simulacron.WhenBatch(options).ThenSuccess()
+
+	doPrime(t, testSetup.Origin, queryPrimeOrigin)
+	doPrime(t, testSetup.Target, queryPrimeTarget)
+
+	batch := newBatch(proxy)
+	reqId := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9}
+	require.Nil(t, err)
+	batch.CustomPayload = make(map[string][]byte)
+	batch.CustomPayload["request-id"] = reqId // client assigned request ID
+	reqIdHex := hex.EncodeToString(reqId)
+	err = proxy.ExecuteBatch(batch)
+	require.True(t, err == nil, "batch shouldn't have failed but it did")
+
+	err = buffWriter.Flush()
+	require.Nil(t, err)
+	allLogs := buff.String()
+	require.Regexp(t, fmt.Sprintf("(.*)Request id %s \\(hex\\) for query with stream id (.){1,3} and OpCode BATCH \\[0x0D\\](.*)", reqIdHex), allLogs)
+	require.Regexp(t, fmt.Sprintf("(.*)Received response from ORIGIN-CONNECTOR for query with stream id (.){1,3} and request id %s \\(hex\\)", reqIdHex), allLogs)
+	require.Regexp(t, fmt.Sprintf("(.*)Received response from TARGET-CONNECTOR for query with stream id (.){1,3} and request id %s \\(hex\\)", reqIdHex), allLogs)
+
+	targetQueryLog, _ := testSetup.Origin.GetLogsByType(simulacron.QueryTypeBatch)
+	require.Equal(t, base64.StdEncoding.EncodeToString(reqId), targetQueryLog.Datacenters[0].Nodes[0].Queries[0].Frame.CustomPayload["request-id"])
 }
 
 func newBatchOptions() *simulacron.WhenBatchOptions {

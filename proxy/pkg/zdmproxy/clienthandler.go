@@ -323,7 +323,7 @@ func NewClientHandler(
 		forwardSystemQueriesToTarget:         systemQueriesMode == common.SystemQueriesModeTarget,
 		forwardAuthToTarget:                  forwardAuthToTarget,
 		targetCredsOnClientRequest:           targetCredsOnClientRequest,
-		queryModifier:                        NewQueryModifier(timeUuidGenerator),
+		queryModifier:                        NewQueryModifier(timeUuidGenerator, conf),
 		parameterModifier:                    NewParameterModifier(timeUuidGenerator),
 		timeUuidGenerator:                    timeUuidGenerator,
 		clientHandlerShutdownRequestCancelFn: clientHandlerShutdownRequestCancelFn,
@@ -1365,11 +1365,7 @@ func (ch *ClientHandler) forwardRequest(request *frame.RawFrame, customResponseC
 
 	currentKeyspace := ch.LoadCurrentKeyspace()
 	context := NewFrameDecodeContext(request)
-	var replacedTerms []*statementReplacedTerms
-	var err error
-	if ch.conf.ReplaceCqlFunctions {
-		context, replacedTerms, err = ch.queryModifier.replaceQueryString(currentKeyspace, context)
-	}
+	context, replacedTerms, err := ch.queryModifier.enrichRequest(currentKeyspace, context)
 
 	if err != nil {
 		return err
@@ -1377,6 +1373,17 @@ func (ch *ClientHandler) forwardRequest(request *frame.RawFrame, customResponseC
 	requestInfo, err := buildRequestInfo(
 		context, replacedTerms, ch.preparedStatementCache, ch.metricHandler, currentKeyspace, ch.primaryCluster,
 		ch.forwardSystemQueriesToTarget, ch.topologyConfig.VirtualizationEnabled, ch.forwardAuthToTarget, ch.timeUuidGenerator)
+
+	switch requestInfo.(type) {
+	case *InterceptedRequestInfo:
+		// do not log system queries
+		break
+	default:
+		if context.GetRequestId() != nil {
+			log.Infof("Request id %v (hex) for query with stream id %d and %v", hex.EncodeToString(context.GetRequestId()), request.Header.StreamId, request.Header.OpCode)
+		}
+	}
+
 	if err != nil {
 		if errVal, ok := err.(*UnpreparedExecuteError); ok {
 			unpreparedFrame, err := createUnpreparedFrame(errVal)
@@ -1446,7 +1453,7 @@ func (ch *ClientHandler) executeRequest(
 		return nil
 	}
 
-	reqCtx := NewRequestContext(f, requestInfo, overallRequestStartTime, customResponseChannel)
+	reqCtx := NewRequestContext(frameContext.GetRequestId(), f, requestInfo, overallRequestStartTime, customResponseChannel)
 	var contextHoldersMap *sync.Map
 	if fwdDecision == forwardToAsyncOnly {
 		contextHoldersMap = ch.asyncRequestContextHolders // different map because of stream id collision

@@ -328,6 +328,17 @@ func (recv *frameDecodeContext) GetOrInspectAllStatements(currentKeyspace string
 	return recv.statementsQueryData, nil
 }
 
+func (recv *frameDecodeContext) GetRequestId() []byte {
+	decodedFrame, err := recv.GetOrDecodeFrame()
+	if err != nil {
+		return nil
+	}
+	if decodedFrame.Body == nil || decodedFrame.Body.CustomPayload == nil {
+		return nil
+	}
+	return recv.decodedFrame.Body.CustomPayload["request-id"]
+}
+
 func (recv *frameDecodeContext) inspectStatements(currentKeyspace string, timeUuidGenerator TimeUuidGenerator) error {
 	if recv.statementsQueryData != nil {
 		return nil

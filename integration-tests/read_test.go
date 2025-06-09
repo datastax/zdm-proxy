@@ -1,13 +1,19 @@
 package integration_tests
 
 import (
+	"bufio"
+	"bytes"
+	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
 	"github.com/datastax/zdm-proxy/integration-tests/utils"
 	"github.com/datastax/zdm-proxy/proxy/pkg/config"
+	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
 	"net"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -212,4 +218,54 @@ func testForwardDecisionsForReads(t *testing.T, primaryCluster string, systemQue
 			require.Equal(t, expectedTargetLogs, len(logsTarget.Datacenters[0].Nodes[0].Queries))
 		})
 	}
+}
+
+func TestQueryTracing(t *testing.T) {
+	var buff bytes.Buffer
+	buffWriter := bufio.NewWriter(&buff)
+	log.SetOutput(buffWriter)
+
+	c := setup.NewTestConfig("", "")
+	c.EnableTracing = true
+	testSetup, err := setup.NewSimulacronTestSetupWithConfig(t, c)
+	require.Nil(t, err)
+	defer testSetup.Cleanup()
+
+	// Connect to proxy as a "client"
+	proxy, err := utils.ConnectToCluster("127.0.0.1", "", "", 14002)
+
+	if err != nil {
+		t.Log("Unable to connect to proxy session.")
+		t.Fatal(err)
+	}
+	defer proxy.Close()
+
+	queryPrime :=
+		simulacron.WhenQuery(
+			" /* trick to skip prepare */ SELECT user, pass FROM users",
+			simulacron.NewWhenQueryOptions()).
+			ThenSuccess()
+
+	err = testSetup.Origin.Prime(queryPrime)
+	require.Nil(t, err)
+	err = testSetup.Target.Prime(queryPrime)
+	require.Nil(t, err)
+
+	_, err = proxy.Query(" /* trick to skip prepare */ SELECT user, pass FROM users", "john").Iter().SliceMap()
+	require.Nil(t, err)
+
+	err = buffWriter.Flush()
+	require.Nil(t, err)
+	allLogs := buff.String()
+	require.Regexp(t, "(.*)Request id (.){32} \\(hex\\) for query with stream id (.){1,3} and OpCode QUERY \\[0x07\\](.*)", allLogs)
+	require.NotRegexp(t, "(.*)Received response from TARGET-CONNECTOR for query with stream id (.){1,3} and request id (.){32} \\(hex\\)", allLogs)
+
+	r := regexp.MustCompile("(.*)\"Received response from ORIGIN-CONNECTOR for query with stream id (.){1,3} and request id (.){32} \\(hex\\)")
+	idLog := r.FindAllStringSubmatch(allLogs, -1)[0][0]
+	idLog = idLog[len(idLog)-38 : len(idLog)-6]
+
+	targetQueryLog, _ := testSetup.Origin.GetLogsByType(simulacron.QueryTypeQuery)
+	idLogHex, err := hex.DecodeString(idLog)
+	require.Nil(t, err)
+	require.Equal(t, base64.StdEncoding.EncodeToString(idLogHex), targetQueryLog.Datacenters[0].Nodes[0].Queries[2].Frame.CustomPayload["request-id"])
 }
