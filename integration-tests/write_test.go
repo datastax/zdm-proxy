@@ -3,12 +3,18 @@ package integration_tests
 import (
 	"bufio"
 	"bytes"
+	"encoding/base64"
+	"encoding/hex"
+	"fmt"
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
 	"github.com/datastax/zdm-proxy/integration-tests/utils"
 	"github.com/gocql/gocql"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
+	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -211,7 +217,7 @@ func TestWriteSuccessful(t *testing.T) {
 	}
 }
 
-func TestPrepareAndExecuteTracing(t *testing.T) {
+func TestRequestIdTracing(t *testing.T) {
 	var buff bytes.Buffer
 	buffWriter := bufio.NewWriter(&buff)
 	log.SetOutput(buffWriter)
@@ -231,27 +237,119 @@ func TestPrepareAndExecuteTracing(t *testing.T) {
 	}
 	defer proxy.Close()
 
-	queryPrime :=
-		simulacron.WhenQuery(
-			"INSERT INTO myks.users (name) VALUES (?)",
-			simulacron.
-				NewWhenQueryOptions().
-				WithPositionalParameter(simulacron.DataTypeText, "john")).
-			ThenSuccess()
+	tests := []struct {
+		name                      string
+		mockQuery                 simulacron.Then
+		execFunc                  func(session *gocql.Session) ([]byte, error)
+		expectedLogOps            []primitive.OpCode
+		expectedSimulacronQueries []simulacron.QueryType
+		expectAtTarget            bool
+	}{
+		{
+			name: "prepare_and_execute",
+			mockQuery: simulacron.WhenQuery(
+				"INSERT INTO myks.users (name) VALUES (?)",
+				simulacron.
+					NewWhenQueryOptions().
+					WithPositionalParameter(simulacron.DataTypeText, "john")).
+				ThenSuccess(),
+			execFunc: func(session *gocql.Session) ([]byte, error) {
+				err = proxy.Query("INSERT INTO myks.users (name) VALUES (?)", "john").Exec()
+				return nil, err
+			},
+			expectedLogOps: []primitive.OpCode{primitive.OpCodePrepare, primitive.OpCodeExecute},
+			expectAtTarget: true,
+		},
+		{
+			name: "query",
+			mockQuery: simulacron.WhenQuery(
+				" /* trick to skip prepare */ SELECT user, pass FROM users",
+				simulacron.NewWhenQueryOptions()).
+				ThenSuccess(),
+			execFunc: func(session *gocql.Session) ([]byte, error) {
+				_, err = proxy.Query(" /* trick to skip prepare */ SELECT user, pass FROM users", "john").Iter().SliceMap()
+				return nil, err
+			},
+			expectedLogOps:            []primitive.OpCode{primitive.OpCodeQuery},
+			expectedSimulacronQueries: []simulacron.QueryType{simulacron.QueryTypeQuery},
+			expectAtTarget:            false,
+		},
+		{
+			name: "batch_with_client_id",
+			mockQuery: simulacron.WhenBatch(
+				simulacron.NewWhenBatchOptions().
+					WithQueries(
+						simulacron.NewBatchQuery("INSERT INTO myks.users (name) VALUES (?)").
+							WithPositionalParameter(simulacron.DataTypeText, "Alice"),
+						simulacron.NewBatchQuery("INSERT INTO myks.users (name) VALUES (?)").
+							WithPositionalParameter(simulacron.DataTypeText, "Bob")).
+					WithAllowedConsistencyLevels(gocql.LocalQuorum)).
+				ThenSuccess(),
+			execFunc: func(session *gocql.Session) ([]byte, error) {
+				batch := proxy.NewBatch(gocql.UnloggedBatch)
+				batch.Query("INSERT INTO myks.users (name) VALUES (?)", "Alice")
+				batch.Query("INSERT INTO myks.users (name) VALUES (?)", "Bob")
+				batch.SetConsistency(gocql.LocalQuorum) // must match batch options above
 
-	err = testSetup.Origin.Prime(queryPrime)
-	require.Nil(t, err)
-	err = testSetup.Target.Prime(queryPrime)
-	require.Nil(t, err)
+				reqId := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9}
+				require.Nil(t, err)
+				batch.CustomPayload = make(map[string][]byte)
+				batch.CustomPayload["request-id"] = reqId // client assigned request ID
 
-	err = proxy.Query("INSERT INTO myks.users (name) VALUES (?)", "john").Exec()
-	require.Nil(t, err)
+				err = proxy.ExecuteBatch(batch)
+				return reqId, err
+			},
+			expectedLogOps:            []primitive.OpCode{primitive.OpCodeBatch},
+			expectedSimulacronQueries: []simulacron.QueryType{simulacron.QueryTypeBatch},
+			expectAtTarget:            true,
+		},
+	}
+	for _, tt := range tests {
+		err = testSetup.Origin.Prime(tt.mockQuery)
+		require.Nil(t, err)
+		err = testSetup.Target.Prime(tt.mockQuery)
+		require.Nil(t, err)
 
-	err = buffWriter.Flush()
-	require.Nil(t, err)
-	allLogs := buff.String()
-	require.Regexp(t, "(.*)Request id (.){32} \\(hex\\) for query with stream id (.){1,3} and OpCode PREPARE \\[0x09\\](.*)", allLogs)
-	require.Regexp(t, "(.*)Request id (.){32} \\(hex\\) for query with stream id (.){1,3} and OpCode EXECUTE \\[0x0A\\](.*)", allLogs)
-	require.Regexp(t, "(.*)Received response from ORIGIN-CONNECTOR for query with stream id (.){1,3} and request id (.){32} \\(hex\\)", allLogs)
-	require.Regexp(t, "(.*)Received response from TARGET-CONNECTOR for query with stream id (.){1,3} and request id (.){32} \\(hex\\)", allLogs)
+		clientReqId, err := tt.execFunc(proxy)
+		require.Nil(t, err)
+
+		reqIdRegExp := "(.){32}"
+		if clientReqId != nil {
+			reqIdRegExp = hex.EncodeToString(clientReqId)
+		}
+
+		err = buffWriter.Flush()
+		require.Nil(t, err)
+		allLogs := buff.String()
+
+		// assert request logs
+		for _, opCode := range tt.expectedLogOps {
+			op := opCode.String()[:len(opCode.String())-7]
+			require.Regexp(t, fmt.Sprintf("(.*)Request id %s \\(hex\\) for query with stream id (.){1,3} and %s(.*)", reqIdRegExp, op), allLogs)
+		}
+		// assert response logs
+		require.Regexp(t, fmt.Sprintf("(.*)Received response from ORIGIN-CONNECTOR for query with stream id (.){1,3} and request id %s \\(hex\\)", reqIdRegExp), allLogs)
+		if tt.expectAtTarget {
+			require.Regexp(t, fmt.Sprintf("(.*)Received response from TARGET-CONNECTOR for query with stream id (.){1,3} and request id %s \\(hex\\)", reqIdRegExp), allLogs)
+		} else {
+			require.NotRegexp(t, fmt.Sprintf("(.*)Received response from TARGET-CONNECTOR for query with stream id (.){1,3} and request id %s \\(hex\\)", reqIdRegExp), allLogs)
+		}
+
+		r := regexp.MustCompile(fmt.Sprintf("(.*)\"Received response from ORIGIN-CONNECTOR for query with stream id (.){1,3} and request id %s", reqIdRegExp))
+		idLogHex := r.FindAllStringSubmatch(allLogs, -1)[0][0]
+		idLogHex = idLogHex[strings.LastIndex(idLogHex, " ")+1:]
+		idLog, err := hex.DecodeString(idLogHex)
+		require.Nil(t, err)
+
+		// assert ID logged is the same as sent to the C* cluster
+		for _, qt := range tt.expectedSimulacronQueries {
+			originQueryLog, _ := testSetup.Origin.GetLogsByType(qt)
+			queries := originQueryLog.Datacenters[0].Nodes[0].Queries
+			require.Equal(t, base64.StdEncoding.EncodeToString(idLog), queries[len(queries)-1].Frame.CustomPayload["request-id"])
+		}
+
+		err = testSetup.Origin.DeleteLogs()
+		require.Nil(t, err)
+		buff.Reset()
+	}
 }
