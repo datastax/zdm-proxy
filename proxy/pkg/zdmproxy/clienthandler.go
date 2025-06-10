@@ -1379,8 +1379,9 @@ func (ch *ClientHandler) forwardRequest(request *frame.RawFrame, customResponseC
 		// do not log system queries
 		break
 	default:
-		if context.GetRequestId() != nil {
-			log.Infof("Request id %v (hex) for query with stream id %d and %v", hex.EncodeToString(context.GetRequestId()), request.Header.StreamId, request.Header.OpCode)
+		reqId := context.GetRequestId(ch.conf)
+		if reqId != nil {
+			log.Infof("Request id %v (hex) for query with stream id %d and %v", hex.EncodeToString(reqId), request.Header.StreamId, request.Header.OpCode)
 		}
 	}
 
@@ -1453,7 +1454,7 @@ func (ch *ClientHandler) executeRequest(
 		return nil
 	}
 
-	reqCtx := NewRequestContext(frameContext.GetRequestId(), f, requestInfo, overallRequestStartTime, customResponseChannel)
+	reqCtx := NewRequestContext(frameContext.GetRequestId(ch.conf), f, requestInfo, overallRequestStartTime, customResponseChannel)
 	var contextHoldersMap *sync.Map
 	if fwdDecision == forwardToAsyncOnly {
 		contextHoldersMap = ch.asyncRequestContextHolders // different map because of stream id collision

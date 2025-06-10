@@ -217,6 +217,42 @@ func TestWriteSuccessful(t *testing.T) {
 	}
 }
 
+func TestDisabledRequestIdTracing(t *testing.T) {
+	testSetup, err := setup.NewSimulacronTestSetup(t)
+	require.Nil(t, err)
+	defer testSetup.Cleanup()
+
+	// Connect to proxy as a "client"
+	proxy, err := utils.ConnectToCluster("127.0.0.1", "", "", 14002)
+
+	if err != nil {
+		t.Log("Unable to connect to proxy session.")
+		t.Fatal(err)
+	}
+	defer proxy.Close()
+
+	queryPrime :=
+		simulacron.WhenQuery(
+			"INSERT INTO myks.users (name) VALUES (?)",
+			simulacron.
+				NewWhenQueryOptions().
+				WithPositionalParameter(simulacron.DataTypeText, "john")).
+			ThenSuccess()
+
+	err = testSetup.Origin.Prime(queryPrime)
+	require.Nil(t, err)
+	err = testSetup.Target.Prime(queryPrime)
+	require.Nil(t, err)
+
+	err = proxy.Query("INSERT INTO myks.users (name) VALUES (?)", "john").Exec()
+	require.Nil(t, err)
+
+	// EXECUTE message shall not contain request ID
+	originQueryLog, _ := testSetup.Origin.GetLogsByType(simulacron.QueryTypeExecute)
+	queries := originQueryLog.Datacenters[0].Nodes[0].Queries
+	require.NotContains(t, queries[len(queries)-1].Frame.CustomPayload, "request-id")
+}
+
 func TestRequestIdTracing(t *testing.T) {
 	var buff bytes.Buffer
 	buffWriter := bufio.NewWriter(&buff)
@@ -305,51 +341,56 @@ func TestRequestIdTracing(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-		err = testSetup.Origin.Prime(tt.mockQuery)
-		require.Nil(t, err)
-		err = testSetup.Target.Prime(tt.mockQuery)
-		require.Nil(t, err)
+		t.Run(tt.name, func(t *testing.T) {
+			err = testSetup.Origin.Prime(tt.mockQuery)
+			require.Nil(t, err)
+			err = testSetup.Target.Prime(tt.mockQuery)
+			require.Nil(t, err)
 
-		clientReqId, err := tt.execFunc(proxy)
-		require.Nil(t, err)
+			clientReqId, err := tt.execFunc(proxy)
+			require.Nil(t, err)
 
-		reqIdRegExp := "(.){32}"
-		if clientReqId != nil {
-			reqIdRegExp = hex.EncodeToString(clientReqId)
-		}
+			reqIdRegExp := "(.){32}"
+			if clientReqId != nil {
+				reqIdRegExp = hex.EncodeToString(clientReqId)
+			}
 
-		err = buffWriter.Flush()
-		require.Nil(t, err)
-		allLogs := buff.String()
+			err = buffWriter.Flush()
+			require.Nil(t, err)
+			allLogs := buff.String()
 
-		// assert request logs
-		for _, opCode := range tt.expectedLogOps {
-			op := opCode.String()[:len(opCode.String())-7]
-			require.Regexp(t, fmt.Sprintf("(.*)Request id %s \\(hex\\) for query with stream id (.){1,3} and %s(.*)", reqIdRegExp, op), allLogs)
-		}
-		// assert response logs
-		require.Regexp(t, fmt.Sprintf("(.*)Received response from ORIGIN-CONNECTOR for query with stream id (.){1,3} and request id %s \\(hex\\)", reqIdRegExp), allLogs)
-		if tt.expectAtTarget {
-			require.Regexp(t, fmt.Sprintf("(.*)Received response from TARGET-CONNECTOR for query with stream id (.){1,3} and request id %s \\(hex\\)", reqIdRegExp), allLogs)
-		} else {
-			require.NotRegexp(t, fmt.Sprintf("(.*)Received response from TARGET-CONNECTOR for query with stream id (.){1,3} and request id %s \\(hex\\)", reqIdRegExp), allLogs)
-		}
+			// assert request logs
+			for _, opCode := range tt.expectedLogOps {
+				op := opCode.String()[:len(opCode.String())-7]
+				reqRegExp := fmt.Sprintf("(.*)Request id %s \\(hex\\) for query with stream id (.){1,3} and %s(.*)", reqIdRegExp, op)
+				require.Regexp(t, reqRegExp, allLogs)
+			}
+			// assert response logs
+			respOriginRegExp := fmt.Sprintf("(.*)Received response from ORIGIN-CONNECTOR for query with stream id (.){1,3} and request id %s \\(hex\\)", reqIdRegExp)
+			require.Regexp(t, respOriginRegExp, allLogs)
+			respTargetRegExp := fmt.Sprintf("(.*)Received response from TARGET-CONNECTOR for query with stream id (.){1,3} and request id %s \\(hex\\)", reqIdRegExp)
+			if tt.expectAtTarget {
+				require.Regexp(t, respTargetRegExp, allLogs)
+			} else {
+				require.NotRegexp(t, respTargetRegExp, allLogs)
+			}
 
-		r := regexp.MustCompile(fmt.Sprintf("(.*)\"Received response from ORIGIN-CONNECTOR for query with stream id (.){1,3} and request id %s", reqIdRegExp))
-		idLogHex := r.FindAllStringSubmatch(allLogs, -1)[0][0]
-		idLogHex = idLogHex[strings.LastIndex(idLogHex, " ")+1:]
-		idLog, err := hex.DecodeString(idLogHex)
-		require.Nil(t, err)
+			r := regexp.MustCompile(fmt.Sprintf("(.*)\"Received response from ORIGIN-CONNECTOR for query with stream id (.){1,3} and request id %s", reqIdRegExp))
+			idLogHex := r.FindAllStringSubmatch(allLogs, -1)[0][0]
+			idLogHex = idLogHex[strings.LastIndex(idLogHex, " ")+1:]
+			idLog, err := hex.DecodeString(idLogHex)
+			require.Nil(t, err)
 
-		// assert ID logged is the same as sent to the C* cluster
-		for _, qt := range tt.expectedSimulacronQueries {
-			originQueryLog, _ := testSetup.Origin.GetLogsByType(qt)
-			queries := originQueryLog.Datacenters[0].Nodes[0].Queries
-			require.Equal(t, base64.StdEncoding.EncodeToString(idLog), queries[len(queries)-1].Frame.CustomPayload["request-id"])
-		}
+			// assert ID logged is the same as sent to the C* cluster
+			for _, qt := range tt.expectedSimulacronQueries {
+				originQueryLog, _ := testSetup.Origin.GetLogsByType(qt)
+				queries := originQueryLog.Datacenters[0].Nodes[0].Queries
+				require.Equal(t, base64.StdEncoding.EncodeToString(idLog), queries[len(queries)-1].Frame.CustomPayload["request-id"])
+			}
 
-		err = testSetup.Origin.DeleteLogs()
-		require.Nil(t, err)
-		buff.Reset()
+			err = testSetup.Origin.DeleteLogs()
+			require.Nil(t, err)
+			buff.Reset()
+		})
 	}
 }

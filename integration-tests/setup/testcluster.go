@@ -457,6 +457,8 @@ func NewTestConfig(originHost string, targetHost string) *config.Config {
 	conf.ProxyRequestTimeoutMs = 10000
 
 	conf.LogLevel = "INFO"
+	conf.EnableTracing = false
+	conf.RequestIdKey = "request-id"
 
 	return conf
 }

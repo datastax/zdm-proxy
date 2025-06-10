@@ -209,13 +209,13 @@ func (recv *QueryModifier) assignRequestId(context *frameDecodeContext) (bool, e
 	if customPayload == nil {
 		customPayload = make(map[string][]byte)
 	}
-	if _, ok := customPayload["request-id"]; !ok {
+	if _, ok := customPayload[recv.conf.RequestIdKey]; !ok {
 		// generate new request ID
 		reqId, err := uuid.New().MarshalBinary()
 		if err != nil {
 			return false, err
 		}
-		customPayload["request-id"] = reqId
+		customPayload[recv.conf.RequestIdKey] = reqId
 		context.decodedFrame.SetCustomPayload(customPayload)
 		return true, nil
 	}
