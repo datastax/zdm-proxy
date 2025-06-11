@@ -1365,7 +1365,7 @@ func (ch *ClientHandler) forwardRequest(request *frame.RawFrame, customResponseC
 
 	currentKeyspace := ch.LoadCurrentKeyspace()
 	context := NewFrameDecodeContext(request)
-	context, replacedTerms, err := ch.queryModifier.enrichRequest(currentKeyspace, context)
+	context, replacedTerms, err := ch.queryModifier.enrichRequest(ch.clientConnector.minProtoVer, currentKeyspace, context)
 
 	if err != nil {
 		return err

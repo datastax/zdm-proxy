@@ -217,40 +217,65 @@ func TestWriteSuccessful(t *testing.T) {
 	}
 }
 
-func TestDisabledRequestIdTracing(t *testing.T) {
-	testSetup, err := setup.NewSimulacronTestSetup(t)
-	require.Nil(t, err)
-	defer testSetup.Cleanup()
-
-	// Connect to proxy as a "client"
-	proxy, err := utils.ConnectToCluster("127.0.0.1", "", "", 14002)
-
-	if err != nil {
-		t.Log("Unable to connect to proxy session.")
-		t.Fatal(err)
+func TestRequestIdTracingSkipped(t *testing.T) {
+	tests := []struct {
+		name     string
+		initFunc func() (*setup.SimulacronTestSetup, error)
+	}{
+		{
+			name: "config_disabled",
+			initFunc: func() (*setup.SimulacronTestSetup, error) {
+				return setup.NewSimulacronTestSetup(t)
+			},
+		},
+		{
+			name: "proto_ver_before_4",
+			initFunc: func() (*setup.SimulacronTestSetup, error) {
+				c := setup.NewTestConfig("", "")
+				c.EnableTracing = true
+				c.ControlConnMaxProtocolVersion = "3"
+				return setup.NewSimulacronTestSetupWithSessionAndNodesAndConfig(t, true, false, 1, c,
+					&simulacron.ClusterVersion{"3.0", "3.0"})
+			},
+		},
 	}
-	defer proxy.Close()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			testSetup, err := tt.initFunc()
+			require.Nil(t, err)
+			defer testSetup.Cleanup()
 
-	queryPrime :=
-		simulacron.WhenQuery(
-			"INSERT INTO myks.users (name) VALUES (?)",
-			simulacron.
-				NewWhenQueryOptions().
-				WithPositionalParameter(simulacron.DataTypeText, "john")).
-			ThenSuccess()
+			// Connect to proxy as a "client"
+			proxy, err := utils.ConnectToCluster("127.0.0.1", "", "", 14002)
 
-	err = testSetup.Origin.Prime(queryPrime)
-	require.Nil(t, err)
-	err = testSetup.Target.Prime(queryPrime)
-	require.Nil(t, err)
+			if err != nil {
+				t.Log("Unable to connect to proxy session.")
+				t.Fatal(err)
+			}
+			defer proxy.Close()
 
-	err = proxy.Query("INSERT INTO myks.users (name) VALUES (?)", "john").Exec()
-	require.Nil(t, err)
+			queryPrime :=
+				simulacron.WhenQuery(
+					"INSERT INTO myks.users (name) VALUES (?)",
+					simulacron.
+						NewWhenQueryOptions().
+						WithPositionalParameter(simulacron.DataTypeText, "john")).
+					ThenSuccess()
 
-	// EXECUTE message shall not contain request ID
-	originQueryLog, _ := testSetup.Origin.GetLogsByType(simulacron.QueryTypeExecute)
-	queries := originQueryLog.Datacenters[0].Nodes[0].Queries
-	require.NotContains(t, queries[len(queries)-1].Frame.CustomPayload, "request-id")
+			err = testSetup.Origin.Prime(queryPrime)
+			require.Nil(t, err)
+			err = testSetup.Target.Prime(queryPrime)
+			require.Nil(t, err)
+
+			err = proxy.Query("INSERT INTO myks.users (name) VALUES (?)", "john").Exec()
+			require.Nil(t, err)
+
+			// EXECUTE message shall not contain request ID
+			originQueryLog, _ := testSetup.Origin.GetLogsByType(simulacron.QueryTypeExecute)
+			queries := originQueryLog.Datacenters[0].Nodes[0].Queries
+			require.NotContains(t, queries[len(queries)-1].Frame.CustomPayload, "request-id")
+		})
+	}
 }
 
 func TestRequestIdTracing(t *testing.T) {

@@ -19,7 +19,7 @@ func NewQueryModifier(timeUuidGenerator TimeUuidGenerator, conf *config.Config) 
 	return &QueryModifier{timeUuidGenerator: timeUuidGenerator, conf: conf}
 }
 
-func (recv *QueryModifier) enrichRequest(currentKeyspace string, context *frameDecodeContext) (*frameDecodeContext, []*statementReplacedTerms, error) {
+func (recv *QueryModifier) enrichRequest(protoVer primitive.ProtocolVersion, currentKeyspace string, context *frameDecodeContext) (*frameDecodeContext, []*statementReplacedTerms, error) {
 	replacedTerms := []*statementReplacedTerms{}
 	var err error
 	reEnc := false
@@ -34,7 +34,7 @@ func (recv *QueryModifier) enrichRequest(currentKeyspace string, context *frameD
 
 	// add request ID for distributed tracing
 	if recv.conf.EnableTracing {
-		reEnc, err = recv.assignRequestId(context)
+		reEnc, err = recv.assignRequestId(protoVer, context)
 	}
 	if err != nil {
 		return nil, nil, err
@@ -195,7 +195,10 @@ func queryOrPrepareRequiresQueryReplacement(statementsQueryData []*statementQuer
 	return requiresQueryReplacement(statementsQueryData[0]), statementsQueryData[0], nil
 }
 
-func (recv *QueryModifier) assignRequestId(context *frameDecodeContext) (bool, error) {
+func (recv *QueryModifier) assignRequestId(protoVer primitive.ProtocolVersion, context *frameDecodeContext) (bool, error) {
+	if protoVer < primitive.ProtocolVersion4 {
+		return false, nil
+	}
 	op := context.frame.Header.OpCode
 	if op != primitive.OpCodePrepare && op != primitive.OpCodeExecute && op != primitive.OpCodeQuery && op != primitive.OpCodeBatch {
 		return false, nil
