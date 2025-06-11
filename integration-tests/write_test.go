@@ -243,7 +243,6 @@ func TestRequestIdTracingSkipped(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			testSetup, err := tt.initFunc()
 			require.Nil(t, err)
-			defer testSetup.Cleanup()
 
 			// Connect to proxy as a "client"
 			proxy, err := utils.ConnectToCluster("127.0.0.1", "", "", 14002)
@@ -252,7 +251,6 @@ func TestRequestIdTracingSkipped(t *testing.T) {
 				t.Log("Unable to connect to proxy session.")
 				t.Fatal(err)
 			}
-			defer proxy.Close()
 
 			queryPrime :=
 				simulacron.WhenQuery(
@@ -274,6 +272,9 @@ func TestRequestIdTracingSkipped(t *testing.T) {
 			originQueryLog, _ := testSetup.Origin.GetLogsByType(simulacron.QueryTypeExecute)
 			queries := originQueryLog.Datacenters[0].Nodes[0].Queries
 			require.NotContains(t, queries[len(queries)-1].Frame.CustomPayload, "request-id")
+
+			proxy.Close()
+			testSetup.Cleanup()
 		})
 	}
 }
