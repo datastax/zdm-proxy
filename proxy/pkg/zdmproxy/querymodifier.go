@@ -201,6 +201,9 @@ func (recv *QueryModifier) canAssignRequestId(protoVer primitive.ProtocolVersion
 	if protoVer < primitive.ProtocolVersion4 {
 		return false
 	}
+	if decodedFrame == nil || decodedFrame.Body == nil {
+		return false
+	}
 	op := decodedFrame.Header.OpCode
 	if op != primitive.OpCodePrepare && op != primitive.OpCodeExecute && op != primitive.OpCodeQuery && op != primitive.OpCodeBatch {
 		return false
