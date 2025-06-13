@@ -31,6 +31,7 @@ type ZdmProxy struct {
 	proxyTlsConfig *common.ProxyTlsConfig
 
 	timeUuidGenerator TimeUuidGenerator
+	rateLimiters      *RateLimiters
 
 	primaryCluster    common.ClusterType
 	readMode          common.ReadMode
@@ -110,6 +111,10 @@ func (p *ZdmProxy) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("could not create timeuuid generator: %w", err)
 	}
+
+	p.lock.Lock()
+	p.rateLimiters = InitializeRateLimiters(p.Conf)
+	p.lock.Unlock()
 
 	p.lock.Lock()
 	p.proxyTlsConfig, err = p.Conf.ParseProxyTlsConfig(true)
@@ -565,6 +570,7 @@ func (p *ZdmProxy) handleNewConnection(clientConn net.Conn) {
 		originHost,
 		targetHost,
 		p.timeUuidGenerator,
+		p.rateLimiters,
 		p.readMode,
 		p.primaryCluster,
 		p.systemQueriesMode)

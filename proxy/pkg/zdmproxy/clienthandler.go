@@ -114,6 +114,7 @@ type ClientHandler struct {
 	queryModifier     *QueryModifier
 	parameterModifier *ParameterModifier
 	timeUuidGenerator TimeUuidGenerator
+	rateLimiters      *RateLimiters
 
 	// not used atm but should be used when a protocol error occurs after #68 has been addressed
 	clientHandlerShutdownRequestCancelFn context.CancelFunc
@@ -144,6 +145,7 @@ func NewClientHandler(
 	originHost *Host,
 	targetHost *Host,
 	timeUuidGenerator TimeUuidGenerator,
+	rateLimiters *RateLimiters,
 	readMode common.ReadMode,
 	primaryCluster common.ClusterType,
 	systemQueriesMode common.SystemQueriesMode) (*ClientHandler, error) {
@@ -323,9 +325,10 @@ func NewClientHandler(
 		forwardSystemQueriesToTarget:         systemQueriesMode == common.SystemQueriesModeTarget,
 		forwardAuthToTarget:                  forwardAuthToTarget,
 		targetCredsOnClientRequest:           targetCredsOnClientRequest,
-		queryModifier:                        NewQueryModifier(timeUuidGenerator, conf),
+		queryModifier:                        NewQueryModifier(timeUuidGenerator, rateLimiters, conf),
 		parameterModifier:                    NewParameterModifier(timeUuidGenerator),
 		timeUuidGenerator:                    timeUuidGenerator,
+		rateLimiters:                         rateLimiters,
 		clientHandlerShutdownRequestCancelFn: clientHandlerShutdownRequestCancelFn,
 		clientHandlerShutdownRequestContext:  clientHandlerShutdownRequestContext,
 	}, nil

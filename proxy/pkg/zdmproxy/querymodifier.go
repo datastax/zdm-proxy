@@ -12,10 +12,11 @@ import (
 type QueryModifier struct {
 	timeUuidGenerator TimeUuidGenerator
 	conf              *config.Config
+	rateLimiters      *RateLimiters
 }
 
-func NewQueryModifier(timeUuidGenerator TimeUuidGenerator, conf *config.Config) *QueryModifier {
-	return &QueryModifier{timeUuidGenerator: timeUuidGenerator, conf: conf}
+func NewQueryModifier(timeUuidGenerator TimeUuidGenerator, rateLimiters *RateLimiters, conf *config.Config) *QueryModifier {
+	return &QueryModifier{timeUuidGenerator: timeUuidGenerator, conf: conf, rateLimiters: rateLimiters}
 }
 
 // replaceQueryString modifies the incoming request in certain conditions:
@@ -164,6 +165,18 @@ func (recv *QueryModifier) assignRequestId(protoVer primitive.ProtocolVersion, d
 	}
 
 	customPayload := decodedFrame.Body.CustomPayload
+	allow := recv.rateLimiters.Allow(RequestIdTracingLimit)
+	if !allow {
+		// remove ID potentially provided by the upstream application
+		if customPayload != nil {
+			if _, ok := customPayload[recv.conf.RequestIdKey]; !ok {
+				delete(customPayload, recv.conf.RequestIdKey)
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+
 	if customPayload == nil {
 		customPayload = make(map[string][]byte)
 	}

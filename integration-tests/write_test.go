@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestBothWriteTimeout(t *testing.T) {
@@ -418,4 +419,51 @@ func TestRequestIdTracing(t *testing.T) {
 			buff.Reset()
 		})
 	}
+}
+
+func TestRequestIdTracingRateLimited(t *testing.T) {
+	var buff bytes.Buffer
+	buffWriter := bufio.NewWriter(&buff)
+	log.SetOutput(buffWriter)
+
+	c := setup.NewTestConfig("", "")
+	c.EnableTracing = true
+	c.TracingRateLimit = 5
+	testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodesAndConfig(t, true, false, 1, c, nil)
+	require.Nil(t, err)
+	defer testSetup.Cleanup()
+
+	// Connect to proxy as a "client"
+	proxy, err := utils.ConnectToCluster("127.0.0.1", "", "", 14002)
+
+	if err != nil {
+		t.Log("Unable to connect to proxy session.")
+		t.Fatal(err)
+	}
+	defer proxy.Close()
+
+	queryPrime :=
+		simulacron.WhenQuery(
+			"INSERT INTO myks.users (name) VALUES (?)",
+			simulacron.
+				NewWhenQueryOptions().
+				WithPositionalParameter(simulacron.DataTypeText, "john")).
+			ThenSuccess()
+
+	err = testSetup.Origin.Prime(queryPrime)
+	require.Nil(t, err)
+	err = testSetup.Target.Prime(queryPrime)
+	require.Nil(t, err)
+
+	time.Sleep(1 * time.Second) // wait to have a new rate-limit bucket
+	for range c.TracingRateLimit * 3 {
+		err = proxy.Query("INSERT INTO myks.users (name) VALUES (?)", "john").Exec()
+		require.Nil(t, err)
+	}
+
+	err = buffWriter.Flush()
+	require.Nil(t, err)
+	allLogs := buff.String()
+
+	require.Equal(t, c.TracingRateLimit, strings.Count(allLogs, "Request id"))
 }

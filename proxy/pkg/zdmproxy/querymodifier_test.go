@@ -161,7 +161,7 @@ func TestReplaceQueryString(t *testing.T) {
 			require.Nil(t, err)
 			conf := config.New()
 			conf.ReplaceCqlFunctions = true
-			queryModifier := NewQueryModifier(timeUuidGenerator, conf)
+			queryModifier := NewQueryModifier(timeUuidGenerator, nil, conf)
 			decodedFrame, statementQuery, err := context.GetOrDecodeAndInspect("", timeUuidGenerator)
 			require.Nil(t, err)
 			_, decodedFrame, statementQuery, statementsReplacedTerms, err := queryModifier.replaceQueryString(decodedFrame, statementQuery)
