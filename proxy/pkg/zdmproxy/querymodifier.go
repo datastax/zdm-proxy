@@ -1,7 +1,6 @@
 package zdmproxy
 
 import (
-	"errors"
 	"fmt"
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
@@ -19,58 +18,18 @@ func NewQueryModifier(timeUuidGenerator TimeUuidGenerator, conf *config.Config) 
 	return &QueryModifier{timeUuidGenerator: timeUuidGenerator, conf: conf}
 }
 
-func (recv *QueryModifier) enrichRequest(protoVer primitive.ProtocolVersion, currentKeyspace string, context *frameDecodeContext) (*frameDecodeContext, []*statementReplacedTerms, error) {
-	replacedTerms := []*statementReplacedTerms{}
-	var err error
-	reEnc := false
-
-	// replace CQL functions
-	if recv.conf.ReplaceCqlFunctions {
-		reEnc, context, replacedTerms, err = recv.replaceQueryString(currentKeyspace, context)
-	}
-	if err != nil {
-		return nil, nil, err
-	}
-
-	// add request ID for distributed tracing
-	if recv.conf.EnableTracing {
-		reEnc, err = recv.assignRequestId(protoVer, context)
-	}
-	if err != nil {
-		return nil, nil, err
-	}
-
-	if reEnc {
-		newRawFrame, err := defaultCodec.ConvertToRawFrame(context.decodedFrame)
-		if err != nil {
-			return nil, nil, fmt.Errorf("could not convert modified frame to raw frame: %w", err)
-		}
-		return NewInitializedFrameDecodeContext(newRawFrame, context.decodedFrame, context.statementsQueryData), replacedTerms, nil
-	}
-
-	return context, replacedTerms, err
-}
-
 // replaceQueryString modifies the incoming request in certain conditions:
 //   - the request is a QUERY or PREPARE
 //   - and it contains now() function calls
-func (recv *QueryModifier) replaceQueryString(currentKeyspace string, context *frameDecodeContext) (bool, *frameDecodeContext, []*statementReplacedTerms, error) {
-	decodedFrame, statementsQueryData, err := context.GetOrDecodeAndInspect(currentKeyspace, recv.timeUuidGenerator)
-	if err != nil {
-		if errors.Is(err, NotInspectableErr) {
-			return false, context, []*statementReplacedTerms{}, nil
-		}
-		return false, nil, nil, fmt.Errorf("could not check whether query needs replacement for a '%v' request: %w",
-			context.GetRawFrame().Header.OpCode.String(), err)
-	}
+func (recv *QueryModifier) replaceQueryString(decodedFrame *frame.Frame, statementsQueryData []*statementQueryData) (bool, *frame.Frame, []*statementQueryData, []*statementReplacedTerms, error) {
+	requestType := decodedFrame.Header.OpCode.String()
 
-	requestType := context.GetRawFrame().Header.OpCode.String()
-
+	var err error
 	var newFrame *frame.Frame
 	var replacedTerms []*statementReplacedTerms
 	var newStatementsQueryData []*statementQueryData
 
-	switch context.GetRawFrame().Header.OpCode {
+	switch decodedFrame.Header.OpCode {
 	case primitive.OpCodeBatch:
 		newFrame, replacedTerms, newStatementsQueryData, err = recv.replaceQueryInBatchMessage(decodedFrame, statementsQueryData)
 	case primitive.OpCodeQuery:
@@ -83,10 +42,10 @@ func (recv *QueryModifier) replaceQueryString(currentKeyspace string, context *f
 	}
 
 	if err != nil {
-		return false, nil, nil, fmt.Errorf("could not replace query string in request '%v': %w", requestType, err)
+		return false, nil, nil, nil, fmt.Errorf("could not replace query string in request '%v': %w", requestType, err)
 	}
 
-	return true, NewInitializedFrameDecodeContext(context.frame, newFrame, newStatementsQueryData), replacedTerms, nil
+	return true, newFrame, newStatementsQueryData, replacedTerms, nil
 }
 
 func (recv *QueryModifier) replaceQueryInBatchMessage(
@@ -195,19 +154,15 @@ func queryOrPrepareRequiresQueryReplacement(statementsQueryData []*statementQuer
 	return requiresQueryReplacement(statementsQueryData[0]), statementsQueryData[0], nil
 }
 
-func (recv *QueryModifier) assignRequestId(protoVer primitive.ProtocolVersion, context *frameDecodeContext) (bool, error) {
+func (recv *QueryModifier) assignRequestId(protoVer primitive.ProtocolVersion, decodedFrame *frame.Frame) (bool, error) {
 	if protoVer < primitive.ProtocolVersion4 {
 		return false, nil
 	}
-	op := context.frame.Header.OpCode
+	op := decodedFrame.Header.OpCode
 	if op != primitive.OpCodePrepare && op != primitive.OpCodeExecute && op != primitive.OpCodeQuery && op != primitive.OpCodeBatch {
 		return false, nil
 	}
 
-	decodedFrame, err := context.GetOrDecodeFrame()
-	if err != nil {
-		return false, fmt.Errorf("could not decode frame: %w", err)
-	}
 	customPayload := decodedFrame.Body.CustomPayload
 	if customPayload == nil {
 		customPayload = make(map[string][]byte)
@@ -219,7 +174,7 @@ func (recv *QueryModifier) assignRequestId(protoVer primitive.ProtocolVersion, c
 			return false, err
 		}
 		customPayload[recv.conf.RequestIdKey] = reqId
-		context.decodedFrame.SetCustomPayload(customPayload)
+		decodedFrame.SetCustomPayload(customPayload)
 		return true, nil
 	}
 	return false, nil

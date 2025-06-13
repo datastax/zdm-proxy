@@ -162,7 +162,11 @@ func TestReplaceQueryString(t *testing.T) {
 			conf := config.New()
 			conf.ReplaceCqlFunctions = true
 			queryModifier := NewQueryModifier(timeUuidGenerator, conf)
-			newContext, statementsReplacedTerms, err := queryModifier.enrichRequest(primitive.ProtocolVersion4, "", context)
+			decodedFrame, statementQuery, err := context.GetOrDecodeAndInspect("", timeUuidGenerator)
+			require.Nil(t, err)
+			_, decodedFrame, statementQuery, statementsReplacedTerms, err := queryModifier.replaceQueryString(decodedFrame, statementQuery)
+			newRawFrame, err := defaultCodec.ConvertToRawFrame(decodedFrame)
+			newContext := NewInitializedFrameDecodeContext(newRawFrame, decodedFrame, statementQuery)
 			require.Nil(t, err)
 			require.Equal(t, len(test.positionsReplaced), len(statementsReplacedTerms))
 			require.Equal(t, len(test.replacedTerms), len(statementsReplacedTerms))

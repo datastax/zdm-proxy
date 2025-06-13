@@ -1364,8 +1364,7 @@ func (ch *ClientHandler) forwardRequest(request *frame.RawFrame, customResponseC
 	log.Tracef("Request frame: %v", request)
 
 	currentKeyspace := ch.LoadCurrentKeyspace()
-	context := NewFrameDecodeContext(request)
-	context, replacedTerms, err := ch.queryModifier.enrichRequest(ch.clientConnector.minProtoVer, currentKeyspace, context)
+	context, replacedTerms, err := ch.modifyRequestIfNeeded(request, currentKeyspace)
 
 	if err != nil {
 		return err
@@ -1409,6 +1408,54 @@ func (ch *ClientHandler) forwardRequest(request *frame.RawFrame, customResponseC
 		return err
 	}
 	return nil
+}
+
+func (ch *ClientHandler) modifyRequestIfNeeded(request *frame.RawFrame, currentKeyspace string) (*frameDecodeContext, []*statementReplacedTerms, error) {
+	context := NewFrameDecodeContext(request)
+	decodedFrame, err := context.GetOrDecodeFrame()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var statementsQueryData []*statementQueryData = nil
+	var replacedTerms = []*statementReplacedTerms{}
+	var modifiedFrame, modifiedQuery bool
+
+	// replace runtime-evaluated CQL functions in queries
+	if ch.conf.ReplaceCqlFunctions {
+		decodedFrame, statementsQueryData, err = context.GetOrDecodeAndInspect(currentKeyspace, ch.timeUuidGenerator)
+		if err != nil {
+			if !errors.Is(err, NotInspectableErr) {
+				return nil, nil, fmt.Errorf("could not check whether query needs replacement for a '%v' request: %w",
+					decodedFrame.Header.OpCode.String(), err)
+			}
+		} else {
+			modifiedQuery, decodedFrame, statementsQueryData, replacedTerms, err =
+				ch.queryModifier.replaceQueryString(decodedFrame, statementsQueryData)
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+	}
+
+	// add request ID for distributed tracing
+	if ch.conf.EnableTracing {
+		modifiedFrame, err = ch.queryModifier.assignRequestId(ch.clientConnector.minProtoVer, decodedFrame)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	if modifiedFrame || modifiedQuery {
+		// re-encode the frame if original request has been modified
+		newRawFrame, err := defaultCodec.ConvertToRawFrame(decodedFrame)
+		if err != nil {
+			return nil, nil, fmt.Errorf("could not convert modified frame to raw frame: %w", err)
+		}
+		return NewInitializedFrameDecodeContext(newRawFrame, decodedFrame, statementsQueryData), replacedTerms, nil
+	}
+
+	return context, replacedTerms, nil
 }
 
 // executeRequest executes the forward decision and waits for one or two responses, then returns the response
