@@ -220,8 +220,9 @@ func TestWriteSuccessful(t *testing.T) {
 
 func TestRequestIdTracingSkipped(t *testing.T) {
 	tests := []struct {
-		name     string
-		initFunc func(t *testing.T) (*setup.SimulacronTestSetup, error)
+		name        string
+		initFunc    func(t *testing.T) (*setup.SimulacronTestSetup, error)
+		clientReqId []byte
 	}{
 		{
 			name: "config_disabled",
@@ -230,10 +231,17 @@ func TestRequestIdTracingSkipped(t *testing.T) {
 			},
 		},
 		{
+			name: "config_disabled_client_id",
+			initFunc: func(t *testing.T) (*setup.SimulacronTestSetup, error) {
+				return setup.NewSimulacronTestSetup(t)
+			},
+			clientReqId: []byte("client"),
+		},
+		{
 			name: "proto_ver_before_4",
 			initFunc: func(t *testing.T) (*setup.SimulacronTestSetup, error) {
 				c := setup.NewTestConfig("", "")
-				c.EnableTracing = true
+				c.TracingEnabled = true
 				c.ControlConnMaxProtocolVersion = "3"
 				return setup.NewSimulacronTestSetupWithSessionAndNodesAndConfig(t, true, false, 1, c,
 					&simulacron.ClusterVersion{"3.0", "3.0"})
@@ -268,7 +276,13 @@ func TestRequestIdTracingSkipped(t *testing.T) {
 			err = testSetup.Target.Prime(queryPrime)
 			require.Nil(t, err)
 
-			err = proxy.Query("INSERT INTO myks.users (name) VALUES (?)", "john").Exec()
+			qry := proxy.Query("INSERT INTO myks.users (name) VALUES (?)", "john")
+			if tt.clientReqId != nil {
+				customPayload := make(map[string][]byte)
+				customPayload["request-id"] = tt.clientReqId
+				qry.CustomPayload(customPayload)
+			}
+			err = qry.Exec()
 			require.Nil(t, err)
 
 			// EXECUTE message shall not contain request ID
@@ -285,7 +299,7 @@ func TestRequestIdTracing(t *testing.T) {
 	log.SetOutput(buffWriter)
 
 	c := setup.NewTestConfig("", "")
-	c.EnableTracing = true
+	c.TracingEnabled = true
 	testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodesAndConfig(t, true, false, 1, c, nil)
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
@@ -427,7 +441,7 @@ func TestRequestIdTracingRateLimited(t *testing.T) {
 	log.SetOutput(buffWriter)
 
 	c := setup.NewTestConfig("", "")
-	c.EnableTracing = true
+	c.TracingEnabled = true
 	c.TracingRateLimit = 5
 	testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodesAndConfig(t, true, false, 1, c, nil)
 	require.Nil(t, err)

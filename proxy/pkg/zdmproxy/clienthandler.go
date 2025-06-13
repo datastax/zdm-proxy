@@ -1441,9 +1441,16 @@ func (ch *ClientHandler) modifyRequestIfNeeded(request *frame.RawFrame, currentK
 		}
 	}
 
-	// add request ID for distributed tracing
-	if ch.conf.EnableTracing {
+	// handle unique request ID
+	if ch.conf.TracingEnabled {
+		// add request ID for distributed tracing
 		modifiedFrame, err = ch.queryModifier.assignRequestId(ch.clientConnector.minProtoVer, decodedFrame)
+		if err != nil {
+			return nil, nil, err
+		}
+	} else {
+		// remove request ID potentially provided by the upstream application
+		modifiedFrame, err = ch.queryModifier.removeRequestId(ch.clientConnector.minProtoVer, decodedFrame)
 		if err != nil {
 			return nil, nil, err
 		}

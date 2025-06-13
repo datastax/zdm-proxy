@@ -156,39 +156,54 @@ func queryOrPrepareRequiresQueryReplacement(statementsQueryData []*statementQuer
 }
 
 func (recv *QueryModifier) assignRequestId(protoVer primitive.ProtocolVersion, decodedFrame *frame.Frame) (bool, error) {
-	if protoVer < primitive.ProtocolVersion4 {
-		return false, nil
-	}
-	op := decodedFrame.Header.OpCode
-	if op != primitive.OpCodePrepare && op != primitive.OpCodeExecute && op != primitive.OpCodeQuery && op != primitive.OpCodeBatch {
+	if !recv.canAssignRequestId(protoVer, decodedFrame) {
 		return false, nil
 	}
 
-	customPayload := decodedFrame.Body.CustomPayload
 	allow := recv.rateLimiters.Allow(RequestIdTracingLimit)
 	if !allow {
 		// remove ID potentially provided by the upstream application
-		if customPayload != nil {
-			if _, ok := customPayload[recv.conf.RequestIdKey]; !ok {
-				delete(customPayload, recv.conf.RequestIdKey)
-				return true, nil
-			}
-		}
-		return false, nil
+		return recv.removeRequestId(protoVer, decodedFrame)
 	}
 
+	customPayload := decodedFrame.Body.CustomPayload
 	if customPayload == nil {
 		customPayload = make(map[string][]byte)
 	}
-	if _, ok := customPayload[recv.conf.RequestIdKey]; !ok {
+	if _, ok := customPayload[recv.conf.TracingRequestIdKey]; !ok {
 		// generate new request ID
 		reqId, err := uuid.New().MarshalBinary()
 		if err != nil {
 			return false, err
 		}
-		customPayload[recv.conf.RequestIdKey] = reqId
+		customPayload[recv.conf.TracingRequestIdKey] = reqId
 		decodedFrame.SetCustomPayload(customPayload)
 		return true, nil
 	}
 	return false, nil
+}
+
+func (recv *QueryModifier) removeRequestId(protoVer primitive.ProtocolVersion, decodedFrame *frame.Frame) (bool, error) {
+	if !recv.canAssignRequestId(protoVer, decodedFrame) {
+		return false, nil
+	}
+	customPayload := decodedFrame.Body.CustomPayload
+	if customPayload != nil {
+		if _, ok := customPayload[recv.conf.TracingRequestIdKey]; ok {
+			delete(customPayload, recv.conf.TracingRequestIdKey)
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (recv *QueryModifier) canAssignRequestId(protoVer primitive.ProtocolVersion, decodedFrame *frame.Frame) bool {
+	if protoVer < primitive.ProtocolVersion4 {
+		return false
+	}
+	op := decodedFrame.Header.OpCode
+	if op != primitive.OpCodePrepare && op != primitive.OpCodeExecute && op != primitive.OpCodeQuery && op != primitive.OpCodeBatch {
+		return false
+	}
+	return true
 }

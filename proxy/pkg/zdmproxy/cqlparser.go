@@ -337,7 +337,7 @@ func (recv *frameDecodeContext) GetRequestId(conf *config.Config) []byte {
 	if decodedFrame.Body == nil || decodedFrame.Body.CustomPayload == nil {
 		return nil
 	}
-	return recv.decodedFrame.Body.CustomPayload[conf.RequestIdKey]
+	return recv.decodedFrame.Body.CustomPayload[conf.TracingRequestIdKey]
 }
 
 func (recv *frameDecodeContext) inspectStatements(currentKeyspace string, timeUuidGenerator TimeUuidGenerator) error {

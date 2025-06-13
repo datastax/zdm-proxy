@@ -18,7 +18,7 @@ type RateLimiters struct {
 
 func InitializeRateLimiters(conf *config.Config) *RateLimiters {
 	limiters := newRateLimiters()
-	if conf.EnableTracing && conf.TracingRateLimit > 0 {
+	if conf.TracingEnabled && conf.TracingRateLimit > 0 {
 		limiters.add(RequestIdTracingLimit, conf.TracingRateLimit, conf.TracingRateLimit)
 	}
 	return limiters

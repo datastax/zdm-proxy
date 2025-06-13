@@ -26,9 +26,9 @@ type Config struct {
 	AsyncHandshakeTimeoutMs       int    `default:"4000" split_words:"true" yaml:"async_handshake_timeout_ms"`
 	LogLevel                      string `default:"INFO" split_words:"true" yaml:"log_level"`
 	ControlConnMaxProtocolVersion string `default:"DseV2" split_words:"true" yaml:"control_conn_max_protocol_version"` // Numeric Cassandra OSS protocol version or DseV1 / DseV2
-	EnableTracing                 bool   `default:"false" split_words:"true" yaml:"enable_tracing"`
+	TracingEnabled                bool   `default:"false" split_words:"true" yaml:"tracing_enabled"`
 	TracingRateLimit              int    `default:"0" split_words:"true" yaml:"tracing_rate_limit"`
-	RequestIdKey                  string `default:"request-id" split_words:"true" yaml:"request_id_key"`
+	TracingRequestIdKey           string `default:"request-id" split_words:"true" yaml:"tracing_request_id_key"`
 
 	// Proxy Topology (also known as system.peers "virtualization") bucket
 
