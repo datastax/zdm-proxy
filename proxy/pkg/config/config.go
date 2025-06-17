@@ -27,6 +27,12 @@ type Config struct {
 	LogLevel                      string `default:"INFO" split_words:"true" yaml:"log_level"`
 	ControlConnMaxProtocolVersion string `default:"DseV2" split_words:"true" yaml:"control_conn_max_protocol_version"` // Numeric Cassandra OSS protocol version or DseV1 / DseV2
 
+	// Tracing (also known as distributed tracing - request id generation and logging)
+
+	TracingEnabled      bool   `default:"false" split_words:"true" yaml:"tracing_enabled"`
+	TracingRateLimit    int    `default:"0" split_words:"true" yaml:"tracing_rate_limit"`
+	TracingRequestIdKey string `default:"request-id" split_words:"true" yaml:"tracing_request_id_key"`
+
 	// Proxy Topology (also known as system.peers "virtualization") bucket
 
 	ProxyTopologyIndex     int    `default:"0" split_words:"true" yaml:"proxy_topology_index"`

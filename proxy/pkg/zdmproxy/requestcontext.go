@@ -1,6 +1,7 @@
 package zdmproxy
 
 import (
+	"encoding/hex"
 	"fmt"
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/zdm-proxy/proxy/pkg/common"
@@ -90,6 +91,7 @@ type RequestContext interface {
 }
 
 type requestContextImpl struct {
+	requestId             []byte
 	request               *frame.RawFrame
 	requestInfo           RequestInfo
 	originResponse        *frame.RawFrame
@@ -101,8 +103,9 @@ type requestContextImpl struct {
 	customResponseChannel chan *customResponse
 }
 
-func NewRequestContext(req *frame.RawFrame, requestInfo RequestInfo, startTime time.Time, customResponseChannel chan *customResponse) *requestContextImpl {
+func NewRequestContext(reqId []byte, req *frame.RawFrame, requestInfo RequestInfo, startTime time.Time, customResponseChannel chan *customResponse) *requestContextImpl {
 	return &requestContextImpl{
+		requestId:             reqId,
 		request:               req,
 		requestInfo:           requestInfo,
 		originResponse:        nil,
@@ -188,7 +191,11 @@ func (recv *requestContextImpl) SetResponse(nodeMetrics *metrics.NodeMetrics, f 
 		recv.timer.Stop() // if timer is not stopped, there's a memory leak because the timer callback holds references!
 	}
 
-	log.Tracef("Received response from %v for query with stream id %d", connectorType, f.Header.StreamId)
+	if recv.requestId != nil {
+		log.Infof("Received response from %v for query with stream id %d and request id %v (hex)", connectorType, f.Header.StreamId, hex.EncodeToString(recv.requestId))
+	} else {
+		log.Tracef("Received response from %v for query with stream id %d", connectorType, f.Header.StreamId)
+	}
 
 	if recv.GetRequestInfo().ShouldBeTrackedInMetrics() {
 		switch connectorType {

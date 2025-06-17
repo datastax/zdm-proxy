@@ -114,6 +114,7 @@ type ClientHandler struct {
 	queryModifier     *QueryModifier
 	parameterModifier *ParameterModifier
 	timeUuidGenerator TimeUuidGenerator
+	rateLimiters      *RateLimiters
 
 	// not used atm but should be used when a protocol error occurs after #68 has been addressed
 	clientHandlerShutdownRequestCancelFn context.CancelFunc
@@ -144,6 +145,7 @@ func NewClientHandler(
 	originHost *Host,
 	targetHost *Host,
 	timeUuidGenerator TimeUuidGenerator,
+	rateLimiters *RateLimiters,
 	readMode common.ReadMode,
 	primaryCluster common.ClusterType,
 	systemQueriesMode common.SystemQueriesMode) (*ClientHandler, error) {
@@ -323,9 +325,10 @@ func NewClientHandler(
 		forwardSystemQueriesToTarget:         systemQueriesMode == common.SystemQueriesModeTarget,
 		forwardAuthToTarget:                  forwardAuthToTarget,
 		targetCredsOnClientRequest:           targetCredsOnClientRequest,
-		queryModifier:                        NewQueryModifier(timeUuidGenerator),
+		queryModifier:                        NewQueryModifier(timeUuidGenerator, rateLimiters, conf),
 		parameterModifier:                    NewParameterModifier(timeUuidGenerator),
 		timeUuidGenerator:                    timeUuidGenerator,
+		rateLimiters:                         rateLimiters,
 		clientHandlerShutdownRequestCancelFn: clientHandlerShutdownRequestCancelFn,
 		clientHandlerShutdownRequestContext:  clientHandlerShutdownRequestContext,
 	}, nil
@@ -1364,12 +1367,7 @@ func (ch *ClientHandler) forwardRequest(request *frame.RawFrame, customResponseC
 	log.Tracef("Request frame: %v", request)
 
 	currentKeyspace := ch.LoadCurrentKeyspace()
-	context := NewFrameDecodeContext(request)
-	var replacedTerms []*statementReplacedTerms
-	var err error
-	if ch.conf.ReplaceCqlFunctions {
-		context, replacedTerms, err = ch.queryModifier.replaceQueryString(currentKeyspace, context)
-	}
+	context, replacedTerms, err := ch.modifyRequestIfNeeded(request, currentKeyspace)
 
 	if err != nil {
 		return err
@@ -1377,6 +1375,18 @@ func (ch *ClientHandler) forwardRequest(request *frame.RawFrame, customResponseC
 	requestInfo, err := buildRequestInfo(
 		context, replacedTerms, ch.preparedStatementCache, ch.metricHandler, currentKeyspace, ch.primaryCluster,
 		ch.forwardSystemQueriesToTarget, ch.topologyConfig.VirtualizationEnabled, ch.forwardAuthToTarget, ch.timeUuidGenerator)
+
+	switch requestInfo.(type) {
+	case *InterceptedRequestInfo:
+		// do not log system queries
+		break
+	default:
+		reqId := context.GetRequestId(ch.conf)
+		if reqId != nil {
+			log.Infof("Request id %v (hex) for query with stream id %d and %v", hex.EncodeToString(reqId), request.Header.StreamId, request.Header.OpCode)
+		}
+	}
+
 	if err != nil {
 		if errVal, ok := err.(*UnpreparedExecuteError); ok {
 			unpreparedFrame, err := createUnpreparedFrame(errVal)
@@ -1401,6 +1411,60 @@ func (ch *ClientHandler) forwardRequest(request *frame.RawFrame, customResponseC
 		return err
 	}
 	return nil
+}
+
+func (ch *ClientHandler) modifyRequestIfNeeded(request *frame.RawFrame, currentKeyspace string) (*frameDecodeContext, []*statementReplacedTerms, error) {
+	context := NewFrameDecodeContext(request)
+	decodedFrame, err := context.GetOrDecodeFrame()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var statementsQueryData []*statementQueryData = nil
+	var replacedTerms = []*statementReplacedTerms{}
+	var modifiedFrame, modifiedQuery bool
+
+	// replace runtime-evaluated CQL functions in queries
+	if ch.conf.ReplaceCqlFunctions {
+		decodedFrame, statementsQueryData, err = context.GetOrDecodeAndInspect(currentKeyspace, ch.timeUuidGenerator)
+		if err != nil {
+			if !errors.Is(err, NotInspectableErr) {
+				return nil, nil, fmt.Errorf("could not check whether query needs replacement for a '%v' request: %w",
+					decodedFrame.Header.OpCode.String(), err)
+			} else {
+				decodedFrame, err = context.GetOrDecodeFrame()
+			}
+		} else {
+			modifiedQuery, decodedFrame, statementsQueryData, replacedTerms, err =
+				ch.queryModifier.replaceQueryString(decodedFrame, statementsQueryData)
+		}
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// handle unique request ID
+	if ch.conf.TracingEnabled {
+		// add request ID for distributed tracing
+		modifiedFrame, err = ch.queryModifier.assignRequestId(ch.clientConnector.minProtoVer, decodedFrame)
+	} else {
+		// remove request ID potentially provided by the upstream application
+		modifiedFrame, err = ch.queryModifier.removeRequestId(ch.clientConnector.minProtoVer, decodedFrame)
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if modifiedFrame || modifiedQuery {
+		// re-encode the frame if original request has been modified
+		newRawFrame, err := defaultCodec.ConvertToRawFrame(decodedFrame)
+		if err != nil {
+			return nil, nil, fmt.Errorf("could not convert modified frame to raw frame: %w", err)
+		}
+		return NewInitializedFrameDecodeContext(newRawFrame, decodedFrame, statementsQueryData), replacedTerms, nil
+	}
+
+	return context, replacedTerms, nil
 }
 
 // executeRequest executes the forward decision and waits for one or two responses, then returns the response
@@ -1446,7 +1510,7 @@ func (ch *ClientHandler) executeRequest(
 		return nil
 	}
 
-	reqCtx := NewRequestContext(f, requestInfo, overallRequestStartTime, customResponseChannel)
+	reqCtx := NewRequestContext(frameContext.GetRequestId(ch.conf), f, requestInfo, overallRequestStartTime, customResponseChannel)
 	var contextHoldersMap *sync.Map
 	if fwdDecision == forwardToAsyncOnly {
 		contextHoldersMap = ch.asyncRequestContextHolders // different map because of stream id collision
