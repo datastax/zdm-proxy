@@ -149,7 +149,9 @@ func (c *cqlConn) StartResponseLoop() {
 		for c.ctx.Err() == nil {
 			f, err := defaultCodec.DecodeFrame(c.conn)
 			if err != nil {
-				if (!errors.Is(err, io.EOF) && !IsClosingErr(err)) || c.ctx.Err() == nil {
+				if isDisconnectErr(err) {
+					log.Infof("[%v] Control connection to %v disconnected", c.controlConn.connConfig.GetClusterType(), c.conn.RemoteAddr().String())
+				} else {
 					log.Errorf("Failed to read/decode frame on cql connection %v: %v", c, err)
 				}
 				c.cancelFn()
@@ -206,7 +208,9 @@ func (c *cqlConn) StartRequestLoop() {
 			case f := <-c.outgoingCh:
 				err := defaultCodec.EncodeFrame(f, c.conn)
 				if err != nil {
-					if (!errors.Is(err, io.EOF) && !IsClosingErr(err)) || c.ctx.Err() == nil {
+					if isDisconnectErr(err) {
+						log.Infof("[%v] Control connection to %v disconnected", c.controlConn.connConfig.GetClusterType(), c.conn.RemoteAddr().String())
+					} else {
 						log.Errorf("Failed to write/encode frame on cql connection %v: %v", c, err)
 					}
 					c.cancelFn()
