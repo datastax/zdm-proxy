@@ -465,7 +465,7 @@ func handleConnectionError(err error, ctx context.Context, cancelFn context.Canc
 	if errors.Is(err, ShutdownErr) {
 		return
 	}
-	if errors.Is(err, io.EOF) || IsPeerDisconnect(err) || IsClosingErr(err) {
+	if isDisconnectErr(err) {
 		log.Infof("[%v] %v disconnected", logPrefix, connectionAddr)
 	} else {
 		log.Errorf("[%v] error %v: %v", logPrefix, operation, err)
@@ -474,6 +474,10 @@ func handleConnectionError(err error, ctx context.Context, cancelFn context.Canc
 	if ctx.Err() == nil {
 		cancelFn()
 	}
+}
+
+func isDisconnectErr(err error) bool {
+	return errors.Is(err, io.EOF) || IsPeerDisconnect(err) || IsClosingErr(err)
 }
 
 func (cc *ClusterConnector) sendAsyncRequestToCluster(
