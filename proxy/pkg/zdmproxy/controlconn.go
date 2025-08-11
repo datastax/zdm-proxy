@@ -56,6 +56,7 @@ type ControlConn struct {
 	authEnabled              *atomic.Value
 	metricsHandler           *metrics.MetricHandler
 	controlConnProtoVersion  *atomic.Value
+	supportedResponse        *atomic.Value
 }
 
 const ProxyVirtualRack = "rack0"
@@ -104,6 +105,7 @@ func NewControlConn(ctx context.Context, defaultPort int, connConfig ConnectionC
 		authEnabled:              authEnabled,
 		metricsHandler:           metricsHandler,
 		controlConnProtoVersion:  &atomic.Value{},
+		supportedResponse:        &atomic.Value{},
 	}
 }
 
@@ -737,6 +739,14 @@ func (cc *ControlConn) LoadProtoVersion() (primitive.ProtocolVersion, error) {
 	}
 
 	panic("invalid type for protocol version")
+}
+
+func (cc *ControlConn) SetSupportedResponse(supported *message.Supported) {
+	cc.supportedResponse.Store(supported)
+}
+
+func (cc *ControlConn) GetSupportedResponse() *message.Supported {
+	return cc.supportedResponse.Load().(*message.Supported)
 }
 
 func computeAssignedHosts(index int, count int, orderedHosts []*Host) []*Host {

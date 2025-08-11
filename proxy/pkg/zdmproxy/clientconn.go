@@ -58,6 +58,7 @@ type ClientConnector struct {
 	shutdownRequestCtx context.Context
 
 	minProtoVer primitive.ProtocolVersion
+	compression *atomic.Value
 }
 
 func NewClientConnector(
@@ -74,7 +75,8 @@ func NewClientConnector(
 	writeScheduler *Scheduler,
 	shutdownRequestCtx context.Context,
 	clientHandlerShutdownRequestCancelFn context.CancelFunc,
-	minProtoVer primitive.ProtocolVersion) *ClientConnector {
+	minProtoVer primitive.ProtocolVersion,
+	compression *atomic.Value) *ClientConnector {
 
 	return &ClientConnector{
 		connection:              connection,
@@ -101,6 +103,7 @@ func NewClientConnector(
 		shutdownRequestCtx:                   shutdownRequestCtx,
 		clientHandlerShutdownRequestCancelFn: clientHandlerShutdownRequestCancelFn,
 		minProtoVer:                          minProtoVer,
+		compression:                          compression,
 	}
 }
 
@@ -180,7 +183,7 @@ func (cc *ClientConnector) listenForRequests() {
 		for cc.clientHandlerContext.Err() == nil {
 			f, err := readRawFrame(bufferedReader, connectionAddr, cc.clientHandlerContext)
 
-			protocolErrResponseFrame, err, _ := checkProtocolError(f, cc.minProtoVer, err, protocolErrOccurred, ClientConnectorLogPrefix)
+			protocolErrResponseFrame, err, _ := checkProtocolError(f, cc.minProtoVer, cc.getCompression(), err, protocolErrOccurred, ClientConnectorLogPrefix)
 			if err != nil {
 				handleConnectionError(
 					err, cc.clientHandlerContext, cc.clientHandlerCancelFunc, ClientConnectorLogPrefix, "reading", connectionAddr)
@@ -220,7 +223,7 @@ func (cc *ClientConnector) sendOverloadedToClient(request *frame.RawFrame) {
 		ErrorMessage: "Shutting down, please retry on next host.",
 	}
 	response := frame.NewFrame(request.Header.Version, request.Header.StreamId, msg)
-	rawResponse, err := defaultCodec.ConvertToRawFrame(response)
+	rawResponse, err := codecs[cc.getCompression()].ConvertToRawFrame(response)
 	if err != nil {
 		log.Errorf("[%s] Could not convert frame (%v) to raw frame: %v", ClientConnectorLogPrefix, response, err)
 	} else {
@@ -228,7 +231,8 @@ func (cc *ClientConnector) sendOverloadedToClient(request *frame.RawFrame) {
 	}
 }
 
-func checkProtocolError(f *frame.RawFrame, protoVer primitive.ProtocolVersion, connErr error, protocolErrorOccurred bool, prefix string) (protocolErrResponse *frame.RawFrame, fatalErr error, errorCode int8) {
+func checkProtocolError(f *frame.RawFrame, protoVer primitive.ProtocolVersion, compression primitive.Compression,
+	connErr error, protocolErrorOccurred bool, prefix string) (protocolErrResponse *frame.RawFrame, fatalErr error, errorCode int8) {
 	var protocolErrMsg *message.ProtocolError
 	var streamId int16
 	var logMsg string
@@ -248,7 +252,7 @@ func checkProtocolError(f *frame.RawFrame, protoVer primitive.ProtocolVersion, c
 		if !protocolErrorOccurred {
 			log.Debugf("[%v] %v Returning a protocol error to the client to force a downgrade: %v.", prefix, logMsg, protocolErrMsg)
 		}
-		rawProtocolErrResponse, err := generateProtocolErrorResponseFrame(streamId, protoVer, protocolErrMsg)
+		rawProtocolErrResponse, err := generateProtocolErrorResponseFrame(streamId, protoVer, compression, protocolErrMsg)
 		if err != nil {
 			return nil, fmt.Errorf("could not generate protocol error response raw frame (%v): %v", protocolErrMsg, err), -1
 		} else {
@@ -259,9 +263,10 @@ func checkProtocolError(f *frame.RawFrame, protoVer primitive.ProtocolVersion, c
 	}
 }
 
-func generateProtocolErrorResponseFrame(streamId int16, protoVer primitive.ProtocolVersion, protocolErrMsg *message.ProtocolError) (*frame.RawFrame, error) {
+func generateProtocolErrorResponseFrame(streamId int16, protoVer primitive.ProtocolVersion, compression primitive.Compression,
+	protocolErrMsg *message.ProtocolError) (*frame.RawFrame, error) {
 	response := frame.NewFrame(protoVer, streamId, protocolErrMsg)
-	rawResponse, err := defaultCodec.ConvertToRawFrame(response)
+	rawResponse, err := codecs[compression].ConvertToRawFrame(response)
 	if err != nil {
 		return nil, err
 	}
@@ -271,4 +276,8 @@ func generateProtocolErrorResponseFrame(streamId int16, protoVer primitive.Proto
 
 func (cc *ClientConnector) sendResponseToClient(frame *frame.RawFrame) {
 	cc.writeCoalescer.Enqueue(frame)
+}
+
+func (cc *ClientConnector) getCompression() primitive.Compression {
+	return cc.compression.Load().(primitive.Compression)
 }

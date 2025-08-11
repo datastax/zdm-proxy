@@ -59,6 +59,7 @@ type ClientHandler struct {
 	authErrorMessage *message.AuthenticationError
 
 	startupRequest           *atomic.Value
+	compression              *atomic.Value
 	secondaryStartupResponse *frame.RawFrame
 	secondaryHandshakeCreds  *AuthCredentials
 	asyncHandshakeCreds      *AuthCredentials
@@ -213,10 +214,14 @@ func NewClientHandler(
 	clientHandlerRequestWg := &sync.WaitGroup{}
 	handshakeDone := &atomic.Value{}
 
+	compression := &atomic.Value{}
+	compression.Store(primitive.CompressionNone)
+
 	originConnector, err := NewClusterConnector(
 		originCassandraConnInfo, conf, psCache, nodeMetrics, localClientHandlerWg, clientHandlerRequestWg,
 		clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler, requestsDoneCtx,
-		false, nil, handshakeDone, originFrameProcessor, originCCProtoVer)
+		false, nil, handshakeDone, originFrameProcessor, originCCProtoVer,
+		compression)
 	if err != nil {
 		metricHandler.GetProxyMetrics().FailedConnectionsOrigin.Add(1)
 		clientHandlerCancelFunc()
@@ -226,7 +231,8 @@ func NewClientHandler(
 	targetConnector, err := NewClusterConnector(
 		targetCassandraConnInfo, conf, psCache, nodeMetrics, localClientHandlerWg, clientHandlerRequestWg,
 		clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler, requestsDoneCtx,
-		false, nil, handshakeDone, targetFrameProcessor, targetCCProtoVer)
+		false, nil, handshakeDone, targetFrameProcessor, targetCCProtoVer,
+		compression)
 	if err != nil {
 		metricHandler.GetProxyMetrics().FailedConnectionsTarget.Add(1)
 		clientHandlerCancelFunc()
@@ -245,7 +251,8 @@ func NewClientHandler(
 		asyncConnector, err = NewClusterConnector(
 			asyncConnInfo, conf, psCache, nodeMetrics, localClientHandlerWg, clientHandlerRequestWg,
 			clientHandlerContext, clientHandlerCancelFunc, respChannel, readScheduler, writeScheduler, requestsDoneCtx,
-			true, asyncPendingRequests, handshakeDone, asyncFrameProcessor, originCCProtoVer)
+			true, asyncPendingRequests, handshakeDone, asyncFrameProcessor, originCCProtoVer,
+			compression)
 		if err != nil {
 			log.Errorf("Could not create async cluster connector to %s, async requests will not be forwarded: %s", asyncConnInfo.connConfig.GetClusterType(), err.Error())
 			asyncConnector = nil
@@ -282,7 +289,8 @@ func NewClientHandler(
 			writeScheduler,
 			clientHandlerShutdownRequestContext,
 			clientHandlerShutdownRequestCancelFn,
-			minProtoVer(originCCProtoVer, targetCCProtoVer)),
+			minProtoVer(originCCProtoVer, targetCCProtoVer),
+			compression),
 
 		asyncConnector:                       asyncConnector,
 		originCassandraConnector:             originConnector,
@@ -331,6 +339,7 @@ func NewClientHandler(
 		rateLimiters:                         rateLimiters,
 		clientHandlerShutdownRequestCancelFn: clientHandlerShutdownRequestCancelFn,
 		clientHandlerShutdownRequestContext:  clientHandlerShutdownRequestContext,
+		compression:                          compression,
 	}, nil
 }
 
@@ -535,7 +544,7 @@ func (ch *ClientHandler) listenForEventMessages() {
 
 			log.Debugf("Message received (fromTarget: %v) on event listener of the client handler: %v", fromTarget, event.Header)
 
-			body, err := defaultCodec.DecodeBody(event.Header, bytes.NewReader(event.Body))
+			body, err := ch.getCodec().DecodeBody(event.Header, bytes.NewReader(event.Body))
 			if err != nil {
 				log.Warnf("Error decoding event response: %v", err)
 				continue
@@ -642,7 +651,7 @@ func (ch *ClientHandler) responseLoop() {
 				} else {
 					finished = reqCtx.SetResponse(ch.nodeMetrics, response.responseFrame, responseClusterType, response.connectorType)
 					if reqCtx.GetRequestInfo().ShouldBeTrackedInMetrics() {
-						trackClusterErrorMetrics(response.responseFrame, response.connectorType, ch.nodeMetrics)
+						trackClusterErrorMetrics(response.responseFrame, ch.getCompression(), response.connectorType, ch.nodeMetrics)
 					}
 				}
 
@@ -665,7 +674,7 @@ func (ch *ClientHandler) responseLoop() {
 // Checks if response is a protocol error. Returns true if it processes this response. If it returns false,
 // then the response wasn't processed and it should be processed by another function.
 func (ch *ClientHandler) tryProcessProtocolError(response *Response, protocolErrOccurred *int32) bool {
-	errMsg, err := decodeError(response.responseFrame)
+	errMsg, err := decodeError(response.responseFrame, ch.getCompression())
 	if err != nil {
 		log.Errorf("Could not check if error from %v was protocol error: %v, skipping it.",
 			response.connectorType, response.responseFrame.Header)
@@ -687,10 +696,10 @@ func (ch *ClientHandler) tryProcessProtocolError(response *Response, protocolErr
 	return false
 }
 
-func decodeError(responseFrame *frame.RawFrame) (message.Error, error) {
+func decodeError(responseFrame *frame.RawFrame, compression primitive.Compression) (message.Error, error) {
 	if responseFrame != nil &&
 		responseFrame.Header.OpCode == primitive.OpCodeError {
-		body, err := defaultCodec.DecodeBody(
+		body, err := codecs[compression].DecodeBody(
 			responseFrame.Header, bytes.NewReader(responseFrame.Body))
 
 		if err != nil {
@@ -882,7 +891,7 @@ func (ch *ClientHandler) processClientResponse(
 	var newFrame *frame.Frame
 	switch response.Header.OpCode {
 	case primitive.OpCodeResult, primitive.OpCodeError:
-		decodedFrame, err := defaultCodec.ConvertFromRawFrame(response)
+		decodedFrame, err := ch.getCodec().ConvertFromRawFrame(response)
 		if err != nil {
 			return nil, fmt.Errorf("error decoding response: %w", err)
 		}
@@ -934,7 +943,7 @@ func (ch *ClientHandler) processClientResponse(
 		return response, nil
 	}
 
-	newRawFrame, err := defaultCodec.ConvertToRawFrame(newFrame)
+	newRawFrame, err := ch.getCodec().ConvertToRawFrame(newFrame)
 	if err != nil {
 		return nil, fmt.Errorf("could not convert new response: %w", err)
 	}
@@ -952,7 +961,7 @@ func (ch *ClientHandler) processPreparedResponse(
 	} else if reqCtx.targetResponse == nil {
 		return nil, errors.New("unexpected target response nil")
 	} else {
-		targetBody, err := defaultCodec.DecodeBody(reqCtx.targetResponse.Header, bytes.NewReader(reqCtx.targetResponse.Body))
+		targetBody, err := ch.getCodec().DecodeBody(reqCtx.targetResponse.Header, bytes.NewReader(reqCtx.targetResponse.Body))
 		if err != nil {
 			return nil, fmt.Errorf("error decoding target result response: %w", err)
 		}
@@ -1170,9 +1179,16 @@ func (ch *ClientHandler) handleHandshakeRequest(request *frame.RawFrame, wg *syn
 		}
 
 		ch.secondaryStartupResponse = secondaryResponse
+
+		clientStartup, err := defaultCodec.DecodeBody(request.Header, bytes.NewReader(request.Body))
+		if err != nil {
+			return false, fmt.Errorf("failed to decode startup message: %w", err)
+		}
+		ch.setCompression(clientStartup.Message.(*message.Startup).GetCompression())
+
 		ch.startupRequest.Store(request)
 
-		err := validateSecondaryStartupResponse(secondaryResponse, secondaryCluster)
+		err = validateSecondaryStartupResponse(secondaryResponse, secondaryCluster)
 		if err != nil {
 			return false, fmt.Errorf("unsuccessful startup on %v: %w", secondaryCluster, err)
 		}
@@ -1314,7 +1330,7 @@ func (ch *ClientHandler) buildAuthErrorResponse(
 		f.SetCompress(true)
 	}
 
-	return defaultCodec.ConvertToRawFrame(f)
+	return ch.getCodec().ConvertToRawFrame(f)
 }
 
 // Starts the secondary handshake in the background (goroutine).
@@ -1389,7 +1405,7 @@ func (ch *ClientHandler) forwardRequest(request *frame.RawFrame, customResponseC
 
 	if err != nil {
 		if errVal, ok := err.(*UnpreparedExecuteError); ok {
-			unpreparedFrame, err := createUnpreparedFrame(errVal)
+			unpreparedFrame, err := createUnpreparedFrame(errVal, ch.getCompression())
 			if err != nil {
 				return err
 			}
@@ -1414,7 +1430,7 @@ func (ch *ClientHandler) forwardRequest(request *frame.RawFrame, customResponseC
 }
 
 func (ch *ClientHandler) modifyRequestIfNeeded(request *frame.RawFrame, currentKeyspace string) (*frameDecodeContext, []*statementReplacedTerms, error) {
-	context := NewFrameDecodeContext(request)
+	context := NewFrameDecodeContext(request, ch.getCompression())
 	decodedFrame, err := context.GetOrDecodeFrame()
 	if err != nil {
 		return nil, nil, err
@@ -1457,11 +1473,11 @@ func (ch *ClientHandler) modifyRequestIfNeeded(request *frame.RawFrame, currentK
 
 	if modifiedFrame || modifiedQuery {
 		// re-encode the frame if original request has been modified
-		newRawFrame, err := defaultCodec.ConvertToRawFrame(decodedFrame)
+		newRawFrame, err := ch.getCodec().ConvertToRawFrame(decodedFrame)
 		if err != nil {
 			return nil, nil, fmt.Errorf("could not convert modified frame to raw frame: %w", err)
 		}
-		return NewInitializedFrameDecodeContext(newRawFrame, decodedFrame, statementsQueryData), replacedTerms, nil
+		return NewInitializedFrameDecodeContext(newRawFrame, ch.getCompression(), decodedFrame, statementsQueryData), replacedTerms, nil
 	}
 
 	return context, replacedTerms, nil
@@ -1613,7 +1629,7 @@ func (ch *ClientHandler) handleRequestSendFailure(err error, frameContext *frame
 	} else if strings.Contains(err.Error(), "negative stream id") {
 		responseMessage := &message.ProtocolError{ErrorMessage: err.Error()}
 		responseFrame, err := generateProtocolErrorResponseFrame(
-			frameContext.frame.Header.StreamId, frameContext.frame.Header.Version, responseMessage)
+			frameContext.frame.Header.StreamId, frameContext.frame.Header.Version, ch.getCompression(), responseMessage)
 		if err != nil {
 			log.Errorf("could not generate protocol error response raw frame (%v): %v", responseMessage, err)
 		} else {
@@ -1694,7 +1710,7 @@ func (ch *ClientHandler) handleInterceptedRequest(
 	}
 
 	interceptedResponseFrame := frame.NewFrame(f.Header.Version, f.Header.StreamId, interceptedQueryResponse)
-	interceptedResponseRawFrame, err := defaultCodec.ConvertToRawFrame(interceptedResponseFrame)
+	interceptedResponseRawFrame, err := ch.getCodec().ConvertToRawFrame(interceptedResponseFrame)
 	if err != nil {
 		return nil, fmt.Errorf("could not convert intercepted response frame %v: %w", interceptedResponseFrame, err)
 	}
@@ -1771,7 +1787,7 @@ func (ch *ClientHandler) handleExecuteRequest(
 			return nil, nil, nil, fmt.Errorf("could not add values to origin EXECUTE: %w", err)
 		}
 
-		originExecuteRequestRaw, err := defaultCodec.ConvertToRawFrame(newOriginRequest)
+		originExecuteRequestRaw, err := ch.getCodec().ConvertToRawFrame(newOriginRequest)
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("could not convert origin EXECUTE response to raw frame: %w", err)
 		}
@@ -1810,7 +1826,7 @@ func (ch *ClientHandler) handleExecuteRequest(
 		log.Tracef("Replacing prepared ID %s with %s for target cluster.",
 			hex.EncodeToString(originalQueryId), hex.EncodeToString(newTargetExecuteMsg.QueryId))
 
-		newTargetRequestRaw, err := defaultCodec.ConvertToRawFrame(newTargetRequest)
+		newTargetRequestRaw, err := ch.getCodec().ConvertToRawFrame(newTargetRequest)
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("could not convert target EXECUTE response to raw frame: %w", err)
 		}
@@ -1870,7 +1886,7 @@ func (ch *ClientHandler) handleBatchRequest(
 	}
 
 	if newOriginRequest != nil {
-		originBatchRequest, err := defaultCodec.ConvertToRawFrame(newOriginRequest)
+		originBatchRequest, err := ch.getCodec().ConvertToRawFrame(newOriginRequest)
 		if err != nil {
 			return nil, nil, fmt.Errorf("could not convert origin BATCH response to raw frame: %w", err)
 		}
@@ -1878,7 +1894,7 @@ func (ch *ClientHandler) handleBatchRequest(
 		originRequest = originBatchRequest
 	}
 
-	targetBatchRequest, err := defaultCodec.ConvertToRawFrame(newTargetRequest)
+	targetBatchRequest, err := ch.getCodec().ConvertToRawFrame(newTargetRequest)
 	if err != nil {
 		return nil, nil, fmt.Errorf("could not convert target BATCH response to raw frame: %w", err)
 	}
@@ -1967,13 +1983,34 @@ func (ch *ClientHandler) aggregateAndTrackResponses(
 	log.Tracef("Aggregating responses. %v opcode %d, %v opcode %d",
 		common.ClusterTypeOrigin, originOpCode, common.ClusterTypeTarget, responseFromTargetCassandra.Header.OpCode)
 
+	if originOpCode == primitive.OpCodeSupported {
+		// OPTIONS request can be treated as heartbeat, so we still forward it to both clusters,
+		// but response returned to the client contains only options supported by everyone
+		log.Tracef("Aggregated response: sending back modified response with opcode %d", originOpCode)
+		optsOrig := ch.originControlConn.GetSupportedResponse().Options
+		optsTarg := ch.targetControlConn.GetSupportedResponse().Options
+		newHeader := responseFromTargetCassandra.Header.DeepCopy()
+		newBody := &frame.Body{
+			Message: &message.Supported{
+				Options: commonSupportOptions(optsOrig, optsTarg),
+			},
+		}
+		buf := &bytes.Buffer{}
+		err := defaultCodec.EncodeBody(newHeader, newBody, buf)
+		if err != nil {
+			log.Errorf("Failed to encode OPTIONS body: %v", err)
+			return responseFromTargetCassandra, common.ClusterTypeTarget
+		}
+		newResponse := &frame.RawFrame{
+			Header: newHeader,
+			Body:   buf.Bytes(),
+		}
+		return newResponse, common.ClusterTypeTarget
+	}
+
 	// aggregate responses and update relevant aggregate metrics for general failed or successful responses
 	if isResponseSuccessful(responseFromOriginCassandra) && isResponseSuccessful(responseFromTargetCassandra) {
-		if originOpCode == primitive.OpCodeSupported {
-			log.Tracef("Aggregated response: both successes, sending back %v response with opcode %d",
-				common.ClusterTypeTarget, originOpCode)
-			return responseFromTargetCassandra, common.ClusterTypeTarget
-		} else if request.Header.OpCode == primitive.OpCodePrepare {
+		if request.Header.OpCode == primitive.OpCodePrepare {
 			// special case for PREPARE requests to always return ORIGIN, even though the default handling for "BOTH" requests would be enough
 			return responseFromOriginCassandra, common.ClusterTypeOrigin
 		} else {
@@ -2020,7 +2057,7 @@ func (ch *ClientHandler) aggregateAndTrackResponses(
 // Replaces the credentials in the provided auth frame (which are the Target credentials) with
 // the Origin credentials that are provided to the proxy in the configuration.
 func (ch *ClientHandler) handleClientCredentials(f *frame.RawFrame) (*frame.RawFrame, error) {
-	parsedAuthFrame, err := defaultCodec.ConvertFromRawFrame(f)
+	parsedAuthFrame, err := ch.getCodec().ConvertFromRawFrame(f)
 	if err != nil {
 		return nil, fmt.Errorf("could not extract auth credentials from frame to start the secondary handshake: %w", err)
 	}
@@ -2101,7 +2138,7 @@ func (ch *ClientHandler) handleClientCredentials(f *frame.RawFrame) (*frame.RawF
 
 	authResponse.Token = primaryHandshakeCreds.Marshal()
 
-	f, err = defaultCodec.ConvertToRawFrame(parsedAuthFrame)
+	f, err = ch.getCodec().ConvertToRawFrame(parsedAuthFrame)
 	if err != nil {
 		return nil, fmt.Errorf("could not convert new auth response to a raw frame, can not proceed with secondary handshake: %w", err)
 	}
@@ -2122,8 +2159,20 @@ func (ch *ClientHandler) StoreCurrentKeyspace(keyspace string) {
 	ch.currentKeyspaceName.Store(keyspace)
 }
 
-func decodeErrorResult(frame *frame.RawFrame) (message.Error, error) {
-	body, err := defaultCodec.DecodeBody(frame.Header, bytes.NewReader(frame.Body))
+func (ch *ClientHandler) getCompression() primitive.Compression {
+	return ch.compression.Load().(primitive.Compression)
+}
+
+func (ch *ClientHandler) setCompression(compression primitive.Compression) {
+	ch.compression.Store(compression)
+}
+
+func (ch *ClientHandler) getCodec() frame.RawCodec {
+	return codecs[ch.getCompression()]
+}
+
+func decodeErrorResult(frame *frame.RawFrame, compression primitive.Compression) (message.Error, error) {
+	body, err := codecs[compression].DecodeBody(frame.Header, bytes.NewReader(frame.Body))
 	if err != nil {
 		return nil, fmt.Errorf("could not decode error body: %w", err)
 	}
@@ -2140,7 +2189,7 @@ func isResponseSuccessful(response *frame.RawFrame) bool {
 	return response.Header.OpCode != primitive.OpCodeError
 }
 
-func createUnpreparedFrame(errVal *UnpreparedExecuteError) (*frame.RawFrame, error) {
+func createUnpreparedFrame(errVal *UnpreparedExecuteError, compression primitive.Compression) (*frame.RawFrame, error) {
 	unpreparedMsg := &message.Unprepared{
 		ErrorMessage: fmt.Sprintf("Prepared query with ID %s not found (either the query was not prepared "+
 			"on this host (maybe the host has been restarted?) or you have prepared too many queries and it has "+
@@ -2150,7 +2199,7 @@ func createUnpreparedFrame(errVal *UnpreparedExecuteError) (*frame.RawFrame, err
 	f := frame.NewFrame(errVal.Header.Version, errVal.Header.StreamId, unpreparedMsg)
 	f.Body.TracingId = errVal.Body.TracingId
 
-	rawFrame, err := defaultCodec.ConvertToRawFrame(f)
+	rawFrame, err := codecs[compression].ConvertToRawFrame(f)
 	if err != nil {
 		return nil, fmt.Errorf("could not convert unprepared response frame to rawframe: %w", err)
 	}
@@ -2189,10 +2238,11 @@ func storeRequestContext(contextHoldersMap *sync.Map, reqCtx *requestContextImpl
 // Updates cluster level error metrics based on the outcome in the response
 func trackClusterErrorMetrics(
 	response *frame.RawFrame,
+	compression primitive.Compression,
 	connectorType ClusterConnectorType,
 	nodeMetrics *metrics.NodeMetrics) {
 	if !isResponseSuccessful(response) {
-		errorMsg, err := decodeErrorResult(response)
+		errorMsg, err := decodeErrorResult(response, compression)
 		if err != nil {
 			log.Errorf("could not track read response: %v", err)
 			return
@@ -2363,4 +2413,35 @@ func minProtoVer(version1 primitive.ProtocolVersion, version2 primitive.Protocol
 		return version1
 	}
 	return version2
+}
+
+// Copies all options form target map, but COMPRESSION key contains only algorithms supported by both clusters
+func commonSupportOptions(optsOrig map[string][]string, optsTarg map[string][]string) map[string][]string {
+	result := make(map[string][]string)
+	for k, vt := range optsTarg {
+		if k == message.StartupOptionCompression {
+			// for COMPRESSION put only algorithms supported by both clusters
+			vo, ok := optsOrig[k]
+			if ok {
+				result[k] = sliceIntersection(vt, vo)
+			}
+		} else {
+			result[k] = vt
+		}
+	}
+	return result
+}
+
+func sliceIntersection(arr1 []string, arr2 []string) []string {
+	intersection := make([]string, 0)
+	set := make(map[string]bool)
+	for _, val := range arr1 {
+		set[val] = true
+	}
+	for _, val := range arr2 {
+		if set[val] {
+			intersection = append(intersection, val)
+		}
+	}
+	return intersection
 }

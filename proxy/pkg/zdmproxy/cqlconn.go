@@ -353,8 +353,27 @@ func (c *cqlConn) SendAndReceive(request *frame.Frame, ctx context.Context) (*fr
 
 func (c *cqlConn) PerformHandshake(version primitive.ProtocolVersion, ctx context.Context) (auth bool, err error) {
 	log.Debug("performing handshake")
-	startup := frame.NewFrame(version, -1, message.NewStartup())
 	var response *frame.Frame
+
+	// OPTIONS message
+	options := frame.NewFrame(version, -1, &message.Options{})
+	if response, err = c.SendAndReceive(options, ctx); err == nil {
+		switch response.Body.Message.(type) {
+		case *message.Supported:
+			c.controlConn.SetSupportedResponse(response.Body.Message.(*message.Supported))
+		case *message.ProtocolError:
+			err = &ResponseError{Response: response}
+		default:
+			err = fmt.Errorf("expected SUPPORTED, got %v", response.Body.Message)
+		}
+	}
+	if err != nil {
+		log.Errorf("%v: handshake failed: %v", c, err)
+		return false, err
+	}
+
+	// STARTUP message
+	startup := frame.NewFrame(version, -1, message.NewStartup())
 	authenticator := &DsePlainTextAuthenticator{c.credentials}
 	authEnabled := false
 	if response, err = c.SendAndReceive(startup, ctx); err == nil {
