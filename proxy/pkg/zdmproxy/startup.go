@@ -100,7 +100,7 @@ func (ch *ClientHandler) handleSecondaryHandshakeStartup(
 				return fmt.Errorf("could not perform handshake step: %w", err)
 			}
 
-			request, err = defaultCodec.ConvertToRawFrame(parsedRequest)
+			request, err = ch.getCodec().ConvertToRawFrame(parsedRequest)
 			if err != nil {
 				return fmt.Errorf("could not convert auth response frame to raw frame: %w", err)
 			}
@@ -111,7 +111,7 @@ func (ch *ClientHandler) handleSecondaryHandshakeStartup(
 			overallRequestStartTime := time.Now()
 			channel := make(chan *customResponse, 1)
 			err := ch.executeRequest(
-				NewFrameDecodeContext(request),
+				NewFrameDecodeContext(request, ch.getCompression()),
 				NewGenericRequestInfo(forwardToSecondary, asyncConnector, false),
 				ch.LoadCurrentKeyspace(),
 				overallRequestStartTime,
@@ -139,7 +139,7 @@ func (ch *ClientHandler) handleSecondaryHandshakeStartup(
 		}
 
 		newPhase, parsedFrame, done, err := handleSecondaryHandshakeResponse(
-			phase, response, clientIPAddress, clusterAddress, logIdentifier)
+			phase, response, clientIPAddress, clusterAddress, ch.getCompression(), logIdentifier)
 		if err != nil {
 			return err
 		}
@@ -162,8 +162,8 @@ func (ch *ClientHandler) handleSecondaryHandshakeStartup(
 
 func handleSecondaryHandshakeResponse(
 	phase int, f *frame.RawFrame, clientIPAddress net.Addr,
-	clusterAddress net.Addr, logIdentifier string) (int, *frame.Frame, bool, error) {
-	parsedFrame, err := defaultCodec.ConvertFromRawFrame(f)
+	clusterAddress net.Addr, compression primitive.Compression, logIdentifier string) (int, *frame.Frame, bool, error) {
+	parsedFrame, err := codecs[compression].ConvertFromRawFrame(f)
 	if err != nil {
 		return phase, nil, false, fmt.Errorf("could not decode frame from %v: %w", clusterAddress, err)
 	}

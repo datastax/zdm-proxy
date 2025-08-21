@@ -76,7 +76,8 @@ type ClusterConnector struct {
 	lastHeartbeatTime *atomic.Value
 	lastHeartbeatLock sync.Mutex
 
-	ccProtoVer primitive.ProtocolVersion
+	ccProtoVer  primitive.ProtocolVersion
+	compression *atomic.Value
 }
 
 func NewClusterConnectionInfo(connConfig ConnectionConfig, endpointConfig Endpoint, isOriginCassandra bool) *ClusterConnectionInfo {
@@ -104,7 +105,8 @@ func NewClusterConnector(
 	asyncPendingRequests *pendingRequests,
 	handshakeDone *atomic.Value,
 	frameProcessor FrameProcessor,
-	ccProtoVer primitive.ProtocolVersion) (*ClusterConnector, error) {
+	ccProtoVer primitive.ProtocolVersion,
+	compression *atomic.Value) (*ClusterConnector, error) {
 
 	var connectorType ClusterConnectorType
 	var clusterType common.ClusterType
@@ -185,6 +187,7 @@ func NewClusterConnector(
 		handshakeDone:               handshakeDone,
 		lastHeartbeatTime:           lastHeartbeatTime,
 		ccProtoVer:                  ccProtoVer,
+		compression:                 compression,
 	}, nil
 }
 
@@ -256,7 +259,7 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 		protocolErrOccurred := false
 		for {
 			response, err := readRawFrame(bufferedReader, connectionAddr, cc.clusterConnContext)
-			protocolErrResponseFrame, err, errCode := checkProtocolError(response, cc.ccProtoVer, err, protocolErrOccurred, string(cc.connectorType))
+			protocolErrResponseFrame, err, errCode := checkProtocolError(response, cc.ccProtoVer, cc.getCompression(), err, protocolErrOccurred, string(cc.connectorType))
 			if err != nil {
 				handleConnectionError(
 					err, cc.clusterConnContext, cc.cancelFunc, string(cc.connectorType), "reading", connectionAddr)
@@ -281,7 +284,7 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 					// if releasing the stream id failed, check if it's a protocol error response
 					// if it is then ignore the release error and forward the response to the client handler so that
 					// it can be handled correctly
-					parsedResponse, parseErr := defaultCodec.ConvertFromRawFrame(response)
+					parsedResponse, parseErr := cc.getCodec().ConvertFromRawFrame(response)
 					if parseErr != nil {
 						log.Errorf("[%v] Error converting frame when releasing stream id: %v. Original error: %v.", string(cc.connectorType), parseErr, releaseErr)
 						continue
@@ -327,7 +330,7 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 }
 
 func (cc *ClusterConnector) handleAsyncResponse(response *frame.RawFrame) *frame.RawFrame {
-	errMsg, err := decodeError(response)
+	errMsg, err := decodeError(response, cc.getCompression())
 	if err != nil {
 		log.Errorf("[%s] Error occured while checking if error is a protocol error: %v.", cc.connectorType, err)
 		cc.Shutdown()
@@ -381,7 +384,7 @@ func (cc *ClusterConnector) handleAsyncResponse(response *frame.RawFrame) *frame
 							Keyspace: preparedData.GetPrepareRequestInfo().GetKeyspace(),
 						}
 						prepareFrame := frame.NewFrame(response.Header.Version, response.Header.StreamId, prepare)
-						prepareRawFrame, err := defaultCodec.ConvertToRawFrame(prepareFrame)
+						prepareRawFrame, err := cc.getCodec().ConvertToRawFrame(prepareFrame)
 						if err != nil {
 							log.Errorf("Could not send async PREPARE because convert raw frame failed: %v.", err.Error())
 						} else {
@@ -561,4 +564,12 @@ func (cc *ClusterConnector) sendHeartbeat(version primitive.ProtocolVersion, hea
 func (cc *ClusterConnector) shouldSendHeartbeat(heartbeatIntervalMs int) bool {
 	lastHeartbeatTime := cc.lastHeartbeatTime.Load().(time.Time)
 	return time.Since(lastHeartbeatTime) > time.Duration(heartbeatIntervalMs)*time.Millisecond
+}
+
+func (cc *ClusterConnector) getCodec() frame.RawCodec {
+	return codecs[cc.getCompression()]
+}
+
+func (cc *ClusterConnector) getCompression() primitive.Compression {
+	return cc.compression.Load().(primitive.Compression)
 }

@@ -74,7 +74,7 @@ func convertEncodedRequestToRawFrameForTests(queryFrame *frame.Frame, t *testing
 func parseEncodedRequestForTests(queryRawFrame *frame.RawFrame, t *testing.T) (RequestInfo, error) {
 	generalParams := getGeneralParamsForTests(t)
 
-	return buildRequestInfo(&frameDecodeContext{frame: queryRawFrame},
+	return buildRequestInfo(&frameDecodeContext{frame: queryRawFrame, compression: primitive.CompressionNone},
 		[]*statementReplacedTerms{},
 		generalParams.psCache,
 		generalParams.mh,

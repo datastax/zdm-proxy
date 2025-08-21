@@ -271,20 +271,22 @@ func isSystemKeyspace(keyspace string) bool {
 }
 
 type frameDecodeContext struct {
-	frame               *frame.RawFrame       // always non nil
+	frame               *frame.RawFrame // always non nil
+	compression         primitive.Compression
 	decodedFrame        *frame.Frame          // nil until first decode
 	statementsQueryData []*statementQueryData // nil until first query inspection
 }
 
 var NotInspectableErr = errors.New("only Query and Prepare messages can be inspected")
 
-func NewFrameDecodeContext(f *frame.RawFrame) *frameDecodeContext {
-	return &frameDecodeContext{frame: f}
+func NewFrameDecodeContext(f *frame.RawFrame, compression primitive.Compression) *frameDecodeContext {
+	return &frameDecodeContext{frame: f, compression: compression}
 }
 
-func NewInitializedFrameDecodeContext(f *frame.RawFrame, decodedFrame *frame.Frame, statementsQueryData []*statementQueryData) *frameDecodeContext {
+func NewInitializedFrameDecodeContext(f *frame.RawFrame, compression primitive.Compression, decodedFrame *frame.Frame, statementsQueryData []*statementQueryData) *frameDecodeContext {
 	return &frameDecodeContext{
 		frame:               f,
+		compression:         compression,
 		decodedFrame:        decodedFrame,
 		statementsQueryData: statementsQueryData}
 }
@@ -298,13 +300,15 @@ func (recv *frameDecodeContext) GetOrDecodeFrame() (*frame.Frame, error) {
 		return recv.decodedFrame, nil
 	}
 
-	decodedFrame, err := defaultCodec.ConvertFromRawFrame(recv.frame)
-	if err != nil {
-		return nil, fmt.Errorf("could not decode raw frame: %w", err)
+	if codec, ok := codecs[recv.compression]; ok {
+		decodedFrame, err := codec.ConvertFromRawFrame(recv.frame)
+		if err != nil {
+			return nil, fmt.Errorf("could not decode raw frame: %w", err)
+		}
+		recv.decodedFrame = decodedFrame
+		return decodedFrame, nil
 	}
-
-	recv.decodedFrame = decodedFrame
-	return decodedFrame, nil
+	return nil, fmt.Errorf("no codec for compression: %v", recv.compression)
 }
 
 func (recv *frameDecodeContext) GetOrInspectStatement(currentKeyspace string, timeUuidGenerator TimeUuidGenerator) (*statementQueryData, error) {

@@ -138,7 +138,7 @@ func TestInspectFrame(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			timeUuidGenerator, err := GetDefaultTimeUuidGenerator()
 			require.Nil(t, err)
-			actual, err := buildRequestInfo(&frameDecodeContext{frame: tt.args.f}, []*statementReplacedTerms{{
+			actual, err := buildRequestInfo(&frameDecodeContext{frame: tt.args.f, compression: primitive.CompressionNone}, []*statementReplacedTerms{{
 				statementIndex: 0,
 				replacedTerms:  tt.args.replacedTerms,
 			}}, psCache, mh, km, tt.args.primaryCluster, tt.args.forwardSystemQueriesToTarget, true, tt.args.forwardAuthToTarget, timeUuidGenerator)

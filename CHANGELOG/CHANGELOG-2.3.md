@@ -7,6 +7,7 @@ When cutting a new release, update the `unreleased` heading to the tag being gen
 ## Unreleased
 
 * [#150](https://github.com/datastax/zdm-proxy/issues/150): CQL request tracing
+* [#154](https://github.com/datastax/zdm-proxy/issues/154): Support CQL request compression
 
 ---
 

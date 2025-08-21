@@ -110,7 +110,6 @@ func TestSimultaneousConnections(t *testing.T) {
 						}
 						time.Sleep(200 * time.Millisecond)
 					}
-
 				}()
 			}
 		}()
