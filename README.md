@@ -132,7 +132,7 @@ The setup we described above is only for testing in a local environment. It is *
 installation where the minimum number of proxy instances is 3.
 
 For a comprehensive guide with the recommended production setup check the documentation available at
-[Datastax Migration](https://docs.datastax.com/en/astra-serverless/docs/migrate/introduction.html).
+[DataStax Migration](https://docs.datastax.com/en/data-migration/introduction.html).
 
 There you'll find information about an Ansible-based tool that automates most of the process.
 
@@ -142,5 +142,5 @@ For information on the packaged dependencies of the Zero Downtime Migration (ZDM
 
 ## Frequently Asked Questions
 
-For frequently asked questions, please refer to our separate [FAQ](https://docs.datastax.com/en/astra-serverless/docs/migrate/faqs.html) page.
+For frequently asked questions, please refer to our separate [FAQ](https://docs.datastax.com/en/data-migration/faqs.html) page.
 

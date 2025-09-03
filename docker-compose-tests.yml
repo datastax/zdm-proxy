@@ -43,7 +43,7 @@ services:
         ipv4_address: 192.168.100.103
 
   nosqlbench:
-    image: nosqlbench/nosqlbench:4.15.101
+    image: nosqlbench/nosqlbench:5.21-latest
     container_name: zdm_tests_nb
     tty: true
     volumes:
