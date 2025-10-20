@@ -3,11 +3,13 @@ package zdmproxy
 import (
 	"context"
 	"fmt"
+	"io"
+
 	"github.com/datastax/go-cassandra-native-protocol/compression/lz4"
 	"github.com/datastax/go-cassandra-native-protocol/compression/snappy"
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"io"
+	"github.com/datastax/go-cassandra-native-protocol/segment"
 )
 
 type shutdownError struct {
@@ -18,13 +20,14 @@ func (e *shutdownError) Error() string {
 	return e.err
 }
 
-var defaultCodec = frame.NewRawCodec()
+var defaultFrameCodec = frame.NewRawCodec()
+var defaultSegmentCodec = segment.NewCodec()
 
 var codecs = map[primitive.Compression]frame.RawCodec{
-	primitive.CompressionNone:       defaultCodec,
+	primitive.CompressionNone:       defaultFrameCodec,
 	primitive.CompressionLz4:        frame.NewRawCodecWithCompression(lz4.Compressor{}),
 	primitive.CompressionSnappy:     frame.NewRawCodecWithCompression(snappy.Compressor{}),
-	primitive.Compression("none"):   defaultCodec,
+	primitive.Compression("none"):   defaultFrameCodec,
 	primitive.Compression("lz4"):    frame.NewRawCodecWithCompression(lz4.Compressor{}),
 	primitive.Compression("snappy"): frame.NewRawCodecWithCompression(snappy.Compressor{}),
 }
@@ -45,13 +48,13 @@ func adaptConnErr(connectionAddr string, clientHandlerContext context.Context, e
 
 // Simple function that writes a rawframe with a single call to writeToConnection
 func writeRawFrame(writer io.Writer, connectionAddr string, clientHandlerContext context.Context, frame *frame.RawFrame) error {
-	err := defaultCodec.EncodeRawFrame(frame, writer) // body is already compressed if needed, so we can use default codec
+	err := defaultFrameCodec.EncodeRawFrame(frame, writer) // body is already compressed if needed, so we can use default codec
 	return adaptConnErr(connectionAddr, clientHandlerContext, err)
 }
 
 // Simple function that reads data from a connection and builds a frame
 func readRawFrame(reader io.Reader, connectionAddr string, clientHandlerContext context.Context) (*frame.RawFrame, error) {
-	rawFrame, err := defaultCodec.DecodeRawFrame(reader) // body is not being decompressed, so we can use default codec
+	rawFrame, err := defaultFrameCodec.DecodeRawFrame(reader) // body is not being decompressed, so we can use default codec
 	if err != nil {
 		return nil, adaptConnErr(connectionAddr, clientHandlerContext, err)
 	}

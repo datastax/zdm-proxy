@@ -6,18 +6,20 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"github.com/datastax/go-cassandra-native-protocol/frame"
-	"github.com/datastax/go-cassandra-native-protocol/message"
-	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/datastax/zdm-proxy/proxy/pkg/common"
-	"github.com/datastax/zdm-proxy/proxy/pkg/config"
-	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
-	log "github.com/sirupsen/logrus"
 	"io"
 	"net"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/datastax/go-cassandra-native-protocol/frame"
+	"github.com/datastax/go-cassandra-native-protocol/message"
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	log "github.com/sirupsen/logrus"
+
+	"github.com/datastax/zdm-proxy/proxy/pkg/common"
+	"github.com/datastax/zdm-proxy/proxy/pkg/config"
+	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
 )
 
 type ClusterConnectionInfo struct {
@@ -550,7 +552,7 @@ func (cc *ClusterConnector) sendHeartbeat(version primitive.ProtocolVersion, hea
 	cc.lastHeartbeatTime.Store(time.Now())
 	optionsMsg := &message.Options{}
 	heartBeatFrame := frame.NewFrame(version, -1, optionsMsg)
-	rawFrame, err := defaultCodec.ConvertToRawFrame(heartBeatFrame)
+	rawFrame, err := defaultFrameCodec.ConvertToRawFrame(heartBeatFrame)
 	if err != nil {
 		log.Errorf("Cannot convert heartbeat frame to raw frame: %v", err)
 		return

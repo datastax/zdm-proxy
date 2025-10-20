@@ -1180,7 +1180,7 @@ func (ch *ClientHandler) handleHandshakeRequest(request *frame.RawFrame, wg *syn
 
 		ch.secondaryStartupResponse = secondaryResponse
 
-		clientStartup, err := defaultCodec.DecodeBody(request.Header, bytes.NewReader(request.Body))
+		clientStartup, err := defaultFrameCodec.DecodeBody(request.Header, bytes.NewReader(request.Body))
 		if err != nil {
 			return false, fmt.Errorf("failed to decode startup message: %w", err)
 		}
@@ -1996,7 +1996,7 @@ func (ch *ClientHandler) aggregateAndTrackResponses(
 			},
 		}
 		buf := &bytes.Buffer{}
-		err := defaultCodec.EncodeBody(newHeader, newBody, buf)
+		err := defaultFrameCodec.EncodeBody(newHeader, newBody, buf)
 		if err != nil {
 			log.Errorf("Failed to encode OPTIONS body: %v", err)
 			return responseFromTargetCassandra, common.ClusterTypeTarget

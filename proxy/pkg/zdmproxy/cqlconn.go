@@ -4,11 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/datastax/go-cassandra-native-protocol/frame"
-	"github.com/datastax/go-cassandra-native-protocol/message"
-	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/datastax/zdm-proxy/proxy/pkg/config"
-	log "github.com/sirupsen/logrus"
 	"io"
 	"net"
 	"runtime"
@@ -16,6 +11,13 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/datastax/go-cassandra-native-protocol/frame"
+	"github.com/datastax/go-cassandra-native-protocol/message"
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	log "github.com/sirupsen/logrus"
+
+	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 )
 
 const (
@@ -147,7 +149,7 @@ func (c *cqlConn) StartResponseLoop() {
 		defer close(c.eventsQueue)
 		defer log.Debugf("Shutting down response loop on %v.", c)
 		for c.ctx.Err() == nil {
-			f, err := defaultCodec.DecodeFrame(c.conn)
+			f, err := defaultFrameCodec.DecodeFrame(c.conn)
 			if err != nil {
 				if isDisconnectErr(err) {
 					log.Infof("[%v] Control connection to %v disconnected", c.controlConn.connConfig.GetClusterType(), c.conn.RemoteAddr().String())
@@ -206,7 +208,7 @@ func (c *cqlConn) StartRequestLoop() {
 		for c.ctx.Err() == nil {
 			select {
 			case f := <-c.outgoingCh:
-				err := defaultCodec.EncodeFrame(f, c.conn)
+				err := defaultFrameCodec.EncodeFrame(f, c.conn)
 				if err != nil {
 					if isDisconnectErr(err) {
 						log.Infof("[%v] Control connection to %v disconnected", c.controlConn.connConfig.GetClusterType(), c.conn.RemoteAddr().String())

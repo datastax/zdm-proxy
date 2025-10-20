@@ -214,7 +214,7 @@ func mockAuthResponse(t *testing.T) *frame.RawFrame {
 
 func mockFrame(t *testing.T, message message.Message, version primitive.ProtocolVersion) *frame.RawFrame {
 	f := frame.NewFrame(version, 1, message)
-	rawFrame, err := defaultCodec.ConvertToRawFrame(f)
+	rawFrame, err := defaultFrameCodec.ConvertToRawFrame(f)
 	require.Nil(t, err)
 	return rawFrame
 }
