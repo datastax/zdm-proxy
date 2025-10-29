@@ -23,13 +23,28 @@ func (e *shutdownError) Error() string {
 var defaultFrameCodec = frame.NewRawCodec()
 var defaultSegmentCodec = segment.NewCodec()
 
-var codecs = map[primitive.Compression]frame.RawCodec{
+var frameCodecs = map[primitive.Compression]frame.RawCodec{
 	primitive.CompressionNone:       defaultFrameCodec,
 	primitive.CompressionLz4:        frame.NewRawCodecWithCompression(lz4.Compressor{}),
 	primitive.CompressionSnappy:     frame.NewRawCodecWithCompression(snappy.Compressor{}),
 	primitive.Compression("none"):   defaultFrameCodec,
 	primitive.Compression("lz4"):    frame.NewRawCodecWithCompression(lz4.Compressor{}),
 	primitive.Compression("snappy"): frame.NewRawCodecWithCompression(snappy.Compressor{}),
+}
+
+var segmentCodecs = map[primitive.Compression]segment.Codec{
+	primitive.CompressionNone:     defaultSegmentCodec,
+	primitive.CompressionLz4:      segment.NewCodecWithCompression(lz4.Compressor{}),
+	primitive.Compression("none"): defaultSegmentCodec,
+	primitive.Compression("lz4"):  segment.NewCodecWithCompression(lz4.Compressor{}),
+}
+
+func getFrameCodec(compression primitive.Compression) (frame.RawCodec, error) {
+	codec, ok := frameCodecs[compression]
+	if !ok {
+		return nil, fmt.Errorf("no codec for compression: %v", compression)
+	}
+	return codec, nil
 }
 
 var ShutdownErr = &shutdownError{err: "aborted due to shutdown request"}
@@ -52,8 +67,9 @@ func writeRawFrame(writer io.Writer, connectionAddr string, clientHandlerContext
 	return adaptConnErr(connectionAddr, clientHandlerContext, err)
 }
 
+// TODO
 // Simple function that reads data from a connection and builds a frame
-func readRawFrame(reader io.Reader, connectionAddr string, clientHandlerContext context.Context) (*frame.RawFrame, error) {
+func asdasdreadRawFrame(reader io.Reader, connectionAddr string, clientHandlerContext context.Context) (*frame.RawFrame, error) {
 	rawFrame, err := defaultFrameCodec.DecodeRawFrame(reader) // body is not being decompressed, so we can use default codec
 	if err != nil {
 		return nil, adaptConnErr(connectionAddr, clientHandlerContext, err)

@@ -104,6 +104,7 @@ func NewClientConnector(
 		clientHandlerShutdownRequestCancelFn: clientHandlerShutdownRequestCancelFn,
 		minProtoVer:                          minProtoVer,
 		compression:                          compression,
+		codecHelper:
 	}
 }
 
@@ -223,7 +224,7 @@ func (cc *ClientConnector) sendOverloadedToClient(request *frame.RawFrame) {
 		ErrorMessage: "Shutting down, please retry on next host.",
 	}
 	response := frame.NewFrame(request.Header.Version, request.Header.StreamId, msg)
-	rawResponse, err := codecs[cc.getCompression()].ConvertToRawFrame(response)
+	rawResponse, err := frameCodecs[cc.getCompression()].ConvertToRawFrame(response)
 	if err != nil {
 		log.Errorf("[%s] Could not convert frame (%v) to raw frame: %v", ClientConnectorLogPrefix, response, err)
 	} else {
@@ -266,7 +267,7 @@ func checkProtocolError(f *frame.RawFrame, protoVer primitive.ProtocolVersion, c
 func generateProtocolErrorResponseFrame(streamId int16, protoVer primitive.ProtocolVersion, compression primitive.Compression,
 	protocolErrMsg *message.ProtocolError) (*frame.RawFrame, error) {
 	response := frame.NewFrame(protoVer, streamId, protocolErrMsg)
-	rawResponse, err := codecs[compression].ConvertToRawFrame(response)
+	rawResponse, err := frameCodecs[compression].ConvertToRawFrame(response)
 	if err != nil {
 		return nil, err
 	}

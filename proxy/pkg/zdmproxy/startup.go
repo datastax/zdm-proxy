@@ -2,13 +2,15 @@ package zdmproxy
 
 import (
 	"fmt"
+	"net"
+	"time"
+
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/datastax/zdm-proxy/proxy/pkg/common"
 	log "github.com/sirupsen/logrus"
-	"net"
-	"time"
+
+	"github.com/datastax/zdm-proxy/proxy/pkg/common"
 )
 
 const (
@@ -21,6 +23,16 @@ type AuthError struct {
 
 func (recv *AuthError) Error() string {
 	return fmt.Sprintf("authentication error: %v", recv.errMsg)
+}
+
+func (ch *ClientHandler) getSecondaryClusterConnector() *ClusterConnector {
+	if ch.forwardAuthToTarget {
+		// secondary is ORIGIN
+		return ch.originCassandraConnector
+	} else {
+		// secondary is TARGET
+		return ch.targetCassandraConnector
+	}
 }
 
 func (ch *ClientHandler) handleSecondaryHandshakeStartup(
@@ -145,12 +157,23 @@ func (ch *ClientHandler) handleSecondaryHandshakeStartup(
 		}
 		if done {
 			if asyncConnector {
+				err = ch.asyncConnector.SetCodecState(ch.getCompression(), startupRequest.Header.Version)
+				if err != nil {
+					return fmt.Errorf(
+						"could not set async connector (%v) codec: %w", logIdentifier, err)
+				}
 				if ch.asyncConnector.SetReady() {
 					return nil
 				} else {
 					return fmt.Errorf(
 						"could not set async connector (%v) as ready after a successful handshake "+
 							"because the connector was already shutdown", logIdentifier)
+				}
+			} else {
+				err = ch.getSecondaryClusterConnector().SetCodecState(ch.getCompression(), startupRequest.Header.Version)
+				if err != nil {
+					return fmt.Errorf(
+						"could not set secondary cluster connector (%v) codec: %w", logIdentifier, err)
 				}
 			}
 			return nil
@@ -163,7 +186,7 @@ func (ch *ClientHandler) handleSecondaryHandshakeStartup(
 func handleSecondaryHandshakeResponse(
 	phase int, f *frame.RawFrame, clientIPAddress net.Addr,
 	clusterAddress net.Addr, compression primitive.Compression, logIdentifier string) (int, *frame.Frame, bool, error) {
-	parsedFrame, err := codecs[compression].ConvertFromRawFrame(f)
+	parsedFrame, err := frameCodecs[compression].ConvertFromRawFrame(f)
 	if err != nil {
 		return phase, nil, false, fmt.Errorf("could not decode frame from %v: %w", clusterAddress, err)
 	}

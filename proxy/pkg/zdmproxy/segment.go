@@ -2,11 +2,15 @@ package zdmproxy
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"io"
+	"sync/atomic"
 
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/datastax/go-cassandra-native-protocol/segment"
 )
 
 // SegmentAccumulator provides a way for the caller to build frames from segments.
@@ -19,9 +23,8 @@ import (
 //
 // This type is not "thread-safe".
 type SegmentAccumulator interface {
-	Header() *frame.Header
-	ReadFrame() ([]byte, error)
-	WriteSegmentPayload(payload []byte) (completed bool, err error)
+	ReadFrame() (*frame.RawFrame, error)
+	WriteSegmentPayload(payload []byte) error
 	FrameReady() bool
 }
 
@@ -36,9 +39,9 @@ type segmentAcc struct {
 	hdrBuf        *bytes.Buffer
 }
 
-func NewSegmentAccumulator(buf *bytes.Buffer, codec frame.RawDecoder) SegmentAccumulator {
+func NewSegmentAccumulator(codec frame.RawDecoder) SegmentAccumulator {
 	return &segmentAcc{
-		buf:           buf,
+		buf:           nil,
 		accumLength:   0,
 		targetLength:  0,
 		hdr:           nil,
@@ -49,27 +52,30 @@ func NewSegmentAccumulator(buf *bytes.Buffer, codec frame.RawDecoder) SegmentAcc
 	}
 }
 
-func (a *segmentAcc) Header() *frame.Header {
-	return a.hdr
-}
-
 func (a *segmentAcc) FrameReady() bool {
-	return a.accumLength >= a.targetLength
+	return a.accumLength >= a.targetLength && a.hdr != nil
 }
 
-func (a *segmentAcc) ReadFrame() ([]byte, error) {
+func (a *segmentAcc) ReadFrame() (*frame.RawFrame, error) {
+	if !a.FrameReady() {
+		return nil, errors.New("frame is not ready")
+	}
 	payload := a.buf.Bytes()
 	actualPayload := payload[:a.targetLength]
 	var extraBytes []byte
 	if a.accumLength > a.targetLength {
 		extraBytes = payload[a.targetLength:]
 	}
+	hdr := a.hdr
 	a.reset()
-	_, err := a.WriteSegmentPayload(extraBytes)
+	err := a.WriteSegmentPayload(extraBytes)
 	if err != nil {
 		return nil, fmt.Errorf("could not carry over extra payload bytes to new payload: %w", err)
 	}
-	return actualPayload, nil
+	return &frame.RawFrame{
+		Header: hdr,
+		Body:   actualPayload,
+	}, nil
 }
 
 func (a *segmentAcc) reset() {
@@ -81,9 +87,9 @@ func (a *segmentAcc) reset() {
 	a.hdrBuf.Reset()
 }
 
-func (a *segmentAcc) WriteSegmentPayload(payload []byte) (frameReady bool, e error) {
+func (a *segmentAcc) WriteSegmentPayload(payload []byte) error {
 	if len(payload) == 0 {
-		return false, nil
+		return nil
 	}
 
 	if a.payloadReader == nil {
@@ -95,7 +101,7 @@ func (a *segmentAcc) WriteSegmentPayload(payload []byte) (frameReady bool, e err
 	if a.version == 0 {
 		v, err := a.readVersion(a.payloadReader)
 		if err != nil {
-			return false, fmt.Errorf("cannot read frame version in multipart segment: %w", err)
+			return fmt.Errorf("cannot read frame version in multipart segment: %w", err)
 		}
 		a.version = v
 	}
@@ -110,12 +116,12 @@ func (a *segmentAcc) WriteSegmentPayload(payload []byte) (frameReady bool, e err
 		}
 		_, err := io.CopyN(a.hdrBuf, a.payloadReader, int64(bytesToCopy))
 		if err != nil {
-			return false, fmt.Errorf("cannot read frame header bytes: %w", err)
+			return fmt.Errorf("cannot read frame header bytes: %w", err)
 		}
 		if done {
 			a.hdr, err = a.codec.DecodeHeader(a.hdrBuf)
 			if err != nil {
-				return false, fmt.Errorf("cannot read frame header in multipart segment: %w", err)
+				return fmt.Errorf("cannot read frame header in multipart segment: %w", err)
 			}
 			a.targetLength = int(a.hdr.BodyLength)
 			a.buf = bytes.NewBuffer(make([]byte, 0, a.targetLength))
@@ -124,7 +130,7 @@ func (a *segmentAcc) WriteSegmentPayload(payload []byte) (frameReady bool, e err
 
 	a.buf.Write(payload)
 	a.accumLength += len(payload)
-	return a.accumLength >= a.targetLength, nil
+	return nil
 }
 
 func (a *segmentAcc) readVersion(reader *bytes.Reader) (primitive.ProtocolVersion, error) {
@@ -140,4 +146,87 @@ func (a *segmentAcc) readVersion(reader *bytes.Reader) (primitive.ProtocolVersio
 		return 0, err
 	}
 	return version, nil
+}
+
+type connState struct {
+	useSegments  bool // Protocol v5+ outer frame (segment) handling. See: https://github.com/apache/cassandra/blob/c713132aa6c20305a4a0157e9246057925ccbf78/doc/native_protocol_v5.spec
+	frameCodec   frame.RawCodec
+	segmentCodec segment.Codec
+}
+
+var emptyConnState = &connState{
+	useSegments:  false,
+	frameCodec:   defaultFrameCodec,
+	segmentCodec: nil,
+}
+
+type connCodecHelper struct {
+	src      io.Reader
+	state    atomic.Pointer[connState]
+	segAccum SegmentAccumulator
+}
+
+func newConnCodecHelper(src io.Reader) *connCodecHelper {
+	return &connCodecHelper{
+		src:      src,
+		segAccum: NewSegmentAccumulator(defaultFrameCodec),
+	}
+}
+
+func (recv *connCodecHelper) ReadRawFrame(reader io.Reader, connectionAddr string, ctx context.Context) (*frame.RawFrame, error) {
+	state := recv.GetState()
+	if !state.useSegments {
+		rawFrame, err := defaultFrameCodec.DecodeRawFrame(reader) // body is not being decompressed, so we can use default codec
+		if err != nil {
+			return nil, adaptConnErr(connectionAddr, ctx, err)
+		}
+
+		return rawFrame, nil
+	} else {
+		for !recv.segAccum.FrameReady() {
+			sgmt, err := state.segmentCodec.DecodeSegment(reader)
+			if err != nil {
+				return nil, adaptConnErr(connectionAddr, ctx, err)
+			}
+			err = recv.segAccum.WriteSegmentPayload(sgmt.Payload.UncompressedData)
+			if err != nil {
+				return nil, err
+			}
+		}
+		return recv.segAccum.ReadFrame()
+	}
+}
+
+func (recv *connCodecHelper) SetState(compression primitive.Compression, useSegments bool) error {
+	if useSegments {
+		sCodec, ok := segmentCodecs[compression]
+		if !ok {
+			return fmt.Errorf("unknown segment compression %v", compression)
+		}
+		recv.state.Store(&connState{
+			useSegments:  true,
+			frameCodec:   defaultFrameCodec,
+			segmentCodec: sCodec,
+		})
+		return nil
+	}
+
+	fCodec, ok := frameCodecs[compression]
+	if !ok {
+		return fmt.Errorf("unknown frame compression %v", compression)
+	}
+	recv.state.Store(&connState{
+		useSegments:  false,
+		frameCodec:   fCodec,
+		segmentCodec: nil,
+	})
+	return nil
+}
+
+func (recv *connCodecHelper) GetState() *connState {
+	state := recv.state.Load()
+	if state == nil {
+		return emptyConnState
+	}
+	return state
 }

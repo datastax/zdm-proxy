@@ -78,8 +78,9 @@ type ClusterConnector struct {
 	lastHeartbeatTime *atomic.Value
 	lastHeartbeatLock sync.Mutex
 
-	ccProtoVer  primitive.ProtocolVersion
-	compression *atomic.Value
+	ccProtoVer primitive.ProtocolVersion
+
+	codecHelper *connCodecHelper
 }
 
 func NewClusterConnectionInfo(connConfig ConnectionConfig, endpointConfig Endpoint, isOriginCassandra bool) *ClusterConnectionInfo {
@@ -189,7 +190,7 @@ func NewClusterConnector(
 		handshakeDone:               handshakeDone,
 		lastHeartbeatTime:           lastHeartbeatTime,
 		ccProtoVer:                  ccProtoVer,
-		compression:                 compression,
+		codecHelper:                 newConnCodecHelper(conn),
 	}, nil
 }
 
@@ -260,7 +261,7 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 		defer wg.Wait()
 		protocolErrOccurred := false
 		for {
-			response, err := readRawFrame(bufferedReader, connectionAddr, cc.clusterConnContext)
+			response, err := cc.codecHelper.ReadRawFrame(bufferedReader, connectionAddr, cc.clusterConnContext)
 			protocolErrResponseFrame, err, errCode := checkProtocolError(response, cc.ccProtoVer, cc.getCompression(), err, protocolErrOccurred, string(cc.connectorType))
 			if err != nil {
 				handleConnectionError(
@@ -452,6 +453,10 @@ func (cc *ClusterConnector) validateAsyncStateForRequest(frame *frame.RawFrame) 
 	}
 }
 
+func (cc *ClusterConnector) SetCodecState(compression primitive.Compression, version primitive.ProtocolVersion) error {
+	return cc.codecHelper.SetState(compression, version.SupportsModernFramingLayout())
+}
+
 func (cc *ClusterConnector) SetReady() bool {
 	return atomic.CompareAndSwapInt32(&cc.asyncConnectorState, ConnectorStateHandshake, ConnectorStateReady)
 }
@@ -569,7 +574,7 @@ func (cc *ClusterConnector) shouldSendHeartbeat(heartbeatIntervalMs int) bool {
 }
 
 func (cc *ClusterConnector) getCodec() frame.RawCodec {
-	return codecs[cc.getCompression()]
+	return cc.codecHelper.GetState().frameCodec
 }
 
 func (cc *ClusterConnector) getCompression() primitive.Compression {

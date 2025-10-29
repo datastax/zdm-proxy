@@ -6,20 +6,22 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"github.com/datastax/go-cassandra-native-protocol/frame"
-	"github.com/datastax/go-cassandra-native-protocol/message"
-	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/datastax/zdm-proxy/proxy/pkg/common"
-	"github.com/datastax/zdm-proxy/proxy/pkg/config"
-	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
-	"github.com/google/uuid"
-	log "github.com/sirupsen/logrus"
 	"net"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/datastax/go-cassandra-native-protocol/frame"
+	"github.com/datastax/go-cassandra-native-protocol/message"
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/google/uuid"
+	log "github.com/sirupsen/logrus"
+
+	"github.com/datastax/zdm-proxy/proxy/pkg/common"
+	"github.com/datastax/zdm-proxy/proxy/pkg/config"
+	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
 )
 
 /*
@@ -438,6 +440,7 @@ func (ch *ClientHandler) requestLoop() {
 				}
 				if ready {
 					ch.handshakeDone.Store(true)
+					ch.originCassandraConnector.SetReady()
 					log.Infof(
 						"Handshake successful with client %s", connectionAddr)
 				}
@@ -699,7 +702,7 @@ func (ch *ClientHandler) tryProcessProtocolError(response *Response, protocolErr
 func decodeError(responseFrame *frame.RawFrame, compression primitive.Compression) (message.Error, error) {
 	if responseFrame != nil &&
 		responseFrame.Header.OpCode == primitive.OpCodeError {
-		body, err := codecs[compression].DecodeBody(
+		body, err := frameCodecs[compression].DecodeBody(
 			responseFrame.Header, bytes.NewReader(responseFrame.Body))
 
 		if err != nil {
@@ -2168,11 +2171,11 @@ func (ch *ClientHandler) setCompression(compression primitive.Compression) {
 }
 
 func (ch *ClientHandler) getCodec() frame.RawCodec {
-	return codecs[ch.getCompression()]
+	return frameCodecs[ch.getCompression()]
 }
 
 func decodeErrorResult(frame *frame.RawFrame, compression primitive.Compression) (message.Error, error) {
-	body, err := codecs[compression].DecodeBody(frame.Header, bytes.NewReader(frame.Body))
+	body, err := frameCodecs[compression].DecodeBody(frame.Header, bytes.NewReader(frame.Body))
 	if err != nil {
 		return nil, fmt.Errorf("could not decode error body: %w", err)
 	}
@@ -2199,7 +2202,7 @@ func createUnpreparedFrame(errVal *UnpreparedExecuteError, compression primitive
 	f := frame.NewFrame(errVal.Header.Version, errVal.Header.StreamId, unpreparedMsg)
 	f.Body.TracingId = errVal.Body.TracingId
 
-	rawFrame, err := codecs[compression].ConvertToRawFrame(f)
+	rawFrame, err := frameCodecs[compression].ConvertToRawFrame(f)
 	if err != nil {
 		return nil, fmt.Errorf("could not convert unprepared response frame to rawframe: %w", err)
 	}
