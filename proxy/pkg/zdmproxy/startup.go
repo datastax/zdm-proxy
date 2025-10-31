@@ -25,13 +25,23 @@ func (recv *AuthError) Error() string {
 	return fmt.Sprintf("authentication error: %v", recv.errMsg)
 }
 
-func (ch *ClientHandler) getSecondaryClusterConnector() *ClusterConnector {
+func (ch *ClientHandler) getAuthSecondaryClusterConnector() *ClusterConnector {
 	if ch.forwardAuthToTarget {
 		// secondary is ORIGIN
 		return ch.originCassandraConnector
 	} else {
 		// secondary is TARGET
 		return ch.targetCassandraConnector
+	}
+}
+
+func (ch *ClientHandler) getAuthPrimaryClusterConnector() *ClusterConnector {
+	if ch.forwardAuthToTarget {
+		// primary is TARGET
+		return ch.targetCassandraConnector
+	} else {
+		// primary is ORIGIN
+		return ch.originCassandraConnector
 	}
 }
 
@@ -150,30 +160,24 @@ func (ch *ClientHandler) handleSecondaryHandshakeStartup(
 			}
 		}
 
+		connector := ch.getAuthSecondaryClusterConnector()
+		if asyncConnector {
+			connector = ch.asyncConnector
+		}
+
 		newPhase, parsedFrame, done, err := handleSecondaryHandshakeResponse(
-			phase, response, clientIPAddress, clusterAddress, ch.getCompression(), logIdentifier)
+			connector, phase, response, clientIPAddress, clusterAddress, ch.getCompression(), logIdentifier)
 		if err != nil {
 			return err
 		}
 		if done {
 			if asyncConnector {
-				err = ch.asyncConnector.SetCodecState(ch.getCompression(), startupRequest.Header.Version)
-				if err != nil {
-					return fmt.Errorf(
-						"could not set async connector (%v) codec: %w", logIdentifier, err)
-				}
 				if ch.asyncConnector.SetReady() {
 					return nil
 				} else {
 					return fmt.Errorf(
 						"could not set async connector (%v) as ready after a successful handshake "+
 							"because the connector was already shutdown", logIdentifier)
-				}
-			} else {
-				err = ch.getSecondaryClusterConnector().SetCodecState(ch.getCompression(), startupRequest.Header.Version)
-				if err != nil {
-					return fmt.Errorf(
-						"could not set secondary cluster connector (%v) codec: %w", logIdentifier, err)
 				}
 			}
 			return nil
@@ -184,6 +188,7 @@ func (ch *ClientHandler) handleSecondaryHandshakeStartup(
 }
 
 func handleSecondaryHandshakeResponse(
+	clusterConnector *ClusterConnector,
 	phase int, f *frame.RawFrame, clientIPAddress net.Addr,
 	clusterAddress net.Addr, compression primitive.Compression, logIdentifier string) (int, *frame.Frame, bool, error) {
 	parsedFrame, err := frameCodecs[compression].ConvertFromRawFrame(f)
@@ -212,6 +217,13 @@ func handleSecondaryHandshakeResponse(
 		return phase, parsedFrame, done, fmt.Errorf(
 			"received response in secondary handshake (%v) that was not "+
 				"READY, AUTHENTICATE, AUTH_CHALLENGE, or AUTH_SUCCESS: %v", logIdentifier, parsedFrame.Body.Message)
+	}
+
+	if f.Header.OpCode == primitive.OpCodeReady || f.Header.OpCode == primitive.OpCodeAuthenticate {
+		err = clusterConnector.codecHelper.MaybeEnableSegments(f.Header.Version)
+		if err != nil {
+			return phase, parsedFrame, false, fmt.Errorf("unsuccessful switch to segments on %v: %w", clusterConnector.clusterType, err)
+		}
 	}
 	return phase, parsedFrame, done, nil
 }

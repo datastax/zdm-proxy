@@ -161,15 +161,17 @@ var emptyConnState = &connState{
 }
 
 type connCodecHelper struct {
-	src      io.Reader
-	state    atomic.Pointer[connState]
-	segAccum SegmentAccumulator
+	src         io.Reader
+	state       atomic.Pointer[connState]
+	segAccum    SegmentAccumulator
+	compression *atomic.Value
 }
 
-func newConnCodecHelper(src io.Reader) *connCodecHelper {
+func newConnCodecHelper(src io.Reader, compression *atomic.Value) *connCodecHelper {
 	return &connCodecHelper{
-		src:      src,
-		segAccum: NewSegmentAccumulator(defaultFrameCodec),
+		src:         src,
+		segAccum:    NewSegmentAccumulator(defaultFrameCodec),
+		compression: compression,
 	}
 }
 
@@ -197,7 +199,28 @@ func (recv *connCodecHelper) ReadRawFrame(reader io.Reader, connectionAddr strin
 	}
 }
 
-func (recv *connCodecHelper) SetState(compression primitive.Compression, useSegments bool) error {
+// SetStartupCompression should be called as soon as the STARTUP request is received and the atomic.Value
+// holding the primitive.Compression value is set. This method will update the state of this codec helper
+// according to the value of Compression.
+//
+// This method should only be called once STARTUP is received and before the handshake proceeds because it
+// will forcefully set a state where segments are disabled.
+func (recv *connCodecHelper) SetStartupCompression() error {
+	return recv.SetState(false)
+}
+
+// MaybeEnableSegments is a helper method to conditionally switch to segments if the provided protocol version supports them.
+func (recv *connCodecHelper) MaybeEnableSegments(version primitive.ProtocolVersion) error {
+	if version.SupportsModernFramingLayout() {
+		return recv.SetState(true)
+	}
+	return nil
+}
+
+// SetState updates the state of this codec helper loading the compression type from the atomic.Value provided
+// during initialization and sets the underlying codecs to use segments or not according to the parameter.
+func (recv *connCodecHelper) SetState(useSegments bool) error {
+	compression := recv.GetCompression()
 	if useSegments {
 		sCodec, ok := segmentCodecs[compression]
 		if !ok {
@@ -229,4 +252,8 @@ func (recv *connCodecHelper) GetState() *connState {
 		return emptyConnState
 	}
 	return state
+}
+
+func (recv *connCodecHelper) GetCompression() primitive.Compression {
+	return recv.compression.Load().(primitive.Compression)
 }

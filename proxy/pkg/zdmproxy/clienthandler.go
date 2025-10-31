@@ -440,7 +440,6 @@ func (ch *ClientHandler) requestLoop() {
 				}
 				if ready {
 					ch.handshakeDone.Store(true)
-					ch.originCassandraConnector.SetReady()
 					log.Infof(
 						"Handshake successful with client %s", connectionAddr)
 				}
@@ -1117,6 +1116,17 @@ func (ch *ClientHandler) handleHandshakeRequest(request *frame.RawFrame, wg *syn
 			if newAuthFrame != nil {
 				request = newAuthFrame
 			}
+		} else if request.Header.OpCode == primitive.OpCodeStartup {
+			clientStartup, err := defaultFrameCodec.DecodeBody(request.Header, bytes.NewReader(request.Body))
+			if err != nil {
+				scheduledTaskChannel <- &handshakeRequestResult{
+					authSuccess: false,
+					err:         fmt.Errorf("failed to decode startup message: %w", err),
+				}
+			}
+			compression := clientStartup.Message.(*message.Startup).GetCompression()
+			ch.setCompression(compression)
+			ch.startupRequest.Store(request)
 		}
 
 		responseChan := make(chan *customResponse, 1)
@@ -1182,18 +1192,18 @@ func (ch *ClientHandler) handleHandshakeRequest(request *frame.RawFrame, wg *syn
 		}
 
 		ch.secondaryStartupResponse = secondaryResponse
+		primaryResponse := aggregatedResponse
 
-		clientStartup, err := defaultFrameCodec.DecodeBody(request.Header, bytes.NewReader(request.Body))
-		if err != nil {
-			return false, fmt.Errorf("failed to decode startup message: %w", err)
-		}
-		ch.setCompression(clientStartup.Message.(*message.Startup).GetCompression())
-
-		ch.startupRequest.Store(request)
-
-		err = validateSecondaryStartupResponse(secondaryResponse, secondaryCluster)
+		err := validateSecondaryStartupResponse(secondaryResponse, secondaryCluster)
 		if err != nil {
 			return false, fmt.Errorf("unsuccessful startup on %v: %w", secondaryCluster, err)
+		}
+
+		if primaryResponse.Header.OpCode == primitive.OpCodeReady || primaryResponse.Header.OpCode == primitive.OpCodeAuthenticate {
+			err = ch.getAuthPrimaryClusterConnector().codecHelper.MaybeEnableSegments(primaryResponse.Header.Version)
+			if err != nil {
+				return false, fmt.Errorf("unsuccessful switch to segments on %v: %w", ch.getAuthPrimaryClusterConnector().clusterType, err)
+			}
 		}
 	}
 
@@ -1208,7 +1218,7 @@ func (ch *ClientHandler) handleHandshakeRequest(request *frame.RawFrame, wg *syn
 			err:                  nil,
 		}
 		if aggregatedResponse.Header.OpCode == primitive.OpCodeReady || aggregatedResponse.Header.OpCode == primitive.OpCodeAuthSuccess {
-			// target handshake must happen within a single client request lifetime
+			// secondary handshake must happen within a single client request lifetime
 			// to guarantee that no other request with the same
 			// stream id goes to target in the meantime
 
@@ -1352,7 +1362,9 @@ func (ch *ClientHandler) startSecondaryHandshake(asyncConnector bool) (chan erro
 	}
 	startupFrame := startupFrameInterface.(*frame.RawFrame)
 	startupResponse := ch.secondaryStartupResponse
-	if startupResponse == nil {
+	if asyncConnector {
+		startupResponse = nil
+	} else if startupResponse == nil {
 		return nil, errors.New("can not start secondary handshake before a Startup response was received")
 	}
 
@@ -2340,7 +2352,8 @@ func checkUnsupportedProtocolError(err error) *message.ProtocolError {
 
 // checkProtocolVersion handles the case where the protocol library does not return an error but the proxy does not support a specific version
 func checkProtocolVersion(version primitive.ProtocolVersion) *message.ProtocolError {
-	if version < primitive.ProtocolVersion5 || version.IsDse() {
+	// Protocol v5 is now supported
+	if version <= primitive.ProtocolVersion5 || version.IsDse() {
 		return nil
 	}
 

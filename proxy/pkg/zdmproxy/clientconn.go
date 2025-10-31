@@ -4,14 +4,16 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"github.com/datastax/go-cassandra-native-protocol/frame"
-	"github.com/datastax/go-cassandra-native-protocol/message"
-	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/datastax/zdm-proxy/proxy/pkg/config"
-	log "github.com/sirupsen/logrus"
 	"net"
 	"sync"
 	"sync/atomic"
+
+	"github.com/datastax/go-cassandra-native-protocol/frame"
+	"github.com/datastax/go-cassandra-native-protocol/message"
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	log "github.com/sirupsen/logrus"
+
+	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 )
 
 const ClientConnectorLogPrefix = "CLIENT-CONNECTOR"
@@ -58,7 +60,8 @@ type ClientConnector struct {
 	shutdownRequestCtx context.Context
 
 	minProtoVer primitive.ProtocolVersion
-	compression *atomic.Value
+
+	codecHelper *connCodecHelper
 }
 
 func NewClientConnector(
@@ -78,6 +81,7 @@ func NewClientConnector(
 	minProtoVer primitive.ProtocolVersion,
 	compression *atomic.Value) *ClientConnector {
 
+	codecHelper := newConnCodecHelper(connection, compression)
 	return &ClientConnector{
 		connection:              connection,
 		conf:                    conf,
@@ -94,7 +98,8 @@ func NewClientConnector(
 			ClientConnectorLogPrefix,
 			false,
 			false,
-			writeScheduler),
+			writeScheduler,
+			codecHelper),
 		responsesDoneChan:                    responsesDoneChan,
 		requestsDoneCtx:                      requestsDoneCtx,
 		eventsDoneChan:                       eventsDoneChan,
@@ -103,8 +108,7 @@ func NewClientConnector(
 		shutdownRequestCtx:                   shutdownRequestCtx,
 		clientHandlerShutdownRequestCancelFn: clientHandlerShutdownRequestCancelFn,
 		minProtoVer:                          minProtoVer,
-		compression:                          compression,
-		codecHelper:
+		codecHelper:                          codecHelper,
 	}
 }
 
@@ -182,9 +186,9 @@ func (cc *ClientConnector) listenForRequests() {
 		protocolErrOccurred := false
 		var alreadySentProtocolErr *frame.RawFrame
 		for cc.clientHandlerContext.Err() == nil {
-			f, err := readRawFrame(bufferedReader, connectionAddr, cc.clientHandlerContext)
+			f, err := cc.codecHelper.ReadRawFrame(bufferedReader, connectionAddr, cc.clientHandlerContext)
 
-			protocolErrResponseFrame, err, _ := checkProtocolError(f, cc.minProtoVer, cc.getCompression(), err, protocolErrOccurred, ClientConnectorLogPrefix)
+			protocolErrResponseFrame, err, _ := checkProtocolError(f, cc.minProtoVer, cc.codecHelper.GetCompression(), err, protocolErrOccurred, ClientConnectorLogPrefix)
 			if err != nil {
 				handleConnectionError(
 					err, cc.clientHandlerContext, cc.clientHandlerCancelFunc, ClientConnectorLogPrefix, "reading", connectionAddr)
@@ -224,7 +228,7 @@ func (cc *ClientConnector) sendOverloadedToClient(request *frame.RawFrame) {
 		ErrorMessage: "Shutting down, please retry on next host.",
 	}
 	response := frame.NewFrame(request.Header.Version, request.Header.StreamId, msg)
-	rawResponse, err := frameCodecs[cc.getCompression()].ConvertToRawFrame(response)
+	rawResponse, err := frameCodecs[cc.codecHelper.GetCompression()].ConvertToRawFrame(response)
 	if err != nil {
 		log.Errorf("[%s] Could not convert frame (%v) to raw frame: %v", ClientConnectorLogPrefix, response, err)
 	} else {
@@ -277,8 +281,4 @@ func generateProtocolErrorResponseFrame(streamId int16, protoVer primitive.Proto
 
 func (cc *ClientConnector) sendResponseToClient(frame *frame.RawFrame) {
 	cc.writeCoalescer.Enqueue(frame)
-}
-
-func (cc *ClientConnector) getCompression() primitive.Compression {
-	return cc.compression.Load().(primitive.Compression)
 }

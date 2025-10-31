@@ -156,6 +156,7 @@ func NewClusterConnector(
 	// Initialize heartbeat time
 	lastHeartbeatTime := &atomic.Value{}
 	lastHeartbeatTime.Store(time.Now())
+	codecHelper := newConnCodecHelper(conn, compression)
 
 	return &ClusterConnector{
 		conf:                   conf,
@@ -178,7 +179,8 @@ func NewClusterConnector(
 			string(connectorType),
 			true,
 			asyncConnector,
-			writeScheduler),
+			writeScheduler,
+			codecHelper),
 		responseChan:                responseChan,
 		frameProcessor:              frameProcessor,
 		responseReadBufferSizeBytes: conf.ResponseReadBufferSizeBytes,
@@ -190,7 +192,7 @@ func NewClusterConnector(
 		handshakeDone:               handshakeDone,
 		lastHeartbeatTime:           lastHeartbeatTime,
 		ccProtoVer:                  ccProtoVer,
-		codecHelper:                 newConnCodecHelper(conn),
+		codecHelper:                 codecHelper,
 	}, nil
 }
 
@@ -262,7 +264,7 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 		protocolErrOccurred := false
 		for {
 			response, err := cc.codecHelper.ReadRawFrame(bufferedReader, connectionAddr, cc.clusterConnContext)
-			protocolErrResponseFrame, err, errCode := checkProtocolError(response, cc.ccProtoVer, cc.getCompression(), err, protocolErrOccurred, string(cc.connectorType))
+			protocolErrResponseFrame, err, errCode := checkProtocolError(response, cc.ccProtoVer, cc.codecHelper.GetCompression(), err, protocolErrOccurred, string(cc.connectorType))
 			if err != nil {
 				handleConnectionError(
 					err, cc.clusterConnContext, cc.cancelFunc, string(cc.connectorType), "reading", connectionAddr)
@@ -333,7 +335,7 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 }
 
 func (cc *ClusterConnector) handleAsyncResponse(response *frame.RawFrame) *frame.RawFrame {
-	errMsg, err := decodeError(response, cc.getCompression())
+	errMsg, err := decodeError(response, cc.codecHelper.GetCompression())
 	if err != nil {
 		log.Errorf("[%s] Error occured while checking if error is a protocol error: %v.", cc.connectorType, err)
 		cc.Shutdown()
@@ -451,10 +453,6 @@ func (cc *ClusterConnector) validateAsyncStateForRequest(frame *frame.RawFrame) 
 		log.Errorf("Unknown cluster connector state: %v. This is a bug, please report.", state)
 		return false
 	}
-}
-
-func (cc *ClusterConnector) SetCodecState(compression primitive.Compression, version primitive.ProtocolVersion) error {
-	return cc.codecHelper.SetState(compression, version.SupportsModernFramingLayout())
 }
 
 func (cc *ClusterConnector) SetReady() bool {
@@ -575,8 +573,4 @@ func (cc *ClusterConnector) shouldSendHeartbeat(heartbeatIntervalMs int) bool {
 
 func (cc *ClusterConnector) getCodec() frame.RawCodec {
 	return cc.codecHelper.GetState().frameCodec
-}
-
-func (cc *ClusterConnector) getCompression() primitive.Compression {
-	return cc.compression.Load().(primitive.Compression)
 }
