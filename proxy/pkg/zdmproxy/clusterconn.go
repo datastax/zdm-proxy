@@ -156,7 +156,7 @@ func NewClusterConnector(
 	// Initialize heartbeat time
 	lastHeartbeatTime := &atomic.Value{}
 	lastHeartbeatTime.Store(time.Now())
-	codecHelper := newConnCodecHelper(conn, compression)
+	codecHelper := newConnCodecHelper(conn, compression, clusterConnCtx)
 
 	return &ClusterConnector{
 		conf:                   conf,
@@ -263,7 +263,7 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 		defer wg.Wait()
 		protocolErrOccurred := false
 		for {
-			response, err := cc.codecHelper.ReadRawFrame(bufferedReader, connectionAddr, cc.clusterConnContext)
+			response, err := cc.codecHelper.ReadRawFrame(bufferedReader)
 			protocolErrResponseFrame, err, errCode := checkProtocolError(response, cc.ccProtoVer, cc.codecHelper.GetCompression(), err, protocolErrOccurred, string(cc.connectorType))
 			if err != nil {
 				handleConnectionError(

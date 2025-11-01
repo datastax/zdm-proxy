@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"sync/atomic"
 
 	"github.com/datastax/go-cassandra-native-protocol/frame"
@@ -148,6 +149,118 @@ func (a *segmentAcc) readVersion(reader *bytes.Reader) (primitive.ProtocolVersio
 	return version, nil
 }
 
+type SegmentWriter struct {
+	payload              *bytes.Buffer
+	connectionAddr       string
+	clientHandlerContext context.Context
+	maxBufferSize        int
+}
+
+func NewSegmentWriter(writeBuffer *bytes.Buffer, connectionAddr string, clientHandlerContext context.Context) *SegmentWriter {
+	return &SegmentWriter{
+		payload:              writeBuffer,
+		connectionAddr:       connectionAddr,
+		clientHandlerContext: clientHandlerContext,
+	}
+}
+
+func FrameUncompressedLength(f *frame.RawFrame) (int, error) {
+	if f.Header.Flags.Contains(primitive.HeaderFlagCompressed) {
+		return -1, fmt.Errorf("cannot obtain uncompressed length of compressed frame: %v", f.String())
+	}
+	return f.Header.Version.FrameHeaderLengthInBytes() + len(f.Body), nil
+}
+
+func (w *SegmentWriter) canWriteFrameInternal(frameLength int) bool {
+	if frameLength > segment.MaxPayloadLength { // frame needs multiple segments
+		if w.payload.Len() > 0 {
+			// if frame needs multiple segments and there is already a frame in the payload then need to flush first
+			return false
+		} else {
+			return true
+		}
+	} else { // frame can be self contained
+		if w.payload.Len()+frameLength > segment.MaxPayloadLength {
+			// if frame can be self contained but adding it to the current payload exceeds the max length then need to flush first
+			return false
+		} else if w.payload.Len() > 0 && (w.payload.Len()+frameLength > w.maxBufferSize) {
+			// if there is already data in the current payload and adding this frame to it exceeds the configured max buffer size then need to flush first
+			// max buffer size can be exceeded if payload is currently empty (otherwise the frame couldn't be written)
+			return false
+		} else {
+			return true
+		}
+	}
+}
+
+func (w *SegmentWriter) WriteSegments(dst io.Writer, state *connState) error {
+	payload := w.payload.Bytes()
+	payloadLength := len(payload)
+
+	if payloadLength <= 0 {
+		return errors.New("cannot write segment with empty payload")
+	}
+
+	if payloadLength > segment.MaxPayloadLength {
+		segmentCount := payloadLength / segment.MaxPayloadLength
+		isExactMultiple := payloadLength%segment.MaxPayloadLength == 0
+		if !isExactMultiple {
+			segmentCount++
+		}
+
+		// Split the payload buffer into segments
+		for i := range segmentCount {
+			segmentLength := segment.MaxPayloadLength
+			if i == segmentCount-1 && !isExactMultiple {
+				segmentLength = payloadLength % segment.MaxPayloadLength
+			}
+			start := i * segment.MaxPayloadLength
+			seg := &segment.Segment{
+				Payload: &segment.Payload{UncompressedData: payload[start : start+segmentLength]},
+				Header:  &segment.Header{IsSelfContained: false},
+			}
+			err := state.segmentCodec.EncodeSegment(seg, dst)
+			if err != nil {
+				return adaptConnErr(
+					w.connectionAddr,
+					w.clientHandlerContext,
+					fmt.Errorf("cannot write segment %d of %d: %w", i+1, segmentCount, err))
+			}
+		}
+	} else {
+		seg := &segment.Segment{
+			Payload: &segment.Payload{UncompressedData: w.payload.Bytes()},
+			Header:  &segment.Header{IsSelfContained: true},
+		}
+		err := state.segmentCodec.EncodeSegment(seg, dst)
+		if err != nil {
+			return adaptConnErr(w.connectionAddr, w.clientHandlerContext, fmt.Errorf("cannot write segment: %w", err))
+		}
+	}
+	return nil
+}
+
+func (w *SegmentWriter) AppendFrameToSegmentPayload(frm *frame.RawFrame) (bool, error) {
+	frameLength, err := FrameUncompressedLength(frm)
+	if err != nil {
+		return false, err
+	}
+	if !w.canWriteFrameInternal(frameLength) {
+		return false, nil
+	}
+
+	err = w.writeToPayload(frm)
+	if err != nil {
+		return false, fmt.Errorf("cannot write frame to segment payload: %w", err)
+	}
+	return true, nil
+}
+
+func (w *SegmentWriter) writeToPayload(f *frame.RawFrame) error {
+	// frames are always uncompressed in v5 (segments can be compressed)
+	return adaptConnErr(w.connectionAddr, w.clientHandlerContext, defaultFrameCodec.EncodeRawFrame(f, w.payload))
+}
+
 type connState struct {
 	useSegments  bool // Protocol v5+ outer frame (segment) handling. See: https://github.com/apache/cassandra/blob/c713132aa6c20305a4a0157e9246057925ccbf78/doc/native_protocol_v5.spec
 	frameCodec   frame.RawCodec
@@ -163,24 +276,37 @@ var emptyConnState = &connState{
 type connCodecHelper struct {
 	src         io.Reader
 	state       atomic.Pointer[connState]
-	segAccum    SegmentAccumulator
 	compression *atomic.Value
+
+	segAccum    SegmentAccumulator
+	writeBuffer *bytes.Buffer
+
+	segWriter *SegmentWriter
+
+	connectionAddr  string
+	shutdownContext context.Context
 }
 
-func newConnCodecHelper(src io.Reader, compression *atomic.Value) *connCodecHelper {
+func newConnCodecHelper(conn net.Conn, compression *atomic.Value, shutdownContext context.Context) *connCodecHelper {
+	writeBuffer := bytes.NewBuffer(make([]byte, 0, initialBufferSize))
+	connectionAddr := conn.RemoteAddr().String()
 	return &connCodecHelper{
-		src:         src,
-		segAccum:    NewSegmentAccumulator(defaultFrameCodec),
-		compression: compression,
+		src:             conn,
+		segAccum:        NewSegmentAccumulator(defaultFrameCodec),
+		compression:     compression,
+		writeBuffer:     writeBuffer,
+		connectionAddr:  connectionAddr,
+		shutdownContext: shutdownContext,
+		segWriter:       NewSegmentWriter(writeBuffer, connectionAddr, shutdownContext),
 	}
 }
 
-func (recv *connCodecHelper) ReadRawFrame(reader io.Reader, connectionAddr string, ctx context.Context) (*frame.RawFrame, error) {
+func (recv *connCodecHelper) ReadRawFrame(reader io.Reader) (*frame.RawFrame, error) {
 	state := recv.GetState()
 	if !state.useSegments {
 		rawFrame, err := defaultFrameCodec.DecodeRawFrame(reader) // body is not being decompressed, so we can use default codec
 		if err != nil {
-			return nil, adaptConnErr(connectionAddr, ctx, err)
+			return nil, adaptConnErr(recv.connectionAddr, recv.shutdownContext, err)
 		}
 
 		return rawFrame, nil
@@ -188,7 +314,7 @@ func (recv *connCodecHelper) ReadRawFrame(reader io.Reader, connectionAddr strin
 		for !recv.segAccum.FrameReady() {
 			sgmt, err := state.segmentCodec.DecodeSegment(reader)
 			if err != nil {
-				return nil, adaptConnErr(connectionAddr, ctx, err)
+				return nil, adaptConnErr(recv.connectionAddr, recv.shutdownContext, err)
 			}
 			err = recv.segAccum.WriteSegmentPayload(sgmt.Payload.UncompressedData)
 			if err != nil {

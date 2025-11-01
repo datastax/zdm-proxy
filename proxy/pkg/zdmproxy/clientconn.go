@@ -81,7 +81,7 @@ func NewClientConnector(
 	minProtoVer primitive.ProtocolVersion,
 	compression *atomic.Value) *ClientConnector {
 
-	codecHelper := newConnCodecHelper(connection, compression)
+	codecHelper := newConnCodecHelper(connection, compression, clientHandlerContext)
 	return &ClientConnector{
 		connection:              connection,
 		conf:                    conf,
@@ -186,7 +186,7 @@ func (cc *ClientConnector) listenForRequests() {
 		protocolErrOccurred := false
 		var alreadySentProtocolErr *frame.RawFrame
 		for cc.clientHandlerContext.Err() == nil {
-			f, err := cc.codecHelper.ReadRawFrame(bufferedReader, connectionAddr, cc.clientHandlerContext)
+			f, err := cc.codecHelper.ReadRawFrame(bufferedReader)
 
 			protocolErrResponseFrame, err, _ := checkProtocolError(f, cc.minProtoVer, cc.codecHelper.GetCompression(), err, protocolErrOccurred, ClientConnectorLogPrefix)
 			if err != nil {

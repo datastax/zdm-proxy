@@ -3,16 +3,19 @@ package config
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/datastax/zdm-proxy/proxy/pkg/common"
-	"github.com/kelseyhightower/envconfig"
-	def "github.com/mcuadros/go-defaults"
-	log "github.com/sirupsen/logrus"
-	"gopkg.in/yaml.v3"
 	"net"
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/datastax/go-cassandra-native-protocol/segment"
+	"github.com/kelseyhightower/envconfig"
+	def "github.com/mcuadros/go-defaults"
+	log "github.com/sirupsen/logrus"
+	"gopkg.in/yaml.v3"
+
+	"github.com/datastax/zdm-proxy/proxy/pkg/common"
 )
 
 // Config holds the values of environment variables necessary for proper Proxy function.
@@ -326,6 +329,29 @@ func (c *Config) Validate() error {
 	_, err = c.ParseControlConnMaxProtocolVersion()
 	if err != nil {
 		return err
+	}
+
+	// TODO remove these checks because we will have to let the buffer grow in the scenario of a very large frame
+	// that spans multiple segments anyway
+	if c.RequestWriteBufferSizeBytes > segment.MaxPayloadLength {
+		log.Warnf("request_write_buffer_size_bytes (%v) is greater than Protocol v5 frame's max payload length (%v) "+
+			"so this config value will be ignored and the max payload length will be used instead in v5 connections.",
+			c.RequestWriteBufferSizeBytes, segment.MaxPayloadLength)
+		c.RequestWriteBufferSizeBytes = segment.MaxPayloadLength
+	}
+
+	if c.ResponseWriteBufferSizeBytes > segment.MaxPayloadLength {
+		log.Warnf("response_write_buffer_size_bytes (%v) is greater than Protocol v5 frame's max payload length (%v) "+
+			"so this config value will be ignored and the max payload length will be used instead in v5 connections.",
+			c.ResponseWriteBufferSizeBytes, segment.MaxPayloadLength)
+		c.ResponseWriteBufferSizeBytes = segment.MaxPayloadLength
+	}
+
+	if c.AsyncConnectorWriteBufferSizeBytes > segment.MaxPayloadLength {
+		log.Warnf("async_connector_write_buffer_size_bytes (%v) is greater than Protocol v5 frame's max payload length (%v) "+
+			"so this config value will be ignored and the max payload length will be used instead in v5 connections.",
+			c.AsyncConnectorWriteBufferSizeBytes, segment.MaxPayloadLength)
+		c.AsyncConnectorWriteBufferSizeBytes = segment.MaxPayloadLength
 	}
 
 	return nil
