@@ -3,16 +3,19 @@ package integration_tests
 import (
 	"context"
 	"fmt"
+	"net"
+	"slices"
+	"testing"
+
 	"github.com/datastax/go-cassandra-native-protocol/client"
 	"github.com/datastax/go-cassandra-native-protocol/datatype"
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/datastax/zdm-proxy/integration-tests/setup"
+	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
-	"net"
-	"slices"
-	"testing"
+
+	"github.com/datastax/zdm-proxy/integration-tests/setup"
 )
 
 // Test that proxy can establish connectivity with ORIGIN and TARGET
@@ -32,7 +35,7 @@ func TestProtocolNegotiationDifferentClusters(t *testing.T) {
 	}{
 		{
 			name:                   "OriginV2_TargetV2_ClientV2",
-			proxyMaxProtoVer:       "2",
+			proxyMaxProtoVer:       "",
 			proxyOriginContConnVer: primitive.ProtocolVersion2,
 			proxyTargetContConnVer: primitive.ProtocolVersion2,
 			originProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion2},
@@ -40,8 +43,17 @@ func TestProtocolNegotiationDifferentClusters(t *testing.T) {
 			clientProtoVer:         primitive.ProtocolVersion2,
 		},
 		{
+			name:                   "OriginV23_TargetV345_ClientV3",
+			proxyMaxProtoVer:       "",
+			proxyOriginContConnVer: primitive.ProtocolVersion3,
+			proxyTargetContConnVer: primitive.ProtocolVersion5,
+			originProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion2, primitive.ProtocolVersion3},
+			targetProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion3, primitive.ProtocolVersion4, primitive.ProtocolVersion5},
+			clientProtoVer:         primitive.ProtocolVersion3,
+		},
+		{
 			name:                   "OriginV2_TargetV2_ClientV2_ProxyControlConnNegotiation",
-			proxyMaxProtoVer:       "4",
+			proxyMaxProtoVer:       "",
 			proxyOriginContConnVer: primitive.ProtocolVersion2,
 			proxyTargetContConnVer: primitive.ProtocolVersion2,
 			originProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion2},
@@ -50,7 +62,7 @@ func TestProtocolNegotiationDifferentClusters(t *testing.T) {
 		},
 		{
 			name:                   "OriginV2_TargetV23_ClientV2",
-			proxyMaxProtoVer:       "3",
+			proxyMaxProtoVer:       "",
 			proxyOriginContConnVer: primitive.ProtocolVersion2,
 			proxyTargetContConnVer: primitive.ProtocolVersion3,
 			originProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion2},
@@ -59,7 +71,7 @@ func TestProtocolNegotiationDifferentClusters(t *testing.T) {
 		},
 		{
 			name:                   "OriginV23_TargetV2_ClientV2",
-			proxyMaxProtoVer:       "3",
+			proxyMaxProtoVer:       "",
 			proxyOriginContConnVer: primitive.ProtocolVersion3,
 			proxyTargetContConnVer: primitive.ProtocolVersion2,
 			originProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion2, primitive.ProtocolVersion3},
@@ -69,42 +81,60 @@ func TestProtocolNegotiationDifferentClusters(t *testing.T) {
 		{
 			// most common setup with OSS Cassandra
 			name:                   "OriginV345_TargetV345_ClientV4",
-			proxyMaxProtoVer:       "DseV2",
-			proxyOriginContConnVer: primitive.ProtocolVersion4,
-			proxyTargetContConnVer: primitive.ProtocolVersion4,
+			proxyMaxProtoVer:       "",
+			proxyOriginContConnVer: primitive.ProtocolVersion5,
+			proxyTargetContConnVer: primitive.ProtocolVersion5,
 			originProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion3, primitive.ProtocolVersion4, primitive.ProtocolVersion5},
 			targetProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion3, primitive.ProtocolVersion4, primitive.ProtocolVersion5},
 			clientProtoVer:         primitive.ProtocolVersion4,
 		},
 		{
+			name:                   "OriginV345_TargetV345_ClientV5",
+			proxyMaxProtoVer:       "",
+			proxyOriginContConnVer: primitive.ProtocolVersion5,
+			proxyTargetContConnVer: primitive.ProtocolVersion5,
+			originProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion3, primitive.ProtocolVersion4, primitive.ProtocolVersion5},
+			targetProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion3, primitive.ProtocolVersion4, primitive.ProtocolVersion5},
+			clientProtoVer:         primitive.ProtocolVersion5,
+		},
+		{
 			// most common setup with DSE
 			name:                   "OriginV345_TargetV34Dse1Dse2_ClientV4",
-			proxyMaxProtoVer:       "DseV2",
-			proxyOriginContConnVer: primitive.ProtocolVersion4,
+			proxyMaxProtoVer:       "",
+			proxyOriginContConnVer: primitive.ProtocolVersion5,
 			proxyTargetContConnVer: primitive.ProtocolVersionDse2,
 			originProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion3, primitive.ProtocolVersion4, primitive.ProtocolVersion5},
 			targetProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion3, primitive.ProtocolVersion4, primitive.ProtocolVersionDse1, primitive.ProtocolVersionDse2},
 			clientProtoVer:         primitive.ProtocolVersion4,
 		},
 		{
-			name:                   "OriginV2_TargetV3_ClientV2",
-			proxyMaxProtoVer:       "3",
+			name:                   "OriginV234Dse1Dse2_TargetV345_ClientV4",
+			proxyMaxProtoVer:       "",
+			proxyOriginContConnVer: primitive.ProtocolVersionDse2,
+			proxyTargetContConnVer: primitive.ProtocolVersion5,
+			originProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion2, primitive.ProtocolVersion3, primitive.ProtocolVersion4, primitive.ProtocolVersionDse1, primitive.ProtocolVersionDse2},
+			targetProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion3, primitive.ProtocolVersion4, primitive.ProtocolVersion5},
+			clientProtoVer:         primitive.ProtocolVersion4,
+		},
+		{
+			name:                   "OriginV2_TargetV345_FailClient",
+			proxyMaxProtoVer:       "",
 			proxyOriginContConnVer: primitive.ProtocolVersion2,
-			proxyTargetContConnVer: primitive.ProtocolVersion3,
+			proxyTargetContConnVer: primitive.ProtocolVersion5,
 			originProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion2},
-			targetProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion3},
+			targetProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion3, primitive.ProtocolVersion4, primitive.ProtocolVersion5},
 			clientProtoVer:         primitive.ProtocolVersion2,
 			// client connection should fail as there is no common protocol version between origin and target
 			failClientConnect: true,
 		}, {
-			name:                   "OriginV3_TargetV3_ClientV3_Too_Low_Proto_Configured",
+			name:                   "OriginV3_TargetV3_Too_Low_Proto_Configured",
 			proxyMaxProtoVer:       "2",
 			proxyOriginContConnVer: primitive.ProtocolVersion3,
 			proxyTargetContConnVer: primitive.ProtocolVersion3,
 			originProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion3},
 			targetProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion3},
 			clientProtoVer:         primitive.ProtocolVersion2,
-			// client proxy startup, because configured protocol version is too low
+			// fail proxy control connection, because configured protocol version is too low
 			failProxyStartup: true,
 		},
 	}
@@ -113,6 +143,7 @@ func TestProtocolNegotiationDifferentClusters(t *testing.T) {
 	targetAddress := "127.0.1.2"
 	serverConf := setup.NewTestConfig(originAddress, targetAddress)
 	proxyConf := setup.NewTestConfig(originAddress, targetAddress)
+	log.SetLevel(log.TraceLevel)
 
 	queryInsert := &message.Query{
 		Query: "INSERT INTO test_ks.test(key, value) VALUES(1, '1')", // use INSERT to route request to both clusters
@@ -123,7 +154,9 @@ func TestProtocolNegotiationDifferentClusters(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			proxyConf.ControlConnMaxProtocolVersion = test.proxyMaxProtoVer
+			if test.proxyMaxProtoVer != "" {
+				proxyConf.ControlConnMaxProtocolVersion = test.proxyMaxProtoVer
+			}
 
 			testSetup, err := setup.NewCqlServerTestSetup(t, serverConf, false, false, false)
 			require.Nil(t, err)

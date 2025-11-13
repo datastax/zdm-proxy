@@ -129,8 +129,11 @@ func (a *segmentAcc) WriteSegmentPayload(payload []byte) error {
 		}
 	}
 
-	a.buf.Write(payload)
-	a.accumLength += len(payload)
+	n, err := a.buf.ReadFrom(a.payloadReader)
+	if err != nil {
+		return fmt.Errorf("cannot copy payload to buffer: %w", err)
+	}
+	a.accumLength += int(n)
 	return nil
 }
 
@@ -169,6 +172,10 @@ func FrameUncompressedLength(f *frame.RawFrame) (int, error) {
 		return -1, fmt.Errorf("cannot obtain uncompressed length of compressed frame: %v", f.String())
 	}
 	return f.Header.Version.FrameHeaderLengthInBytes() + len(f.Body), nil
+}
+
+func (w *SegmentWriter) GetWriteBuffer() *bytes.Buffer {
+	return w.payload
 }
 
 func (w *SegmentWriter) canWriteFrameInternal(frameLength int) bool {
@@ -237,6 +244,7 @@ func (w *SegmentWriter) WriteSegments(dst io.Writer, state *connState) error {
 			return adaptConnErr(w.connectionAddr, w.clientHandlerContext, fmt.Errorf("cannot write segment: %w", err))
 		}
 	}
+	w.payload.Reset()
 	return nil
 }
 
@@ -278,8 +286,7 @@ type connCodecHelper struct {
 	state       atomic.Pointer[connState]
 	compression *atomic.Value
 
-	segAccum    SegmentAccumulator
-	writeBuffer *bytes.Buffer
+	segAccum SegmentAccumulator
 
 	segWriter *SegmentWriter
 
@@ -294,34 +301,34 @@ func newConnCodecHelper(conn net.Conn, compression *atomic.Value, shutdownContex
 		src:             conn,
 		segAccum:        NewSegmentAccumulator(defaultFrameCodec),
 		compression:     compression,
-		writeBuffer:     writeBuffer,
 		connectionAddr:  connectionAddr,
 		shutdownContext: shutdownContext,
 		segWriter:       NewSegmentWriter(writeBuffer, connectionAddr, shutdownContext),
 	}
 }
 
-func (recv *connCodecHelper) ReadRawFrame(reader io.Reader) (*frame.RawFrame, error) {
+func (recv *connCodecHelper) ReadRawFrame(reader io.Reader) (*frame.RawFrame, *connState, error) {
 	state := recv.GetState()
 	if !state.useSegments {
 		rawFrame, err := defaultFrameCodec.DecodeRawFrame(reader) // body is not being decompressed, so we can use default codec
 		if err != nil {
-			return nil, adaptConnErr(recv.connectionAddr, recv.shutdownContext, err)
+			return nil, state, adaptConnErr(recv.connectionAddr, recv.shutdownContext, err)
 		}
 
-		return rawFrame, nil
+		return rawFrame, state, nil
 	} else {
 		for !recv.segAccum.FrameReady() {
 			sgmt, err := state.segmentCodec.DecodeSegment(reader)
 			if err != nil {
-				return nil, adaptConnErr(recv.connectionAddr, recv.shutdownContext, err)
+				return nil, state, adaptConnErr(recv.connectionAddr, recv.shutdownContext, err)
 			}
 			err = recv.segAccum.WriteSegmentPayload(sgmt.Payload.UncompressedData)
 			if err != nil {
-				return nil, err
+				return nil, state, err
 			}
 		}
-		return recv.segAccum.ReadFrame()
+		frame, err := recv.segAccum.ReadFrame()
+		return frame, state, err
 	}
 }
 

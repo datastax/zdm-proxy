@@ -4,21 +4,23 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"sync/atomic"
+	"testing"
+	"time"
+
 	cqlClient "github.com/datastax/go-cassandra-native-protocol/client"
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/rs/zerolog"
+	log "github.com/sirupsen/logrus"
+	"github.com/stretchr/testify/require"
+
 	"github.com/datastax/zdm-proxy/integration-tests/client"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
 	"github.com/datastax/zdm-proxy/integration-tests/utils"
 	"github.com/datastax/zdm-proxy/proxy/pkg/config"
-	"github.com/rs/zerolog"
-	log "github.com/sirupsen/logrus"
-	"github.com/stretchr/testify/require"
-	"sync/atomic"
-	"testing"
-	"time"
 )
 
 func TestGoCqlConnect(t *testing.T) {
@@ -193,13 +195,6 @@ func TestRequestedProtocolVersionUnsupportedByProxy(t *testing.T) {
 		errExpected       string
 	}{
 		{
-			"request v5, response v4",
-			primitive.ProtocolVersion5,
-			"4",
-			primitive.ProtocolVersion4,
-			"Invalid or unsupported protocol version (5)",
-		},
-		{
 			"request v1, response v4",
 			primitive.ProtocolVersion(0x1),
 			"4",
@@ -257,14 +252,6 @@ func TestReturnedProtocolVersionUnsupportedByProxy(t *testing.T) {
 		errExpected       string
 	}
 	tests := []*test{
-		{
-			"DSE_V2 request, v5 returned, v4 expected",
-			primitive.ProtocolVersionDse2,
-			"4",
-			primitive.ProtocolVersion5,
-			primitive.ProtocolVersion4,
-			"Invalid or unsupported protocol version (5)",
-		},
 		{
 			"DSE_V2 request, v1 returned, v4 expected",
 			primitive.ProtocolVersionDse2,
@@ -335,9 +322,7 @@ func TestReturnedProtocolVersionUnsupportedByProxy(t *testing.T) {
 
 func createFrameWithUnsupportedVersion(version primitive.ProtocolVersion, streamId int16, isResponse bool) ([]byte, error) {
 	mostSimilarVersion := version
-	if version > primitive.ProtocolVersionDse2 {
-		mostSimilarVersion = primitive.ProtocolVersionDse2
-	} else if version < primitive.ProtocolVersion2 {
+	if version < primitive.ProtocolVersion2 {
 		mostSimilarVersion = primitive.ProtocolVersion2
 	}
 

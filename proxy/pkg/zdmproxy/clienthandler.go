@@ -1192,19 +1192,20 @@ func (ch *ClientHandler) handleHandshakeRequest(request *frame.RawFrame, wg *syn
 		}
 
 		ch.secondaryStartupResponse = secondaryResponse
-		primaryResponse := aggregatedResponse
+		//primaryResponse := aggregatedResponse TODO
 
 		err := validateSecondaryStartupResponse(secondaryResponse, secondaryCluster)
 		if err != nil {
 			return false, fmt.Errorf("unsuccessful startup on %v: %w", secondaryCluster, err)
 		}
 
-		if primaryResponse.Header.OpCode == primitive.OpCodeReady || primaryResponse.Header.OpCode == primitive.OpCodeAuthenticate {
-			err = ch.getAuthPrimaryClusterConnector().codecHelper.MaybeEnableSegments(primaryResponse.Header.Version)
-			if err != nil {
-				return false, fmt.Errorf("unsuccessful switch to segments on %v: %w", ch.getAuthPrimaryClusterConnector().clusterType, err)
-			}
-		}
+		// TODO
+		//if primaryResponse.Header.OpCode == primitive.OpCodeReady || primaryResponse.Header.OpCode == primitive.OpCodeAuthenticate {
+		//	err = ch.getAuthPrimaryClusterConnector().codecHelper.MaybeEnableSegments(primaryResponse.Header.Version)
+		//	if err != nil {
+		//		return false, fmt.Errorf("unsuccessful switch to segments on %v: %w", ch.getAuthPrimaryClusterConnector().clusterType, err)
+		//	}
+		//}
 	}
 
 	startHandshakeCh := make(chan *startHandshakeResult, 1)

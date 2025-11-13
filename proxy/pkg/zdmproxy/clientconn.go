@@ -1,9 +1,10 @@
 package zdmproxy
 
 import (
-	"bufio"
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -181,12 +182,23 @@ func (cc *ClientConnector) listenForRequests() {
 			setDrainModeNowFunc()
 		}()
 
-		bufferedReader := bufio.NewReaderSize(cc.connection, cc.conf.RequestWriteBufferSizeBytes)
+		//bufferedReader := bufio.NewReaderSize(cc.connection, cc.conf.RequestWriteBufferSizeBytes)
 		connectionAddr := cc.connection.RemoteAddr().String()
 		protocolErrOccurred := false
 		var alreadySentProtocolErr *frame.RawFrame
+		//waitBuf := make([]byte, 1)
+		//newReader := io.MultiReader(bytes.NewReader(waitBuf), bufferedReader)
 		for cc.clientHandlerContext.Err() == nil {
-			f, err := cc.codecHelper.ReadRawFrame(bufferedReader)
+			// block until data is available outside of codecHelper so that we can check the state (segments/compression)
+			// before reading the frame/segment otherwise it will check the state then enter a blocking state inside a codec
+			// but the state can be modified in the meantime
+			newReader, err := waitForIncomingData(cc.connection)
+			if err != nil {
+				handleConnectionError(
+					err, cc.clientHandlerContext, cc.clientHandlerCancelFunc, ClientConnectorLogPrefix, "reading", connectionAddr)
+				break
+			}
+			f, _, err := cc.codecHelper.ReadRawFrame(newReader)
 
 			protocolErrResponseFrame, err, _ := checkProtocolError(f, cc.minProtoVer, cc.codecHelper.GetCompression(), err, protocolErrOccurred, ClientConnectorLogPrefix)
 			if err != nil {
@@ -233,6 +245,15 @@ func (cc *ClientConnector) sendOverloadedToClient(request *frame.RawFrame) {
 		log.Errorf("[%s] Could not convert frame (%v) to raw frame: %v", ClientConnectorLogPrefix, response, err)
 	} else {
 		cc.sendResponseToClient(rawResponse)
+	}
+}
+
+func waitForIncomingData(reader io.Reader) (io.Reader, error) {
+	buf := make([]byte, 1)
+	if _, err := io.ReadFull(reader, buf); err != nil {
+		return nil, err
+	} else {
+		return io.MultiReader(bytes.NewReader(buf), reader), nil
 	}
 }
 

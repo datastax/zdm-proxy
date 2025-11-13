@@ -218,13 +218,14 @@ func handleSecondaryHandshakeResponse(
 			"received response in secondary handshake (%v) that was not "+
 				"READY, AUTHENTICATE, AUTH_CHALLENGE, or AUTH_SUCCESS: %v", logIdentifier, parsedFrame.Body.Message)
 	}
-
-	if f.Header.OpCode == primitive.OpCodeReady || f.Header.OpCode == primitive.OpCodeAuthenticate {
-		err = clusterConnector.codecHelper.MaybeEnableSegments(f.Header.Version)
-		if err != nil {
-			return phase, parsedFrame, false, fmt.Errorf("unsuccessful switch to segments on %v: %w", clusterConnector.clusterType, err)
-		}
-	}
+	//TODO
+	//
+	//if f.Header.OpCode == primitive.OpCodeReady || f.Header.OpCode == primitive.OpCodeAuthenticate {
+	//	err = clusterConnector.codecHelper.MaybeEnableSegments(f.Header.Version)
+	//	if err != nil {
+	//		return phase, parsedFrame, false, fmt.Errorf("unsuccessful switch to segments on %v: %w", clusterConnector.clusterType, err)
+	//	}
+	//}
 	return phase, parsedFrame, done, nil
 }
 

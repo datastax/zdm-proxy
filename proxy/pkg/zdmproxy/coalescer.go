@@ -1,7 +1,6 @@
 package zdmproxy
 
 import (
-	"bytes"
 	"context"
 	"net"
 	"sync"
@@ -97,7 +96,6 @@ func (recv *writeCoalescer) RunWriteQueueLoop() {
 		defer recv.waitGroup.Done()
 
 		draining := false
-		bufferedWriter := bytes.NewBuffer(make([]byte, 0, initialBufferSize))
 		wg := &sync.WaitGroup{}
 		defer wg.Wait()
 
@@ -119,6 +117,7 @@ func (recv *writeCoalescer) RunWriteQueueLoop() {
 				break
 			}
 
+			writeBuffer := recv.codecHelper.segWriter.GetWriteBuffer()
 			resultChannel := make(chan coalescerIterationResult, 1)
 			wg.Add(1)
 			recv.scheduler.Schedule(func() {
@@ -156,7 +155,7 @@ func (recv *writeCoalescer) RunWriteQueueLoop() {
 							continue
 						}
 					} else {
-						bufferedWriter.Reset()
+						writeBuffer.Reset()
 						firstFrameRead = true
 						f = firstFrame
 						ok = true
@@ -164,7 +163,7 @@ func (recv *writeCoalescer) RunWriteQueueLoop() {
 
 					if !state.useSegments {
 						log.Tracef("[%v] Writing %v on %v", recv.logPrefix, f.Header, connectionAddr)
-						err := writeRawFrame(bufferedWriter, connectionAddr, recv.shutdownContext, f)
+						err := writeRawFrame(writeBuffer, connectionAddr, recv.shutdownContext, f)
 						if err != nil {
 							draining = true
 							handleConnectionError(err, recv.shutdownContext, recv.cancelFunc, recv.logPrefix, "writing", connectionAddr)
@@ -181,14 +180,14 @@ func (recv *writeCoalescer) RunWriteQueueLoop() {
 								}
 							}
 
-							if bufferedWriter.Len() >= recv.writeBufferSizeBytes {
+							if writeBuffer.Len() >= recv.writeBufferSizeBytes {
 								resultChannel <- coalescerIterationResult{}
 								close(resultChannel)
 								return
 							}
 						}
 					} else {
-						log.Tracef("[%v] Writing %v on %v", recv.logPrefix, f.Header, connectionAddr)
+						log.Tracef("[%v] Writing %v to segment on %v", recv.logPrefix, f.Header, connectionAddr)
 						written, err := recv.codecHelper.segWriter.AppendFrameToSegmentPayload(f)
 						if err != nil {
 							draining = true
@@ -211,9 +210,19 @@ func (recv *writeCoalescer) RunWriteQueueLoop() {
 				continue
 			}
 
-			if bufferedWriter.Len() > 0 {
-				if !state.useSegments {
-					_, err := recv.connection.Write(bufferedWriter.Bytes())
+			if result.switchToSegments {
+				err := recv.codecHelper.SetState(true) // don't update local state variable yet, so old state is used to write this buffer
+				if err != nil {
+					handleConnectionError(err, recv.shutdownContext, recv.cancelFunc, recv.logPrefix, "switching to segments", connectionAddr)
+					draining = true
+				}
+			}
+
+			if writeBuffer.Len() > 0 {
+				if draining {
+					writeBuffer.Reset()
+				} else if !state.useSegments {
+					_, err := recv.connection.Write(writeBuffer.Bytes())
 					if err != nil {
 						handleConnectionError(err, recv.shutdownContext, recv.cancelFunc, recv.logPrefix, "writing", connectionAddr)
 						draining = true
@@ -224,14 +233,6 @@ func (recv *writeCoalescer) RunWriteQueueLoop() {
 						handleConnectionError(err, recv.shutdownContext, recv.cancelFunc, recv.logPrefix, "writing", connectionAddr)
 						draining = true
 					}
-				}
-			}
-
-			if result.switchToSegments {
-				err := recv.codecHelper.SetState(true)
-				if err != nil {
-					handleConnectionError(err, recv.shutdownContext, recv.cancelFunc, recv.logPrefix, "switching to segments", connectionAddr)
-					draining = true
 				}
 			}
 		}

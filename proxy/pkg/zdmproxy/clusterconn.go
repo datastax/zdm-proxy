@@ -263,7 +263,7 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 		defer wg.Wait()
 		protocolErrOccurred := false
 		for {
-			response, err := cc.codecHelper.ReadRawFrame(bufferedReader)
+			response, state, err := cc.codecHelper.ReadRawFrame(bufferedReader)
 			protocolErrResponseFrame, err, errCode := checkProtocolError(response, cc.ccProtoVer, cc.codecHelper.GetCompression(), err, protocolErrOccurred, string(cc.connectorType))
 			if err != nil {
 				handleConnectionError(
@@ -279,6 +279,15 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 				}
 			}
 
+			if !state.useSegments && response.Header.Version.SupportsModernFramingLayout() &&
+				(response.Header.OpCode == primitive.OpCodeReady || response.Header.OpCode == primitive.OpCodeAuthenticate) {
+				err = cc.codecHelper.SetState(true)
+				if err != nil {
+					handleConnectionError(err, cc.clusterConnContext, cc.cancelFunc, string(cc.connectorType), "switching to segments", connectionAddr)
+					break
+				}
+			}
+
 			// when there's a protocol error, we cannot rely on the returned stream id, the only exception is
 			// when it's a UnsupportedVersion error, which means the Frame was properly parsed by the native protocol library
 			// but the proxy doesn't support the protocol version and in that case we can proceed with releasing the stream id in the mapper
@@ -289,7 +298,7 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 					// if releasing the stream id failed, check if it's a protocol error response
 					// if it is then ignore the release error and forward the response to the client handler so that
 					// it can be handled correctly
-					parsedResponse, parseErr := cc.getCodec().ConvertFromRawFrame(response)
+					parsedResponse, parseErr := state.frameCodec.ConvertFromRawFrame(response)
 					if parseErr != nil {
 						log.Errorf("[%v] Error converting frame when releasing stream id: %v. Original error: %v.", string(cc.connectorType), parseErr, releaseErr)
 						continue
@@ -561,7 +570,7 @@ func (cc *ClusterConnector) sendHeartbeat(version primitive.ProtocolVersion, hea
 		return
 	}
 	log.Debugf("Sending heartbeat to cluster %v", cc.clusterType)
-	cc.sendRequestToCluster(rawFrame, true)
+	_ = cc.sendRequestToCluster(rawFrame, true)
 }
 
 // shouldSendHeartbeat looks up the value of the last heartbeat time in the atomic value

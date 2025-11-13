@@ -4,15 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/datastax/go-cassandra-native-protocol/frame"
-	"github.com/datastax/go-cassandra-native-protocol/message"
-	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/datastax/zdm-proxy/proxy/pkg/common"
-	"github.com/datastax/zdm-proxy/proxy/pkg/config"
-	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
-	"github.com/google/uuid"
-	"github.com/jpillora/backoff"
-	log "github.com/sirupsen/logrus"
 	"math"
 	"math/big"
 	"math/rand"
@@ -22,6 +13,17 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/datastax/go-cassandra-native-protocol/frame"
+	"github.com/datastax/go-cassandra-native-protocol/message"
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/google/uuid"
+	"github.com/jpillora/backoff"
+	log "github.com/sirupsen/logrus"
+
+	"github.com/datastax/zdm-proxy/proxy/pkg/common"
+	"github.com/datastax/zdm-proxy/proxy/pkg/config"
+	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
 )
 
 type ControlConn struct {
@@ -62,7 +64,7 @@ type ControlConn struct {
 const ProxyVirtualRack = "rack0"
 const ProxyVirtualPartitioner = "org.apache.cassandra.dht.Murmur3Partitioner"
 const ccWriteTimeout = 5 * time.Second
-const ccReadTimeout = 10 * time.Second
+const ccReadTimeout = 600 * time.Second
 
 func NewControlConn(ctx context.Context, defaultPort int, connConfig ConnectionConfig,
 	username string, password string, conf *config.Config, topologyConfig *common.TopologyConfig, proxyRand *rand.Rand,
@@ -410,6 +412,8 @@ func downgradeProtocol(version primitive.ProtocolVersion) primitive.ProtocolVers
 	case primitive.ProtocolVersionDse2:
 		return primitive.ProtocolVersionDse1
 	case primitive.ProtocolVersionDse1:
+		return primitive.ProtocolVersion5
+	case primitive.ProtocolVersion5:
 		return primitive.ProtocolVersion4
 	case primitive.ProtocolVersion4:
 		return primitive.ProtocolVersion3

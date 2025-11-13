@@ -3,6 +3,8 @@ package cqlserver
 import (
 	"context"
 	"fmt"
+	"time"
+
 	"github.com/datastax/go-cassandra-native-protocol/client"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
 )
@@ -22,6 +24,7 @@ func NewCqlClient(addr string, port int, username string, password string, conne
 	}
 	proxyAddr := fmt.Sprintf("%s:%d", addr, port)
 	clt := client.NewCqlClient(proxyAddr, authCreds)
+	clt.ReadTimeout = time.Second * 600
 
 	var clientConn *client.CqlClientConnection
 	var err error

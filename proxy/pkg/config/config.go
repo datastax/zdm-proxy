@@ -420,8 +420,8 @@ func (c *Config) ParseControlConnMaxProtocolVersion() (primitive.ProtocolVersion
 		return 0, fmt.Errorf("could not parse control connection max protocol version, valid values are "+
 			"2, 3, 4, DseV1, DseV2; original err: %w", err)
 	}
-	if ver < 2 || ver > 4 {
-		return 0, fmt.Errorf("invalid control connection max protocol version, valid values are 2, 3, 4, DseV1, DseV2")
+	if ver < 2 || ver > 5 {
+		return 0, fmt.Errorf("invalid control connection max protocol version, valid values are 2, 3, 4, 5, DseV1, DseV2")
 	}
 	return primitive.ProtocolVersion(ver), nil
 }

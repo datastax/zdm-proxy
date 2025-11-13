@@ -70,6 +70,7 @@ type cqlConn struct {
 	authEnabled           bool
 	frameProcessor        FrameProcessor
 	protocolVersion       *atomic.Value
+	codecHelper           *connCodecHelper
 }
 
 var (
@@ -90,6 +91,8 @@ func NewCqlConnection(
 	readTimeout time.Duration, writeTimeout time.Duration,
 	conf *config.Config, protoVer primitive.ProtocolVersion) CqlConnection {
 	ctx, cFn := context.WithCancel(context.Background())
+	compressionValue := &atomic.Value{}
+	compressionValue.Store(primitive.CompressionNone)
 	cqlConn := &cqlConn{
 		controlConn:  controlConn,
 		readTimeout:  readTimeout,
@@ -115,6 +118,7 @@ func NewCqlConnection(
 		// protoVer is the proposed protocol version using which we will try to establish connectivity
 		frameProcessor:  NewStreamIdProcessor(NewInternalStreamIdMapper(protoVer, conf, nil)),
 		protocolVersion: &atomic.Value{},
+		codecHelper:     newConnCodecHelper(conn, compressionValue, ctx),
 	}
 	cqlConn.StartRequestLoop()
 	cqlConn.StartResponseLoop()
@@ -149,7 +153,8 @@ func (c *cqlConn) StartResponseLoop() {
 		defer close(c.eventsQueue)
 		defer log.Debugf("Shutting down response loop on %v.", c)
 		for c.ctx.Err() == nil {
-			f, err := defaultFrameCodec.DecodeFrame(c.conn)
+			var f *frame.Frame
+			rawFrame, state, err := c.codecHelper.ReadRawFrame(c.conn)
 			if err != nil {
 				if isDisconnectErr(err) {
 					log.Infof("[%v] Control connection to %v disconnected", c.controlConn.connConfig.GetClusterType(), c.conn.RemoteAddr().String())
@@ -159,7 +164,21 @@ func (c *cqlConn) StartResponseLoop() {
 				c.cancelFn()
 				break
 			}
-
+			f, err = state.frameCodec.ConvertFromRawFrame(rawFrame)
+			if err != nil {
+				log.Errorf("Failed to decode frame messge on cql connection %v: %v", c, err)
+				c.cancelFn()
+				break
+			}
+			if !state.useSegments && f.Header.Version.SupportsModernFramingLayout() &&
+				(f.Header.OpCode == primitive.OpCodeReady || f.Header.OpCode == primitive.OpCodeAuthenticate) {
+				err = c.codecHelper.SetState(true)
+				if err != nil {
+					log.Errorf("Failed to switch to segments on cql connection %v: %v", c, err)
+					c.cancelFn()
+					break
+				}
+			}
 			if f.Body.Message.GetOpCode() == primitive.OpCodeEvent {
 				select {
 				case c.eventsQueue <- f:
@@ -208,15 +227,74 @@ func (c *cqlConn) StartRequestLoop() {
 		for c.ctx.Err() == nil {
 			select {
 			case f := <-c.outgoingCh:
-				err := defaultFrameCodec.EncodeFrame(f, c.conn)
-				if err != nil {
-					if isDisconnectErr(err) {
-						log.Infof("[%v] Control connection to %v disconnected", c.controlConn.connConfig.GetClusterType(), c.conn.RemoteAddr().String())
-					} else {
-						log.Errorf("Failed to write/encode frame on cql connection %v: %v", c, err)
+				state := c.codecHelper.GetState()
+				if state.useSegments {
+					first := true
+					for {
+						if !first {
+							ok := false
+							select {
+							case f, ok = <-c.outgoingCh:
+							default:
+							}
+							if !ok {
+								state = c.codecHelper.GetState()
+								err := c.codecHelper.segWriter.WriteSegments(c.conn, state)
+								if err != nil {
+									log.Errorf("Failed to write segment to control connection %v: %v", c, err)
+									c.cancelFn()
+									return
+								}
+								break
+							}
+						} else {
+							first = false
+						}
+
+						rawFrame, err := defaultFrameCodec.ConvertToRawFrame(f)
+						if err != nil {
+							log.Errorf("Failed to convert frame to raw frame while writing segment payload on control connection %v: %v", c, err)
+							c.cancelFn()
+							return
+						}
+						written, err := c.codecHelper.segWriter.AppendFrameToSegmentPayload(rawFrame)
+						if err != nil {
+							log.Errorf("Failed to write/encode frame to segment payload on control connection %v: %v", c, err)
+							c.cancelFn()
+							return
+						}
+						if !written {
+							state = c.codecHelper.GetState()
+							err = c.codecHelper.segWriter.WriteSegments(c.conn, state)
+							if err != nil {
+								log.Errorf("Failed to write segment to control connection %v: %v", c, err)
+								c.cancelFn()
+								return
+							}
+							written, err = c.codecHelper.segWriter.AppendFrameToSegmentPayload(rawFrame)
+							if err != nil {
+								log.Errorf("Failed to write/encode frame to segment payload on control connection %v: %v", c, err)
+								c.cancelFn()
+								return
+							}
+							if !written {
+								log.Errorf("SegWriter returned false even after flushing the payload on control connection %v: %v", c, err)
+								c.cancelFn()
+								return
+							}
+						}
 					}
-					c.cancelFn()
-					return
+				} else {
+					err := defaultFrameCodec.EncodeFrame(f, c.conn)
+					if err != nil {
+						if isDisconnectErr(err) {
+							log.Infof("[%v] Control connection to %v disconnected", c.controlConn.connConfig.GetClusterType(), c.conn.RemoteAddr().String())
+						} else {
+							log.Errorf("Failed to write/encode frame on cql connection %v: %v", c, err)
+						}
+						c.cancelFn()
+						return
+					}
 				}
 			case <-c.ctx.Done():
 				return
@@ -350,6 +428,8 @@ func (c *cqlConn) SendAndReceive(request *frame.Frame, ctx context.Context) (*fr
 			c.Close()
 		}
 		return nil, fmt.Errorf("context finished before completing receiving frame on %v: %w", c, readTimeoutCtx.Err())
+	case <-c.ctx.Done():
+		return nil, fmt.Errorf("cql connection was closed: %w", ctx.Err())
 	}
 }
 
@@ -381,24 +461,29 @@ func (c *cqlConn) PerformHandshake(version primitive.ProtocolVersion, ctx contex
 	if response, err = c.SendAndReceive(startup, ctx); err == nil {
 		switch response.Body.Message.(type) {
 		case *message.Ready:
-			log.Warnf("%v: expected AUTHENTICATE, got READY – is authentication required?", c)
+			log.Warnf("%v ControlConn: authentication is NOT enabled.", c.controlConn.connConfig.GetClusterType())
 			break
 		case *message.Authenticate:
 			authEnabled = true
 			var authResponse *frame.Frame
 			authResponse, err = performHandshakeStep(authenticator, version, -1, response)
-			if err == nil {
+			if err != nil {
+				return authEnabled, fmt.Errorf("authentication response processing failed: %w", err)
+			}
+			response, err = c.SendAndReceive(authResponse, ctx)
+			if err != nil {
+				return authEnabled, fmt.Errorf("could not send AUTH RESPONSE: %w", err)
+			}
+			_, authSuccess := response.Body.Message.(*message.AuthSuccess)
+			if !authSuccess {
+				authResponse, err = performHandshakeStep(authenticator, version, -1, response)
+				if err != nil {
+					return authEnabled, fmt.Errorf("second authentication response processing failed: %w", err)
+				}
 				if response, err = c.SendAndReceive(authResponse, ctx); err != nil {
-					err = fmt.Errorf("could not send AUTH RESPONSE: %w", err)
+					return authEnabled, fmt.Errorf("could not send AUTH RESPONSE: %w", err)
 				} else if _, authSuccess := response.Body.Message.(*message.AuthSuccess); !authSuccess {
-					authResponse, err = performHandshakeStep(authenticator, version, -1, response)
-					if err == nil {
-						if response, err = c.SendAndReceive(authResponse, ctx); err != nil {
-							err = fmt.Errorf("could not send AUTH RESPONSE: %w", err)
-						} else if _, authSuccess := response.Body.Message.(*message.AuthSuccess); !authSuccess {
-							err = fmt.Errorf("expected AUTH_SUCCESS, got %v", response.Body.Message)
-						}
-					}
+					return authEnabled, fmt.Errorf("expected AUTH_SUCCESS, got %v", response.Body.Message)
 				}
 			}
 		case *message.ProtocolError:
@@ -410,8 +495,6 @@ func (c *cqlConn) PerformHandshake(version primitive.ProtocolVersion, ctx contex
 	if err == nil {
 		log.Debugf("%v: handshake successful", c)
 		c.initialized = true
-	} else {
-		log.Errorf("%v: handshake failed: %v", c, err)
 	}
 	return authEnabled, err
 }
