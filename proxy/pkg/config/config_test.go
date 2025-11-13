@@ -1,9 +1,10 @@
 package config
 
 import (
+	"testing"
+
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestTargetConfig_WithBundleOnly(t *testing.T) {
@@ -136,6 +137,12 @@ func TestTargetConfig_ParsingControlConnMaxProtocolVersion(t *testing.T) {
 			errorMessage:                  "",
 		},
 		{
+			name:                          "ParsedV5",
+			controlConnMaxProtocolVersion: "5",
+			parsedProtocolVersion:         primitive.ProtocolVersion5,
+			errorMessage:                  "",
+		},
+		{
 			name:                          "ParsedDse1",
 			controlConnMaxProtocolVersion: "DseV1",
 			parsedProtocolVersion:         primitive.ProtocolVersionDse1,
@@ -154,22 +161,16 @@ func TestTargetConfig_ParsingControlConnMaxProtocolVersion(t *testing.T) {
 			errorMessage:                  "",
 		},
 		{
-			name:                          "UnsupportedCassandraV5",
-			controlConnMaxProtocolVersion: "5",
-			parsedProtocolVersion:         0,
-			errorMessage:                  "invalid control connection max protocol version, valid values are 2, 3, 4, DseV1, DseV2",
-		},
-		{
 			name:                          "UnsupportedCassandraV1",
 			controlConnMaxProtocolVersion: "1",
 			parsedProtocolVersion:         0,
-			errorMessage:                  "invalid control connection max protocol version, valid values are 2, 3, 4, DseV1, DseV2",
+			errorMessage:                  "invalid control connection max protocol version, valid values are 2, 3, 4, 5, DseV1, DseV2",
 		},
 		{
 			name:                          "InvalidValue",
 			controlConnMaxProtocolVersion: "Dsev123",
 			parsedProtocolVersion:         0,
-			errorMessage:                  "could not parse control connection max protocol version, valid values are 2, 3, 4, DseV1, DseV2",
+			errorMessage:                  "could not parse control connection max protocol version, valid values are 2, 3, 4, 5, DseV1, DseV2",
 		},
 	}
 

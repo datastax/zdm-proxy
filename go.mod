@@ -2,8 +2,6 @@ module github.com/datastax/zdm-proxy
 
 go 1.24
 
-replace github.com/datastax/go-cassandra-native-protocol v0.0.0-20240903140133-605a850e203b => E:\Github\Datastax\go-cassandra-native-protocol
-
 require (
 	github.com/antlr4-go/antlr/v4 v4.13.1
 	github.com/datastax/go-cassandra-native-protocol v0.0.0-20240903140133-605a850e203b

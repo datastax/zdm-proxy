@@ -387,7 +387,7 @@ func (cc *ControlConn) connAndNegotiateProtoVer(endpoint Endpoint, initialProtoV
 		newConn := NewCqlConnection(cc, endpoint, tcpConn, cc.username, cc.password, ccReadTimeout, ccWriteTimeout, cc.conf, protoVer)
 		err = newConn.InitializeContext(protoVer, ctx)
 		var respErr *ResponseError
-		if err != nil && errors.As(err, &respErr) && respErr.IsProtocolError() && strings.Contains(err.Error(), "Invalid or unsupported protocol version") {
+		if err != nil && errors.As(err, &respErr) && respErr.IsProtocolError() {
 			// unsupported protocol version
 			// protocol renegotiation requires opening a new TCP connection
 			err2 := newConn.Close()

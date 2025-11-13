@@ -82,7 +82,7 @@ func NewClientConnector(
 	minProtoVer primitive.ProtocolVersion,
 	compression *atomic.Value) *ClientConnector {
 
-	codecHelper := newConnCodecHelper(connection, compression, clientHandlerContext)
+	codecHelper := newConnCodecHelper(connection, conf.RequestReadBufferSizeBytes, compression, clientHandlerContext)
 	return &ClientConnector{
 		connection:              connection,
 		conf:                    conf,
@@ -182,24 +182,11 @@ func (cc *ClientConnector) listenForRequests() {
 			setDrainModeNowFunc()
 		}()
 
-		//bufferedReader := bufio.NewReaderSize(cc.connection, cc.conf.RequestWriteBufferSizeBytes)
 		connectionAddr := cc.connection.RemoteAddr().String()
 		protocolErrOccurred := false
 		var alreadySentProtocolErr *frame.RawFrame
-		//waitBuf := make([]byte, 1)
-		//newReader := io.MultiReader(bytes.NewReader(waitBuf), bufferedReader)
 		for cc.clientHandlerContext.Err() == nil {
-			// block until data is available outside of codecHelper so that we can check the state (segments/compression)
-			// before reading the frame/segment otherwise it will check the state then enter a blocking state inside a codec
-			// but the state can be modified in the meantime
-			newReader, err := waitForIncomingData(cc.connection)
-			if err != nil {
-				handleConnectionError(
-					err, cc.clientHandlerContext, cc.clientHandlerCancelFunc, ClientConnectorLogPrefix, "reading", connectionAddr)
-				break
-			}
-			f, _, err := cc.codecHelper.ReadRawFrame(newReader)
-
+			f, _, err := cc.codecHelper.ReadRawFrame()
 			protocolErrResponseFrame, err, _ := checkProtocolError(f, cc.minProtoVer, cc.codecHelper.GetCompression(), err, protocolErrOccurred, ClientConnectorLogPrefix)
 			if err != nil {
 				handleConnectionError(

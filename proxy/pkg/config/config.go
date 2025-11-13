@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/datastax/go-cassandra-native-protocol/segment"
 	"github.com/kelseyhightower/envconfig"
 	def "github.com/mcuadros/go-defaults"
 	log "github.com/sirupsen/logrus"
@@ -331,29 +330,6 @@ func (c *Config) Validate() error {
 		return err
 	}
 
-	// TODO remove these checks because we will have to let the buffer grow in the scenario of a very large frame
-	// that spans multiple segments anyway
-	if c.RequestWriteBufferSizeBytes > segment.MaxPayloadLength {
-		log.Warnf("request_write_buffer_size_bytes (%v) is greater than Protocol v5 frame's max payload length (%v) "+
-			"so this config value will be ignored and the max payload length will be used instead in v5 connections.",
-			c.RequestWriteBufferSizeBytes, segment.MaxPayloadLength)
-		c.RequestWriteBufferSizeBytes = segment.MaxPayloadLength
-	}
-
-	if c.ResponseWriteBufferSizeBytes > segment.MaxPayloadLength {
-		log.Warnf("response_write_buffer_size_bytes (%v) is greater than Protocol v5 frame's max payload length (%v) "+
-			"so this config value will be ignored and the max payload length will be used instead in v5 connections.",
-			c.ResponseWriteBufferSizeBytes, segment.MaxPayloadLength)
-		c.ResponseWriteBufferSizeBytes = segment.MaxPayloadLength
-	}
-
-	if c.AsyncConnectorWriteBufferSizeBytes > segment.MaxPayloadLength {
-		log.Warnf("async_connector_write_buffer_size_bytes (%v) is greater than Protocol v5 frame's max payload length (%v) "+
-			"so this config value will be ignored and the max payload length will be used instead in v5 connections.",
-			c.AsyncConnectorWriteBufferSizeBytes, segment.MaxPayloadLength)
-		c.AsyncConnectorWriteBufferSizeBytes = segment.MaxPayloadLength
-	}
-
 	return nil
 }
 
@@ -418,7 +394,7 @@ func (c *Config) ParseControlConnMaxProtocolVersion() (primitive.ProtocolVersion
 	ver, err := strconv.ParseUint(c.ControlConnMaxProtocolVersion, 10, 32)
 	if err != nil {
 		return 0, fmt.Errorf("could not parse control connection max protocol version, valid values are "+
-			"2, 3, 4, DseV1, DseV2; original err: %w", err)
+			"2, 3, 4, 5, DseV1, DseV2; original err: %w", err)
 	}
 	if ver < 2 || ver > 5 {
 		return 0, fmt.Errorf("invalid control connection max protocol version, valid values are 2, 3, 4, 5, DseV1, DseV2")

@@ -77,6 +77,8 @@ var (
 	StreamIdMismatchErr = errors.New("stream id of the response is different from the stream id of the request")
 )
 
+const CqlConnReadBufferSizeBytes = 1024
+
 func (c *cqlConn) GetEndpoint() Endpoint {
 	return c.endpoint
 }
@@ -118,7 +120,7 @@ func NewCqlConnection(
 		// protoVer is the proposed protocol version using which we will try to establish connectivity
 		frameProcessor:  NewStreamIdProcessor(NewInternalStreamIdMapper(protoVer, conf, nil)),
 		protocolVersion: &atomic.Value{},
-		codecHelper:     newConnCodecHelper(conn, compressionValue, ctx),
+		codecHelper:     newConnCodecHelper(conn, CqlConnReadBufferSizeBytes, compressionValue, ctx),
 	}
 	cqlConn.StartRequestLoop()
 	cqlConn.StartResponseLoop()
@@ -154,7 +156,7 @@ func (c *cqlConn) StartResponseLoop() {
 		defer log.Debugf("Shutting down response loop on %v.", c)
 		for c.ctx.Err() == nil {
 			var f *frame.Frame
-			rawFrame, state, err := c.codecHelper.ReadRawFrame(c.conn)
+			rawFrame, state, err := c.codecHelper.ReadRawFrame()
 			if err != nil {
 				if isDisconnectErr(err) {
 					log.Infof("[%v] Control connection to %v disconnected", c.controlConn.connConfig.GetClusterType(), c.conn.RemoteAddr().String())

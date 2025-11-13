@@ -1,7 +1,6 @@
 package zdmproxy
 
 import (
-	"bufio"
 	"context"
 	"encoding/hex"
 	"errors"
@@ -62,10 +61,9 @@ type ClusterConnector struct {
 	cancelFunc             context.CancelFunc
 	responseChan           chan<- *Response
 
-	responseReadBufferSizeBytes int
-	writeCoalescer              *writeCoalescer
-	doneChan                    chan bool
-	frameProcessor              FrameProcessor
+	writeCoalescer *writeCoalescer
+	doneChan       chan bool
+	frameProcessor FrameProcessor
 
 	handshakeDone *atomic.Value
 
@@ -156,7 +154,7 @@ func NewClusterConnector(
 	// Initialize heartbeat time
 	lastHeartbeatTime := &atomic.Value{}
 	lastHeartbeatTime.Store(time.Now())
-	codecHelper := newConnCodecHelper(conn, compression, clusterConnCtx)
+	codecHelper := newConnCodecHelper(conn, conf.ResponseReadBufferSizeBytes, compression, clusterConnCtx)
 
 	return &ClusterConnector{
 		conf:                   conf,
@@ -181,18 +179,17 @@ func NewClusterConnector(
 			asyncConnector,
 			writeScheduler,
 			codecHelper),
-		responseChan:                responseChan,
-		frameProcessor:              frameProcessor,
-		responseReadBufferSizeBytes: conf.ResponseReadBufferSizeBytes,
-		doneChan:                    make(chan bool),
-		readScheduler:               readScheduler,
-		asyncConnector:              asyncConnector,
-		asyncConnectorState:         ConnectorStateHandshake,
-		asyncPendingRequests:        asyncPendingRequests,
-		handshakeDone:               handshakeDone,
-		lastHeartbeatTime:           lastHeartbeatTime,
-		ccProtoVer:                  ccProtoVer,
-		codecHelper:                 codecHelper,
+		responseChan:         responseChan,
+		frameProcessor:       frameProcessor,
+		doneChan:             make(chan bool),
+		readScheduler:        readScheduler,
+		asyncConnector:       asyncConnector,
+		asyncConnectorState:  ConnectorStateHandshake,
+		asyncPendingRequests: asyncPendingRequests,
+		handshakeDone:        handshakeDone,
+		lastHeartbeatTime:    lastHeartbeatTime,
+		ccProtoVer:           ccProtoVer,
+		codecHelper:          codecHelper,
 	}, nil
 }
 
@@ -257,13 +254,12 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 		defer close(cc.doneChan)
 		defer atomic.StoreInt32(&cc.asyncConnectorState, ConnectorStateShutdown)
 
-		bufferedReader := bufio.NewReaderSize(cc.connection, cc.responseReadBufferSizeBytes)
 		connectionAddr := cc.connection.RemoteAddr().String()
 		wg := &sync.WaitGroup{}
 		defer wg.Wait()
 		protocolErrOccurred := false
 		for {
-			response, state, err := cc.codecHelper.ReadRawFrame(bufferedReader)
+			response, state, err := cc.codecHelper.ReadRawFrame()
 			protocolErrResponseFrame, err, errCode := checkProtocolError(response, cc.ccProtoVer, cc.codecHelper.GetCompression(), err, protocolErrOccurred, string(cc.connectorType))
 			if err != nil {
 				handleConnectionError(

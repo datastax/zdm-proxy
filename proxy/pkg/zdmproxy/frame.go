@@ -66,14 +66,3 @@ func writeRawFrame(writer io.Writer, connectionAddr string, clientHandlerContext
 	err := defaultFrameCodec.EncodeRawFrame(frame, writer) // body is already compressed if needed, so we can use default codec
 	return adaptConnErr(connectionAddr, clientHandlerContext, err)
 }
-
-// TODO
-// Simple function that reads data from a connection and builds a frame
-func asdasdreadRawFrame(reader io.Reader, connectionAddr string, clientHandlerContext context.Context) (*frame.RawFrame, error) {
-	rawFrame, err := defaultFrameCodec.DecodeRawFrame(reader) // body is not being decompressed, so we can use default codec
-	if err != nil {
-		return nil, adaptConnErr(connectionAddr, clientHandlerContext, err)
-	}
-
-	return rawFrame, nil
-}
