@@ -120,7 +120,7 @@ func NewCqlConnection(
 		// protoVer is the proposed protocol version using which we will try to establish connectivity
 		frameProcessor:  NewStreamIdProcessor(NewInternalStreamIdMapper(protoVer, conf, nil)),
 		protocolVersion: &atomic.Value{},
-		codecHelper:     newConnCodecHelper(conn, CqlConnReadBufferSizeBytes, compressionValue, ctx),
+		codecHelper:     newConnCodecHelper(conn, conn.RemoteAddr().String(), CqlConnReadBufferSizeBytes, compressionValue, ctx),
 	}
 	cqlConn.StartRequestLoop()
 	cqlConn.StartResponseLoop()
