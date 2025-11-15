@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"testing"
 
-	"github.com/gocql/gocql"
+	"github.com/apache/cassandra-gocql-driver/v2"
 )
 
 // BasicBatch tests basic batch statement functionality

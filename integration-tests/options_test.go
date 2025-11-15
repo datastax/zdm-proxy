@@ -40,10 +40,10 @@ func TestCommonCompressionAlgorithms(t *testing.T) {
 	testSetup.Origin.CqlServer.RequestHandlers = []client.RequestHandler{client.RegisterHandler, newOptionsHandler(map[string][]string{"COMPRESSION": {"snappy"}}), client.HandshakeHandler, client.NewSystemTablesHandler("cluster2", "dc2")}
 	testSetup.Target.CqlServer.RequestHandlers = []client.RequestHandler{client.RegisterHandler, newOptionsHandler(map[string][]string{"COMPRESSION": {"snappy", "lz4"}}), client.HandshakeHandler, client.NewSystemTablesHandler("cluster1", "dc1")}
 
-	err = testSetup.Start(conf, true, primitive.ProtocolVersion4)
+	err = testSetup.Start(conf, true, primitive.ProtocolVersion5)
 	require.Nil(t, err)
 
-	request := frame.NewFrame(primitive.ProtocolVersion4, client.ManagedStreamId, &message.Options{})
+	request := frame.NewFrame(primitive.ProtocolVersion5, client.ManagedStreamId, &message.Options{})
 	response, err := testSetup.Client.CqlConnection.SendAndReceive(request)
 	require.Nil(t, err)
 	require.IsType(t, &message.Supported{}, response.Body.Message)

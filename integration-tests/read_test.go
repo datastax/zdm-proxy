@@ -2,18 +2,20 @@ package integration_tests
 
 import (
 	"fmt"
+	"net"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
 	"github.com/datastax/zdm-proxy/integration-tests/utils"
 	"github.com/datastax/zdm-proxy/proxy/pkg/config"
-	"github.com/stretchr/testify/require"
-	"net"
-	"strings"
-	"testing"
 )
 
-var rpcAddressExpectedPrimed = net.IPv4(192, 168, 1, 1)
-var rpcAddressExpectedProxy = net.IPv4(127, 0, 0, 1)
+var rpcAddressExpectedPrimed = net.IP{192, 168, 1, 1}
+var rpcAddressExpectedProxy = net.IP{127, 0, 0, 1}
 
 var rows = simulacron.NewRowsResult(
 	map[string]simulacron.DataType{
@@ -65,13 +67,13 @@ func testForwardDecisionsForReads(t *testing.T, primaryCluster string, systemQue
 	}
 
 	expectedProxyRow := map[string]interface{}{
-		"rpc_address": rpcAddressExpectedProxy.String(),
+		"rpc_address": rpcAddressExpectedProxy,
 	}
 	expectedAliasedProxyRow := map[string]interface{}{
-		"addr": rpcAddressExpectedProxy.String(),
+		"addr": rpcAddressExpectedProxy,
 	}
 	expectedPrimedRow := map[string]interface{}{
-		"rpc_address": rpcAddressExpectedPrimed.String(),
+		"rpc_address": rpcAddressExpectedPrimed,
 	}
 
 	tests := []struct {

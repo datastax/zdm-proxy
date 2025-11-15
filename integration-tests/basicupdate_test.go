@@ -2,13 +2,15 @@ package integration_tests
 
 import (
 	"fmt"
+	"testing"
+
+	"github.com/apache/cassandra-gocql-driver/v2/snappy"
+	log "github.com/sirupsen/logrus"
+	"github.com/stretchr/testify/require"
+
 	"github.com/datastax/zdm-proxy/integration-tests/env"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/integration-tests/utils"
-	"github.com/gocql/gocql"
-	log "github.com/sirupsen/logrus"
-	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 // BasicUpdate tests if update queries run correctly
@@ -88,7 +90,7 @@ func TestCompression(t *testing.T) {
 
 	// Connect to proxy as a "client"
 	cluster := utils.NewCluster("127.0.0.1", "", "", 14002)
-	cluster.Compressor = gocql.SnappyCompressor{}
+	cluster.Compressor = snappy.SnappyCompressor{}
 	proxy, err := cluster.CreateSession()
 
 	if err != nil {

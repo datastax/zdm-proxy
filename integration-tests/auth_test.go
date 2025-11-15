@@ -3,18 +3,20 @@ package integration_tests
 import (
 	"context"
 	"fmt"
-	"github.com/datastax/go-cassandra-native-protocol/client"
-	"github.com/datastax/go-cassandra-native-protocol/frame"
-	"github.com/datastax/go-cassandra-native-protocol/message"
-	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/datastax/zdm-proxy/integration-tests/setup"
-	"github.com/datastax/zdm-proxy/proxy/pkg/config"
-	"github.com/datastax/zdm-proxy/proxy/pkg/health"
-	"github.com/stretchr/testify/require"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/datastax/go-cassandra-native-protocol/client"
+	"github.com/datastax/go-cassandra-native-protocol/frame"
+	"github.com/datastax/go-cassandra-native-protocol/message"
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/stretchr/testify/require"
+
+	"github.com/datastax/zdm-proxy/integration-tests/setup"
+	"github.com/datastax/zdm-proxy/proxy/pkg/config"
+	"github.com/datastax/zdm-proxy/proxy/pkg/health"
 )
 
 func TestAuth(t *testing.T) {
@@ -499,7 +501,7 @@ func TestAuth(t *testing.T) {
 
 	originAddress := "127.0.1.1"
 	targetAddress := "127.0.1.2"
-	version := primitive.ProtocolVersion4
+	version := primitive.ProtocolVersion5
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
