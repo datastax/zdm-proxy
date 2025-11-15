@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	log "github.com/sirupsen/logrus"
 	"os/exec"
 	"runtime"
 	"strings"
 	"time"
+
+	log "github.com/sirupsen/logrus"
 )
 
 const cmdTimeout = 5 * time.Minute
