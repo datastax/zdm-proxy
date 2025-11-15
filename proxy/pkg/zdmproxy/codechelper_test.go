@@ -45,13 +45,13 @@ func writeFrameAsSegment(t *testing.T, buf *bytes.Buffer, frm *frame.RawFrame, u
 	if useSegments {
 		// Encode frame to get envelope
 		envelopeBytes := encodeRawFrameToBytes(t, frm)
-		
+
 		// Wrap in segment
 		seg := &segment.Segment{
 			Payload: &segment.Payload{UncompressedData: envelopeBytes},
 			Header:  &segment.Header{IsSelfContained: true},
 		}
-		
+
 		err := defaultSegmentCodec.EncodeSegment(seg, buf)
 		require.NoError(t, err)
 	} else {
@@ -66,23 +66,23 @@ func TestConnCodecHelper_ReadSingleFrame_NoSegments(t *testing.T) {
 	// Create a test frame
 	bodyContent := []byte("test query body")
 	testFrame := createTestRawFrame(primitive.ProtocolVersion4, 1, bodyContent)
-	
+
 	// Write frame to buffer (no segments for v4)
 	buf := &bytes.Buffer{}
 	writeFrameAsSegment(t, buf, testFrame, false)
-	
+
 	// Create codec helper
 	helper := createTestConnCodecHelper(buf)
-	
+
 	// Read the frame
 	readFrame, state, err := helper.ReadRawFrame()
 	require.NoError(t, err)
 	require.NotNil(t, readFrame)
 	require.NotNil(t, state)
-	
+
 	// Verify state shows no segments
 	assert.False(t, state.useSegments)
-	
+
 	// Verify the frame
 	assert.Equal(t, testFrame.Header.Version, readFrame.Header.Version)
 	assert.Equal(t, testFrame.Header.StreamId, readFrame.Header.StreamId)
@@ -95,25 +95,25 @@ func TestConnCodecHelper_ReadSingleFrame_WithSegments(t *testing.T) {
 	// Create a test frame
 	bodyContent := []byte("test query body for v5")
 	testFrame := createTestRawFrame(primitive.ProtocolVersion5, 1, bodyContent)
-	
+
 	// Write frame as segment to buffer
 	buf := &bytes.Buffer{}
 	writeFrameAsSegment(t, buf, testFrame, true)
-	
+
 	// Create codec helper and enable segments
 	helper := createTestConnCodecHelper(buf)
 	err := helper.MaybeEnableSegments(primitive.ProtocolVersion5)
 	require.NoError(t, err)
-	
+
 	// Read the frame
 	readFrame, state, err := helper.ReadRawFrame()
 	require.NoError(t, err)
 	require.NotNil(t, readFrame)
 	require.NotNil(t, state)
-	
+
 	// Verify state shows segments enabled
 	assert.True(t, state.useSegments)
-	
+
 	// Verify the frame
 	assert.Equal(t, testFrame.Header.Version, readFrame.Header.Version)
 	assert.Equal(t, testFrame.Header.StreamId, readFrame.Header.StreamId)
@@ -127,23 +127,23 @@ func TestConnCodecHelper_ReadMultipleFrames_NoSegments(t *testing.T) {
 	frame1 := createTestRawFrame(primitive.ProtocolVersion4, 1, []byte("first frame"))
 	frame2 := createTestRawFrame(primitive.ProtocolVersion4, 2, []byte("second frame"))
 	frame3 := createTestRawFrame(primitive.ProtocolVersion4, 3, []byte("third frame"))
-	
+
 	// Write frames to buffer
 	buf := &bytes.Buffer{}
 	writeFrameAsSegment(t, buf, frame1, false)
 	writeFrameAsSegment(t, buf, frame2, false)
 	writeFrameAsSegment(t, buf, frame3, false)
-	
+
 	// Create codec helper
 	helper := createTestConnCodecHelper(buf)
-	
+
 	// Read and verify each frame
 	frames := []*frame.RawFrame{frame1, frame2, frame3}
 	for i, expectedFrame := range frames {
 		readFrame, _, err := helper.ReadRawFrame()
 		require.NoError(t, err, "Failed to read frame %d", i+1)
 		require.NotNil(t, readFrame)
-		
+
 		assert.Equal(t, expectedFrame.Header.StreamId, readFrame.Header.StreamId,
 			"Frame %d stream ID mismatch", i+1)
 		assert.Equal(t, expectedFrame.Body, readFrame.Body,
@@ -157,18 +157,18 @@ func TestConnCodecHelper_ReadMultipleFrames_WithSegments(t *testing.T) {
 	frame1 := createTestRawFrame(primitive.ProtocolVersion5, 1, []byte("first v5 frame"))
 	frame2 := createTestRawFrame(primitive.ProtocolVersion5, 2, []byte("second v5 frame"))
 	frame3 := createTestRawFrame(primitive.ProtocolVersion5, 3, []byte("third v5 frame"))
-	
+
 	// Write frames as segments to buffer
 	buf := &bytes.Buffer{}
 	writeFrameAsSegment(t, buf, frame1, true)
 	writeFrameAsSegment(t, buf, frame2, true)
 	writeFrameAsSegment(t, buf, frame3, true)
-	
+
 	// Create codec helper and enable segments
 	helper := createTestConnCodecHelper(buf)
 	err := helper.MaybeEnableSegments(primitive.ProtocolVersion5)
 	require.NoError(t, err)
-	
+
 	// Read and verify each frame
 	frames := []*frame.RawFrame{frame1, frame2, frame3}
 	for i, expectedFrame := range frames {
@@ -176,7 +176,7 @@ func TestConnCodecHelper_ReadMultipleFrames_WithSegments(t *testing.T) {
 		require.NoError(t, err, "Failed to read frame %d", i+1)
 		require.NotNil(t, readFrame)
 		assert.True(t, state.useSegments, "Segments should be enabled")
-		
+
 		assert.Equal(t, expectedFrame.Header.StreamId, readFrame.Header.StreamId,
 			"Frame %d stream ID mismatch", i+1)
 		assert.Equal(t, expectedFrame.Body, readFrame.Body,
@@ -189,22 +189,22 @@ func TestConnCodecHelper_SingleSegmentFrame(t *testing.T) {
 	// Create a test frame
 	bodyContent := []byte("test query body")
 	testFrame := createTestRawFrame(primitive.ProtocolVersion5, 1, bodyContent)
-	
+
 	// Write frame as a self-contained segment to buffer
 	buf := &bytes.Buffer{}
 	writeFrameAsSegment(t, buf, testFrame, true)
-	
+
 	// Create codec helper and enable segments
 	helper := createTestConnCodecHelper(buf)
 	err := helper.MaybeEnableSegments(primitive.ProtocolVersion5)
 	require.NoError(t, err)
-	
+
 	// Verify frame is ready state is correct (internal check through reading)
 	readFrame, state, err := helper.ReadRawFrame()
 	require.NoError(t, err)
 	require.NotNil(t, readFrame)
 	require.True(t, state.useSegments)
-	
+
 	// Verify the frame
 	assert.Equal(t, testFrame.Header.Version, readFrame.Header.Version)
 	assert.Equal(t, testFrame.Header.StreamId, readFrame.Header.StreamId)
@@ -220,15 +220,15 @@ func TestConnCodecHelper_MultipleSegmentPayloads(t *testing.T) {
 		bodyContent[i] = byte(i % 256)
 	}
 	testFrame := createTestRawFrame(primitive.ProtocolVersion5, 2, bodyContent)
-	
+
 	// Encode the frame
 	fullPayload := encodeRawFrameToBytes(t, testFrame)
-	
+
 	// Split the payload into multiple non-self-contained segments
 	buf := &bytes.Buffer{}
-	part1 := fullPayload[:40]  // First part
-	part2 := fullPayload[40:]  // Rest
-	
+	part1 := fullPayload[:40] // First part
+	part2 := fullPayload[40:] // Rest
+
 	// Write first non-self-contained segment
 	seg1 := &segment.Segment{
 		Payload: &segment.Payload{UncompressedData: part1},
@@ -236,7 +236,7 @@ func TestConnCodecHelper_MultipleSegmentPayloads(t *testing.T) {
 	}
 	err := defaultSegmentCodec.EncodeSegment(seg1, buf)
 	require.NoError(t, err)
-	
+
 	// Write second non-self-contained segment
 	seg2 := &segment.Segment{
 		Payload: &segment.Payload{UncompressedData: part2},
@@ -244,18 +244,18 @@ func TestConnCodecHelper_MultipleSegmentPayloads(t *testing.T) {
 	}
 	err = defaultSegmentCodec.EncodeSegment(seg2, buf)
 	require.NoError(t, err)
-	
+
 	// Create codec helper and enable segments
 	helper := createTestConnCodecHelper(buf)
 	err = helper.MaybeEnableSegments(primitive.ProtocolVersion5)
 	require.NoError(t, err)
-	
+
 	// Read the frame (should accumulate from both segments automatically)
 	readFrame, state, err := helper.ReadRawFrame()
 	require.NoError(t, err)
 	require.NotNil(t, readFrame)
 	require.True(t, state.useSegments)
-	
+
 	// Verify the frame
 	assert.Equal(t, testFrame.Header.Version, readFrame.Header.Version)
 	assert.Equal(t, testFrame.Header.StreamId, readFrame.Header.StreamId)
@@ -269,18 +269,18 @@ func TestConnCodecHelper_SequentialFramesInSeparateSegments(t *testing.T) {
 	frame1 := createTestRawFrame(primitive.ProtocolVersion5, 1, []byte("first frame"))
 	frame2 := createTestRawFrame(primitive.ProtocolVersion5, 2, []byte("second frame"))
 	frame3 := createTestRawFrame(primitive.ProtocolVersion5, 3, []byte("third frame"))
-	
+
 	// Write each frame as a separate self-contained segment to buffer
 	buf := &bytes.Buffer{}
 	writeFrameAsSegment(t, buf, frame1, true)
 	writeFrameAsSegment(t, buf, frame2, true)
 	writeFrameAsSegment(t, buf, frame3, true)
-	
+
 	// Create codec helper and enable segments
 	helper := createTestConnCodecHelper(buf)
 	err := helper.MaybeEnableSegments(primitive.ProtocolVersion5)
 	require.NoError(t, err)
-	
+
 	// Read and verify each frame
 	frames := []*frame.RawFrame{frame1, frame2, frame3}
 	for i, expectedFrame := range frames {
@@ -288,7 +288,7 @@ func TestConnCodecHelper_SequentialFramesInSeparateSegments(t *testing.T) {
 		require.NoError(t, err, "Failed to read frame %d", i+1)
 		require.NotNil(t, readFrame)
 		require.True(t, state.useSegments)
-		
+
 		assert.Equal(t, expectedFrame.Header.StreamId, readFrame.Header.StreamId,
 			"Frame %d stream ID mismatch", i+1)
 		assert.Equal(t, expectedFrame.Body, readFrame.Body,
@@ -303,7 +303,7 @@ func TestConnCodecHelper_EmptyBufferEOF(t *testing.T) {
 	helper := createTestConnCodecHelper(buf)
 	err := helper.MaybeEnableSegments(primitive.ProtocolVersion5)
 	require.NoError(t, err)
-	
+
 	// Try to read - should get EOF
 	readFrame, _, err := helper.ReadRawFrame()
 	require.Error(t, err)
@@ -324,23 +324,23 @@ func TestConnCodecHelper_MultipleEnvelopesInOneSegment(t *testing.T) {
 		{name: "Three envelopes in one segment", envelopeCount: 3},
 		{name: "Four envelopes in one segment", envelopeCount: 4},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Create multiple envelopes
 			var envelopes []*frame.RawFrame
 			var combinedEnvelopePayload []byte
-			
+
 			for i := 0; i < tc.envelopeCount; i++ {
 				bodyContent := []byte(fmt.Sprintf("envelope_%d_data", i+1))
 				envelope := createTestRawFrame(primitive.ProtocolVersion5, int16(i+1), bodyContent)
 				envelopes = append(envelopes, envelope)
-				
+
 				// Encode envelope and append to combined payload
 				encodedEnvelope := encodeRawFrameToBytes(t, envelope)
 				combinedEnvelopePayload = append(combinedEnvelopePayload, encodedEnvelope...)
 			}
-			
+
 			// Create ONE segment containing all envelopes
 			buf := &bytes.Buffer{}
 			seg := &segment.Segment{
@@ -349,25 +349,25 @@ func TestConnCodecHelper_MultipleEnvelopesInOneSegment(t *testing.T) {
 			}
 			err := defaultSegmentCodec.EncodeSegment(seg, buf)
 			require.NoError(t, err)
-			
+
 			// Create codec helper and enable segments
 			helper := createTestConnCodecHelper(buf)
 			err = helper.MaybeEnableSegments(primitive.ProtocolVersion5)
 			require.NoError(t, err)
-			
+
 			// Read all envelopes back - THIS IS THE BUG TEST
 			// If ReadRawFrame() doesn't check the accumulator first, it will fail with EOF
 			// on the second call instead of returning the cached envelope
 			for i := 0; i < tc.envelopeCount; i++ {
 				readEnvelope, state, err := helper.ReadRawFrame()
-				
+
 				// If this fails with EOF on i > 0, it's the bug!
-				require.NoError(t, err, 
-					"BUG: Failed to read envelope %d of %d - ReadRawFrame() should check accumulator before reading from source", 
+				require.NoError(t, err,
+					"BUG: Failed to read envelope %d of %d - ReadRawFrame() should check accumulator before reading from source",
 					i+1, tc.envelopeCount)
 				require.NotNil(t, readEnvelope)
 				assert.True(t, state.useSegments)
-				
+
 				// Verify envelope content
 				assert.Equal(t, envelopes[i].Header.StreamId, readEnvelope.Header.StreamId,
 					"Envelope %d stream ID mismatch", i+1)
@@ -386,20 +386,20 @@ func TestConnCodecHelper_LargeFrameMultipleSegments(t *testing.T) {
 		largeBody[i] = byte(i % 256)
 	}
 	testFrame := createTestRawFrame(primitive.ProtocolVersion5, 1, largeBody)
-	
+
 	// Encode the frame
 	envelopeBytes := encodeRawFrameToBytes(t, testFrame)
-	
+
 	// Split into multiple non-self-contained segments
 	buf := &bytes.Buffer{}
 	payloadLength := len(envelopeBytes)
-	
+
 	for offset := 0; offset < payloadLength; offset += segment.MaxPayloadLength {
 		end := offset + segment.MaxPayloadLength
 		if end > payloadLength {
 			end = payloadLength
 		}
-		
+
 		seg := &segment.Segment{
 			Payload: &segment.Payload{UncompressedData: envelopeBytes[offset:end]},
 			Header:  &segment.Header{IsSelfContained: false}, // Not self-contained
@@ -407,18 +407,18 @@ func TestConnCodecHelper_LargeFrameMultipleSegments(t *testing.T) {
 		err := defaultSegmentCodec.EncodeSegment(seg, buf)
 		require.NoError(t, err)
 	}
-	
+
 	// Create codec helper and enable segments
 	helper := createTestConnCodecHelper(buf)
 	err := helper.MaybeEnableSegments(primitive.ProtocolVersion5)
 	require.NoError(t, err)
-	
+
 	// Read the frame (should accumulate from multiple segments)
 	readFrame, state, err := helper.ReadRawFrame()
 	require.NoError(t, err)
 	require.NotNil(t, readFrame)
 	assert.True(t, state.useSegments)
-	
+
 	// Verify the frame
 	assert.Equal(t, testFrame.Header.Version, readFrame.Header.Version)
 	assert.Equal(t, testFrame.Header.StreamId, readFrame.Header.StreamId)
@@ -429,30 +429,30 @@ func TestConnCodecHelper_LargeFrameMultipleSegments(t *testing.T) {
 func TestConnCodecHelper_StateTransitions(t *testing.T) {
 	buf := &bytes.Buffer{}
 	helper := createTestConnCodecHelper(buf)
-	
+
 	// Initially, state should be empty (no segments)
 	state := helper.GetState()
 	assert.False(t, state.useSegments)
-	
+
 	// Enable segments for v5
 	err := helper.MaybeEnableSegments(primitive.ProtocolVersion5)
 	require.NoError(t, err)
-	
+
 	state = helper.GetState()
 	assert.True(t, state.useSegments)
 	assert.NotNil(t, state.segmentCodec)
-	
+
 	// Disable segments (e.g., for startup)
 	err = helper.SetStartupCompression()
 	require.NoError(t, err)
-	
+
 	state = helper.GetState()
 	assert.False(t, state.useSegments)
-	
+
 	// Enable again for v5
 	err = helper.MaybeEnableSegments(primitive.ProtocolVersion5)
 	require.NoError(t, err)
-	
+
 	state = helper.GetState()
 	assert.True(t, state.useSegments)
 }
@@ -460,42 +460,42 @@ func TestConnCodecHelper_StateTransitions(t *testing.T) {
 // TestConnCodecHelper_MixedProtocolVersions tests handling different protocol versions
 func TestConnCodecHelper_MixedProtocolVersions(t *testing.T) {
 	testCases := []struct {
-		name            string
-		version         primitive.ProtocolVersion
+		name              string
+		version           primitive.ProtocolVersion
 		shouldUseSegments bool
 	}{
 		{name: "v3 - no segments", version: primitive.ProtocolVersion3, shouldUseSegments: false},
 		{name: "v4 - no segments", version: primitive.ProtocolVersion4, shouldUseSegments: false},
 		{name: "v5 - with segments", version: primitive.ProtocolVersion5, shouldUseSegments: true},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Create a test frame
 			bodyContent := []byte(fmt.Sprintf("test for %s", tc.name))
 			testFrame := createTestRawFrame(tc.version, 1, bodyContent)
-			
+
 			// Write frame to buffer
 			buf := &bytes.Buffer{}
 			writeFrameAsSegment(t, buf, testFrame, tc.shouldUseSegments)
-			
+
 			// Create codec helper
 			helper := createTestConnCodecHelper(buf)
-			
+
 			// Enable segments if protocol supports it
 			err := helper.MaybeEnableSegments(tc.version)
 			require.NoError(t, err)
-			
+
 			// Verify state
 			state := helper.GetState()
 			assert.Equal(t, tc.shouldUseSegments, state.useSegments,
 				"Segment usage mismatch for %s", tc.name)
-			
+
 			// Read and verify frame
 			readFrame, _, err := helper.ReadRawFrame()
 			require.NoError(t, err)
 			require.NotNil(t, readFrame)
-			
+
 			assert.Equal(t, testFrame.Header.Version, readFrame.Header.Version)
 			assert.Equal(t, testFrame.Body, readFrame.Body)
 		})
@@ -516,9 +516,9 @@ func TestConnCodecHelper_PartialEnvelopeAcrossSegments(t *testing.T) {
 	// Segment 1: First 3 bytes of envelope header (incomplete)
 	// Segment 2: Next 4 bytes of header (bytes 3-6, still incomplete - total 7 < 9)
 	// Segment 3: Remaining header bytes (bytes 7-8) + body
-	
+
 	buf := &bytes.Buffer{}
-	
+
 	// Write segment 1 with partial header (3 bytes)
 	seg1 := &segment.Segment{
 		Payload: &segment.Payload{UncompressedData: fullEnvelope[:3]},
@@ -526,7 +526,7 @@ func TestConnCodecHelper_PartialEnvelopeAcrossSegments(t *testing.T) {
 	}
 	err := defaultSegmentCodec.EncodeSegment(seg1, buf)
 	require.NoError(t, err)
-	
+
 	// Write segment 2 with more partial header (4 bytes)
 	seg2 := &segment.Segment{
 		Payload: &segment.Payload{UncompressedData: fullEnvelope[3:7]},
@@ -534,7 +534,7 @@ func TestConnCodecHelper_PartialEnvelopeAcrossSegments(t *testing.T) {
 	}
 	err = defaultSegmentCodec.EncodeSegment(seg2, buf)
 	require.NoError(t, err)
-	
+
 	// Write segment 3 with remaining header + body
 	seg3 := &segment.Segment{
 		Payload: &segment.Payload{UncompressedData: fullEnvelope[7:]},
@@ -542,18 +542,18 @@ func TestConnCodecHelper_PartialEnvelopeAcrossSegments(t *testing.T) {
 	}
 	err = defaultSegmentCodec.EncodeSegment(seg3, buf)
 	require.NoError(t, err)
-	
+
 	// Create codec helper and enable segments
 	helper := createTestConnCodecHelper(buf)
 	err = helper.MaybeEnableSegments(primitive.ProtocolVersion5)
 	require.NoError(t, err)
-	
+
 	// Read the frame - should succeed despite header being split across 3 segments
 	readFrame, state, err := helper.ReadRawFrame()
 	require.NoError(t, err)
 	require.NotNil(t, readFrame)
 	assert.True(t, state.useSegments)
-	
+
 	// Verify frame content
 	assert.Equal(t, testFrame.Header.StreamId, readFrame.Header.StreamId)
 	assert.Equal(t, testFrame.Body, readFrame.Body)
@@ -576,9 +576,9 @@ func TestConnCodecHelper_HeaderCompletionWithBodyInSegment(t *testing.T) {
 	// Segment 2: Remaining 2 header bytes (7-8) + first 11 body bytes (9-19)
 	//            This segment completes header AND has body data
 	// Segment 3: Remaining body bytes (20+)
-	
+
 	buf := &bytes.Buffer{}
-	
+
 	// Write segment 1 with partial header (7 bytes)
 	seg1 := &segment.Segment{
 		Payload: &segment.Payload{UncompressedData: fullEnvelope[:7]},
@@ -586,7 +586,7 @@ func TestConnCodecHelper_HeaderCompletionWithBodyInSegment(t *testing.T) {
 	}
 	err := defaultSegmentCodec.EncodeSegment(seg1, buf)
 	require.NoError(t, err)
-	
+
 	// Write segment 2 with header completion + some body bytes
 	seg2 := &segment.Segment{
 		Payload: &segment.Payload{UncompressedData: fullEnvelope[7:20]},
@@ -594,7 +594,7 @@ func TestConnCodecHelper_HeaderCompletionWithBodyInSegment(t *testing.T) {
 	}
 	err = defaultSegmentCodec.EncodeSegment(seg2, buf)
 	require.NoError(t, err)
-	
+
 	// Write segment 3 with remaining body bytes
 	seg3 := &segment.Segment{
 		Payload: &segment.Payload{UncompressedData: fullEnvelope[20:]},
@@ -602,18 +602,18 @@ func TestConnCodecHelper_HeaderCompletionWithBodyInSegment(t *testing.T) {
 	}
 	err = defaultSegmentCodec.EncodeSegment(seg3, buf)
 	require.NoError(t, err)
-	
+
 	// Create codec helper and enable segments
 	helper := createTestConnCodecHelper(buf)
 	err = helper.MaybeEnableSegments(primitive.ProtocolVersion5)
 	require.NoError(t, err)
-	
+
 	// Read the frame
 	readFrame, state, err := helper.ReadRawFrame()
 	require.NoError(t, err)
 	require.NotNil(t, readFrame)
 	assert.True(t, state.useSegments)
-	
+
 	// Verify frame content
 	assert.Equal(t, testFrame.Header.StreamId, readFrame.Header.StreamId)
 	assert.Equal(t, bodyContent, readFrame.Body)
