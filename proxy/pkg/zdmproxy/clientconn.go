@@ -1,10 +1,8 @@
 package zdmproxy
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -193,13 +191,14 @@ func (cc *ClientConnector) listenForRequests() {
 					err, cc.clientHandlerContext, cc.clientHandlerCancelFunc, ClientConnectorLogPrefix, "reading", connectionAddr)
 				break
 			} else if protocolErrResponseFrame != nil {
+				protocolErrResponseFrame.Header.StreamId = 0
 				alreadySentProtocolErr = protocolErrResponseFrame
 				protocolErrOccurred = true
 				cc.sendResponseToClient(protocolErrResponseFrame)
 				continue
 			} else if alreadySentProtocolErr != nil {
 				clonedProtocolErr := alreadySentProtocolErr.DeepCopy()
-				clonedProtocolErr.Header.StreamId = f.Header.StreamId
+				clonedProtocolErr.Header.StreamId = 0
 				cc.sendResponseToClient(clonedProtocolErr)
 				continue
 			}
@@ -232,15 +231,6 @@ func (cc *ClientConnector) sendOverloadedToClient(request *frame.RawFrame) {
 		log.Errorf("[%s] Could not convert frame (%v) to raw frame: %v", ClientConnectorLogPrefix, response, err)
 	} else {
 		cc.sendResponseToClient(rawResponse)
-	}
-}
-
-func waitForIncomingData(reader io.Reader) (io.Reader, error) {
-	buf := make([]byte, 1)
-	if _, err := io.ReadFull(reader, buf); err != nil {
-		return nil, err
-	} else {
-		return io.MultiReader(bytes.NewReader(buf), reader), nil
 	}
 }
 

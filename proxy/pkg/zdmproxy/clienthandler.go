@@ -690,6 +690,12 @@ func (ch *ClientHandler) tryProcessProtocolError(response *Response, protocolErr
 				log.Debugf("[ClientHandler] Protocol version downgrade detected (%v) on %v, forwarding it to the client.",
 					errMsg, response.connectorType)
 			}
+
+			// some clients might require stream id 0 on protocol errors (it's what C* does, or at least some C* versions)
+			// gocql for example has a bug where protocol version negotiation will fail if stream id of the protocol error isn't 0
+			// https://issues.apache.org/jira/browse/CASSGO-97
+			response.responseFrame.Header.StreamId = 0
+
 			ch.clientConnector.sendResponseToClient(response.responseFrame)
 		}
 		return true

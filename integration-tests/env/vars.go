@@ -28,7 +28,7 @@ func InitGlobalVars() {
 	flags := map[string]interface{}{
 		"CASSANDRA_VERSION": flag.String(
 			"CASSANDRA_VERSION",
-			getEnvironmentVariableOrDefault("CASSANDRA_VERSION", "3.11.7"),
+			getEnvironmentVariableOrDefault("CASSANDRA_VERSION", "5.0.6"),
 			"CASSANDRA_VERSION"),
 
 		"DSE_VERSION": flag.String(
