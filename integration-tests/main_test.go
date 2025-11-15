@@ -1,20 +1,20 @@
 package integration_tests
 
 import (
+	"os"
+	"testing"
+
+	log "github.com/sirupsen/logrus"
+
 	"github.com/datastax/zdm-proxy/integration-tests/ccm"
 	"github.com/datastax/zdm-proxy/integration-tests/env"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/proxy/pkg/zdmproxy"
-	"github.com/gocql/gocql"
-	log "github.com/sirupsen/logrus"
-	"os"
-	"testing"
 )
 
 func TestMain(m *testing.M) {
 	env.InitGlobalVars()
 
-	gocql.TimeoutLimit = 5
 	if env.Debug {
 		log.SetLevel(log.DebugLevel)
 	} else {

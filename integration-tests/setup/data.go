@@ -3,7 +3,7 @@ package setup
 import (
 	"fmt"
 
-	"github.com/gocql/gocql"
+	"github.com/apache/cassandra-gocql-driver/v2"
 	log "github.com/sirupsen/logrus"
 )
 

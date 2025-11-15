@@ -2,8 +2,8 @@ package ccm
 
 import (
 	"fmt"
+	"github.com/apache/cassandra-gocql-driver/v2"
 	"github.com/datastax/zdm-proxy/integration-tests/env"
-	"github.com/gocql/gocql"
 )
 
 type Cluster struct {

@@ -4,17 +4,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/datastax/zdm-proxy/integration-tests/env"
-	"github.com/datastax/zdm-proxy/integration-tests/setup"
-	"github.com/gocql/gocql"
-	"github.com/rs/zerolog"
-	log "github.com/sirupsen/logrus"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/apache/cassandra-gocql-driver/v2"
+	"github.com/rs/zerolog"
+	log "github.com/sirupsen/logrus"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/datastax/zdm-proxy/integration-tests/env"
+	"github.com/datastax/zdm-proxy/integration-tests/setup"
 )
 
 func TestSimultaneousConnections(t *testing.T) {
@@ -72,6 +74,8 @@ func TestSimultaneousConnections(t *testing.T) {
 
 	fatalErr := errors.New("fatal err")
 	spawnGoroutinesWg := &sync.WaitGroup{}
+	var sessions []*gocql.Session
+	sessionsLock := &sync.Mutex{}
 	for i := 0; i < parallelSessionGoroutines; i++ {
 		spawnGoroutinesWg.Add(1)
 		go func() {
@@ -93,7 +97,9 @@ func TestSimultaneousConnections(t *testing.T) {
 					errChan <- fmt.Errorf("%w: %v", fatalErr, err.Error())
 					return
 				}
-				defer goCqlSession.Close()
+				sessionsLock.Lock()
+				sessions = append(sessions, goCqlSession)
+				sessionsLock.Unlock()
 				requestWg.Add(1)
 				go func() {
 					defer requestWg.Done()
@@ -119,6 +125,13 @@ func TestSimultaneousConnections(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		defer close(errChan)
+		defer func() {
+			sessionsLock.Lock()
+			for _, session := range sessions {
+				session.Close()
+			}
+			sessionsLock.Unlock()
+		}()
 		spawnGoroutinesWg.Wait()
 		select {
 		case <-time.After(13 * time.Second):
@@ -151,6 +164,7 @@ func TestSimultaneousConnections(t *testing.T) {
 		requestWg.Wait()
 	}()
 
+	errCounter := 0
 	for {
 		err, ok := <-errChan
 		if !ok {
@@ -166,7 +180,14 @@ func TestSimultaneousConnections(t *testing.T) {
 			assert.Failf(t, "error before shutdown, deadlock?", "%v", err.Error())
 			testCancelFn()
 		} else {
-			t.Log(err)
+			if errors.Is(err, gocql.ErrNoConnections) {
+				if errCounter%20 == 0 {
+					t.Log(err)
+				}
+				errCounter++
+			} else {
+				t.Log(err)
+			}
 		}
 	}
 }

@@ -3,20 +3,6 @@ package integration_tests
 import (
 	"context"
 	"fmt"
-	"github.com/datastax/go-cassandra-native-protocol/client"
-	"github.com/datastax/go-cassandra-native-protocol/datacodec"
-	"github.com/datastax/go-cassandra-native-protocol/frame"
-	"github.com/datastax/go-cassandra-native-protocol/message"
-	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/datastax/zdm-proxy/integration-tests/env"
-	"github.com/datastax/zdm-proxy/integration-tests/setup"
-	"github.com/datastax/zdm-proxy/integration-tests/utils"
-	"github.com/datastax/zdm-proxy/proxy/pkg/config"
-	"github.com/datastax/zdm-proxy/proxy/pkg/zdmproxy"
-	"github.com/gocql/gocql"
-	"github.com/google/uuid"
-	log "github.com/sirupsen/logrus"
-	"github.com/stretchr/testify/require"
 	"math/big"
 	"math/rand"
 	"net"
@@ -25,6 +11,22 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/apache/cassandra-gocql-driver/v2"
+	"github.com/datastax/go-cassandra-native-protocol/client"
+	"github.com/datastax/go-cassandra-native-protocol/datacodec"
+	"github.com/datastax/go-cassandra-native-protocol/frame"
+	"github.com/datastax/go-cassandra-native-protocol/message"
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/google/uuid"
+	log "github.com/sirupsen/logrus"
+	"github.com/stretchr/testify/require"
+
+	"github.com/datastax/zdm-proxy/integration-tests/env"
+	"github.com/datastax/zdm-proxy/integration-tests/setup"
+	"github.com/datastax/zdm-proxy/integration-tests/utils"
+	"github.com/datastax/zdm-proxy/proxy/pkg/config"
+	"github.com/datastax/zdm-proxy/proxy/pkg/zdmproxy"
 )
 
 type connectObserver struct {
@@ -136,11 +138,10 @@ func TestVirtualizationNumberOfConnections(t *testing.T) {
 					if !exists {
 						counter = 0
 					}
+					counter++
+					hostsMap[hostAddr.String()] = counter
 					if observedConnect.Err != nil {
 						errors = append(errors, observedConnect.Err)
-					} else {
-						counter++
-						hostsMap[hostAddr.String()] = counter
 					}
 					hostsMapLock.Unlock()
 				}
