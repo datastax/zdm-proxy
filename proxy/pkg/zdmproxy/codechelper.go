@@ -209,4 +209,3 @@ func (mr *DualReader) Reset() {
 func NewDualReader(reader1 io.Reader, reader2 io.Reader) *DualReader {
 	return &DualReader{reader1: reader1, reader2: reader2, skipReader1: false}
 }
-
