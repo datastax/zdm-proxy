@@ -107,8 +107,6 @@ jobs:
           export CCM_VERSION
           echo "Install CCM ${CCM_VERSION}"
           pip install "git+https://github.com/apache/cassandra-ccm.git@${CCM_VERSION}"
-          mkdir ${CCM_CONFIG_DIR} 2>/dev/null 1>&2 || true
-          echo ${CCM_VERSION} > ${CCM_CONFIG_DIR}/ccm-version
 
           which ccm
           sudo ln -s /home/runner/.local/bin/ccm /usr/local/bin/ccm
