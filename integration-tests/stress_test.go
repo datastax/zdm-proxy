@@ -104,7 +104,11 @@ func TestSimultaneousConnections(t *testing.T) {
 					defer requestWg.Done()
 					for testCtx.Err() == nil {
 						qCtx, fn := context.WithTimeout(testCtx, 10*time.Second)
-						q := goCqlSession.Query("SELECT * FROM system_schema.keyspaces").WithContext(qCtx)
+						qry := "SELECT * FROM system_schema.keyspaces"
+						if env.CompareServerVersion("3.0.0") < 0 {
+							qry = "SELECT * FROM system.schema_keyspaces"
+						}
+						q := goCqlSession.Query(qry).WithContext(qCtx)
 						err := q.Exec()
 						fn()
 						if errors.Is(err, gocql.ErrSessionClosed) {

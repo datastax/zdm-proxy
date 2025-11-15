@@ -80,7 +80,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        cassandra_version: [ '2.1.22', '2.2.19', '3.11.19', '4.1.9', '5.0.6' ]
+        cassandra_version: [ '2.2.19', '3.11.19', '4.1.9', '5.0.6' ]
     steps:
       - uses: actions/checkout@v2
       - name: Run
