@@ -101,10 +101,9 @@ func (recv *writeCoalescer) RunWriteQueueLoop() {
 
 		state := recv.codecHelper.GetState()
 
+		var resultOk bool
+		var result coalescerIterationResult
 		for {
-			var resultOk bool
-			var result coalescerIterationResult
-
 			var firstFrame *frame.RawFrame
 			var firstFrameOk bool
 			if result.leftoverFrame != nil {
@@ -116,6 +115,9 @@ func (recv *writeCoalescer) RunWriteQueueLoop() {
 			if !firstFrameOk {
 				break
 			}
+
+			result = coalescerIterationResult{}
+			resultOk = false
 
 			writeBuffer := recv.codecHelper.segWriter.GetWriteBuffer()
 			resultChannel := make(chan coalescerIterationResult, 1)

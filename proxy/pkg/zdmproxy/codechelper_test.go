@@ -20,7 +20,7 @@ func createTestConnCodecHelper(src *bytes.Buffer) *connCodecHelper {
 	compression := &atomic.Value{}
 	compression.Store(primitive.CompressionNone)
 	ctx := context.Background()
-	return newConnCodecHelper(src, "test-addr:9042", 4096, compression, ctx)
+	return newConnCodecHelper(src, "test-addr:9042", 4096, 1024, compression, ctx)
 }
 
 // Helper to write a frame as a segment to a buffer

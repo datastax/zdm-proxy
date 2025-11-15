@@ -154,7 +154,7 @@ func NewClusterConnector(
 	// Initialize heartbeat time
 	lastHeartbeatTime := &atomic.Value{}
 	lastHeartbeatTime.Store(time.Now())
-	codecHelper := newConnCodecHelper(conn, conn.RemoteAddr().String(), conf.ResponseReadBufferSizeBytes, compression, clusterConnCtx)
+	codecHelper := newConnCodecHelper(conn, conn.RemoteAddr().String(), conf.ResponseReadBufferSizeBytes, conf.ResponseWriteBufferSizeBytes, compression, clusterConnCtx)
 
 	return &ClusterConnector{
 		conf:                   conf,

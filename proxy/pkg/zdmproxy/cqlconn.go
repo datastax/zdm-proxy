@@ -78,6 +78,7 @@ var (
 )
 
 const CqlConnReadBufferSizeBytes = 1024
+const CqlConnWriteBufferSizeBytes = 1024
 
 func (c *cqlConn) GetEndpoint() Endpoint {
 	return c.endpoint
@@ -120,7 +121,7 @@ func NewCqlConnection(
 		// protoVer is the proposed protocol version using which we will try to establish connectivity
 		frameProcessor:  NewStreamIdProcessor(NewInternalStreamIdMapper(protoVer, conf, nil)),
 		protocolVersion: &atomic.Value{},
-		codecHelper:     newConnCodecHelper(conn, conn.RemoteAddr().String(), CqlConnReadBufferSizeBytes, compressionValue, ctx),
+		codecHelper:     newConnCodecHelper(conn, conn.RemoteAddr().String(), CqlConnReadBufferSizeBytes, CqlConnWriteBufferSizeBytes, compressionValue, ctx),
 	}
 	cqlConn.StartRequestLoop()
 	cqlConn.StartResponseLoop()

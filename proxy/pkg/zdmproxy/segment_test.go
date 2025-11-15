@@ -66,7 +66,7 @@ func TestSegmentWriter_NewSegmentWriter(t *testing.T) {
 	ctx := context.Background()
 	addr := "127.0.0.1:9042"
 
-	writer := NewSegmentWriter(buf, addr, ctx)
+	writer := NewSegmentWriter(buf, 128, addr, ctx)
 
 	require.NotNil(t, writer)
 	assert.Equal(t, buf, writer.payload)
@@ -78,7 +78,7 @@ func TestSegmentWriter_NewSegmentWriter(t *testing.T) {
 func TestSegmentWriter_GetWriteBuffer(t *testing.T) {
 	buf := &bytes.Buffer{}
 	ctx := context.Background()
-	writer := NewSegmentWriter(buf, "127.0.0.1:9042", ctx)
+	writer := NewSegmentWriter(buf, 128, "127.0.0.1:9042", ctx)
 
 	returnedBuf := writer.GetWriteBuffer()
 	assert.Equal(t, buf, returnedBuf)
@@ -88,8 +88,7 @@ func TestSegmentWriter_GetWriteBuffer(t *testing.T) {
 func TestSegmentWriter_CanWriteFrameInternal(t *testing.T) {
 	buf := &bytes.Buffer{}
 	ctx := context.Background()
-	writer := NewSegmentWriter(buf, "127.0.0.1:9042", ctx)
-	writer.maxBufferSize = 10000 // Set a reasonable max buffer size
+	writer := NewSegmentWriter(buf, 10000, "127.0.0.1:9042", ctx)
 
 	// Test 1: Empty payload, frame fits in one segment
 	assert.True(t, writer.canWriteFrameInternal(1000))
@@ -116,8 +115,7 @@ func TestSegmentWriter_CanWriteFrameInternal(t *testing.T) {
 func TestSegmentWriter_AppendFrameToSegmentPayload(t *testing.T) {
 	buf := &bytes.Buffer{}
 	ctx := context.Background()
-	writer := NewSegmentWriter(buf, "127.0.0.1:9042", ctx)
-	writer.maxBufferSize = 100000
+	writer := NewSegmentWriter(buf, 100000, "127.0.0.1:9042", ctx)
 
 	bodyContent := []byte("test")
 	testFrame := createTestRawFrame(primitive.ProtocolVersion4, 1, bodyContent)
@@ -135,8 +133,7 @@ func TestSegmentWriter_AppendFrameToSegmentPayload(t *testing.T) {
 func TestSegmentWriter_AppendFrameToSegmentPayload_CannotWrite(t *testing.T) {
 	buf := &bytes.Buffer{}
 	ctx := context.Background()
-	writer := NewSegmentWriter(buf, "127.0.0.1:9042", ctx)
-	writer.maxBufferSize = 100
+	writer := NewSegmentWriter(buf, 100, "127.0.0.1:9042", ctx)
 
 	// Fill the buffer
 	writer.payload.Write(make([]byte, 1000))
@@ -165,8 +162,7 @@ func TestSegmentWriter_WriteSegments_SelfContained(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			buf := &bytes.Buffer{}
 			ctx := context.Background()
-			writer := NewSegmentWriter(buf, "127.0.0.1:9042", ctx)
-			writer.maxBufferSize = 100000
+			writer := NewSegmentWriter(buf, 100000, "127.0.0.1:9042", ctx)
 
 			// Create a conn state with segment codec
 			state := &connState{
@@ -229,7 +225,7 @@ func TestSegmentWriter_WriteSegments_SelfContained(t *testing.T) {
 func TestSegmentWriter_WriteSegments_MultipleSegments(t *testing.T) {
 	buf := &bytes.Buffer{}
 	ctx := context.Background()
-	writer := NewSegmentWriter(buf, "127.0.0.1:9042", ctx)
+	writer := NewSegmentWriter(buf, 128, "127.0.0.1:9042", ctx)
 
 	// Add data larger than MaxPayloadLength
 	largeData := make([]byte, segment.MaxPayloadLength*2+1000)
@@ -272,7 +268,7 @@ func TestSegmentWriter_WriteSegments_MultipleSegments(t *testing.T) {
 func TestSegmentWriter_WriteSegments_EmptyPayload(t *testing.T) {
 	buf := &bytes.Buffer{}
 	ctx := context.Background()
-	writer := NewSegmentWriter(buf, "127.0.0.1:9042", ctx)
+	writer := NewSegmentWriter(buf, 128, "127.0.0.1:9042", ctx)
 
 	state := &connState{
 		useSegments:  true,

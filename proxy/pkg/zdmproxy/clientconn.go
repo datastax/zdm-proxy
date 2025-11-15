@@ -80,7 +80,7 @@ func NewClientConnector(
 	minProtoVer primitive.ProtocolVersion,
 	compression *atomic.Value) *ClientConnector {
 
-	codecHelper := newConnCodecHelper(connection, connection.RemoteAddr().String(), conf.RequestReadBufferSizeBytes, compression, clientHandlerContext)
+	codecHelper := newConnCodecHelper(connection, connection.RemoteAddr().String(), conf.RequestReadBufferSizeBytes, conf.RequestWriteBufferSizeBytes, compression, clientHandlerContext)
 	return &ClientConnector{
 		connection:              connection,
 		conf:                    conf,

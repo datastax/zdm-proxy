@@ -161,11 +161,12 @@ type SegmentWriter struct {
 	maxBufferSize        int
 }
 
-func NewSegmentWriter(writeBuffer *bytes.Buffer, connectionAddr string, clientHandlerContext context.Context) *SegmentWriter {
+func NewSegmentWriter(writeBuffer *bytes.Buffer, maxBufferSize int, connectionAddr string, clientHandlerContext context.Context) *SegmentWriter {
 	return &SegmentWriter{
 		payload:              writeBuffer,
 		connectionAddr:       connectionAddr,
 		clientHandlerContext: clientHandlerContext,
+		maxBufferSize:        maxBufferSize,
 	}
 }
 

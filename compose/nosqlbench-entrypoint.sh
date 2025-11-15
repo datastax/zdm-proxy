@@ -61,7 +61,7 @@ java -jar /nb.jar \
   --report-csv-to /source/verify-origin \
   /source/nb-tests/cql-nb-activity.yaml \
   verify \
-  driver=cqld4 \
+  driver=cqld3 \
   hosts=zdm_tests_origin \
   localdc=datacenter1 \
   -v
@@ -72,7 +72,7 @@ java -jar /nb.jar \
   --report-csv-to /source/verify-target \
   /source/nb-tests/cql-nb-activity.yaml \
   verify \
-  driver=cqld4 \
+  driver=cqld3 \
   hosts=zdm_tests_target \
   localdc=datacenter1 \
   -v

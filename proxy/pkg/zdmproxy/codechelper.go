@@ -43,7 +43,7 @@ type connCodecHelper struct {
 	shutdownContext context.Context
 }
 
-func newConnCodecHelper(src io.Reader, connectionAddr string, readBufferSizeBytes int, compression *atomic.Value,
+func newConnCodecHelper(src io.Reader, connectionAddr string, readBufferSizeBytes int, writeBufferSizeBytes int, compression *atomic.Value,
 	shutdownContext context.Context) *connCodecHelper {
 	writeBuffer := bytes.NewBuffer(make([]byte, 0, initialBufferSize))
 
@@ -57,7 +57,7 @@ func newConnCodecHelper(src io.Reader, connectionAddr string, readBufferSizeByte
 		segAccum:           NewSegmentAccumulator(defaultFrameCodec),
 		waitReadDataBuf:    waitBuf,
 		waitReadDataReader: waitBufReader,
-		segWriter:          NewSegmentWriter(writeBuffer, connectionAddr, shutdownContext),
+		segWriter:          NewSegmentWriter(writeBuffer, writeBufferSizeBytes, connectionAddr, shutdownContext),
 		connectionAddr:     connectionAddr,
 		shutdownContext:    shutdownContext,
 		dualReader:         NewDualReader(waitBufReader, bufferedReader),
