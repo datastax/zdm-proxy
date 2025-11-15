@@ -1,15 +1,5 @@
 package zdmproxy
 
-// This file contains unit tests for low-level segment handling components.
-//
-// These tests directly test internal components:
-// - SegmentAccumulator (frame accumulation from segment payloads)
-// - SegmentWriter (writing frames as segments)
-// - Utility functions (FrameUncompressedLength)
-//
-// Integration tests using the high-level connCodecHelper API (including DualReader tests)
-// are in codechelper_test.go.
-
 import (
 	"bytes"
 	"context"
@@ -44,10 +34,6 @@ func encodeRawFrameToBytes(t *testing.T, frm *frame.RawFrame) []byte {
 	require.NoError(t, err)
 	return buf.Bytes()
 }
-
-// === Component-Specific Tests ===
-// The following tests remain here because they test specific internal components
-// that are not fully exposed through connCodecHelper
 
 // TestFrameUncompressedLength tests the FrameUncompressedLength function
 func TestFrameUncompressedLength(t *testing.T) {
