@@ -86,19 +86,34 @@ jobs:
       - name: Run
         run: |
           sudo apt update
+          
           sudo apt -y install openjdk-8-jdk gcc git wget pip
+          sudo apt -y install openjdk-11-jdk gcc git wget pip
+
+          export JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
+          export JAVA8_HOME=/usr/lib/jvm/java-8-openjdk-amd64
+          export JAVA11_HOME=/usr/lib/jvm/java-11-openjdk-amd64
+          export PATH=$JAVA_HOME/bin:$PATH
+          java -version
+          
           wget https://go.dev/dl/go1.24.2.linux-amd64.tar.gz
           sudo tar -xzf go*.tar.gz -C /usr/local/
           export PATH=$PATH:/usr/local/go/bin
           export PATH=$PATH:`go env GOPATH`/bin
-          export JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64
-          export PATH=$JAVA_HOME/bin:$PATH
-          java -version
+
           go install github.com/jstemmer/go-junit-report/v2@latest
-          pip install ccm
+
+          CCM_VERSION="0e20102c1cad99104969239f1ac375b6fcaa7bbc"
+          export CCM_VERSION
+          echo "Install CCM ${CCM_VERSION}"
+          pip install "git+https://github.com/apache/cassandra-ccm.git@${CCM_VERSION}"
+          mkdir ${CCM_CONFIG_DIR} 2>/dev/null 1>&2 || true
+          echo ${CCM_VERSION} > ${CCM_CONFIG_DIR}/ccm-version
+
           which ccm
           sudo ln -s /home/runner/.local/bin/ccm /usr/local/bin/ccm
           /usr/local/bin/ccm list
+
           go test -timeout 180m -v 2>&1 ./integration-tests -RUN_MOCKTESTS=false -RUN_CCMTESTS=true -CASSANDRA_VERSION=${{ matrix.cassandra_version }} | go-junit-report -set-exit-code -iocopy -out report-integration-ccm.xml
       - name: Test Summary
         uses: test-summary/action@v1

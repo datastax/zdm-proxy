@@ -70,6 +70,9 @@ func (a *segmentAcc) ReadFrame() (*frame.RawFrame, error) {
 	if err != nil {
 		return nil, fmt.Errorf("could not carry over extra payload bytes to new payload: %w", err)
 	}
+	if hdr.Version.SupportsModernFramingLayout() && hdr.Flags.Contains(primitive.HeaderFlagCompressed) {
+		hdr.Flags = hdr.Flags.Remove(primitive.HeaderFlagCompressed) // gocql workaround (https://issues.apache.org/jira/browse/CASSGO-98)
+	}
 	return &frame.RawFrame{
 		Header: hdr,
 		Body:   actualPayload,
