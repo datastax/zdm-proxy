@@ -1,9 +1,5 @@
 #!/bin/sh
 
-wget https://github.com/nosqlbench/nosqlbench/releases/download/nosqlbench-4.15.104/nb.jar
-
-mv nb.jar /
-
 set -e
 
 echo "Running NoSQLBench VERIFY job on ORIGIN"

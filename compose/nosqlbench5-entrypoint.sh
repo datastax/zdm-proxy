@@ -1,4 +1,5 @@
 #!/bin/sh
+
 apk add --no-cache netcat-openbsd
 apk add py3-pip
 pip install cqlsh

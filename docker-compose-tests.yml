@@ -43,7 +43,7 @@ services:
         ipv4_address: 192.168.100.103
 
   nosqlbench5:
-    image: ubuntu:jammy-20251013
+    image: eclipse-temurin:21-jdk-alpine-3.22
     container_name: zdm_tests_nb5
     tty: true
     volumes:
@@ -62,7 +62,7 @@ services:
       start_interval: 10s
       
   nosqlbench4:
-    image: ubuntu:jammy-20251013
+    image: nosqlbench/nosqlbench:4.15.101
     container_name: zdm_tests_nb4
     tty: true
     volumes:
