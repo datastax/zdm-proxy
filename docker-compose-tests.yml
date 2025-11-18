@@ -11,7 +11,7 @@ networks:
 
 services:
   origin:
-    image: cassandra:3.11.13
+    image: cassandra:4.1.10
     container_name: zdm_tests_origin
     restart: unless-stopped
     networks:
@@ -19,7 +19,7 @@ services:
         ipv4_address: 192.168.100.101
 
   target:
-    image: cassandra:3.11.13
+    image: cassandra:5.0.6
     container_name: zdm_tests_target
     restart: unless-stopped
     networks:
@@ -42,14 +42,36 @@ services:
       proxy:
         ipv4_address: 192.168.100.103
 
-  nosqlbench:
-    image: nosqlbench/nosqlbench:4.15.101
-    container_name: zdm_tests_nb
+  nosqlbench5:
+    image: nosqlbench/nosqlbench:5.21.7
+    container_name: zdm_tests_nb5
     tty: true
     volumes:
       - .:/source
     entrypoint:
-      - /source/compose/nosqlbench-entrypoint.sh
+      - /source/compose/nosqlbench5-entrypoint.sh
     networks:
       proxy:
         ipv4_address: 192.168.100.104
+    healthcheck:
+      test: ["CMD", "test", "-e", "/source/donefile"]
+      interval: 10s
+      timeout: 10s
+      retries: 120
+      start_period: 10s
+      start_interval: 10s
+      
+  nosqlbench4:
+    image: nosqlbench/nosqlbench:4.15.101
+    container_name: zdm_tests_nb4
+    tty: true
+    volumes:
+      - .:/source
+    entrypoint:
+      - /source/compose/nosqlbench4-entrypoint.sh
+    networks:
+      proxy:
+        ipv4_address: 192.168.100.105
+    depends_on:
+      nosqlbench5:
+        condition: service_healthy

@@ -27,7 +27,7 @@ java -jar /nb.jar \
   --show-stacktraces \
   /source/nb-tests/cql-nb-activity.yaml \
   rampup \
-  driver=cqld3 \
+  driver=cqld4 \
   hosts=zdm_tests_proxy \
   localdc=datacenter1 \
   errors=retry \
@@ -38,7 +38,7 @@ java -jar /nb.jar \
   --show-stacktraces \
   /source/nb-tests/cql-nb-activity.yaml \
   write \
-  driver=cqld3 \
+  driver=cqld4 \
   hosts=zdm_tests_proxy \
   localdc=datacenter1 \
   errors=retry \
@@ -49,30 +49,10 @@ java -jar /nb.jar \
   --show-stacktraces \
   /source/nb-tests/cql-nb-activity.yaml \
   read \
-  driver=cqld3 \
+  driver=cqld4 \
   hosts=zdm_tests_proxy \
   localdc=datacenter1 \
   errors=retry \
   -v
 
-echo "Running NoSQLBench VERIFY job on ORIGIN"
-java -jar /nb.jar \
-  --show-stacktraces \
-  --report-csv-to /source/verify-origin \
-  /source/nb-tests/cql-nb-activity.yaml \
-  verify \
-  driver=cqld3 \
-  hosts=zdm_tests_origin \
-  localdc=datacenter1 \
-  -v
-
-echo "Running NoSQLBench VERIFY job on TARGET"
-java -jar /nb.jar \
-  --show-stacktraces \
-  --report-csv-to /source/verify-target \
-  /source/nb-tests/cql-nb-activity.yaml \
-  verify \
-  driver=cqld3 \
-  hosts=zdm_tests_target \
-  localdc=datacenter1 \
-  -v
+touch /source/donefile

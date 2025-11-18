@@ -20,7 +20,7 @@ jobs:
       - name: Start docker-compose
         id: compose
         run: |
-          docker compose -f docker-compose-tests.yml up --abort-on-container-exit --exit-code-from=nosqlbench
+          docker compose -f docker-compose-tests.yml up --abort-on-container-exit --exit-code-from=nosqlbench4
       - name: Test Summary
         if: ${{ failure() }}
         run: |
