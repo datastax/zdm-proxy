@@ -53,13 +53,6 @@ services:
     networks:
       proxy:
         ipv4_address: 192.168.100.104
-    healthcheck:
-      test: ["CMD", "test", "-e", "/source/donefile"]
-      interval: 10s
-      timeout: 10s
-      retries: 120
-      start_period: 10s
-      start_interval: 10s
       
   nosqlbench4:
     image: nosqlbench/nosqlbench:4.15.101
@@ -72,6 +65,3 @@ services:
     networks:
       proxy:
         ipv4_address: 192.168.100.105
-    depends_on:
-      nosqlbench5:
-        condition: service_healthy

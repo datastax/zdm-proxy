@@ -1,12 +1,8 @@
 #!/bin/sh
 
-set -e
-
 apk add --no-cache netcat-openbsd
 
 wget https://github.com/nosqlbench/nosqlbench/releases/download/5.21.7-release/nb5.jar
-
-mv nb5.jar /
 
 function test_conn() {
 	nc -z -v  $1 9042;
@@ -21,6 +17,8 @@ function test_conn() {
 test_conn zdm_tests_origin
 test_conn zdm_tests_target
 test_conn zdm_tests_proxy
+
+set -e
 
 echo "Running NoSQLBench SCHEMA job"
 java -jar /nb.jar \
