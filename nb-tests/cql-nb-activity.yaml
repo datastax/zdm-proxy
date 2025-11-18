@@ -5,7 +5,7 @@ bindings:
   rw_value: Hash(); <<valdist:Uniform(0,1000000000)->int>>; ToString() -> String
 
 scenarios:
-  schema: run driver=cqld4 tags=phase:schema cycles=UNDEF
+  schema: run driver=cqld4 tags=phase:schema threads==1 cycles=UNDEF
   rampup: run driver=cqld4 tags=phase:rampup cycles=20000
   write: run driver=cqld4 tags=phase:write cycles=20000
   read: run driver=cqld4 tags=phase:read cycles=20000
@@ -18,19 +18,24 @@ blocks:
     params:
       prepared: false
     statements:
-      - stmts: |
-          DROP KEYSPACE IF EXISTS test;
-
-          create keyspace if not exists test
-            WITH replication = {'class': 'SimpleStrategy', 'replication_factor': '1'}
-            AND durable_writes = true;
-
-          create table if not exists test.keyvalue (
-            key int,
-            value text,
-            PRIMARY KEY (key));
-        tags:
-          name: schema-stmts
+    - drop-keyspace: |
+        drop keyspace if exists <<keyspace:test>>;
+      tags:
+         name: drop-keyspace
+    - create-keyspace: |
+        create keyspace if not exists <<keyspace:test>>
+        WITH replication = {'class': 'SimpleStrategy', 'replication_factor': '<<rf:1>>'}
+        AND durable_writes = true;
+      tags:
+         name: create-keyspace
+    - create-table: |
+        create table if not exists <<keyspace:test>>.<<table:keyvalue>> (
+        key int,
+         value text,
+         PRIMARY KEY (key)
+        );
+      tags:
+        name: create-table
   - name: rampup
     tags:
       phase: rampup
