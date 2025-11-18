@@ -3,6 +3,10 @@ apk add --no-cache netcat-openbsd
 apk add py3-pip
 pip install cqlsh
 
+wget https://github.com/nosqlbench/nosqlbench/releases/download/5.21.7-release/nb5.jar
+
+mv nb5.jar /
+
 function test_conn() {
 	nc -z -v  $1 9042;
 	while [ $? -ne 0 ];
