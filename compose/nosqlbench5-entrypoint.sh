@@ -1,10 +1,7 @@
 #!/bin/sh
 
-apk add --no-cache netcat-openbsd
-
-wget https://github.com/nosqlbench/nosqlbench/releases/download/5.21.7-release/nb5.jar
-
-mv nb5.jar nb.jar
+apt-get update
+apt-get install -y netcat-openbsd
 
 function test_conn() {
 	nc -z -v  $1 9042;
