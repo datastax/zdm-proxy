@@ -1,8 +1,8 @@
 #!/bin/sh
 
+set -e
+
 apk add --no-cache netcat-openbsd
-apk add py3-pip
-pip install cqlsh
 
 wget https://github.com/nosqlbench/nosqlbench/releases/download/5.21.7-release/nb5.jar
 
@@ -22,10 +22,16 @@ test_conn zdm_tests_origin
 test_conn zdm_tests_target
 test_conn zdm_tests_proxy
 
-set -e
-
-echo "Creating schema"
-cat /source/nb-tests/schema.cql | cqlsh zdm_tests_proxy
+echo "Running NoSQLBench SCHEMA job"
+java -jar /nb.jar \
+  --show-stacktraces \
+  /source/nb-tests/cql-nb-activity.yaml \
+  schema \
+  driver=cqld4 \
+  hosts=zdm_tests_proxy \
+  localdc=datacenter1 \
+  errors=retry \
+  -v
 
 echo "Running NoSQLBench RAMPUP job"
 java -jar /nb.jar \

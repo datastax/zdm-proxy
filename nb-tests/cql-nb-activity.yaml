@@ -5,12 +5,32 @@ bindings:
   rw_value: Hash(); <<valdist:Uniform(0,1000000000)->int>>; ToString() -> String
 
 scenarios:
+  schema: run driver=cqld4 tags=phase:schema cycles=UNDEF
   rampup: run driver=cqld4 tags=phase:rampup cycles=20000
   write: run driver=cqld4 tags=phase:write cycles=20000
   read: run driver=cqld4 tags=phase:read cycles=20000
-  verify: run driver=cqld4 tags=phase:verify errors=warn,unverified->count compare=all cycles=20000
+  verify: run driver=cqld3 tags=phase:verify errors=warn,unverified->count compare=all cycles=20000
 
 blocks:
+  - name: schema
+    tags:
+      phase: schema
+    params:
+      prepared: false
+    statements:
+      - stmts: |
+          DROP KEYSPACE IF EXISTS test;
+
+          create keyspace if not exists test
+            WITH replication = {'class': 'SimpleStrategy', 'replication_factor': '1'}
+            AND durable_writes = true;
+
+          create table if not exists test.keyvalue (
+            key int,
+            value text,
+            PRIMARY KEY (key));
+        tags:
+          name: schema-stmts
   - name: rampup
     tags:
       phase: rampup
