@@ -94,7 +94,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-ccm-
 
-      - name: Setup
+      - name: Run
         run: |
           sudo apt update
           
@@ -123,10 +123,10 @@ jobs:
           sudo ln -s /home/runner/.local/bin/ccm /usr/local/bin/ccm
           /usr/local/bin/ccm list
 
-      - name: Run
-        run: go test -timeout 180m -v 2>&1 ./integration-tests -RUN_MOCKTESTS=false -RUN_CCMTESTS=true -CASSANDRA_VERSION=${{ matrix.cassandra_version }} | go-junit-report -set-exit-code -iocopy -out report-integration-ccm.xml
+          go test -timeout 180m -v 2>&1 ./integration-tests -RUN_MOCKTESTS=false -RUN_CCMTESTS=true -CASSANDRA_VERSION=${{ matrix.cassandra_version }} | go-junit-report -set-exit-code -iocopy -out report-integration-ccm.xml
 
       - uses: actions/cache/save@v4
+        if: always()
         with:
           path: ~/.ccm/repository
           key: ${{ runner.os }}-ccm-${{ hashFiles('**/CHANGES.txt') }}
