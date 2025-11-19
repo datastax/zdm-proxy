@@ -50,7 +50,7 @@ java -jar /nb.jar \
   hosts=zdm_tests_proxy \
   localdc=datacenter1 \
   errors=retry \
-  driver.advanced.protocol.compression='lz4' \
+  driverconfig='{advanced.protocol.compression:"lz4"}' \
   -v
 
 echo "Running NoSQLBench READ job"
