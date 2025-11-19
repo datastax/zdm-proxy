@@ -28,7 +28,7 @@ java -jar /nb.jar \
   hosts=zdm_tests_proxy \
   localdc=datacenter1 \
   errors=retry \
-  --log-level-override com.datastax.oss.driver:INFO \
+  --log-level-override com.datastax.oss.driver.internal.core.session.PoolManager:DEBUG,com.datastax.oss.driver.internal.core.pool.ChannelPool:DEBUG,com.datastax.oss.driver.internal.core.metadata.NodeStateManager:DEBUG,com.datastax.oss.driver.internal.core.metadata.MetadataManager:DEBUG,com.datastax.oss.driver.internal.core.util.concurrent.Reconnection:DEBUG \
   -vv
 
 echo "Running NoSQLBench RAMPUP job"
@@ -40,7 +40,7 @@ java -jar /nb.jar \
   hosts=zdm_tests_proxy \
   localdc=datacenter1 \
   errors=retry \
-  --log-level-override com.datastax.oss.driver:INFO \
+  --log-level-override com.datastax.oss.driver.internal.core.session.PoolManager:DEBUG,com.datastax.oss.driver.internal.core.pool.ChannelPool:DEBUG,com.datastax.oss.driver.internal.core.metadata.NodeStateManager:DEBUG,com.datastax.oss.driver.internal.core.metadata.MetadataManager:DEBUG,com.datastax.oss.driver.internal.core.util.concurrent.Reconnection:DEBUG \
   -vv
 
 echo "Running NoSQLBench WRITE job"
@@ -52,7 +52,7 @@ java -jar /nb.jar \
   hosts=zdm_tests_proxy \
   localdc=datacenter1 \
   errors=retry \
-  --log-level-override com.datastax.oss.driver:INFO \
+  --log-level-override com.datastax.oss.driver.internal.core.session.PoolManager:DEBUG,com.datastax.oss.driver.internal.core.pool.ChannelPool:DEBUG,com.datastax.oss.driver.internal.core.metadata.NodeStateManager:DEBUG,com.datastax.oss.driver.internal.core.metadata.MetadataManager:DEBUG,com.datastax.oss.driver.internal.core.util.concurrent.Reconnection:DEBUG \
   -vv
 
 echo "Running NoSQLBench READ job"
@@ -64,7 +64,7 @@ java -jar /nb.jar \
   hosts=zdm_tests_proxy \
   localdc=datacenter1 \
   errors=retry \
-  --log-level-override com.datastax.oss.driver:INFO \
+  --log-level-override com.datastax.oss.driver.internal.core.session.PoolManager:DEBUG,com.datastax.oss.driver.internal.core.pool.ChannelPool:DEBUG,com.datastax.oss.driver.internal.core.metadata.NodeStateManager:DEBUG,com.datastax.oss.driver.internal.core.metadata.MetadataManager:DEBUG,com.datastax.oss.driver.internal.core.util.concurrent.Reconnection:DEBUG \
   -vv
 
 touch /source/donefile
