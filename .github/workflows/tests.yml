@@ -33,16 +33,16 @@ jobs:
         name: Download Go
         continue-on-error: true
         run: |
-          mkdir -p deps/godl
-          cd deps/godl
+          mkdir -p ~/deps/godl
+          cd ~/deps/godl
           wget -O go.tar.gz https://go.dev/dl/go${{ env.GO_VERSION }}.linux-amd64.tar.gz
           
       - if: ${{ steps.restore-simulacron.outputs.cache-hit != 'true' }}
         name: Download simulacron
         continue-on-error: true
         run: |
-          mkdir -p deps/simulacron
-          cd deps/simulacron
+          mkdir -p ~/deps/simulacron
+          cd ~/deps/simulacron
           wget -O simulacron.jar https://github.com/datastax/simulacron/releases/download/${{ env.SIMULACRON_VERSION }}/simulacron-standalone-${{ env.SIMULACRON_VERSION }}.jar
 
   # Runs a NoSQLBench job in docker-compose with 3 proxy nodes
@@ -77,7 +77,7 @@ jobs:
         run: |
           sudo apt update
           sudo apt -y install default-jre gcc git wget
-          sudo tar -xzf /deps/godl/go.tar.gz -C /usr/local/
+          sudo tar -xzf ~/deps/godl/go.tar.gz -C /usr/local/
           export PATH=$PATH:/usr/local/go/bin
           export PATH=$PATH:`go env GOPATH`/bin
           go install github.com/jstemmer/go-junit-report/v2@latest
@@ -113,11 +113,11 @@ jobs:
         run: |
           sudo apt update
           sudo apt -y install openjdk-8-jdk gcc git wget
-          sudo tar -xzf /deps/godl/go.tar.gz -C /usr/local/
+          sudo tar -xzf ~/deps/godl/go.tar.gz -C /usr/local/
           export PATH=$PATH:/usr/local/go/bin
           export PATH=$PATH:`go env GOPATH`/bin
           go install github.com/jstemmer/go-junit-report/v2@latest
-          cp deps/simulacron/simulacron.jar .
+          cp ~/deps/simulacron/simulacron.jar .
           export SIMULACRON_PATH=`pwd`/simulacron.jar
           go test -timeout 180m -v 2>&1 ./integration-tests | go-junit-report -set-exit-code -iocopy -out report-integration-mock.xml
       
@@ -164,7 +164,7 @@ jobs:
           export PATH=$JAVA_HOME/bin:$PATH
           java -version
           
-          sudo tar -xzf /deps/godl/go.tar.gz -C /usr/local/
+          sudo tar -xzf ~/deps/godl/go.tar.gz -C /usr/local/
           export PATH=$PATH:/usr/local/go/bin
           export PATH=$PATH:`go env GOPATH`/bin
 
@@ -215,11 +215,11 @@ jobs:
         run: |
           sudo apt update
           sudo apt -y install openjdk-8-jdk gcc git pip wget
-          sudo tar -xzf /deps/godl/go.tar.gz -C /usr/local/
+          sudo tar -xzf ~/deps/godl/go.tar.gz -C /usr/local/
           export PATH=$PATH:/usr/local/go/bin
           export PATH=$PATH:`go env GOPATH`/bin
           go install github.com/jstemmer/go-junit-report/v2@latest
-          cp /deps/simulacron/simulacron.jar .
+          cp ~/deps/simulacron/simulacron.jar .
           export SIMULACRON_PATH=`pwd`/simulacron.jar
           go test -race -timeout 180m -v 2>&1 ./integration-tests | go-junit-report -set-exit-code -iocopy -out report-integration-race.xml
       - name: Test Summary
@@ -245,7 +245,7 @@ jobs:
         run: |
           sudo apt update
           sudo apt -y install openjdk-8-jdk gcc git pip wget
-          sudo tar -xzf /deps/godl/go.tar.gz -C /usr/local/
+          sudo tar -xzf ~/deps/godl/go.tar.gz -C /usr/local/
           export PATH=$PATH:/usr/local/go/bin
           export PATH=$PATH:`go env GOPATH`/bin
           go vet ./...
