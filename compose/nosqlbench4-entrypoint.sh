@@ -14,8 +14,8 @@ wait_file() {
 
 donefile=/source/donefile 
 
-wait_file "$donefile" 600 || {
-  echo "donefile missing after waiting for 600 seconds: '$donefile'"
+wait_file "$donefile" 1200 || {
+  echo "donefile missing after waiting for 1200 seconds: '$donefile'"
   exit 1
 }
 echo "File found"

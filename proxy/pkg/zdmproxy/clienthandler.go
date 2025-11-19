@@ -441,7 +441,7 @@ func (ch *ClientHandler) requestLoop() {
 				if ready {
 					ch.handshakeDone.Store(true)
 					log.Infof(
-						"Handshake successful with client %s", connectionAddr)
+						"Handshake successful with client %s (%v)", connectionAddr, f.Header.Version.String())
 				}
 				log.Tracef("ready? %t", ready)
 			} else {
