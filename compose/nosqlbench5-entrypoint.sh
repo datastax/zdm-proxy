@@ -64,3 +64,6 @@ java -jar /nb.jar \
   -v
 
 touch /source/donefile
+
+# don't exit otherwise the verification step on the other container won't run
+sleep 600
