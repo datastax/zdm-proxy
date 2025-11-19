@@ -31,7 +31,7 @@ java -jar /nb.jar \
   driver=cqld3 \
   hosts=zdm_tests_origin \
   localdc=datacenter1 \
-  -v
+  -vv
 
 echo "Running NoSQLBench VERIFY job on TARGET"
 java -jar /nb.jar \
@@ -42,4 +42,4 @@ java -jar /nb.jar \
   driver=cqld3 \
   hosts=zdm_tests_target \
   localdc=datacenter1 \
-  -v
+  -vv

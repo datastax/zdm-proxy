@@ -28,7 +28,8 @@ java -jar /nb.jar \
   hosts=zdm_tests_proxy \
   localdc=datacenter1 \
   errors=retry \
-  -v
+  --log-level-override com.datastax.oss.driver:DEBUG \
+  -vv
 
 echo "Running NoSQLBench RAMPUP job"
 java -jar /nb.jar \
@@ -39,7 +40,8 @@ java -jar /nb.jar \
   hosts=zdm_tests_proxy \
   localdc=datacenter1 \
   errors=retry \
-  -v
+  --log-level-override com.datastax.oss.driver:DEBUG \
+  -vv
 
 echo "Running NoSQLBench WRITE job"
 java -jar /nb.jar \
@@ -50,8 +52,9 @@ java -jar /nb.jar \
   hosts=zdm_tests_proxy \
   localdc=datacenter1 \
   errors=retry \
+  --log-level-override com.datastax.oss.driver:DEBUG \
   driver.advanced.protocol.compression=lz4 \
-  -v
+  -vv
 
 echo "Running NoSQLBench READ job"
 java -jar /nb.jar \
@@ -62,7 +65,8 @@ java -jar /nb.jar \
   hosts=zdm_tests_proxy \
   localdc=datacenter1 \
   errors=retry \
-  -v
+  --log-level-override com.datastax.oss.driver:DEBUG \
+  -vv
 
 touch /source/donefile
 
