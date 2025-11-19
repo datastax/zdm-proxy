@@ -11,8 +11,7 @@ networks:
 
 services:
   origin:
-    image: cassandra:3.11.7
-    # image: cassandra:4.1.10
+    image: cassandra:4.1.10
     container_name: zdm_tests_origin
     restart: unless-stopped
     networks:
@@ -20,8 +19,7 @@ services:
         ipv4_address: 192.168.100.101
 
   target:
-    image: cassandra:3.11.7
-    # image: cassandra:5.0.6
+    image: cassandra:5.0.6
     container_name: zdm_tests_target
     restart: unless-stopped
     networks:
