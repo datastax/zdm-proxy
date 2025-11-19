@@ -2,7 +2,9 @@ package ccm
 
 import (
 	"fmt"
+
 	"github.com/apache/cassandra-gocql-driver/v2"
+
 	"github.com/datastax/zdm-proxy/integration-tests/env"
 )
 
@@ -15,6 +17,8 @@ type Cluster struct {
 
 	startNodeIndex int
 	session        *gocql.Session
+
+	singleNode bool
 }
 
 func newCluster(name string, version string, isDse bool, startNodeIndex int, numberOfSeedNodes int) *Cluster {
@@ -26,6 +30,7 @@ func newCluster(name string, version string, isDse bool, startNodeIndex int, num
 		numberOfSeedNodes:   numberOfSeedNodes,
 		startNodeIndex:      startNodeIndex,
 		session:             nil,
+		singleNode:          numberOfSeedNodes == 1,
 	}
 }
 
@@ -84,7 +89,7 @@ func (ccmCluster *Cluster) Create(numberOfNodes int, start bool) error {
 	}
 
 	if start {
-		_, err = Start()
+		_, err = Start(ccmCluster.GetDelayMs())
 
 		if err != nil {
 			Remove(ccmCluster.name)
@@ -118,7 +123,7 @@ func (ccmCluster *Cluster) Start(jvmArgs ...string) error {
 	if err != nil {
 		return err
 	}
-	_, err = Start(jvmArgs...)
+	_, err = Start(ccmCluster.GetDelayMs(), jvmArgs...)
 	return err
 }
 
@@ -147,6 +152,7 @@ func (ccmCluster *Cluster) Remove() error {
 
 func (ccmCluster *Cluster) AddNode(index int) error {
 	ccmCluster.SwitchToThis()
+	ccmCluster.singleNode = false
 	nodeIndex := ccmCluster.startNodeIndex + index
 	_, err := Add(
 		false,
@@ -161,7 +167,7 @@ func (ccmCluster *Cluster) AddNode(index int) error {
 func (ccmCluster *Cluster) StartNode(index int, jvmArgs ...string) error {
 	ccmCluster.SwitchToThis()
 	nodeIndex := ccmCluster.startNodeIndex + index
-	_, err := StartNode(fmt.Sprintf("node%d", nodeIndex), jvmArgs...)
+	_, err := StartNode(ccmCluster.GetDelayMs(), fmt.Sprintf("node%d", nodeIndex), jvmArgs...)
 	return err
 }
 
@@ -177,4 +183,12 @@ func (ccmCluster *Cluster) RemoveNode(index int) error {
 	nodeIndex := ccmCluster.startNodeIndex + index
 	_, err := RemoveNode(fmt.Sprintf("node%d", nodeIndex))
 	return err
+}
+
+func (ccmCluster *Cluster) GetDelayMs() int {
+	if ccmCluster.singleNode {
+		return 1000
+	} else {
+		return 10000
+	}
 }

@@ -14,6 +14,10 @@ services:
     image: cassandra:4.1.10
     container_name: zdm_tests_origin
     restart: unless-stopped
+    command:
+      - cassandra
+      - -f
+      - -Dcassandra.ring_delay_ms=1000
     networks:
       proxy:
         ipv4_address: 192.168.100.101
@@ -22,6 +26,10 @@ services:
     image: cassandra:5.0.6
     container_name: zdm_tests_target
     restart: unless-stopped
+    command:
+      - cassandra
+      - -f
+      - -Dcassandra.ring_delay_ms=1000
     networks:
       proxy:
         ipv4_address: 192.168.100.102
