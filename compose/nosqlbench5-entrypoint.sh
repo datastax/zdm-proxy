@@ -53,7 +53,6 @@ java -jar /nb.jar \
   localdc=datacenter1 \
   errors=retry \
   --log-level-override com.datastax.oss.driver:DEBUG \
-  driver.advanced.protocol.compression=lz4 \
   -vv
 
 echo "Running NoSQLBench READ job"
