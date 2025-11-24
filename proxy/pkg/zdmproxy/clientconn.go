@@ -191,14 +191,14 @@ func (cc *ClientConnector) listenForRequests() {
 					err, cc.clientHandlerContext, cc.clientHandlerCancelFunc, ClientConnectorLogPrefix, "reading", connectionAddr)
 				break
 			} else if protocolErrResponseFrame != nil {
-				protocolErrResponseFrame.Header.StreamId = 0
+				//protocolErrResponseFrame.Header.StreamId = 0
 				alreadySentProtocolErr = protocolErrResponseFrame
 				protocolErrOccurred = true
 				cc.sendResponseToClient(protocolErrResponseFrame)
 				continue
 			} else if alreadySentProtocolErr != nil {
 				clonedProtocolErr := alreadySentProtocolErr.DeepCopy()
-				clonedProtocolErr.Header.StreamId = 0
+				//clonedProtocolErr.Header.StreamId = 0
 				cc.sendResponseToClient(clonedProtocolErr)
 				continue
 			}
