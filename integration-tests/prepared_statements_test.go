@@ -1037,7 +1037,7 @@ func NewPreparedTestHandler(
 			lock.Unlock()
 			return frame.NewFrame(request.Header.Version, request.Header.StreamId, &message.PreparedResult{
 				PreparedQueryId:   prepId,
-				ResultMetadataId:  nil,
+				ResultMetadataId:  prepId,
 				VariablesMetadata: variablesMetadata,
 				ResultMetadata:    rowsMetadata,
 			})

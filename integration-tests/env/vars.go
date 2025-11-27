@@ -35,6 +35,7 @@ var AllProtocolVersions []primitive.ProtocolVersion = []primitive.ProtocolVersio
 }
 var DefaultProtocolVersion primitive.ProtocolVersion
 var DefaultProtocolVersionSimulacron primitive.ProtocolVersion
+var DefaultProtocolVersionTestClient primitive.ProtocolVersion
 
 func InitGlobalVars() {
 	flags := map[string]interface{}{
@@ -106,6 +107,12 @@ func InitGlobalVars() {
 		DefaultProtocolVersionSimulacron = primitive.ProtocolVersion4
 	} else {
 		DefaultProtocolVersionSimulacron = DefaultProtocolVersion
+	}
+
+	if DefaultProtocolVersion.SupportsModernFramingLayout() {
+		DefaultProtocolVersionTestClient = primitive.ProtocolVersion4
+	} else {
+		DefaultProtocolVersionTestClient = DefaultProtocolVersion
 	}
 
 	if strings.ToLower(runCcmTests) == "true" {

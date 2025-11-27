@@ -72,17 +72,21 @@ var proxyMetrics = []metrics.Metric{
 
 var allMetrics = append(proxyMetrics, nodeMetrics...)
 
-var insertQuery = frame.NewFrame(
-	env.DefaultProtocolVersion,
-	client.ManagedStreamId,
-	&message.Query{Query: "INSERT INTO ks1.t1"},
-)
+func getInsertQuery() *frame.Frame {
+	return frame.NewFrame(
+		env.DefaultProtocolVersion,
+		client.ManagedStreamId,
+		&message.Query{Query: "INSERT INTO ks1.t1"},
+	)
+}
 
-var selectQuery = frame.NewFrame(
-	env.DefaultProtocolVersion,
-	client.ManagedStreamId,
-	&message.Query{Query: "SELECT * FROM ks1.t1"},
-)
+func getSelectQuery() *frame.Frame {
+	return frame.NewFrame(
+		env.DefaultProtocolVersion,
+		client.ManagedStreamId,
+		&message.Query{Query: "SELECT * FROM ks1.t1"},
+	)
+}
 
 func testMetrics(t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback) {
 
@@ -158,7 +162,7 @@ func testMetrics(t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback)
 			// but all of these are "system" requests so not tracked
 			checkMetrics(t, true, lines, conf.ReadMode, 1, 1, 1, expectedAsyncConnections, 0, 0, 0, 0, true, true, originEndpoint, targetEndpoint, asyncEndpoint, 0, 0, 0)
 
-			_, err = clientConn.SendAndReceive(insertQuery)
+			_, err = clientConn.SendAndReceive(getInsertQuery())
 			require.Nil(t, err)
 
 			lines = GatherMetrics(t, conf, true)
@@ -169,7 +173,7 @@ func testMetrics(t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback)
 			// only QUERY is tracked
 			checkMetrics(t, true, lines, conf.ReadMode, 1, 1, 1, expectedAsyncConnections, 1, 0, 0, 0, true, true, originEndpoint, targetEndpoint, asyncEndpoint, 0, 0, 0)
 
-			_, err = clientConn.SendAndReceive(selectQuery)
+			_, err = clientConn.SendAndReceive(getSelectQuery())
 			require.Nil(t, err)
 
 			lines = GatherMetrics(t, conf, true)
