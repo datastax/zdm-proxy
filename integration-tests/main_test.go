@@ -24,13 +24,13 @@ func TestMain(m *testing.M) {
 	os.Exit(RunTests(m))
 }
 
-func SetupOrGetGlobalCcmClusters() (*ccm.Cluster, *ccm.Cluster, error) {
-	originCluster, err := setup.GetGlobalTestClusterOrigin()
+func SetupOrGetGlobalCcmClusters(t *testing.T) (*ccm.Cluster, *ccm.Cluster, error) {
+	originCluster, err := setup.GetGlobalTestClusterOrigin(t)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	targetCluster, err := setup.GetGlobalTestClusterTarget()
+	targetCluster, err := setup.GetGlobalTestClusterTarget(t)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -43,8 +43,8 @@ func RunTests(m *testing.M) int {
 	return m.Run()
 }
 
-func NewProxyInstanceForGlobalCcmClusters() (*zdmproxy.ZdmProxy, error) {
-	originCluster, targetCluster, err := SetupOrGetGlobalCcmClusters()
+func NewProxyInstanceForGlobalCcmClusters(t *testing.T) (*zdmproxy.ZdmProxy, error) {
+	originCluster, targetCluster, err := SetupOrGetGlobalCcmClusters(t)
 	if err != nil {
 		return nil, err
 	}

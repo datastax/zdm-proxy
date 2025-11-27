@@ -4,8 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/apache/cassandra-gocql-driver/v2"
 	"time"
+
+	"github.com/apache/cassandra-gocql-driver/v2"
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
+
+	"github.com/datastax/zdm-proxy/integration-tests/env"
 )
 
 type When interface {
@@ -383,4 +387,16 @@ func when(out map[string]interface{}) When {
 	when := &baseWhen{}
 	when.out = out
 	return when
+}
+
+func SupportsProtocolVersion(version primitive.ProtocolVersion) bool {
+	if version == primitive.ProtocolVersion5 {
+		return false
+	}
+
+	if version.IsDse() {
+		return false
+	}
+
+	return env.SupportsProtocolVersion(version)
 }

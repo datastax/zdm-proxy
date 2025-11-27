@@ -20,10 +20,7 @@ import (
 )
 
 func TestSimultaneousConnections(t *testing.T) {
-	if !env.RunCcmTests {
-		t.Skip("Test requires CCM, set RUN_CCMTESTS env variable to TRUE")
-	}
-	ccmSetup, err := setup.NewTemporaryCcmTestSetup(false, false)
+	ccmSetup, err := setup.NewTemporaryCcmTestSetup(t, false, false)
 	require.Nil(t, err)
 	defer ccmSetup.Cleanup()
 	err = ccmSetup.Origin.UpdateConf("authenticator: PasswordAuthenticator")

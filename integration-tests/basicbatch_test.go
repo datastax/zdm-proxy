@@ -2,11 +2,12 @@ package integration_tests
 
 import (
 	"fmt"
-	"github.com/datastax/zdm-proxy/integration-tests/env"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/integration-tests/utils"
-	"github.com/stretchr/testify/require"
-	"testing"
 
 	"github.com/apache/cassandra-gocql-driver/v2"
 )
@@ -15,15 +16,11 @@ import (
 // The test runs a basic batch statement, which includes an insert and update,
 // and then runs an insert and update after to make sure it works
 func TestBasicBatch(t *testing.T) {
-	if !env.RunCcmTests {
-		t.Skip("Test requires CCM, set RUN_CCMTESTS env variable to TRUE")
-	}
-
-	proxyInstance, err := NewProxyInstanceForGlobalCcmClusters()
+	proxyInstance, err := NewProxyInstanceForGlobalCcmClusters(t)
 	require.Nil(t, err)
 	defer proxyInstance.Shutdown()
 
-	originCluster, targetCluster, err := SetupOrGetGlobalCcmClusters()
+	originCluster, targetCluster, err := SetupOrGetGlobalCcmClusters(t)
 	require.Nil(t, err)
 
 	// Initialize test data

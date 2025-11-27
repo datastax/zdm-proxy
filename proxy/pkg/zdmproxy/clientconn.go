@@ -246,7 +246,7 @@ func checkProtocolError(f *frame.RawFrame, protoVer primitive.ProtocolVersion, c
 		errorCode = ProtocolErrorDecodeError
 	} else {
 		protocolErrMsg = checkProtocolVersion(f.Header.Version)
-		logMsg = "Protocol v5 detected while decoding a frame."
+		logMsg = fmt.Sprintf("Protocol %v detected while decoding a frame.", f.Header.Version)
 		streamId = f.Header.StreamId
 		errorCode = ProtocolErrorUnsupportedVersion
 	}

@@ -5,22 +5,24 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
-	"github.com/datastax/go-cassandra-native-protocol/client"
-	"github.com/datastax/go-cassandra-native-protocol/frame"
-	"github.com/datastax/go-cassandra-native-protocol/message"
-	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/datastax/zdm-proxy/integration-tests/env"
-	"github.com/datastax/zdm-proxy/integration-tests/setup"
-	"github.com/datastax/zdm-proxy/integration-tests/utils"
-	"github.com/datastax/zdm-proxy/proxy/pkg/config"
-	"github.com/rs/zerolog"
-	zerologger "github.com/rs/zerolog/log"
-	log "github.com/sirupsen/logrus"
-	"github.com/stretchr/testify/require"
 	"io/ioutil"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/datastax/go-cassandra-native-protocol/client"
+	"github.com/datastax/go-cassandra-native-protocol/frame"
+	"github.com/datastax/go-cassandra-native-protocol/message"
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/rs/zerolog"
+	zerologger "github.com/rs/zerolog/log"
+	log "github.com/sirupsen/logrus"
+	"github.com/stretchr/testify/require"
+
+	"github.com/datastax/zdm-proxy/integration-tests/env"
+	"github.com/datastax/zdm-proxy/integration-tests/setup"
+	"github.com/datastax/zdm-proxy/integration-tests/utils"
+	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 )
 
 type clusterTlsConfiguration struct {
@@ -903,11 +905,7 @@ func skipNonEssentialTests(essentialTest bool, t *testing.T) {
 }
 
 func setupOriginAndTargetClusters(clusterConf clusterTlsConfiguration, t *testing.T) (*setup.CcmTestSetup, error) {
-	if !env.RunCcmTests {
-		t.Skip("Test requires CCM, set RUN_CCMTESTS env variable to TRUE")
-	}
-
-	ccmSetup, err := setup.NewTemporaryCcmTestSetup(false, false)
+	ccmSetup, err := setup.NewTemporaryCcmTestSetup(t, false, false)
 	if ccmSetup == nil {
 		return nil, fmt.Errorf("ccm setup could not be created and is nil")
 	}

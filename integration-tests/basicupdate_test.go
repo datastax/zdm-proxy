@@ -20,15 +20,11 @@ import (
 // performs an update where through the proxy
 // then loads the unloaded data into the destination
 func TestBasicUpdate(t *testing.T) {
-	if !env.RunCcmTests {
-		t.Skip("Test requires CCM, set RUN_CCMTESTS env variable to TRUE")
-	}
-
-	proxyInstance, err := NewProxyInstanceForGlobalCcmClusters()
+	proxyInstance, err := NewProxyInstanceForGlobalCcmClusters(t)
 	require.Nil(t, err)
 	defer proxyInstance.Shutdown()
 
-	originCluster, targetCluster, err := SetupOrGetGlobalCcmClusters()
+	originCluster, targetCluster, err := SetupOrGetGlobalCcmClusters(t)
 	require.Nil(t, err)
 
 	// Initialize test data
@@ -68,18 +64,14 @@ func TestBasicUpdate(t *testing.T) {
 }
 
 func TestCompression(t *testing.T) {
-	if !env.RunCcmTests {
-		t.Skip("Test requires CCM, set RUN_CCMTESTS env variable to TRUE")
-	}
-
 	log.SetLevel(log.TraceLevel)
 	defer log.SetLevel(log.InfoLevel)
 
-	proxyInstance, err := NewProxyInstanceForGlobalCcmClusters()
+	proxyInstance, err := NewProxyInstanceForGlobalCcmClusters(t)
 	require.Nil(t, err)
 	defer proxyInstance.Shutdown()
 
-	originCluster, targetCluster, err := SetupOrGetGlobalCcmClusters()
+	originCluster, targetCluster, err := SetupOrGetGlobalCcmClusters(t)
 	require.Nil(t, err)
 
 	// Initialize test data
@@ -96,7 +88,7 @@ func TestCompression(t *testing.T) {
 		t.Run(compressor.Name(), func(t *testing.T) {
 			// Connect to proxy as a "client"
 			cluster := utils.NewCluster("127.0.0.1", "", "", 14002)
-			if env.CompareServerVersion("4.0.0") >= 0 && compressor.Name() == "snappy" {
+			if !env.IsDse && env.CompareServerVersion("4.0.0") >= 0 && compressor.Name() == "snappy" {
 				cluster.ProtoVersion = 4 // v5 doesn't support snappy
 			}
 			cluster.Compressor = compressor

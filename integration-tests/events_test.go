@@ -3,24 +3,22 @@ package integration_tests
 import (
 	"context"
 	"fmt"
+	"testing"
+	"time"
+
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/stretchr/testify/require"
+
 	"github.com/datastax/zdm-proxy/integration-tests/ccm"
 	"github.com/datastax/zdm-proxy/integration-tests/client"
 	"github.com/datastax/zdm-proxy/integration-tests/env"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
-	"github.com/stretchr/testify/require"
-	"testing"
-	"time"
 )
 
 // TestSchemaEvents tests the schema event message handling
 func TestSchemaEvents(t *testing.T) {
-	if !env.RunCcmTests {
-		t.Skip("Test requires CCM, set RUN_CCMTESTS env variable to TRUE")
-	}
-
-	originCluster, targetCluster, err := SetupOrGetGlobalCcmClusters()
+	originCluster, targetCluster, err := SetupOrGetGlobalCcmClusters(t)
 	require.Nil(t, err)
 
 	tests := []struct {
@@ -42,7 +40,7 @@ func TestSchemaEvents(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			proxyInstance, err := NewProxyInstanceForGlobalCcmClusters()
+			proxyInstance, err := NewProxyInstanceForGlobalCcmClusters(t)
 			require.Nil(t, err)
 			defer proxyInstance.Shutdown()
 
@@ -107,11 +105,7 @@ func TestSchemaEvents(t *testing.T) {
 
 // TestTopologyStatusEvents tests the topology and status events handling
 func TestTopologyStatusEvents(t *testing.T) {
-	if !env.RunCcmTests {
-		t.Skip("Test requires CCM, set RUN_CCMTESTS env variable to TRUE")
-	}
-
-	tempCcmSetup, err := setup.NewTemporaryCcmTestSetup(true, false)
+	tempCcmSetup, err := setup.NewTemporaryCcmTestSetup(t, true, false)
 	require.Nil(t, err)
 	defer tempCcmSetup.Cleanup()
 

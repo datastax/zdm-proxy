@@ -22,8 +22,10 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
 
+	"github.com/datastax/zdm-proxy/integration-tests/ccm"
 	"github.com/datastax/zdm-proxy/integration-tests/env"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
+	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
 	"github.com/datastax/zdm-proxy/integration-tests/utils"
 	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 	"github.com/datastax/zdm-proxy/proxy/pkg/zdmproxy"
@@ -185,10 +187,6 @@ func TestVirtualizationNumberOfConnections(t *testing.T) {
 }
 
 func TestVirtualizationTokenAwareness(t *testing.T) {
-	if !env.RunCcmTests {
-		t.Skip("Test requires CCM, set RUN_CCMTESTS env variable to TRUE")
-	}
-
 	type test struct {
 		name                        string
 		proxyIndexes                []int
@@ -252,9 +250,9 @@ func TestVirtualizationTokenAwareness(t *testing.T) {
 		},
 	}
 
-	origin, err := setup.GetGlobalTestClusterOrigin()
+	origin, err := setup.GetGlobalTestClusterOrigin(t)
 	require.Nil(t, err)
-	target, err := setup.GetGlobalTestClusterTarget()
+	target, err := setup.GetGlobalTestClusterTarget(t)
 	require.Nil(t, err)
 
 	err = origin.GetSession().Query(
@@ -378,377 +376,458 @@ CREATE TABLE system.local (
 	)
 */
 func TestInterceptedQueries(t *testing.T) {
-	testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodes(t, false, false, 3)
-	require.Nil(t, err)
-	defer testSetup.Cleanup()
-
-	expectedLocalCols := []string{
-		"key", "bootstrapped", "broadcast_address", "cluster_name", "cql_version", "data_center", "dse_version", "graph",
-		"host_id", "listen_address", "partitioner", "rack", "release_version", "rpc_address", "schema_version", "tokens",
-		"truncated_at",
-	}
-
-	expectedPeersCols := []string{
-		"peer", "data_center", "dse_version", "graph", "host_id", "preferred_ip", "rack", "release_version", "rpc_address",
-		"schema_version", "tokens",
-	}
-
-	hostId1 := uuid.NewSHA1(uuid.Nil, net.ParseIP("127.0.0.1"))
-	primitiveHostId1 := primitive.UUID(hostId1)
-	hostId2 := uuid.NewSHA1(uuid.Nil, net.ParseIP("127.0.0.2"))
-	primitiveHostId2 := primitive.UUID(hostId2)
-	hostId3 := uuid.NewSHA1(uuid.Nil, net.ParseIP("127.0.0.3"))
-	primitiveHostId3 := primitive.UUID(hostId3)
-
-	numTokens := 8
-
-	type testDefinition struct {
-		query              string
-		expectedCols       []string
-		expectedValues     [][]interface{}
-		errExpected        message.Message
-		proxyInstanceCount int
-		connectProxyIndex  int
-	}
-
-	tests := []testDefinition{
-		{
-			query:        "SELECT * FROM system.local",
-			expectedCols: expectedLocalCols,
-			expectedValues: [][]interface{}{
-				{
-					"local", "COMPLETED", net.ParseIP("127.0.0.1").To4(), testSetup.Origin.Name, "3.2.0", "dc1", env.DseVersion, false, primitiveHostId1,
-					net.ParseIP("127.0.0.1").To4(), "org.apache.cassandra.dht.Murmur3Partitioner", "rack0", env.CassandraVersion, net.ParseIP("127.0.0.1").To4(), nil,
-					[]string{"1241"}, nil,
-				},
-			},
-			errExpected:        nil,
-			proxyInstanceCount: 3,
-			connectProxyIndex:  0,
-		},
-		{
-			query:        "SELECT rack FROM system.local",
-			expectedCols: []string{"rack"},
-			expectedValues: [][]interface{}{
-				{
-					"rack0",
-				},
-			},
-			errExpected:        nil,
-			proxyInstanceCount: 3,
-			connectProxyIndex:  0,
-		},
-		{
-			query:        "SELECT rack as r FROM system.local",
-			expectedCols: []string{"r"},
-			expectedValues: [][]interface{}{
-				{
-					"rack0",
-				},
-			},
-			errExpected:        nil,
-			proxyInstanceCount: 3,
-			connectProxyIndex:  0,
-		},
-		{
-			query:        "SELECT count(*) FROM system.local",
-			expectedCols: []string{"count"},
-			expectedValues: [][]interface{}{
-				{
-					int32(1),
-				},
-			},
-			errExpected:        nil,
-			proxyInstanceCount: 3,
-			connectProxyIndex:  0,
-		},
-		{
-			query:              "SELECT dsa, key, asd FROM system.local",
-			expectedCols:       nil,
-			expectedValues:     nil,
-			errExpected:        &message.Invalid{ErrorMessage: "Undefined column name dsa"},
-			proxyInstanceCount: 3,
-			connectProxyIndex:  0,
-		},
-		{
-			query:              "SELECT dsa FROM system.local",
-			expectedCols:       nil,
-			expectedValues:     nil,
-			errExpected:        &message.Invalid{ErrorMessage: "Undefined column name dsa"},
-			proxyInstanceCount: 3,
-			connectProxyIndex:  0,
-		},
-		{
-			query:              "SELECT key, asd FROM system.local",
-			expectedCols:       nil,
-			expectedValues:     nil,
-			errExpected:        &message.Invalid{ErrorMessage: "Undefined column name asd"},
-			proxyInstanceCount: 3,
-			connectProxyIndex:  0,
-		},
-		{
-			query:        "SELECT rack as r, count(*) as c, rack FROM system.peers",
-			expectedCols: []string{"r", "c", "rack"},
-			expectedValues: [][]interface{}{
-				{
-					"rack0", int32(2), "rack0",
-				},
-			},
-			errExpected:        nil,
-			proxyInstanceCount: 3,
-			connectProxyIndex:  0,
-		},
-		{
-			query:        "SELECT * FROM system.peers",
-			expectedCols: expectedPeersCols,
-			expectedValues: [][]interface{}{
-				{
-					net.ParseIP("127.0.0.2").To4(), "dc1", env.DseVersion, false, primitiveHostId2, net.ParseIP("127.0.0.2").To4(), "rack0", env.CassandraVersion, net.ParseIP("127.0.0.2").To4(), nil, []string{"1234"},
-				},
-				{
-					net.ParseIP("127.0.0.3").To4(), "dc1", env.DseVersion, false, primitiveHostId3, net.ParseIP("127.0.0.3").To4(), "rack0", env.CassandraVersion, net.ParseIP("127.0.0.3").To4(), nil, []string{"1234"},
-				},
-			},
-			errExpected:        nil,
-			proxyInstanceCount: 3,
-			connectProxyIndex:  0,
-		},
-		{
-			query:        "SELECT * FROM system.peers",
-			expectedCols: expectedPeersCols,
-			expectedValues: [][]interface{}{
-				{
-					net.ParseIP("127.0.0.1").To4(), "dc1", env.DseVersion, false, primitiveHostId1, net.ParseIP("127.0.0.1").To4(), "rack0", env.CassandraVersion, net.ParseIP("127.0.0.1").To4(), nil, []string{"1234"},
-				},
-				{
-					net.ParseIP("127.0.0.3").To4(), "dc1", env.DseVersion, false, primitiveHostId3, net.ParseIP("127.0.0.3").To4(), "rack0", env.CassandraVersion, net.ParseIP("127.0.0.3").To4(), nil, []string{"1234"},
-				},
-			},
-			errExpected:        nil,
-			proxyInstanceCount: 3,
-			connectProxyIndex:  1,
-		},
-		{
-			query:              "SELECT * FROM system.peers",
-			expectedCols:       expectedPeersCols,
-			expectedValues:     [][]interface{}{},
-			errExpected:        nil,
-			proxyInstanceCount: 1,
-			connectProxyIndex:  0,
-		},
-		{
-			query:        "SELECT rack FROM system.peers",
-			expectedCols: []string{"rack"},
-			expectedValues: [][]interface{}{
-				{
-					"rack0",
-				},
-				{
-					"rack0",
-				},
-			},
-			errExpected:        nil,
-			proxyInstanceCount: 3,
-			connectProxyIndex:  0,
-		},
-		{
-			query:        "SELECT rack as r FROM system.peers",
-			expectedCols: []string{"r"},
-			expectedValues: [][]interface{}{
-				{
-					"rack0",
-				},
-				{
-					"rack0",
-				},
-			},
-			errExpected:        nil,
-			proxyInstanceCount: 3,
-			connectProxyIndex:  0,
-		},
-		{
-			query:        "SELECT peer, count(*) FROM system.peers",
-			expectedCols: []string{"peer", "count"},
-			expectedValues: [][]interface{}{
-				{
-					net.ParseIP("127.0.0.2").To4(), int32(2),
-				},
-			},
-			errExpected:        nil,
-			proxyInstanceCount: 3,
-			connectProxyIndex:  0,
-		},
-		{
-			query:        "SELECT peer, count(*), count(*) as c, peer as p FROM system.peers",
-			expectedCols: []string{"peer", "count", "c", "p"},
-			expectedValues: [][]interface{}{
-				{
-					nil, int32(0), int32(0), nil,
-				},
-			},
-			errExpected:        nil,
-			proxyInstanceCount: 1,
-			connectProxyIndex:  0,
-		},
-		{
-			query:        "SELECT count(*) FROM system.peers",
-			expectedCols: []string{"count"},
-			expectedValues: [][]interface{}{
-				{
-					int32(2),
-				},
-			},
-			errExpected:        nil,
-			proxyInstanceCount: 3,
-			connectProxyIndex:  0,
-		},
-		{
-			query:        "SELECT count(*) FROM system.peers",
-			expectedCols: []string{"count"},
-			expectedValues: [][]interface{}{
-				{
-					int32(0),
-				},
-			},
-			errExpected:        nil,
-			proxyInstanceCount: 1,
-			connectProxyIndex:  0,
-		},
-		{
-			query:              "SELECT asd, peer, dsa FROM system.peers",
-			expectedCols:       nil,
-			expectedValues:     nil,
-			errExpected:        &message.Invalid{ErrorMessage: "Undefined column name asd"},
-			proxyInstanceCount: 3,
-			connectProxyIndex:  0,
-		},
-		{
-			query:              "SELECT asd FROM system.peers",
-			expectedCols:       nil,
-			expectedValues:     nil,
-			errExpected:        &message.Invalid{ErrorMessage: "Undefined column name asd"},
-			proxyInstanceCount: 3,
-			connectProxyIndex:  0,
-		},
-		{
-			query:              "SELECT peer, dsa FROM system.peers",
-			expectedCols:       nil,
-			expectedValues:     nil,
-			errExpected:        &message.Invalid{ErrorMessage: "Undefined column name dsa"},
-			proxyInstanceCount: 3,
-			connectProxyIndex:  0,
-		},
-		{
-			query:        "SELECT peer as p, count(*) as c, peer FROM system.peers",
-			expectedCols: []string{"p", "c", "peer"},
-			expectedValues: [][]interface{}{
-				{
-					net.ParseIP("127.0.0.2").To4(), int32(2), net.ParseIP("127.0.0.2").To4(),
-				},
-			},
-			errExpected:        nil,
-			proxyInstanceCount: 3,
-			connectProxyIndex:  0,
-		},
-	}
-
-	checkRowsResultFunc := func(t *testing.T, testVars testDefinition, queryResponseFrame *frame.Frame) {
-		queryRowsResult, ok := queryResponseFrame.Body.Message.(*message.RowsResult)
-		require.True(t, ok, queryResponseFrame.Body.Message)
-		require.Equal(t, len(testVars.expectedValues), len(queryRowsResult.Data))
-		var resultCols []string
-		for _, colMetadata := range queryRowsResult.Metadata.Columns {
-			resultCols = append(resultCols, colMetadata.Name)
-		}
-		require.Equal(t, testVars.expectedCols, resultCols)
-		for i, row := range queryRowsResult.Data {
-			require.Equal(t, len(testVars.expectedValues[i]), len(row))
-			for j, value := range row {
-				dcodec, err := datacodec.NewCodec(queryRowsResult.Metadata.Columns[j].Type)
+	for _, v := range env.AllProtocolVersions {
+		t.Run(v.String(), func(t *testing.T) {
+			var cleanupFn func()
+			originName := ""
+			var originSetup, targetSetup setup.TestCluster
+			var expectedLocalCols, expectedPeersCols []string
+			var isCcm bool
+			if !simulacron.SupportsProtocolVersion(v) {
+				if !env.SupportsProtocolVersion(v) {
+					t.Skipf("proto version %v not supported in current ccm cluster version %v", v.String(), env.ServerVersionLogStr)
+				}
+				cleanupFn = func() {}
+				var err error
+				originSetup, err = setup.GetGlobalTestClusterOrigin(t)
 				require.Nil(t, err)
-				var dest interface{}
-				wasNull, err := dcodec.Decode(value, &dest, primitive.ProtocolVersion4)
+				originName = originSetup.(*ccm.Cluster).GetId()
+				targetSetup, err = setup.GetGlobalTestClusterTarget(t)
 				require.Nil(t, err)
-				switch queryRowsResult.Metadata.Columns[j].Name {
-				case "schema_version":
-					require.IsType(t, primitive.UUID{}, dest)
-					require.NotNil(t, dest)
-					require.NotEqual(t, primitive.UUID{}, dest)
-				case "tokens":
-					tokens, ok := dest.([]*string)
-					require.True(t, ok)
-					require.Equal(t, numTokens, len(tokens))
-					for _, token := range tokens {
-						require.NotNil(t, token)
-						require.NotEqual(t, "", *token)
+				expectedLocalCols = []string{
+					"key", "bootstrapped", "broadcast_address", "cluster_name", "cql_version", "data_center",
+					"gossip_generation", "host_id", "listen_address", "native_protocol_version", "partitioner",
+					"rack", "release_version", "rpc_address", "schema_version", "tokens", "truncated_at",
+				}
+
+				expectedPeersCols = []string{
+					"peer", "data_center", "host_id", "preferred_ip", "rack", "release_version", "rpc_address",
+					"schema_version", "tokens",
+				}
+				isCcm = true
+			} else {
+				testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodes(t, false, false, 3)
+				require.Nil(t, err)
+				cleanupFn = testSetup.Cleanup
+				originName = testSetup.Origin.Name
+				originSetup = testSetup.Origin
+				targetSetup = testSetup.Target
+				expectedLocalCols = []string{
+					"key", "bootstrapped", "broadcast_address", "cluster_name", "cql_version", "data_center", "dse_version", "graph",
+					"host_id", "listen_address", "partitioner", "rack", "release_version", "rpc_address", "schema_version", "tokens",
+					"truncated_at",
+				}
+
+				expectedPeersCols = []string{
+					"peer", "data_center", "dse_version", "graph", "host_id", "preferred_ip", "rack", "release_version", "rpc_address",
+					"schema_version", "tokens",
+				}
+				isCcm = false
+			}
+			defer cleanupFn()
+
+			hostId1 := uuid.NewSHA1(uuid.Nil, net.ParseIP("127.0.0.1"))
+			primitiveHostId1 := primitive.UUID(hostId1)
+			hostId2 := uuid.NewSHA1(uuid.Nil, net.ParseIP("127.0.0.2"))
+			primitiveHostId2 := primitive.UUID(hostId2)
+			hostId3 := uuid.NewSHA1(uuid.Nil, net.ParseIP("127.0.0.3"))
+			primitiveHostId3 := primitive.UUID(hostId3)
+
+			numTokens := 8
+
+			type testDefinition struct {
+				query                    string
+				expectedCols             []string
+				expectedValuesSimulacron [][]interface{}
+				expectedValuesCcm        [][]interface{}
+				errExpected              message.Message
+				proxyInstanceCount       int
+				connectProxyIndex        int
+			}
+
+			tests := []testDefinition{
+				{
+					query:        "SELECT * FROM system.local",
+					expectedCols: expectedLocalCols,
+					expectedValuesSimulacron: [][]interface{}{
+						{
+							"local", "COMPLETED", net.ParseIP("127.0.0.1").To4(), originName, "3.2.0", "dc1", env.DseVersion, false, primitiveHostId1,
+							net.ParseIP("127.0.0.1").To4(), "org.apache.cassandra.dht.Murmur3Partitioner", "rack0", env.CassandraVersion, net.ParseIP("127.0.0.1").To4(), nil,
+							[]string{"1241"}, nil,
+						},
+					},
+					expectedValuesCcm: [][]interface{}{
+						{
+							"local", "COMPLETED", net.ParseIP("127.0.0.1").To4(), originName, "3.4.7", "datacenter1", 1764262829, primitiveHostId1,
+							net.ParseIP("127.0.0.1").To4(), env.ProtocolVersionStr(v), "org.apache.cassandra.dht.Murmur3Partitioner", "rack0", env.CassandraVersion, net.ParseIP("127.0.0.1").To4(), nil,
+							[]string{"1241"}, nil,
+						},
+					},
+					errExpected:        nil,
+					proxyInstanceCount: 3,
+					connectProxyIndex:  0,
+				},
+				{
+					query:        "SELECT rack FROM system.local",
+					expectedCols: []string{"rack"},
+					expectedValuesSimulacron: [][]interface{}{
+						{
+							"rack0",
+						},
+					},
+					errExpected:        nil,
+					proxyInstanceCount: 3,
+					connectProxyIndex:  0,
+				},
+				{
+					query:        "SELECT rack as r FROM system.local",
+					expectedCols: []string{"r"},
+					expectedValuesSimulacron: [][]interface{}{
+						{
+							"rack0",
+						},
+					},
+					errExpected:        nil,
+					proxyInstanceCount: 3,
+					connectProxyIndex:  0,
+				},
+				{
+					query:        "SELECT count(*) FROM system.local",
+					expectedCols: []string{"count"},
+					expectedValuesSimulacron: [][]interface{}{
+						{
+							int32(1),
+						},
+					},
+					errExpected:        nil,
+					proxyInstanceCount: 3,
+					connectProxyIndex:  0,
+				},
+				{
+					query:                    "SELECT dsa, key, asd FROM system.local",
+					expectedCols:             nil,
+					expectedValuesSimulacron: nil,
+					errExpected:              &message.Invalid{ErrorMessage: "Undefined column name dsa"},
+					proxyInstanceCount:       3,
+					connectProxyIndex:        0,
+				},
+				{
+					query:                    "SELECT dsa FROM system.local",
+					expectedCols:             nil,
+					expectedValuesSimulacron: nil,
+					errExpected:              &message.Invalid{ErrorMessage: "Undefined column name dsa"},
+					proxyInstanceCount:       3,
+					connectProxyIndex:        0,
+				},
+				{
+					query:                    "SELECT key, asd FROM system.local",
+					expectedCols:             nil,
+					expectedValuesSimulacron: nil,
+					errExpected:              &message.Invalid{ErrorMessage: "Undefined column name asd"},
+					proxyInstanceCount:       3,
+					connectProxyIndex:        0,
+				},
+				{
+					query:        "SELECT rack as r, count(*) as c, rack FROM system.peers",
+					expectedCols: []string{"r", "c", "rack"},
+					expectedValuesSimulacron: [][]interface{}{
+						{
+							"rack0", int32(2), "rack0",
+						},
+					},
+					errExpected:        nil,
+					proxyInstanceCount: 3,
+					connectProxyIndex:  0,
+				},
+				{
+					query:        "SELECT * FROM system.peers",
+					expectedCols: expectedPeersCols,
+					expectedValuesSimulacron: [][]interface{}{
+						{
+							net.ParseIP("127.0.0.2").To4(), "dc1", env.DseVersion, false, primitiveHostId2, net.ParseIP("127.0.0.2").To4(), "rack0", env.CassandraVersion, net.ParseIP("127.0.0.2").To4(), nil, []string{"1234"},
+						},
+						{
+							net.ParseIP("127.0.0.3").To4(), "dc1", env.DseVersion, false, primitiveHostId3, net.ParseIP("127.0.0.3").To4(), "rack0", env.CassandraVersion, net.ParseIP("127.0.0.3").To4(), nil, []string{"1234"},
+						},
+					},
+					expectedValuesCcm: [][]interface{}{
+						{
+							net.ParseIP("127.0.0.2").To4(), "datacenter1", primitiveHostId2, net.ParseIP("127.0.0.2").To4(), "rack0", env.CassandraVersion, net.ParseIP("127.0.0.2").To4(), nil, []string{"1234"},
+						},
+						{
+							net.ParseIP("127.0.0.3").To4(), "datacenter1", primitiveHostId3, net.ParseIP("127.0.0.3").To4(), "rack0", env.CassandraVersion, net.ParseIP("127.0.0.3").To4(), nil, []string{"1234"},
+						},
+					},
+					errExpected:        nil,
+					proxyInstanceCount: 3,
+					connectProxyIndex:  0,
+				},
+				{
+					query:        "SELECT * FROM system.peers",
+					expectedCols: expectedPeersCols,
+					expectedValuesSimulacron: [][]interface{}{
+						{
+							net.ParseIP("127.0.0.1").To4(), "dc1", env.DseVersion, false, primitiveHostId1, net.ParseIP("127.0.0.1").To4(), "rack0", env.CassandraVersion, net.ParseIP("127.0.0.1").To4(), nil, []string{"1234"},
+						},
+						{
+							net.ParseIP("127.0.0.3").To4(), "dc1", env.DseVersion, false, primitiveHostId3, net.ParseIP("127.0.0.3").To4(), "rack0", env.CassandraVersion, net.ParseIP("127.0.0.3").To4(), nil, []string{"1234"},
+						},
+					},
+					expectedValuesCcm: [][]interface{}{
+						{
+							net.ParseIP("127.0.0.1").To4(), "datacenter1", primitiveHostId1, net.ParseIP("127.0.0.1").To4(), "rack0", env.CassandraVersion, net.ParseIP("127.0.0.1").To4(), nil, []string{"1234"},
+						},
+						{
+							net.ParseIP("127.0.0.3").To4(), "datacenter1", primitiveHostId3, net.ParseIP("127.0.0.3").To4(), "rack0", env.CassandraVersion, net.ParseIP("127.0.0.3").To4(), nil, []string{"1234"},
+						},
+					},
+					errExpected:        nil,
+					proxyInstanceCount: 3,
+					connectProxyIndex:  1,
+				},
+				{
+					query:                    "SELECT * FROM system.peers",
+					expectedCols:             expectedPeersCols,
+					expectedValuesSimulacron: [][]interface{}{},
+					errExpected:              nil,
+					proxyInstanceCount:       1,
+					connectProxyIndex:        0,
+				},
+				{
+					query:        "SELECT rack FROM system.peers",
+					expectedCols: []string{"rack"},
+					expectedValuesSimulacron: [][]interface{}{
+						{
+							"rack0",
+						},
+						{
+							"rack0",
+						},
+					},
+					errExpected:        nil,
+					proxyInstanceCount: 3,
+					connectProxyIndex:  0,
+				},
+				{
+					query:        "SELECT rack as r FROM system.peers",
+					expectedCols: []string{"r"},
+					expectedValuesSimulacron: [][]interface{}{
+						{
+							"rack0",
+						},
+						{
+							"rack0",
+						},
+					},
+					errExpected:        nil,
+					proxyInstanceCount: 3,
+					connectProxyIndex:  0,
+				},
+				{
+					query:        "SELECT peer, count(*) FROM system.peers",
+					expectedCols: []string{"peer", "count"},
+					expectedValuesSimulacron: [][]interface{}{
+						{
+							net.ParseIP("127.0.0.2").To4(), int32(2),
+						},
+					},
+					errExpected:        nil,
+					proxyInstanceCount: 3,
+					connectProxyIndex:  0,
+				},
+				{
+					query:        "SELECT peer, count(*), count(*) as c, peer as p FROM system.peers",
+					expectedCols: []string{"peer", "count", "c", "p"},
+					expectedValuesSimulacron: [][]interface{}{
+						{
+							nil, int32(0), int32(0), nil,
+						},
+					},
+					errExpected:        nil,
+					proxyInstanceCount: 1,
+					connectProxyIndex:  0,
+				},
+				{
+					query:        "SELECT count(*) FROM system.peers",
+					expectedCols: []string{"count"},
+					expectedValuesSimulacron: [][]interface{}{
+						{
+							int32(2),
+						},
+					},
+					errExpected:        nil,
+					proxyInstanceCount: 3,
+					connectProxyIndex:  0,
+				},
+				{
+					query:        "SELECT count(*) FROM system.peers",
+					expectedCols: []string{"count"},
+					expectedValuesSimulacron: [][]interface{}{
+						{
+							int32(0),
+						},
+					},
+					errExpected:        nil,
+					proxyInstanceCount: 1,
+					connectProxyIndex:  0,
+				},
+				{
+					query:                    "SELECT asd, peer, dsa FROM system.peers",
+					expectedCols:             nil,
+					expectedValuesSimulacron: nil,
+					errExpected:              &message.Invalid{ErrorMessage: "Undefined column name asd"},
+					proxyInstanceCount:       3,
+					connectProxyIndex:        0,
+				},
+				{
+					query:                    "SELECT asd FROM system.peers",
+					expectedCols:             nil,
+					expectedValuesSimulacron: nil,
+					errExpected:              &message.Invalid{ErrorMessage: "Undefined column name asd"},
+					proxyInstanceCount:       3,
+					connectProxyIndex:        0,
+				},
+				{
+					query:                    "SELECT peer, dsa FROM system.peers",
+					expectedCols:             nil,
+					expectedValuesSimulacron: nil,
+					errExpected:              &message.Invalid{ErrorMessage: "Undefined column name dsa"},
+					proxyInstanceCount:       3,
+					connectProxyIndex:        0,
+				},
+				{
+					query:        "SELECT peer as p, count(*) as c, peer FROM system.peers",
+					expectedCols: []string{"p", "c", "peer"},
+					expectedValuesSimulacron: [][]interface{}{
+						{
+							net.ParseIP("127.0.0.2").To4(), int32(2), net.ParseIP("127.0.0.2").To4(),
+						},
+					},
+					errExpected:        nil,
+					proxyInstanceCount: 3,
+					connectProxyIndex:  0,
+				},
+			}
+
+			checkRowsResultFunc := func(t *testing.T, testVars testDefinition, queryResponseFrame *frame.Frame) {
+				queryRowsResult, ok := queryResponseFrame.Body.Message.(*message.RowsResult)
+				require.True(t, ok, queryResponseFrame.Body.Message)
+				if env.IsDse && isCcm {
+					// skip validation of columns when DSE is used with CCM, maybe we can add DSE columns here in the future
+					return
+				}
+				expectedVals := testVars.expectedValuesSimulacron
+				if isCcm && testVars.expectedValuesCcm != nil {
+					expectedVals = testVars.expectedValuesCcm
+				}
+				require.Equal(t, len(expectedVals), len(queryRowsResult.Data))
+				var resultCols []string
+				for _, colMetadata := range queryRowsResult.Metadata.Columns {
+					resultCols = append(resultCols, colMetadata.Name)
+				}
+				require.Equal(t, testVars.expectedCols, resultCols)
+				for i, row := range queryRowsResult.Data {
+					require.Equal(t, len(expectedVals[i]), len(row))
+					for j, value := range row {
+						dcodec, err := datacodec.NewCodec(queryRowsResult.Metadata.Columns[j].Type)
+						require.Nil(t, err)
+						var dest interface{}
+						wasNull, err := dcodec.Decode(value, &dest, queryResponseFrame.Header.Version)
+						require.Nil(t, err)
+						switch queryRowsResult.Metadata.Columns[j].Name {
+						case "schema_version":
+							require.IsType(t, primitive.UUID{}, dest)
+							require.NotNil(t, dest)
+							require.NotEqual(t, primitive.UUID{}, dest)
+						case "tokens":
+							tokens, ok := dest.([]*string)
+							require.True(t, ok)
+							require.Equal(t, numTokens, len(tokens))
+							for _, token := range tokens {
+								require.NotNil(t, token)
+								require.NotEqual(t, "", *token)
+							}
+						case "gossip_generation":
+							gossip, ok := dest.(int32)
+							require.True(t, ok)
+							require.NotNil(t, gossip)
+							require.Greater(t, gossip, int32(0))
+						case "cql_version":
+							cqlV, ok := dest.(string)
+							require.True(t, ok)
+							require.NotNil(t, cqlV)
+							require.NotEqual(t, "", cqlV)
+						default:
+							if wasNull {
+								require.Nil(t, expectedVals[i][j], queryRowsResult.Metadata.Columns[j].Name)
+							} else {
+								require.Equal(t, expectedVals[i][j], dest, queryRowsResult.Metadata.Columns[j].Name)
+							}
+						}
 					}
-				default:
-					if wasNull {
-						require.Nil(t, testVars.expectedValues[i][j], queryRowsResult.Metadata.Columns[j].Name)
+				}
+			}
+			for _, testVars := range tests {
+				t.Run(fmt.Sprintf("%s_proxy%d_%dtotalproxies", testVars.query, testVars.connectProxyIndex, testVars.proxyInstanceCount), func(t *testing.T) {
+					proxyAddresses := []string{"127.0.0.1", "127.0.0.2", "127.0.0.3"}
+					if testVars.proxyInstanceCount == 1 {
+						proxyAddresses = []string{"127.0.0.1"}
+					} else if testVars.proxyInstanceCount != 3 {
+						require.Fail(t, "unsupported proxy instance count %v", testVars.proxyInstanceCount)
+					}
+					proxyAddressToConnect := fmt.Sprintf("127.0.0.%v", testVars.connectProxyIndex+1)
+					proxy, err := LaunchProxyWithTopologyConfig(
+						strings.Join(proxyAddresses, ","), testVars.connectProxyIndex,
+						proxyAddressToConnect, numTokens, originSetup, targetSetup)
+					require.Nil(t, err)
+					defer proxy.Shutdown()
+
+					testClient := client.NewCqlClient(fmt.Sprintf("%v:14002", proxyAddressToConnect), nil)
+					testClient.ReadTimeout = 1 * time.Second
+					cqlConnection, err := testClient.ConnectAndInit(context.Background(), v, 0)
+					require.Nil(t, err)
+					defer cqlConnection.Close()
+
+					queryMsg := &message.Query{
+						Query:   testVars.query,
+						Options: nil,
+					}
+					queryFrame := frame.NewFrame(v, 0, queryMsg)
+					queryResponseFrame, err := cqlConnection.SendAndReceive(queryFrame)
+					require.Nil(t, err)
+					if testVars.errExpected != nil {
+						require.Equal(t, testVars.errExpected, queryResponseFrame.Body.Message)
 					} else {
-						require.Equal(t, testVars.expectedValues[i][j], dest, queryRowsResult.Metadata.Columns[j].Name)
+						checkRowsResultFunc(t, testVars, queryResponseFrame)
 					}
-				}
-			}
-		}
-	}
-	for _, testVars := range tests {
-		t.Run(fmt.Sprintf("%s_proxy%d_%dtotalproxies", testVars.query, testVars.connectProxyIndex, testVars.proxyInstanceCount), func(t *testing.T) {
-			proxyAddresses := []string{"127.0.0.1", "127.0.0.2", "127.0.0.3"}
-			if testVars.proxyInstanceCount == 1 {
-				proxyAddresses = []string{"127.0.0.1"}
-			} else if testVars.proxyInstanceCount != 3 {
-				require.Fail(t, "unsupported proxy instance count %v", testVars.proxyInstanceCount)
-			}
-			proxyAddressToConnect := fmt.Sprintf("127.0.0.%v", testVars.connectProxyIndex+1)
-			proxy, err := LaunchProxyWithTopologyConfig(
-				strings.Join(proxyAddresses, ","), testVars.connectProxyIndex,
-				proxyAddressToConnect, numTokens, testSetup.Origin, testSetup.Target)
-			require.Nil(t, err)
-			defer proxy.Shutdown()
 
-			testClient := client.NewCqlClient(fmt.Sprintf("%v:14002", proxyAddressToConnect), nil)
-			cqlConnection, err := testClient.ConnectAndInit(context.Background(), primitive.ProtocolVersion4, 0)
-			require.Nil(t, err)
-			defer cqlConnection.Close()
-
-			queryMsg := &message.Query{
-				Query:   testVars.query,
-				Options: nil,
-			}
-			queryFrame := frame.NewFrame(primitive.ProtocolVersion4, 0, queryMsg)
-			queryResponseFrame, err := cqlConnection.SendAndReceive(queryFrame)
-			require.Nil(t, err)
-			if testVars.errExpected != nil {
-				require.Equal(t, testVars.errExpected, queryResponseFrame.Body.Message)
-			} else {
-				checkRowsResultFunc(t, testVars, queryResponseFrame)
-			}
-
-			prepareMsg := &message.Prepare{
-				Query:    testVars.query,
-				Keyspace: "",
-			}
-			prepareFrame := frame.NewFrame(primitive.ProtocolVersion4, 0, prepareMsg)
-			prepareResponseFrame, err := cqlConnection.SendAndReceive(prepareFrame)
-			require.Nil(t, err)
-			if testVars.errExpected != nil {
-				require.Equal(t, testVars.errExpected, prepareResponseFrame.Body.Message)
-			} else {
-				preparedMsg, ok := prepareResponseFrame.Body.Message.(*message.PreparedResult)
-				require.True(t, ok, prepareResponseFrame.Body.Message)
-				executeMsg := &message.Execute{
-					QueryId:          preparedMsg.PreparedQueryId,
-					ResultMetadataId: preparedMsg.ResultMetadataId,
-					Options:          nil,
-				}
-				executeFrame := frame.NewFrame(primitive.ProtocolVersion4, 0, executeMsg)
-				executeResponseFrame, err := cqlConnection.SendAndReceive(executeFrame)
-				require.Nil(t, err)
-				checkRowsResultFunc(t, testVars, executeResponseFrame)
+					prepareMsg := &message.Prepare{
+						Query:    testVars.query,
+						Keyspace: "",
+					}
+					prepareFrame := frame.NewFrame(v, 0, prepareMsg)
+					prepareResponseFrame, err := cqlConnection.SendAndReceive(prepareFrame)
+					require.Nil(t, err)
+					if testVars.errExpected != nil {
+						require.Equal(t, testVars.errExpected, prepareResponseFrame.Body.Message)
+					} else {
+						preparedMsg, ok := prepareResponseFrame.Body.Message.(*message.PreparedResult)
+						require.True(t, ok, prepareResponseFrame.Body.Message)
+						executeMsg := &message.Execute{
+							QueryId:          preparedMsg.PreparedQueryId,
+							ResultMetadataId: preparedMsg.ResultMetadataId,
+							Options:          nil,
+						}
+						executeFrame := frame.NewFrame(v, 0, executeMsg)
+						executeResponseFrame, err := cqlConnection.SendAndReceive(executeFrame)
+						require.Nil(t, err)
+						checkRowsResultFunc(t, testVars, executeResponseFrame)
+					}
+				})
 			}
 		})
 	}
+
 }
 
 func TestVirtualizationPartitioner(t *testing.T) {
@@ -905,6 +984,10 @@ func TestVirtualizationPartitioner(t *testing.T) {
 			runTestWithQueryForwarding(t, tt.originPartitioner, tt.targetPartitioner, config.PrimaryClusterTarget, tt.proxyShouldStartUp)
 		})
 	}
+
+}
+
+func TestInterceptedQueryPrepared(t *testing.T) {
 
 }
 

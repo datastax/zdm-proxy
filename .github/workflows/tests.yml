@@ -135,7 +135,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        cassandra_version: [ '2.2.19', '3.11.19', '4.1.9', '5.0.6' ]
+        cassandra_version: [ '2.2.19', '3.11.19', '4.1.9', '5.0.6', 'dse-4.8.16', 'dse-5.1.48', 'dse-6.8.61' ]
     steps:
       - uses: actions/checkout@v2
             
