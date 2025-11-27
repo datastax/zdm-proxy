@@ -353,6 +353,8 @@ func TestPreparedIdReplacement(t *testing.T) {
 
 			require.Equal(t, originPreparedId, preparedResult.PreparedQueryId)
 
+			metadataId := preparedResult.ResultMetadataId
+
 			var batchPrepareMsg *message.Prepare
 			var expectedBatchPrepareMsg *message.Prepare
 			if test.batchQuery != "" {
@@ -372,7 +374,7 @@ func TestPreparedIdReplacement(t *testing.T) {
 
 			executeMsg := &message.Execute{
 				QueryId:          originPreparedId,
-				ResultMetadataId: nil,
+				ResultMetadataId: metadataId,
 				Options:          &message.QueryOptions{},
 			}
 
@@ -717,7 +719,7 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 
 			executeMsg := &message.Execute{
 				QueryId:          originPreparedId,
-				ResultMetadataId: nil,
+				ResultMetadataId: preparedResult.ResultMetadataId,
 				Options:          &message.QueryOptions{},
 			}
 
