@@ -3,22 +3,25 @@ package integration_tests
 import (
 	"context"
 	"fmt"
+	"sync"
+	"testing"
+	"time"
+
 	"github.com/apache/cassandra-gocql-driver/v2"
 	"github.com/datastax/go-cassandra-native-protocol/client"
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/datastax/zdm-proxy/integration-tests/setup"
-	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
-	"github.com/datastax/zdm-proxy/integration-tests/utils"
-	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 	"github.com/rs/zerolog"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"sync"
-	"testing"
-	"time"
+
+	"github.com/datastax/zdm-proxy/integration-tests/env"
+	"github.com/datastax/zdm-proxy/integration-tests/setup"
+	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
+	"github.com/datastax/zdm-proxy/integration-tests/utils"
+	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 )
 
 func TestAsyncReadError(t *testing.T) {
@@ -49,7 +52,7 @@ func TestAsyncReadError(t *testing.T) {
 	require.Nil(t, err)
 
 	client := client.NewCqlClient("127.0.0.1:14002", nil)
-	cqlClientConn, err := client.ConnectAndInit(context.Background(), primitive.ProtocolVersion4, 0)
+	cqlClientConn, err := client.ConnectAndInit(context.Background(), env.DefaultProtocolVersionSimulacron, 0)
 	require.Nil(t, err)
 	defer cqlClientConn.Close()
 
@@ -58,7 +61,7 @@ func TestAsyncReadError(t *testing.T) {
 		Options: nil,
 	}
 
-	rsp, err := cqlClientConn.SendAndReceive(frame.NewFrame(primitive.ProtocolVersion4, 0, queryMsg))
+	rsp, err := cqlClientConn.SendAndReceive(frame.NewFrame(env.DefaultProtocolVersionSimulacron, 0, queryMsg))
 	require.Nil(t, err)
 	require.Equal(t, primitive.OpCodeResult, rsp.Header.OpCode)
 	rowsMsg, ok := rsp.Body.Message.(*message.RowsResult)
@@ -95,7 +98,7 @@ func TestAsyncReadHighLatency(t *testing.T) {
 	require.Nil(t, err)
 
 	client := client.NewCqlClient("127.0.0.1:14002", nil)
-	cqlClientConn, err := client.ConnectAndInit(context.Background(), primitive.ProtocolVersion4, 0)
+	cqlClientConn, err := client.ConnectAndInit(context.Background(), env.DefaultProtocolVersionSimulacron, 0)
 	require.Nil(t, err)
 	defer cqlClientConn.Close()
 
@@ -105,7 +108,7 @@ func TestAsyncReadHighLatency(t *testing.T) {
 	}
 
 	now := time.Now()
-	rsp, err := cqlClientConn.SendAndReceive(frame.NewFrame(primitive.ProtocolVersion4, 0, queryMsg))
+	rsp, err := cqlClientConn.SendAndReceive(frame.NewFrame(env.DefaultProtocolVersionSimulacron, 0, queryMsg))
 	require.Less(t, time.Now().Sub(now).Milliseconds(), int64(500))
 	require.Nil(t, err)
 	require.Equal(t, primitive.OpCodeResult, rsp.Header.OpCode)
@@ -143,7 +146,7 @@ func TestAsyncExhaustedStreamIds(t *testing.T) {
 	require.Nil(t, err)
 
 	client := client.NewCqlClient("127.0.0.1:14002", nil)
-	cqlClientConn, err := client.ConnectAndInit(context.Background(), primitive.ProtocolVersion4, 0)
+	cqlClientConn, err := client.ConnectAndInit(context.Background(), env.DefaultProtocolVersionSimulacron, 0)
 	require.Nil(t, err)
 	defer cqlClientConn.Close()
 
@@ -169,7 +172,7 @@ func TestAsyncExhaustedStreamIds(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < totalRequests/workers; j++ {
-				rsp, err := cqlClientConn.SendAndReceive(frame.NewFrame(primitive.ProtocolVersion4, 0, queryMsg))
+				rsp, err := cqlClientConn.SendAndReceive(frame.NewFrame(env.DefaultProtocolVersionSimulacron, 0, queryMsg))
 				assert.Nil(t, err)
 				if err != nil {
 					continue
@@ -302,14 +305,14 @@ func TestAsyncReadsRequestTypes(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				client := client.NewCqlClient("127.0.0.1:14002", nil)
-				cqlClientConn, err := client.ConnectAndInit(context.Background(), primitive.ProtocolVersion4, 0)
+				cqlClientConn, err := client.ConnectAndInit(context.Background(), env.DefaultProtocolVersionSimulacron, 0)
 				require.Nil(t, err)
 				defer cqlClientConn.Close()
 				err = testSetup.Origin.DeleteLogs()
 				require.Nil(t, err)
 				err = testSetup.Target.DeleteLogs()
 				require.Nil(t, err)
-				f := frame.NewFrame(primitive.ProtocolVersion4, 0, tt.msg)
+				f := frame.NewFrame(env.DefaultProtocolVersionSimulacron, 0, tt.msg)
 				rsp, err := cqlClientConn.SendAndReceive(f)
 				require.Nil(t, err)
 				require.NotNil(t, rsp)
@@ -324,7 +327,7 @@ func TestAsyncReadsRequestTypes(t *testing.T) {
 						ResultMetadataId: preparedResult.ResultMetadataId,
 						Options:          nil,
 					}
-					f = frame.NewFrame(primitive.ProtocolVersion4, 0, execute)
+					f = frame.NewFrame(env.DefaultProtocolVersionSimulacron, 0, execute)
 					rsp, err = cqlClientConn.SendAndReceive(f)
 					require.Nil(t, err)
 					require.NotNil(t, rsp)

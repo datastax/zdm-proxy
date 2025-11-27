@@ -158,7 +158,7 @@ jobs:
           sudo apt -y install openjdk-8-jdk gcc git wget pip
           sudo apt -y install openjdk-11-jdk gcc git wget pip
 
-          export JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
+          export JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64
           export JAVA8_HOME=/usr/lib/jvm/java-8-openjdk-amd64
           export JAVA11_HOME=/usr/lib/jvm/java-11-openjdk-amd64
           export PATH=$JAVA_HOME/bin:$PATH

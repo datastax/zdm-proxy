@@ -54,10 +54,10 @@ func TestSchemaEvents(t *testing.T) {
 			require.True(t, err == nil, "unable to connect to test client: %v", err)
 			defer testClientForSchemaChange.Shutdown()
 
-			err = testClientForEvents.PerformDefaultHandshake(context.Background(), primitive.ProtocolVersion4, false)
+			err = testClientForEvents.PerformDefaultHandshake(context.Background(), env.DefaultProtocolVersion, false)
 			require.True(t, err == nil, "could not perform handshake: %v", err)
 
-			err = testClientForSchemaChange.PerformDefaultHandshake(context.Background(), primitive.ProtocolVersion4, false)
+			err = testClientForSchemaChange.PerformDefaultHandshake(context.Background(), env.DefaultProtocolVersion, false)
 			require.True(t, err == nil, "could not perform handshake: %v", err)
 
 			// send REGISTER to proxy
@@ -68,7 +68,7 @@ func TestSchemaEvents(t *testing.T) {
 					primitive.EventTypeTopologyChange},
 			}
 
-			response, _, err := testClientForEvents.SendMessage(context.Background(), primitive.ProtocolVersion4, registerMsg)
+			response, _, err := testClientForEvents.SendMessage(context.Background(), env.DefaultProtocolVersion, registerMsg)
 			require.True(t, err == nil, "could not send register frame: %v", err)
 
 			_, ok := response.Body.Message.(*message.Ready)
@@ -80,7 +80,7 @@ func TestSchemaEvents(t *testing.T) {
 					"WITH REPLICATION = {'class':'SimpleStrategy', 'replication_factor':1};", env.Rand.Uint64()),
 			}
 
-			response, _, err = testClientForSchemaChange.SendMessage(context.Background(), primitive.ProtocolVersion4, createKeyspaceMessage)
+			response, _, err = testClientForSchemaChange.SendMessage(context.Background(), env.DefaultProtocolVersion, createKeyspaceMessage)
 			require.True(t, err == nil, "could not send create keyspace request: %v", err)
 
 			_, ok = response.Body.Message.(*message.SchemaChangeResult)
@@ -141,7 +141,7 @@ func TestTopologyStatusEvents(t *testing.T) {
 			require.True(t, err == nil, "unable to connect to test client: %v", err)
 			defer testClientForEvents.Shutdown()
 
-			err = testClientForEvents.PerformDefaultHandshake(context.Background(), primitive.ProtocolVersion4, false)
+			err = testClientForEvents.PerformDefaultHandshake(context.Background(), env.DefaultProtocolVersion, false)
 			require.True(t, err == nil, "could not perform handshake: %v", err)
 
 			registerMsg := &message.Register{
@@ -151,7 +151,7 @@ func TestTopologyStatusEvents(t *testing.T) {
 					primitive.EventTypeTopologyChange},
 			}
 
-			response, _, err := testClientForEvents.SendMessage(context.Background(), primitive.ProtocolVersion4, registerMsg)
+			response, _, err := testClientForEvents.SendMessage(context.Background(), env.DefaultProtocolVersion, registerMsg)
 			require.True(t, err == nil, "could not send register frame: %v", err)
 
 			_, ok := response.Body.Message.(*message.Ready)

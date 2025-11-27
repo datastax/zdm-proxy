@@ -33,6 +33,8 @@ var AllProtocolVersions []primitive.ProtocolVersion = []primitive.ProtocolVersio
 	primitive.ProtocolVersion2, primitive.ProtocolVersion3, primitive.ProtocolVersion4,
 	primitive.ProtocolVersion5, primitive.ProtocolVersionDse1, primitive.ProtocolVersionDse2,
 }
+var DefaultProtocolVersion primitive.ProtocolVersion
+var DefaultProtocolVersionSimulacron primitive.ProtocolVersion
 
 func InitGlobalVars() {
 	flags := map[string]interface{}{
@@ -95,6 +97,16 @@ func InitGlobalVars() {
 	SupportedProtocolVersions = supportedProtocolVersions()
 
 	ServerVersionLogStr = serverVersionLogString()
+
+	DefaultProtocolVersion = computeDefaultProtocolVersion()
+
+	if DefaultProtocolVersion <= primitive.ProtocolVersion2 {
+		DefaultProtocolVersionSimulacron = primitive.ProtocolVersion3
+	} else if DefaultProtocolVersion >= primitive.ProtocolVersion5 {
+		DefaultProtocolVersionSimulacron = primitive.ProtocolVersion4
+	} else {
+		DefaultProtocolVersionSimulacron = DefaultProtocolVersion
+	}
 
 	if strings.ToLower(runCcmTests) == "true" {
 		RunCcmTests = true
@@ -226,4 +238,16 @@ func ProtocolVersionStr(v primitive.ProtocolVersion) string {
 		return "DSEv2"
 	}
 	return strconv.Itoa(int(v))
+}
+
+func computeDefaultProtocolVersion() primitive.ProtocolVersion {
+	orderedProtocolVersions := []primitive.ProtocolVersion{
+		primitive.ProtocolVersionDse2, primitive.ProtocolVersionDse1, primitive.ProtocolVersion5,
+		primitive.ProtocolVersion4, primitive.ProtocolVersion3, primitive.ProtocolVersion2}
+	for _, v := range orderedProtocolVersions {
+		if SupportsProtocolVersion(v) {
+			return v
+		}
+	}
+	panic(fmt.Sprintf("Unable to compute protocol version for server version %v", ServerVersionLogStr))
 }

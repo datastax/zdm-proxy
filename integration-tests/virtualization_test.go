@@ -926,7 +926,7 @@ func TestVirtualizationPartitioner(t *testing.T) {
 			client.NewDriverConnectionInitializationHandler("target", "dc2", func(_ string) {}),
 		}
 
-		err = testSetup.Start(nil, false, primitive.ProtocolVersion4)
+		err = testSetup.Start(nil, false, env.DefaultProtocolVersion)
 		require.Nil(t, err)
 
 		validatePartitionerFromSystemLocal(t, originAddress+":9042", credentials, originPartitioner)
@@ -1052,7 +1052,7 @@ func computeReplicas(n int, numTokens int) []*replica {
 func validatePartitionerFromSystemLocal(t *testing.T, remoteEndpoint string, credentials *client.AuthCredentials, expectedPartitioner string) {
 
 	testClient := client.NewCqlClient(remoteEndpoint, credentials)
-	cqlConn, err := testClient.ConnectAndInit(context.Background(), primitive.ProtocolVersion4, 1)
+	cqlConn, err := testClient.ConnectAndInit(context.Background(), env.DefaultProtocolVersion, 1)
 	require.Nil(t, err, "testClient setup failed", err)
 	require.NotNil(t, cqlConn, "cql connection could not be opened")
 	defer func() {
@@ -1068,7 +1068,7 @@ func validatePartitionerFromSystemLocal(t *testing.T, remoteEndpoint string, cre
 		},
 	}
 
-	queryFrame := frame.NewFrame(primitive.ProtocolVersion4, 0, requestMsg)
+	queryFrame := frame.NewFrame(env.DefaultProtocolVersion, 0, requestMsg)
 	response, err := cqlConn.SendAndReceive(queryFrame)
 	require.Nil(t, err)
 

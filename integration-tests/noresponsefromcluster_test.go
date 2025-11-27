@@ -2,14 +2,17 @@ package integration_tests
 
 import (
 	"context"
-	"github.com/datastax/go-cassandra-native-protocol/message"
-	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/datastax/zdm-proxy/integration-tests/client"
-	"github.com/datastax/zdm-proxy/integration-tests/setup"
-	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
-	"github.com/stretchr/testify/require"
 	"strings"
 	"testing"
+
+	"github.com/datastax/go-cassandra-native-protocol/message"
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/stretchr/testify/require"
+
+	"github.com/datastax/zdm-proxy/integration-tests/client"
+	"github.com/datastax/zdm-proxy/integration-tests/env"
+	"github.com/datastax/zdm-proxy/integration-tests/setup"
+	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
 )
 
 func TestAtLeastOneClusterReturnsNoResponse(t *testing.T) {
@@ -23,7 +26,7 @@ func TestAtLeastOneClusterReturnsNoResponse(t *testing.T) {
 
 	defer testClient.Shutdown()
 
-	err = testClient.PerformDefaultHandshake(context.Background(), primitive.ProtocolVersion4, false)
+	err = testClient.PerformDefaultHandshake(context.Background(), env.DefaultProtocolVersionSimulacron, false)
 	require.True(t, err == nil, "No-auth handshake failed: %s", err)
 
 	queryPrimeNoResponse :=
@@ -82,7 +85,7 @@ func TestAtLeastOneClusterReturnsNoResponse(t *testing.T) {
 					PositionalValues: []*primitive.Value{primitive.NewValue([]byte("john"))},
 				},
 			}
-			response, _, err := testClient.SendMessage(context.Background(), primitive.ProtocolVersion4, query)
+			response, _, err := testClient.SendMessage(context.Background(), env.DefaultProtocolVersionSimulacron, query)
 
 			require.True(t, response == nil, "a response has been received")
 			require.True(t, err != nil, "no error has been received, but the request should have failed")

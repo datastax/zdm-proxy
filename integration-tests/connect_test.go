@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/datastax/zdm-proxy/integration-tests/client"
+	"github.com/datastax/zdm-proxy/integration-tests/env"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
 	"github.com/datastax/zdm-proxy/integration-tests/utils"
@@ -69,7 +70,7 @@ func TestCannotConnectWithoutControlConnection(t *testing.T) {
 	for i := 0; i < 1000; i++ {
 		// connect to proxy as a "client"
 		client := cqlClient.NewCqlClient("127.0.0.1:14002", nil)
-		conn, err := client.ConnectAndInit(context.Background(), primitive.ProtocolVersion4, 0)
+		conn, err := client.ConnectAndInit(context.Background(), env.DefaultProtocolVersionSimulacron, 0)
 		require.Nil(t, err)
 		_ = conn.Close()
 	}
@@ -141,7 +142,7 @@ func TestControlConnectionProtocolVersionNegotiation(t *testing.T) {
 				Query:   "SELECT * FROM test",
 				Options: &message.QueryOptions{Consistency: primitive.ConsistencyLevelOne},
 			}
-			rsp, err := cqlClientConn.SendAndReceive(frame.NewFrame(primitive.ProtocolVersion3, 0, queryMsg))
+			rsp, err := cqlClientConn.SendAndReceive(frame.NewFrame(negotiatedProto, 0, queryMsg))
 			if err != nil {
 				t.Fatal("query failed:", err)
 			}
@@ -223,7 +224,7 @@ func TestRequestedProtocolVersionUnsupportedByProxy(t *testing.T) {
 			testSetup.Origin.CqlServer.RequestHandlers = []cqlClient.RequestHandler{cqlClient.NewDriverConnectionInitializationHandler("origin", "dc1", func(_ string) {})}
 			testSetup.Target.CqlServer.RequestHandlers = []cqlClient.RequestHandler{cqlClient.NewDriverConnectionInitializationHandler("target", "dc1", func(_ string) {})}
 
-			err = testSetup.Start(cfg, false, primitive.ProtocolVersion3)
+			err = testSetup.Start(cfg, false, env.DefaultProtocolVersion)
 			require.Nil(t, err)
 
 			testClient, err := client.NewTestClient(context.Background(), "127.0.0.1:14002")
@@ -286,7 +287,7 @@ func TestReturnedProtocolVersionUnsupportedByProxy(t *testing.T) {
 		testSetup.Origin.CqlServer.RequestRawHandlers = []cqlClient.RawRequestHandler{rawHandler}
 		testSetup.Target.CqlServer.RequestRawHandlers = []cqlClient.RawRequestHandler{rawHandler}
 
-		err = testSetup.Start(cfg, false, primitive.ProtocolVersion4)
+		err = testSetup.Start(cfg, false, env.DefaultProtocolVersion)
 		require.Nil(t, err)
 
 		testClient, err := client.NewTestClient(context.Background(), "127.0.0.1:14002")
@@ -379,7 +380,7 @@ func TestHandlingOfInternalHeartbeat(t *testing.T) {
 
 	// Connect to proxy as a "client"
 	proxyClient := cqlClient.NewCqlClient("127.0.0.1:14002", nil)
-	cqlClientConn, err := proxyClient.ConnectAndInit(context.Background(), primitive.ProtocolVersion4, 0)
+	cqlClientConn, err := proxyClient.ConnectAndInit(context.Background(), env.DefaultProtocolVersionSimulacron, 0)
 	require.Nil(t, err)
 	defer cqlClientConn.Close()
 
@@ -388,7 +389,7 @@ func TestHandlingOfInternalHeartbeat(t *testing.T) {
 		Options: nil,
 	}
 
-	_, err = cqlClientConn.SendAndReceive(frame.NewFrame(primitive.ProtocolVersion4, 0, queryMsg))
+	_, err = cqlClientConn.SendAndReceive(frame.NewFrame(env.DefaultProtocolVersionSimulacron, 0, queryMsg))
 	require.Nil(t, err)
 
 	// sleep longer than heartbeat interval
@@ -397,7 +398,7 @@ func TestHandlingOfInternalHeartbeat(t *testing.T) {
 	err = testSetup.Target.DeleteLogs()
 	require.Nil(t, err)
 
-	_, err = cqlClientConn.SendAndReceive(frame.NewFrame(primitive.ProtocolVersion4, 0, queryMsg))
+	_, err = cqlClientConn.SendAndReceive(frame.NewFrame(env.DefaultProtocolVersionSimulacron, 0, queryMsg))
 	require.Nil(t, err)
 
 	err = buffWriter.Flush()

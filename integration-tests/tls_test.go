@@ -1237,7 +1237,7 @@ func applyProxyClientTlsConfiguration(expiredCa bool, incorrectCa bool, isMutual
 func createTestClientConnection(endpoint string, tlsCfg *tls.Config) (*client.CqlClientConnection, error) {
 	testClient := client.NewCqlClient(endpoint, nil)
 	testClient.TLSConfig = tlsCfg
-	return testClient.ConnectAndInit(context.Background(), primitive.ProtocolVersion4, 1)
+	return testClient.ConnectAndInit(context.Background(), env.DefaultProtocolVersion, 1)
 }
 
 func sendRequest(cqlConn *client.CqlClientConnection, cqlRequest string, isSchemaChange bool, t *testing.T) {
@@ -1248,7 +1248,7 @@ func sendRequest(cqlConn *client.CqlClientConnection, cqlRequest string, isSchem
 		},
 	}
 
-	queryFrame := frame.NewFrame(primitive.ProtocolVersion4, 0, requestMsg)
+	queryFrame := frame.NewFrame(env.DefaultProtocolVersion, 0, requestMsg)
 
 	response, err := cqlConn.SendAndReceive(queryFrame)
 	require.Nil(t, err)

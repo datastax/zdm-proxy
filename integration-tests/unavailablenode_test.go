@@ -3,16 +3,19 @@ package integration_tests
 import (
 	"context"
 	"fmt"
-	"github.com/datastax/go-cassandra-native-protocol/frame"
-	"github.com/datastax/go-cassandra-native-protocol/message"
-	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/datastax/zdm-proxy/integration-tests/client"
-	"github.com/datastax/zdm-proxy/integration-tests/setup"
-	"github.com/datastax/zdm-proxy/integration-tests/utils"
-	"github.com/stretchr/testify/require"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/datastax/go-cassandra-native-protocol/frame"
+	"github.com/datastax/go-cassandra-native-protocol/message"
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/stretchr/testify/require"
+
+	"github.com/datastax/zdm-proxy/integration-tests/client"
+	"github.com/datastax/zdm-proxy/integration-tests/env"
+	"github.com/datastax/zdm-proxy/integration-tests/setup"
+	"github.com/datastax/zdm-proxy/integration-tests/utils"
 )
 
 // TestUnavailableNode tests if the proxy closes the client connection correctly when either cluster node connection is closed
@@ -30,7 +33,7 @@ func TestUnavailableNode(t *testing.T) {
 			require.True(t, err == nil, "testClient setup failed: %s", err)
 			defer testClient.Shutdown()
 
-			err = testClient.PerformDefaultHandshake(context.Background(), primitive.ProtocolVersion4, false)
+			err = testClient.PerformDefaultHandshake(context.Background(), env.DefaultProtocolVersionSimulacron, false)
 			require.True(t, err == nil, "No-auth handshake failed: %s", err)
 
 			switch clusterNotResponding {
@@ -55,7 +58,7 @@ func TestUnavailableNode(t *testing.T) {
 			responsePtr := new(*frame.Frame)
 			errPtr := new(error)
 			utils.RequireWithRetries(t, func() (err error, fatal bool) {
-				*responsePtr, _, *errPtr = testClient.SendMessage(context.Background(), primitive.ProtocolVersion4, query)
+				*responsePtr, _, *errPtr = testClient.SendMessage(context.Background(), env.DefaultProtocolVersionSimulacron, query)
 				if *responsePtr != nil {
 					_, ok := (*responsePtr).Body.Message.(*message.Overloaded)
 					if !ok {
@@ -83,11 +86,11 @@ func TestUnavailableNode(t *testing.T) {
 			require.True(t, err == nil, "newTestClient setup failed: %s", err)
 			defer newTestClient.Shutdown()
 
-			err = newTestClient.PerformDefaultHandshake(context.Background(), primitive.ProtocolVersion4, false)
+			err = newTestClient.PerformDefaultHandshake(context.Background(), env.DefaultProtocolVersionSimulacron, false)
 			require.True(t, err == nil, "No-auth handshake failed: %s", err)
 
 			// send same query on the new connection and this time it should succeed
-			response, _, err = newTestClient.SendMessage(context.Background(), primitive.ProtocolVersion4, query)
+			response, _, err = newTestClient.SendMessage(context.Background(), env.DefaultProtocolVersionSimulacron, query)
 			require.True(t, err == nil, "Query failed: %v", err)
 
 			require.Equal(

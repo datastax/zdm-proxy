@@ -3,9 +3,20 @@ package integration_tests
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
 	"github.com/datastax/go-cassandra-native-protocol/message"
-	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/jpillora/backoff"
+	log "github.com/sirupsen/logrus"
+	"github.com/stretchr/testify/require"
+
 	"github.com/datastax/zdm-proxy/integration-tests/client"
+	"github.com/datastax/zdm-proxy/integration-tests/env"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/integration-tests/utils"
 	"github.com/datastax/zdm-proxy/proxy/pkg/config"
@@ -14,15 +25,6 @@ import (
 	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
 	"github.com/datastax/zdm-proxy/proxy/pkg/runner"
 	"github.com/datastax/zdm-proxy/proxy/pkg/zdmproxy"
-	"github.com/jpillora/backoff"
-	log "github.com/sirupsen/logrus"
-	"github.com/stretchr/testify/require"
-	"net/http"
-	"strings"
-	"sync"
-	"sync/atomic"
-	"testing"
-	"time"
 )
 
 /*
@@ -213,7 +215,7 @@ func testMetricsWithUnavailableNode(
 	queryMsg := &message.Query{
 		Query: "SELECT * FROM table1",
 	}
-	_, _, _ = testClient.SendMessage(context.Background(), primitive.ProtocolVersion4, queryMsg)
+	_, _, _ = testClient.SendMessage(context.Background(), env.DefaultProtocolVersionSimulacron, queryMsg)
 
 	utils.RequireWithRetries(t, func() (err error, fatal bool) {
 		// expect connection failure to origin cluster
