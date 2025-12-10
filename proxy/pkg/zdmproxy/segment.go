@@ -193,8 +193,8 @@ func (w *SegmentWriter) canWriteFrameInternal(frameLength int) bool {
 		if w.payload.Len()+frameLength > segment.MaxPayloadLength {
 			// if frame can be self contained but adding it to the current payload exceeds the max length then need to flush first
 			return false
-		} else if w.payload.Len() > 0 && (w.payload.Len()+frameLength > w.maxBufferSize) {
-			// if there is already data in the current payload and adding this frame to it exceeds the configured max buffer size then need to flush first
+		} else if w.payload.Len() >= 0 && w.payload.Len() >= w.maxBufferSize {
+			// if there is already data in the current payload and it exceeds the configured max buffer size then need to flush first
 			// max buffer size can be exceeded if payload is currently empty (otherwise the frame couldn't be written)
 			return false
 		} else {

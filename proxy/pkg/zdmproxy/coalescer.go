@@ -181,12 +181,6 @@ func (recv *writeCoalescer) RunWriteQueueLoop() {
 									return
 								}
 							}
-
-							if writeBuffer.Len() >= recv.writeBufferSizeBytes {
-								resultChannel <- coalescerIterationResult{}
-								close(resultChannel)
-								return
-							}
 						}
 					} else {
 						log.Tracef("[%v] Writing %v to segment on %v", recv.logPrefix, f.Header, connectionAddr)
@@ -200,6 +194,12 @@ func (recv *writeCoalescer) RunWriteQueueLoop() {
 							close(resultChannel)
 							return
 						}
+					}
+
+					if writeBuffer.Len() >= recv.writeBufferSizeBytes {
+						resultChannel <- coalescerIterationResult{}
+						close(resultChannel)
+						return
 					}
 				}
 			})
