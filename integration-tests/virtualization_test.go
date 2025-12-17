@@ -987,10 +987,6 @@ func TestVirtualizationPartitioner(t *testing.T) {
 
 }
 
-func TestInterceptedQueryPrepared(t *testing.T) {
-
-}
-
 func LaunchProxyWithTopologyConfig(
 	proxyAddresses string, proxyIndex int, listenAddress string, numTokens int,
 	origin setup.TestCluster, target setup.TestCluster) (*zdmproxy.ZdmProxy, error) {

@@ -64,7 +64,7 @@ type ControlConn struct {
 const ProxyVirtualRack = "rack0"
 const ProxyVirtualPartitioner = "org.apache.cassandra.dht.Murmur3Partitioner"
 const ccWriteTimeout = 5 * time.Second
-const ccReadTimeout = 600 * time.Second
+const ccReadTimeout = 10 * time.Second
 
 func NewControlConn(ctx context.Context, defaultPort int, connConfig ConnectionConfig,
 	username string, password string, conf *config.Config, topologyConfig *common.TopologyConfig, proxyRand *rand.Rand,

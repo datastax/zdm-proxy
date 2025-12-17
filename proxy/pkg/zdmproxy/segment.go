@@ -19,6 +19,8 @@ import (
 //
 // The caller can check whether a frame is ready to be read by calling FrameReady().
 //
+// There can be multiple frames in a segment so the caller should check FrameReady() again after calling ReadFrame().
+//
 // This type is not "thread-safe".
 type SegmentAccumulator interface {
 	ReadFrame() (*frame.RawFrame, error)

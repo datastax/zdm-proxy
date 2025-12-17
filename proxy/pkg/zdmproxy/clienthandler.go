@@ -2009,7 +2009,7 @@ func (ch *ClientHandler) aggregateAndTrackResponses(
 			},
 		}
 		buf := &bytes.Buffer{}
-		err := defaultFrameCodec.EncodeBody(newHeader, newBody, buf)
+		err := ch.getCodec().EncodeBody(newHeader, newBody, buf)
 		if err != nil {
 			log.Errorf("Failed to encode OPTIONS body: %v", err)
 			return responseFromTargetCassandra, common.ClusterTypeTarget
