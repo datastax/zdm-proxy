@@ -102,16 +102,19 @@ func TestSegmentWriter_CanWriteFrameInternal(t *testing.T) {
 	// Test 4: Empty payload, frame with no body (e.g. OPTIONS message)
 	assert.True(t, writer.canWriteFrameInternal(primitive.FrameHeaderLengthV3AndHigher))
 
-	// Test 5: Write some data first
+	// Test 5: Empty payload, 0 length (just an edge case but it should be impossible for this to happen)
+	assert.True(t, writer.canWriteFrameInternal(0))
+
+	// Test 6: Write some data first
 	writer.payload.Write(make([]byte, 1000))
 
 	// Small frame that fits
 	assert.True(t, writer.canWriteFrameInternal(1000))
 
-	// Test 6: Frame that would exceed segment max payload after merging and there's already data in the payload
+	// Test 7: Frame that would exceed segment max payload after merging and there's already data in the payload
 	assert.False(t, writer.canWriteFrameInternal(segment.MaxPayloadLength-500))
 
-	// Test 7: Payload has data, adding frame would need multiple segments
+	// Test 8: Payload has data, adding frame would need multiple segments
 	writer.payload.Reset()
 	writer.payload.Write(make([]byte, 100))
 	assert.False(t, writer.canWriteFrameInternal(segment.MaxPayloadLength+1))
