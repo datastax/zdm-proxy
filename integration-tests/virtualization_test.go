@@ -382,7 +382,16 @@ func TestInterceptedQueries(t *testing.T) {
 			originName := ""
 			var originSetup, targetSetup setup.TestCluster
 			var expectedLocalCols, expectedPeersCols []string
+			var expectedLocalVals [][]interface{}
 			var isCcm bool
+
+			hostId1 := uuid.NewSHA1(uuid.Nil, net.ParseIP("127.0.0.1"))
+			primitiveHostId1 := primitive.UUID(hostId1)
+			hostId2 := uuid.NewSHA1(uuid.Nil, net.ParseIP("127.0.0.2"))
+			primitiveHostId2 := primitive.UUID(hostId2)
+			hostId3 := uuid.NewSHA1(uuid.Nil, net.ParseIP("127.0.0.3"))
+			primitiveHostId3 := primitive.UUID(hostId3)
+
 			if !simulacron.SupportsProtocolVersion(v) {
 				if !env.SupportsProtocolVersion(v) {
 					t.Skipf("proto version %v not supported in current ccm cluster version %v", v.String(), env.ServerVersionLogStr)
@@ -394,10 +403,33 @@ func TestInterceptedQueries(t *testing.T) {
 				originName = originSetup.(*ccm.Cluster).GetId()
 				targetSetup, err = setup.GetGlobalTestClusterTarget(t)
 				require.Nil(t, err)
-				expectedLocalCols = []string{
-					"key", "bootstrapped", "broadcast_address", "cluster_name", "cql_version", "data_center",
-					"gossip_generation", "host_id", "listen_address", "native_protocol_version", "partitioner",
-					"rack", "release_version", "rpc_address", "schema_version", "tokens", "truncated_at",
+				if env.CompareServerVersion("3.0.0") < 0 {
+					expectedLocalCols = []string{
+						"key", "bootstrapped", "broadcast_address", "cluster_name", "cql_version", "data_center",
+						"gossip_generation", "host_id", "listen_address", "native_protocol_version", "partitioner",
+						"rack", "release_version", "rpc_address", "schema_version", "thrift_version", "tokens", "truncated_at",
+					}
+					expectedLocalVals = [][]interface{}{
+						{
+							"local", "COMPLETED", net.ParseIP("127.0.0.1").To4(), originName, "3.4.7", "datacenter1", 1764262829, primitiveHostId1,
+							net.ParseIP("127.0.0.1").To4(), env.ProtocolVersionStr(env.ComputeDefaultProtocolVersion()),
+							"org.apache.cassandra.dht.Murmur3Partitioner", "rack0", env.CassandraVersion, net.ParseIP("127.0.0.1").To4(), nil,
+							"20", []string{"1241"}, nil,
+						},
+					}
+				} else {
+					expectedLocalCols = []string{
+						"key", "bootstrapped", "broadcast_address", "cluster_name", "cql_version", "data_center",
+						"gossip_generation", "host_id", "listen_address", "native_protocol_version", "partitioner",
+						"rack", "release_version", "rpc_address", "schema_version", "tokens", "truncated_at",
+					}
+					expectedLocalVals = [][]interface{}{
+						{
+							"local", "COMPLETED", net.ParseIP("127.0.0.1").To4(), originName, "3.4.7", "datacenter1", 1764262829, primitiveHostId1,
+							net.ParseIP("127.0.0.1").To4(), env.ProtocolVersionStr(v), "org.apache.cassandra.dht.Murmur3Partitioner", "rack0", env.CassandraVersion, net.ParseIP("127.0.0.1").To4(), nil,
+							[]string{"1241"}, nil,
+						},
+					}
 				}
 
 				expectedPeersCols = []string{
@@ -426,13 +458,6 @@ func TestInterceptedQueries(t *testing.T) {
 			}
 			defer cleanupFn()
 
-			hostId1 := uuid.NewSHA1(uuid.Nil, net.ParseIP("127.0.0.1"))
-			primitiveHostId1 := primitive.UUID(hostId1)
-			hostId2 := uuid.NewSHA1(uuid.Nil, net.ParseIP("127.0.0.2"))
-			primitiveHostId2 := primitive.UUID(hostId2)
-			hostId3 := uuid.NewSHA1(uuid.Nil, net.ParseIP("127.0.0.3"))
-			primitiveHostId3 := primitive.UUID(hostId3)
-
 			numTokens := 8
 
 			type testDefinition struct {
@@ -456,13 +481,7 @@ func TestInterceptedQueries(t *testing.T) {
 							[]string{"1241"}, nil,
 						},
 					},
-					expectedValuesCcm: [][]interface{}{
-						{
-							"local", "COMPLETED", net.ParseIP("127.0.0.1").To4(), originName, "3.4.7", "datacenter1", 1764262829, primitiveHostId1,
-							net.ParseIP("127.0.0.1").To4(), env.ProtocolVersionStr(v), "org.apache.cassandra.dht.Murmur3Partitioner", "rack0", env.CassandraVersion, net.ParseIP("127.0.0.1").To4(), nil,
-							[]string{"1241"}, nil,
-						},
-					},
+					expectedValuesCcm:  expectedLocalVals,
 					errExpected:        nil,
 					proxyInstanceCount: 3,
 					connectProxyIndex:  0,
@@ -757,6 +776,11 @@ func TestInterceptedQueries(t *testing.T) {
 							require.True(t, ok)
 							require.NotNil(t, cqlV)
 							require.NotEqual(t, "", cqlV)
+						case "thrift_version":
+							thriftV, ok := dest.(string)
+							require.True(t, ok)
+							require.NotNil(t, thriftV)
+							require.NotEqual(t, "", thriftV)
 						default:
 							if wasNull {
 								require.Nil(t, expectedVals[i][j], queryRowsResult.Metadata.Columns[j].Name)

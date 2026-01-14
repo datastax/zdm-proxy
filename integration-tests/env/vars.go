@@ -99,7 +99,7 @@ func InitGlobalVars() {
 
 	ServerVersionLogStr = serverVersionLogString()
 
-	DefaultProtocolVersion = computeDefaultProtocolVersion()
+	DefaultProtocolVersion = ComputeDefaultProtocolVersion()
 
 	if DefaultProtocolVersion <= primitive.ProtocolVersion2 {
 		DefaultProtocolVersionSimulacron = primitive.ProtocolVersion3
@@ -210,6 +210,10 @@ func supportedProtocolVersions() []primitive.ProtocolVersion {
 			return []primitive.ProtocolVersion{
 				primitive.ProtocolVersion3, primitive.ProtocolVersion4, primitive.ProtocolVersion5}
 		}
+		if v[0] >= 3 {
+			return []primitive.ProtocolVersion{
+				primitive.ProtocolVersion3, primitive.ProtocolVersion4}
+		}
 		if v[0] >= 2 {
 			if v[1] >= 2 {
 				return []primitive.ProtocolVersion{
@@ -247,7 +251,7 @@ func ProtocolVersionStr(v primitive.ProtocolVersion) string {
 	return strconv.Itoa(int(v))
 }
 
-func computeDefaultProtocolVersion() primitive.ProtocolVersion {
+func ComputeDefaultProtocolVersion() primitive.ProtocolVersion {
 	orderedProtocolVersions := []primitive.ProtocolVersion{
 		primitive.ProtocolVersionDse2, primitive.ProtocolVersionDse1, primitive.ProtocolVersion5,
 		primitive.ProtocolVersion4, primitive.ProtocolVersion3, primitive.ProtocolVersion2}
