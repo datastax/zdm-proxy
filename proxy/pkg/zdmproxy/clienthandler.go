@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -132,6 +133,7 @@ func NewClientHandler(
 	originControlConn *ControlConn,
 	targetControlConn *ControlConn,
 	conf *config.Config,
+	blockedProtoVersions []primitive.ProtocolVersion,
 	topologyConfig *common.TopologyConfig,
 	targetUsername string,
 	targetPassword string,
@@ -280,6 +282,7 @@ func NewClientHandler(
 		clientConnector: NewClientConnector(
 			clientTcpConn,
 			conf,
+			blockedProtoVersions,
 			localClientHandlerWg,
 			requestsChannel,
 			clientHandlerContext,
@@ -2348,10 +2351,21 @@ func checkUnsupportedProtocolError(err error) *message.ProtocolError {
 	return nil
 }
 
-// checkProtocolVersion handles the case where the protocol library does not return an error but the proxy does not support a specific version
-func checkProtocolVersion(version primitive.ProtocolVersion) *message.ProtocolError {
-	// Protocol v5 is now supported
-	if version <= primitive.ProtocolVersion5 || version.IsDse() {
+func createStandardUnsupportedVersionString(version primitive.ProtocolVersion) string {
+	return fmt.Sprintf("Invalid or unsupported protocol version (%d)", version)
+}
+
+// checkProtocolVersion handles the case where the protocol library does not return an error but the proxy does not support (or blocks) a specific version
+func checkProtocolVersion(version primitive.ProtocolVersion, blockedVersions []primitive.ProtocolVersion) *message.ProtocolError {
+	if slices.Contains(blockedVersions, version) {
+		return &message.ProtocolError{ErrorMessage: createStandardUnsupportedVersionString(version)}
+	}
+
+	if version.IsDse() {
+		return nil
+	}
+
+	if version >= primitive.ProtocolVersion2 && version <= primitive.ProtocolVersion5 {
 		return nil
 	}
 

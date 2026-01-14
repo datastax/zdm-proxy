@@ -260,7 +260,9 @@ func (cc *ClusterConnector) runResponseListeningLoop() {
 		protocolErrOccurred := false
 		for {
 			response, state, err := cc.codecHelper.ReadRawFrame()
-			protocolErrResponseFrame, err, errCode := checkProtocolError(response, cc.ccProtoVer, cc.codecHelper.GetCompression(), err, protocolErrOccurred, string(cc.connectorType))
+			protocolErrResponseFrame, err, errCode := checkProtocolError(
+				response, cc.ccProtoVer, []primitive.ProtocolVersion{}, cc.codecHelper.GetCompression(), err,
+				protocolErrOccurred, string(cc.connectorType))
 			if err != nil {
 				handleConnectionError(
 					err, cc.clusterConnContext, cc.cancelFunc, string(cc.connectorType), "reading", connectionAddr)

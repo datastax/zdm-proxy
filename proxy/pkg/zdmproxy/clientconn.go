@@ -36,6 +36,9 @@ type ClientConnector struct {
 	// configuration object of the proxy
 	conf *config.Config
 
+	// protocol versions blocked through configuration
+	blockedProtoVersions []primitive.ProtocolVersion
+
 	// channel on which the ClientConnector sends requests as it receives them from the client
 	requestChannel chan<- *frame.RawFrame
 
@@ -66,6 +69,7 @@ type ClientConnector struct {
 func NewClientConnector(
 	connection net.Conn,
 	conf *config.Config,
+	blockedProtoVersions []primitive.ProtocolVersion,
 	localClientHandlerWg *sync.WaitGroup,
 	requestsChan chan<- *frame.RawFrame,
 	clientHandlerContext context.Context,
@@ -84,6 +88,7 @@ func NewClientConnector(
 	return &ClientConnector{
 		connection:              connection,
 		conf:                    conf,
+		blockedProtoVersions:    blockedProtoVersions,
 		requestChannel:          requestsChan,
 		clientHandlerWg:         localClientHandlerWg,
 		clientHandlerContext:    clientHandlerContext,
@@ -185,7 +190,8 @@ func (cc *ClientConnector) listenForRequests() {
 		var alreadySentProtocolErr *frame.RawFrame
 		for cc.clientHandlerContext.Err() == nil {
 			f, _, err := cc.codecHelper.ReadRawFrame()
-			protocolErrResponseFrame, err, _ := checkProtocolError(f, cc.minProtoVer, cc.codecHelper.GetCompression(), err, protocolErrOccurred, ClientConnectorLogPrefix)
+			protocolErrResponseFrame, err, _ := checkProtocolError(
+				f, cc.minProtoVer, cc.blockedProtoVersions, cc.codecHelper.GetCompression(), err, protocolErrOccurred, ClientConnectorLogPrefix)
 			if err != nil {
 				handleConnectionError(
 					err, cc.clientHandlerContext, cc.clientHandlerCancelFunc, ClientConnectorLogPrefix, "reading", connectionAddr)
@@ -234,8 +240,10 @@ func (cc *ClientConnector) sendOverloadedToClient(request *frame.RawFrame) {
 	}
 }
 
-func checkProtocolError(f *frame.RawFrame, protoVer primitive.ProtocolVersion, compression primitive.Compression,
-	connErr error, protocolErrorOccurred bool, prefix string) (protocolErrResponse *frame.RawFrame, fatalErr error, errorCode int8) {
+func checkProtocolError(
+	f *frame.RawFrame, protoVer primitive.ProtocolVersion, blockedVersions []primitive.ProtocolVersion,
+	compression primitive.Compression, connErr error, protocolErrorOccurred bool, prefix string) (
+	protocolErrResponse *frame.RawFrame, fatalErr error, errorCode int8) {
 	var protocolErrMsg *message.ProtocolError
 	var streamId int16
 	var logMsg string
@@ -245,7 +253,7 @@ func checkProtocolError(f *frame.RawFrame, protoVer primitive.ProtocolVersion, c
 		streamId = 0
 		errorCode = ProtocolErrorDecodeError
 	} else {
-		protocolErrMsg = checkProtocolVersion(f.Header.Version)
+		protocolErrMsg = checkProtocolVersion(f.Header.Version, blockedVersions)
 		logMsg = fmt.Sprintf("Protocol %v detected while decoding a frame.", f.Header.Version)
 		streamId = f.Header.StreamId
 		errorCode = ProtocolErrorUnsupportedVersion
