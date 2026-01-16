@@ -3,18 +3,21 @@ package integration_tests
 import (
 	"context"
 	"fmt"
-	"github.com/datastax/go-cassandra-native-protocol/client"
-	"github.com/datastax/go-cassandra-native-protocol/frame"
-	"github.com/datastax/go-cassandra-native-protocol/message"
-	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/datastax/zdm-proxy/integration-tests/setup"
-	"github.com/datastax/zdm-proxy/proxy/pkg/config"
-	"github.com/datastax/zdm-proxy/proxy/pkg/health"
-	"github.com/stretchr/testify/require"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/datastax/go-cassandra-native-protocol/client"
+	"github.com/datastax/go-cassandra-native-protocol/frame"
+	"github.com/datastax/go-cassandra-native-protocol/message"
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/stretchr/testify/require"
+
+	"github.com/datastax/zdm-proxy/integration-tests/env"
+	"github.com/datastax/zdm-proxy/integration-tests/setup"
+	"github.com/datastax/zdm-proxy/proxy/pkg/config"
+	"github.com/datastax/zdm-proxy/proxy/pkg/health"
 )
 
 func TestAuth(t *testing.T) {
@@ -499,7 +502,6 @@ func TestAuth(t *testing.T) {
 
 	originAddress := "127.0.1.1"
 	targetAddress := "127.0.1.2"
-	version := primitive.ProtocolVersion4
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -536,7 +538,7 @@ func TestAuth(t *testing.T) {
 					client.NewDriverConnectionInitializationHandler("target", "dc2", func(_ string) {}),
 				}
 
-				err = testSetup.Start(nil, false, primitive.ProtocolVersion4)
+				err = testSetup.Start(nil, false, env.DefaultProtocolVersion)
 				require.Nil(t, err)
 
 				proxy, err := setup.NewProxyInstanceWithConfig(proxyConf)
@@ -566,7 +568,7 @@ func TestAuth(t *testing.T) {
 				require.Nil(t, err, "client connection failed: %v", err)
 				defer cqlConn.Close()
 
-				err = cqlConn.InitiateHandshake(primitive.ProtocolVersion4, 0)
+				err = cqlConn.InitiateHandshake(env.DefaultProtocolVersion, 0)
 
 				originRequestsByConn := originRequestHandler.GetRequests()
 				targetRequestsByConn := targetRequestHandler.GetRequests()
@@ -586,7 +588,7 @@ func TestAuth(t *testing.T) {
 						Options: &message.QueryOptions{Consistency: primitive.ConsistencyLevelOne},
 					}
 
-					response, err := cqlConn.SendAndReceive(frame.NewFrame(version, 0, query))
+					response, err := cqlConn.SendAndReceive(frame.NewFrame(env.DefaultProtocolVersion, 0, query))
 					require.Nil(t, err, "query request send failed: %s", err)
 
 					require.Equal(t, primitive.OpCodeResult, response.Body.Message.GetOpCode(), response.Body.Message)

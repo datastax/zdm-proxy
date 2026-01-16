@@ -4,15 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/datastax/go-cassandra-native-protocol/frame"
-	"github.com/datastax/go-cassandra-native-protocol/message"
-	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/datastax/zdm-proxy/proxy/pkg/common"
-	"github.com/datastax/zdm-proxy/proxy/pkg/config"
-	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
-	"github.com/google/uuid"
-	"github.com/jpillora/backoff"
-	log "github.com/sirupsen/logrus"
 	"math"
 	"math/big"
 	"math/rand"
@@ -22,6 +13,17 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/datastax/go-cassandra-native-protocol/frame"
+	"github.com/datastax/go-cassandra-native-protocol/message"
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/google/uuid"
+	"github.com/jpillora/backoff"
+	log "github.com/sirupsen/logrus"
+
+	"github.com/datastax/zdm-proxy/proxy/pkg/common"
+	"github.com/datastax/zdm-proxy/proxy/pkg/config"
+	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
 )
 
 type ControlConn struct {
@@ -385,7 +387,7 @@ func (cc *ControlConn) connAndNegotiateProtoVer(endpoint Endpoint, initialProtoV
 		newConn := NewCqlConnection(cc, endpoint, tcpConn, cc.username, cc.password, ccReadTimeout, ccWriteTimeout, cc.conf, protoVer)
 		err = newConn.InitializeContext(protoVer, ctx)
 		var respErr *ResponseError
-		if err != nil && errors.As(err, &respErr) && respErr.IsProtocolError() && strings.Contains(err.Error(), "Invalid or unsupported protocol version") {
+		if err != nil && errors.As(err, &respErr) && respErr.IsProtocolError() {
 			// unsupported protocol version
 			// protocol renegotiation requires opening a new TCP connection
 			err2 := newConn.Close()
@@ -410,6 +412,8 @@ func downgradeProtocol(version primitive.ProtocolVersion) primitive.ProtocolVers
 	case primitive.ProtocolVersionDse2:
 		return primitive.ProtocolVersionDse1
 	case primitive.ProtocolVersionDse1:
+		return primitive.ProtocolVersion5
+	case primitive.ProtocolVersion5:
 		return primitive.ProtocolVersion4
 	case primitive.ProtocolVersion4:
 		return primitive.ProtocolVersion3

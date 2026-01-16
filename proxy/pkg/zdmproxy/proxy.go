@@ -5,20 +5,23 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"github.com/datastax/zdm-proxy/proxy/pkg/common"
-	"github.com/datastax/zdm-proxy/proxy/pkg/config"
-	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
-	"github.com/datastax/zdm-proxy/proxy/pkg/metrics/noopmetrics"
-	"github.com/datastax/zdm-proxy/proxy/pkg/metrics/prommetrics"
-	"github.com/jpillora/backoff"
-	"github.com/prometheus/client_golang/prometheus"
-	log "github.com/sirupsen/logrus"
 	"math/rand"
 	"net"
 	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/jpillora/backoff"
+	"github.com/prometheus/client_golang/prometheus"
+	log "github.com/sirupsen/logrus"
+
+	"github.com/datastax/zdm-proxy/proxy/pkg/common"
+	"github.com/datastax/zdm-proxy/proxy/pkg/config"
+	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
+	"github.com/datastax/zdm-proxy/proxy/pkg/metrics/noopmetrics"
+	"github.com/datastax/zdm-proxy/proxy/pkg/metrics/prommetrics"
 )
 
 type ZdmProxy struct {
@@ -36,6 +39,8 @@ type ZdmProxy struct {
 	primaryCluster    common.ClusterType
 	readMode          common.ReadMode
 	systemQueriesMode common.SystemQueriesMode
+
+	blockedProtoVersions []primitive.ProtocolVersion
 
 	proxyRand *rand.Rand
 
@@ -414,6 +419,13 @@ func (p *ZdmProxy) initializeGlobalStructures() error {
 		log.Infof("Parsed Async latency buckets: %v", p.asyncBuckets)
 	}
 
+	p.blockedProtoVersions, err = p.Conf.ParseBlockedProtocolVersions()
+	if err != nil {
+		return fmt.Errorf("failed to parse blocked protocol versions: %w", err)
+	} else {
+		log.Infof("Parsed Blocked Protocol Versions: %v", p.blockedProtoVersions)
+	}
+
 	p.activeClients = 0
 	return nil
 }
@@ -554,6 +566,7 @@ func (p *ZdmProxy) handleNewConnection(clientConn net.Conn) {
 		p.originControlConn,
 		p.targetControlConn,
 		p.Conf,
+		p.blockedProtoVersions,
 		p.TopologyConfig,
 		p.Conf.TargetUsername,
 		p.Conf.TargetPassword,

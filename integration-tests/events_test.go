@@ -3,24 +3,22 @@ package integration_tests
 import (
 	"context"
 	"fmt"
+	"testing"
+	"time"
+
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/stretchr/testify/require"
+
 	"github.com/datastax/zdm-proxy/integration-tests/ccm"
 	"github.com/datastax/zdm-proxy/integration-tests/client"
 	"github.com/datastax/zdm-proxy/integration-tests/env"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
-	"github.com/stretchr/testify/require"
-	"testing"
-	"time"
 )
 
 // TestSchemaEvents tests the schema event message handling
 func TestSchemaEvents(t *testing.T) {
-	if !env.RunCcmTests {
-		t.Skip("Test requires CCM, set RUN_CCMTESTS env variable to TRUE")
-	}
-
-	originCluster, targetCluster, err := SetupOrGetGlobalCcmClusters()
+	originCluster, targetCluster, err := SetupOrGetGlobalCcmClusters(t)
 	require.Nil(t, err)
 
 	tests := []struct {
@@ -42,7 +40,7 @@ func TestSchemaEvents(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			proxyInstance, err := NewProxyInstanceForGlobalCcmClusters()
+			proxyInstance, err := NewProxyInstanceForGlobalCcmClusters(t)
 			require.Nil(t, err)
 			defer proxyInstance.Shutdown()
 
@@ -56,10 +54,10 @@ func TestSchemaEvents(t *testing.T) {
 			require.True(t, err == nil, "unable to connect to test client: %v", err)
 			defer testClientForSchemaChange.Shutdown()
 
-			err = testClientForEvents.PerformDefaultHandshake(context.Background(), primitive.ProtocolVersion4, false)
+			err = testClientForEvents.PerformDefaultHandshake(context.Background(), env.DefaultProtocolVersionTestClient, false)
 			require.True(t, err == nil, "could not perform handshake: %v", err)
 
-			err = testClientForSchemaChange.PerformDefaultHandshake(context.Background(), primitive.ProtocolVersion4, false)
+			err = testClientForSchemaChange.PerformDefaultHandshake(context.Background(), env.DefaultProtocolVersionTestClient, false)
 			require.True(t, err == nil, "could not perform handshake: %v", err)
 
 			// send REGISTER to proxy
@@ -70,7 +68,7 @@ func TestSchemaEvents(t *testing.T) {
 					primitive.EventTypeTopologyChange},
 			}
 
-			response, _, err := testClientForEvents.SendMessage(context.Background(), primitive.ProtocolVersion4, registerMsg)
+			response, _, err := testClientForEvents.SendMessage(context.Background(), env.DefaultProtocolVersionTestClient, registerMsg)
 			require.True(t, err == nil, "could not send register frame: %v", err)
 
 			_, ok := response.Body.Message.(*message.Ready)
@@ -82,7 +80,7 @@ func TestSchemaEvents(t *testing.T) {
 					"WITH REPLICATION = {'class':'SimpleStrategy', 'replication_factor':1};", env.Rand.Uint64()),
 			}
 
-			response, _, err = testClientForSchemaChange.SendMessage(context.Background(), primitive.ProtocolVersion4, createKeyspaceMessage)
+			response, _, err = testClientForSchemaChange.SendMessage(context.Background(), env.DefaultProtocolVersionTestClient, createKeyspaceMessage)
 			require.True(t, err == nil, "could not send create keyspace request: %v", err)
 
 			_, ok = response.Body.Message.(*message.SchemaChangeResult)
@@ -107,11 +105,7 @@ func TestSchemaEvents(t *testing.T) {
 
 // TestTopologyStatusEvents tests the topology and status events handling
 func TestTopologyStatusEvents(t *testing.T) {
-	if !env.RunCcmTests {
-		t.Skip("Test requires CCM, set RUN_CCMTESTS env variable to TRUE")
-	}
-
-	tempCcmSetup, err := setup.NewTemporaryCcmTestSetup(true, false)
+	tempCcmSetup, err := setup.NewTemporaryCcmTestSetup(t, true, false)
 	require.Nil(t, err)
 	defer tempCcmSetup.Cleanup()
 
@@ -147,7 +141,7 @@ func TestTopologyStatusEvents(t *testing.T) {
 			require.True(t, err == nil, "unable to connect to test client: %v", err)
 			defer testClientForEvents.Shutdown()
 
-			err = testClientForEvents.PerformDefaultHandshake(context.Background(), primitive.ProtocolVersion4, false)
+			err = testClientForEvents.PerformDefaultHandshake(context.Background(), env.DefaultProtocolVersionTestClient, false)
 			require.True(t, err == nil, "could not perform handshake: %v", err)
 
 			registerMsg := &message.Register{
@@ -157,7 +151,7 @@ func TestTopologyStatusEvents(t *testing.T) {
 					primitive.EventTypeTopologyChange},
 			}
 
-			response, _, err := testClientForEvents.SendMessage(context.Background(), primitive.ProtocolVersion4, registerMsg)
+			response, _, err := testClientForEvents.SendMessage(context.Background(), env.DefaultProtocolVersionTestClient, registerMsg)
 			require.True(t, err == nil, "could not send register frame: %v", err)
 
 			_, ok := response.Body.Message.(*message.Ready)

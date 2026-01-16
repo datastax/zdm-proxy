@@ -165,7 +165,7 @@ func TestReplaceQueryString(t *testing.T) {
 			decodedFrame, statementQuery, err := context.GetOrDecodeAndInspect("", timeUuidGenerator)
 			require.Nil(t, err)
 			_, decodedFrame, statementQuery, statementsReplacedTerms, err := queryModifier.replaceQueryString(decodedFrame, statementQuery)
-			newRawFrame, err := defaultCodec.ConvertToRawFrame(decodedFrame)
+			newRawFrame, err := defaultFrameCodec.ConvertToRawFrame(decodedFrame)
 			newContext := NewInitializedFrameDecodeContext(newRawFrame, primitive.CompressionNone, decodedFrame, statementQuery)
 			require.Nil(t, err)
 			require.Equal(t, len(test.positionsReplaced), len(statementsReplacedTerms))

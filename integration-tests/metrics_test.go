@@ -2,18 +2,6 @@ package integration_tests
 
 import (
 	"fmt"
-	"github.com/datastax/go-cassandra-native-protocol/client"
-	"github.com/datastax/go-cassandra-native-protocol/frame"
-	"github.com/datastax/go-cassandra-native-protocol/message"
-	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/datastax/zdm-proxy/integration-tests/setup"
-	"github.com/datastax/zdm-proxy/integration-tests/utils"
-	"github.com/datastax/zdm-proxy/proxy/pkg/config"
-	"github.com/datastax/zdm-proxy/proxy/pkg/httpzdmproxy"
-	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
-	log "github.com/sirupsen/logrus"
-	"github.com/stretchr/testify/require"
 	"net/http"
 	"sort"
 	"strconv"
@@ -21,6 +9,21 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/datastax/go-cassandra-native-protocol/client"
+	"github.com/datastax/go-cassandra-native-protocol/frame"
+	"github.com/datastax/go-cassandra-native-protocol/message"
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	log "github.com/sirupsen/logrus"
+	"github.com/stretchr/testify/require"
+
+	"github.com/datastax/zdm-proxy/integration-tests/env"
+	"github.com/datastax/zdm-proxy/integration-tests/setup"
+	"github.com/datastax/zdm-proxy/integration-tests/utils"
+	"github.com/datastax/zdm-proxy/proxy/pkg/config"
+	"github.com/datastax/zdm-proxy/proxy/pkg/httpzdmproxy"
+	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
 )
 
 var nodeMetrics = []metrics.Metric{
@@ -69,17 +72,21 @@ var proxyMetrics = []metrics.Metric{
 
 var allMetrics = append(proxyMetrics, nodeMetrics...)
 
-var insertQuery = frame.NewFrame(
-	primitive.ProtocolVersion4,
-	client.ManagedStreamId,
-	&message.Query{Query: "INSERT INTO ks1.t1"},
-)
+func getInsertQuery() *frame.Frame {
+	return frame.NewFrame(
+		env.DefaultProtocolVersion,
+		client.ManagedStreamId,
+		&message.Query{Query: "INSERT INTO ks1.t1"},
+	)
+}
 
-var selectQuery = frame.NewFrame(
-	primitive.ProtocolVersion4,
-	client.ManagedStreamId,
-	&message.Query{Query: "SELECT * FROM ks1.t1"},
-)
+func getSelectQuery() *frame.Frame {
+	return frame.NewFrame(
+		env.DefaultProtocolVersion,
+		client.ManagedStreamId,
+		&message.Query{Query: "SELECT * FROM ks1.t1"},
+	)
+}
 
 func testMetrics(t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback) {
 
@@ -125,7 +132,7 @@ func testMetrics(t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback)
 			testSetup.Origin.CqlServer.RequestHandlers = []client.RequestHandler{client.RegisterHandler, client.HeartbeatHandler, client.HandshakeHandler, client.NewSystemTablesHandler("cluster1", "dc1"), handleReads, handleWrites}
 			testSetup.Target.CqlServer.RequestHandlers = []client.RequestHandler{client.RegisterHandler, client.HeartbeatHandler, client.HandshakeHandler, client.NewSystemTablesHandler("cluster2", "dc2"), handleReads, handleWrites}
 
-			err = testSetup.Start(conf, false, primitive.ProtocolVersion4)
+			err = testSetup.Start(conf, false, env.DefaultProtocolVersion)
 			require.Nil(t, err)
 
 			wg := &sync.WaitGroup{}
@@ -143,7 +150,7 @@ func testMetrics(t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback)
 			lines := GatherMetrics(t, conf, false)
 			checkMetrics(t, false, lines, conf.ReadMode, 0, 0, 0, 0, 0, 0, 0, 0, true, true, originEndpoint, targetEndpoint, asyncEndpoint, 0, 0, 0)
 
-			err = testSetup.Client.Connect(primitive.ProtocolVersion4)
+			err = testSetup.Client.Connect(env.DefaultProtocolVersion)
 			require.Nil(t, err)
 			clientConn := testSetup.Client.CqlConnection
 
@@ -155,7 +162,7 @@ func testMetrics(t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback)
 			// but all of these are "system" requests so not tracked
 			checkMetrics(t, true, lines, conf.ReadMode, 1, 1, 1, expectedAsyncConnections, 0, 0, 0, 0, true, true, originEndpoint, targetEndpoint, asyncEndpoint, 0, 0, 0)
 
-			_, err = clientConn.SendAndReceive(insertQuery)
+			_, err = clientConn.SendAndReceive(getInsertQuery())
 			require.Nil(t, err)
 
 			lines = GatherMetrics(t, conf, true)
@@ -166,7 +173,7 @@ func testMetrics(t *testing.T, metricsHandler *httpzdmproxy.HandlerWithFallback)
 			// only QUERY is tracked
 			checkMetrics(t, true, lines, conf.ReadMode, 1, 1, 1, expectedAsyncConnections, 1, 0, 0, 0, true, true, originEndpoint, targetEndpoint, asyncEndpoint, 0, 0, 0)
 
-			_, err = clientConn.SendAndReceive(selectQuery)
+			_, err = clientConn.SendAndReceive(getSelectQuery())
 			require.Nil(t, err)
 
 			lines = GatherMetrics(t, conf, true)

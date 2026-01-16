@@ -6,6 +6,18 @@ Build artifacts are available at [Docker Hub](https://hub.docker.com/repository/
 
 For additional details on the changes included in a specific release, see the associated CHANGELOG-x.x.md file.
 
+## v2.4.0 - 2026-01-16
+
+Support LZ4 and snappy compression.
+
+Support protocol v5.
+
+New configuration setting `ZDM_BLOCKED_PROTOCOL_VERSIONS` to block specific protocol versions at the proxy level.
+
+Send request id in the request payload (currently supported by Astra only).
+
+[Changelog](CHANGELOG/CHANGELOG-2.4.md#v240---2026-01-16)
+
 ## v2.3.4 - 2025-05-29
 
 Fix CQL stream ID validation for internal heartbeat mechanism.

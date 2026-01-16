@@ -2,17 +2,19 @@ package setup
 
 import (
 	"context"
+	"math"
+	"sync"
+	"testing"
+
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	log "github.com/sirupsen/logrus"
+
 	"github.com/datastax/zdm-proxy/integration-tests/ccm"
 	"github.com/datastax/zdm-proxy/integration-tests/cqlserver"
 	"github.com/datastax/zdm-proxy/integration-tests/env"
 	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
 	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 	"github.com/datastax/zdm-proxy/proxy/pkg/zdmproxy"
-	log "github.com/sirupsen/logrus"
-	"math"
-	"sync"
-	"testing"
 )
 
 type TestCluster interface {
@@ -27,7 +29,10 @@ var createdGlobalClusters = false
 var globalCcmClusterOrigin *ccm.Cluster
 var globalCcmClusterTarget *ccm.Cluster
 
-func GetGlobalTestClusterOrigin() (*ccm.Cluster, error) {
+func GetGlobalTestClusterOrigin(t *testing.T) (*ccm.Cluster, error) {
+	if !env.RunCcmTests {
+		t.Skip("Skipping CCM tests, RUN_CCMTESTS is set false")
+	}
 	if createdGlobalClusters {
 		return globalCcmClusterOrigin, nil
 	}
@@ -47,7 +52,10 @@ func GetGlobalTestClusterOrigin() (*ccm.Cluster, error) {
 	return globalCcmClusterOrigin, nil
 }
 
-func GetGlobalTestClusterTarget() (*ccm.Cluster, error) {
+func GetGlobalTestClusterTarget(t *testing.T) (*ccm.Cluster, error) {
+	if !env.RunCcmTests {
+		t.Skip("Skipping CCM tests, RUN_CCMTESTS is set false")
+	}
 	if createdGlobalClusters {
 		return globalCcmClusterTarget, nil
 	}
@@ -198,7 +206,10 @@ type CcmTestSetup struct {
 	Proxy  *zdmproxy.ZdmProxy
 }
 
-func NewTemporaryCcmTestSetup(start bool, createProxy bool) (*CcmTestSetup, error) {
+func NewTemporaryCcmTestSetup(t *testing.T, start bool, createProxy bool) (*CcmTestSetup, error) {
+	if !env.RunCcmTests {
+		t.Skip("Skipping CCM tests, RUN_CCMTESTS is set false")
+	}
 	firstClusterId := env.Rand.Uint64() % (math.MaxUint64 - 1)
 	origin, err := ccm.GetNewCluster(firstClusterId, 20, env.OriginNodes, start)
 	if err != nil {

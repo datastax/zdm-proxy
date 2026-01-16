@@ -3,16 +3,20 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"net"
+	"os"
+	"slices"
+	"strconv"
+	"strings"
+	"sync"
+
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/datastax/zdm-proxy/proxy/pkg/common"
 	"github.com/kelseyhightower/envconfig"
 	def "github.com/mcuadros/go-defaults"
 	log "github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v3"
-	"net"
-	"os"
-	"strconv"
-	"strings"
+
+	"github.com/datastax/zdm-proxy/proxy/pkg/common"
 )
 
 // Config holds the values of environment variables necessary for proper Proxy function.
@@ -26,6 +30,7 @@ type Config struct {
 	AsyncHandshakeTimeoutMs       int    `default:"4000" split_words:"true" yaml:"async_handshake_timeout_ms"`
 	LogLevel                      string `default:"INFO" split_words:"true" yaml:"log_level"`
 	ControlConnMaxProtocolVersion string `default:"DseV2" split_words:"true" yaml:"control_conn_max_protocol_version"` // Numeric Cassandra OSS protocol version or DseV1 / DseV2
+	BlockedProtocolVersions       string `default:"" split_words:"true" yaml:"blocked_protocol_versions"`
 
 	// Tracing (also known as distributed tracing - request id generation and logging)
 
@@ -328,6 +333,11 @@ func (c *Config) Validate() error {
 		return err
 	}
 
+	_, err = c.ParseBlockedProtocolVersions()
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -392,10 +402,10 @@ func (c *Config) ParseControlConnMaxProtocolVersion() (primitive.ProtocolVersion
 	ver, err := strconv.ParseUint(c.ControlConnMaxProtocolVersion, 10, 32)
 	if err != nil {
 		return 0, fmt.Errorf("could not parse control connection max protocol version, valid values are "+
-			"2, 3, 4, DseV1, DseV2; original err: %w", err)
+			"2, 3, 4, 5, DseV1, DseV2; original err: %w", err)
 	}
-	if ver < 2 || ver > 4 {
-		return 0, fmt.Errorf("invalid control connection max protocol version, valid values are 2, 3, 4, DseV1, DseV2")
+	if ver < 2 || ver > 5 {
+		return 0, fmt.Errorf("invalid control connection max protocol version, valid values are 2, 3, 4, 5, DseV1, DseV2")
 	}
 	return primitive.ProtocolVersion(ver), nil
 }
@@ -666,4 +676,69 @@ func isDefined(propertyValue string) bool {
 
 func isNotDefined(propertyValue string) bool {
 	return !isDefined(propertyValue)
+}
+
+func (c *Config) ParseBlockedProtocolVersions() ([]primitive.ProtocolVersion, error) {
+	if isNotDefined(c.BlockedProtocolVersions) {
+		return []primitive.ProtocolVersion{}, nil
+	}
+
+	versionsStr := strings.Split(c.BlockedProtocolVersions, ",")
+	versions := make([]primitive.ProtocolVersion, 0, len(versionsStr))
+	for _, v := range versionsStr {
+		trimmed := strings.TrimSpace(v)
+		if trimmed == "" {
+			continue
+		}
+		parsedVersion, err := parseProtocolVersion(trimmed)
+		if err != nil {
+			return nil, fmt.Errorf("invalid value for ZDM_BLOCKED_PROTOCOL_VERSIONS (%v); possible values are: %v (case insensitive)",
+				trimmed, supportedProtocolVersionsStr())
+		}
+		versions = append(versions, parsedVersion)
+	}
+	return versions, nil
+}
+
+var protocolVersionStrMap = map[primitive.ProtocolVersion][]string{
+	primitive.ProtocolVersion2:    {"2", "v2"},
+	primitive.ProtocolVersion3:    {"3", "v3"},
+	primitive.ProtocolVersion4:    {"4", "v4"},
+	primitive.ProtocolVersion5:    {"5", "v5"},
+	primitive.ProtocolVersionDse1: {"DseV1", "Dse_V1"},
+	primitive.ProtocolVersionDse2: {"DseV2", "Dse_V2"},
+}
+
+var supportedProtocolVersionsStr = sync.OnceValue[[]string](
+	func() []string {
+		versionsStr := make([]string, 0)
+		for _, strSlice := range protocolVersionStrMap {
+			for _, str := range strSlice {
+				versionsStr = append(versionsStr, str)
+			}
+		}
+		slices.Sort(versionsStr)
+		return versionsStr
+	})
+
+var lowerCaseProtocolVersionsMap = sync.OnceValue[map[string]primitive.ProtocolVersion](
+	func() map[string]primitive.ProtocolVersion {
+		m := make(map[string]primitive.ProtocolVersion)
+		for v, strSlice := range protocolVersionStrMap {
+			for _, str := range strSlice {
+				m[strings.ToLower(str)] = v
+			}
+		}
+		return m
+	})
+
+func parseProtocolVersion(versionStr string) (primitive.ProtocolVersion, error) {
+	blockableProtocolVersions := lowerCaseProtocolVersionsMap()
+	lowerCaseVersionStr := strings.ToLower(versionStr)
+	matchedVersion, ok := blockableProtocolVersions[lowerCaseVersionStr]
+	if !ok {
+		return 0, fmt.Errorf("unrecognized protocol version (%s), allowed versions are %v (case insensitive)",
+			versionStr, supportedProtocolVersionsStr())
+	}
+	return matchedVersion, nil
 }

@@ -6,20 +6,23 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"github.com/datastax/go-cassandra-native-protocol/frame"
-	"github.com/datastax/go-cassandra-native-protocol/message"
-	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/datastax/zdm-proxy/proxy/pkg/common"
-	"github.com/datastax/zdm-proxy/proxy/pkg/config"
-	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
-	"github.com/google/uuid"
-	log "github.com/sirupsen/logrus"
 	"net"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/datastax/go-cassandra-native-protocol/frame"
+	"github.com/datastax/go-cassandra-native-protocol/message"
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/google/uuid"
+	log "github.com/sirupsen/logrus"
+
+	"github.com/datastax/zdm-proxy/proxy/pkg/common"
+	"github.com/datastax/zdm-proxy/proxy/pkg/config"
+	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
 )
 
 /*
@@ -130,6 +133,7 @@ func NewClientHandler(
 	originControlConn *ControlConn,
 	targetControlConn *ControlConn,
 	conf *config.Config,
+	blockedProtoVersions []primitive.ProtocolVersion,
 	topologyConfig *common.TopologyConfig,
 	targetUsername string,
 	targetPassword string,
@@ -278,6 +282,7 @@ func NewClientHandler(
 		clientConnector: NewClientConnector(
 			clientTcpConn,
 			conf,
+			blockedProtoVersions,
 			localClientHandlerWg,
 			requestsChannel,
 			clientHandlerContext,
@@ -439,7 +444,7 @@ func (ch *ClientHandler) requestLoop() {
 				if ready {
 					ch.handshakeDone.Store(true)
 					log.Infof(
-						"Handshake successful with client %s", connectionAddr)
+						"Handshake successful with client %s (%v, Compression: %v)", connectionAddr, f.Header.Version.String(), ch.getCompression())
 				}
 				log.Tracef("ready? %t", ready)
 			} else {
@@ -688,6 +693,12 @@ func (ch *ClientHandler) tryProcessProtocolError(response *Response, protocolErr
 				log.Debugf("[ClientHandler] Protocol version downgrade detected (%v) on %v, forwarding it to the client.",
 					errMsg, response.connectorType)
 			}
+
+			// some clients might require stream id 0 on protocol errors (it's what C* does, or at least some C* versions)
+			// gocql for example has a bug where protocol version negotiation will fail if stream id of the protocol error isn't 0
+			// https://issues.apache.org/jira/browse/CASSGO-97
+			response.responseFrame.Header.StreamId = 0
+
 			ch.clientConnector.sendResponseToClient(response.responseFrame)
 		}
 		return true
@@ -699,7 +710,7 @@ func (ch *ClientHandler) tryProcessProtocolError(response *Response, protocolErr
 func decodeError(responseFrame *frame.RawFrame, compression primitive.Compression) (message.Error, error) {
 	if responseFrame != nil &&
 		responseFrame.Header.OpCode == primitive.OpCodeError {
-		body, err := codecs[compression].DecodeBody(
+		body, err := frameCodecs[compression].DecodeBody(
 			responseFrame.Header, bytes.NewReader(responseFrame.Body))
 
 		if err != nil {
@@ -1114,6 +1125,17 @@ func (ch *ClientHandler) handleHandshakeRequest(request *frame.RawFrame, wg *syn
 			if newAuthFrame != nil {
 				request = newAuthFrame
 			}
+		} else if request.Header.OpCode == primitive.OpCodeStartup {
+			clientStartup, err := defaultFrameCodec.DecodeBody(request.Header, bytes.NewReader(request.Body))
+			if err != nil {
+				scheduledTaskChannel <- &handshakeRequestResult{
+					authSuccess: false,
+					err:         fmt.Errorf("failed to decode startup message: %w", err),
+				}
+			}
+			compression := clientStartup.Message.(*message.Startup).GetCompression()
+			ch.setCompression(compression)
+			ch.startupRequest.Store(request)
 		}
 
 		responseChan := make(chan *customResponse, 1)
@@ -1180,15 +1202,7 @@ func (ch *ClientHandler) handleHandshakeRequest(request *frame.RawFrame, wg *syn
 
 		ch.secondaryStartupResponse = secondaryResponse
 
-		clientStartup, err := defaultCodec.DecodeBody(request.Header, bytes.NewReader(request.Body))
-		if err != nil {
-			return false, fmt.Errorf("failed to decode startup message: %w", err)
-		}
-		ch.setCompression(clientStartup.Message.(*message.Startup).GetCompression())
-
-		ch.startupRequest.Store(request)
-
-		err = validateSecondaryStartupResponse(secondaryResponse, secondaryCluster)
+		err := validateSecondaryStartupResponse(secondaryResponse, secondaryCluster)
 		if err != nil {
 			return false, fmt.Errorf("unsuccessful startup on %v: %w", secondaryCluster, err)
 		}
@@ -1205,7 +1219,7 @@ func (ch *ClientHandler) handleHandshakeRequest(request *frame.RawFrame, wg *syn
 			err:                  nil,
 		}
 		if aggregatedResponse.Header.OpCode == primitive.OpCodeReady || aggregatedResponse.Header.OpCode == primitive.OpCodeAuthSuccess {
-			// target handshake must happen within a single client request lifetime
+			// secondary handshake must happen within a single client request lifetime
 			// to guarantee that no other request with the same
 			// stream id goes to target in the meantime
 
@@ -1349,7 +1363,9 @@ func (ch *ClientHandler) startSecondaryHandshake(asyncConnector bool) (chan erro
 	}
 	startupFrame := startupFrameInterface.(*frame.RawFrame)
 	startupResponse := ch.secondaryStartupResponse
-	if startupResponse == nil {
+	if asyncConnector {
+		startupResponse = nil
+	} else if startupResponse == nil {
 		return nil, errors.New("can not start secondary handshake before a Startup response was received")
 	}
 
@@ -1996,7 +2012,7 @@ func (ch *ClientHandler) aggregateAndTrackResponses(
 			},
 		}
 		buf := &bytes.Buffer{}
-		err := defaultCodec.EncodeBody(newHeader, newBody, buf)
+		err := ch.getCodec().EncodeBody(newHeader, newBody, buf)
 		if err != nil {
 			log.Errorf("Failed to encode OPTIONS body: %v", err)
 			return responseFromTargetCassandra, common.ClusterTypeTarget
@@ -2168,11 +2184,11 @@ func (ch *ClientHandler) setCompression(compression primitive.Compression) {
 }
 
 func (ch *ClientHandler) getCodec() frame.RawCodec {
-	return codecs[ch.getCompression()]
+	return frameCodecs[ch.getCompression()]
 }
 
 func decodeErrorResult(frame *frame.RawFrame, compression primitive.Compression) (message.Error, error) {
-	body, err := codecs[compression].DecodeBody(frame.Header, bytes.NewReader(frame.Body))
+	body, err := frameCodecs[compression].DecodeBody(frame.Header, bytes.NewReader(frame.Body))
 	if err != nil {
 		return nil, fmt.Errorf("could not decode error body: %w", err)
 	}
@@ -2199,7 +2215,7 @@ func createUnpreparedFrame(errVal *UnpreparedExecuteError, compression primitive
 	f := frame.NewFrame(errVal.Header.Version, errVal.Header.StreamId, unpreparedMsg)
 	f.Body.TracingId = errVal.Body.TracingId
 
-	rawFrame, err := codecs[compression].ConvertToRawFrame(f)
+	rawFrame, err := frameCodecs[compression].ConvertToRawFrame(f)
 	if err != nil {
 		return nil, fmt.Errorf("could not convert unprepared response frame to rawframe: %w", err)
 	}
@@ -2335,9 +2351,21 @@ func checkUnsupportedProtocolError(err error) *message.ProtocolError {
 	return nil
 }
 
-// checkProtocolVersion handles the case where the protocol library does not return an error but the proxy does not support a specific version
-func checkProtocolVersion(version primitive.ProtocolVersion) *message.ProtocolError {
-	if version < primitive.ProtocolVersion5 || version.IsDse() {
+func createStandardUnsupportedVersionString(version primitive.ProtocolVersion) string {
+	return fmt.Sprintf("Invalid or unsupported protocol version (%d)", version)
+}
+
+// checkProtocolVersion handles the case where the protocol library does not return an error but the proxy does not support (or blocks) a specific version
+func checkProtocolVersion(version primitive.ProtocolVersion, blockedVersions []primitive.ProtocolVersion) *message.ProtocolError {
+	if slices.Contains(blockedVersions, version) {
+		return &message.ProtocolError{ErrorMessage: createStandardUnsupportedVersionString(version)}
+	}
+
+	if version.IsDse() {
+		return nil
+	}
+
+	if version >= primitive.ProtocolVersion2 && version <= primitive.ProtocolVersion5 {
 		return nil
 	}
 

@@ -4,23 +4,26 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	client2 "github.com/datastax/go-cassandra-native-protocol/client"
-	"github.com/datastax/go-cassandra-native-protocol/frame"
-	"github.com/datastax/go-cassandra-native-protocol/message"
-	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/datastax/zdm-proxy/integration-tests/client"
-	"github.com/datastax/zdm-proxy/integration-tests/setup"
-	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
-	"github.com/datastax/zdm-proxy/proxy/pkg/config"
-	"github.com/rs/zerolog"
-	log "github.com/sirupsen/logrus"
-	"github.com/stretchr/testify/require"
 	"math/rand"
 	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	client2 "github.com/datastax/go-cassandra-native-protocol/client"
+	"github.com/datastax/go-cassandra-native-protocol/frame"
+	"github.com/datastax/go-cassandra-native-protocol/message"
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/rs/zerolog"
+	log "github.com/sirupsen/logrus"
+	"github.com/stretchr/testify/require"
+
+	"github.com/datastax/zdm-proxy/integration-tests/client"
+	"github.com/datastax/zdm-proxy/integration-tests/env"
+	"github.com/datastax/zdm-proxy/integration-tests/setup"
+	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
+	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 )
 
 func TestShutdownInFlightRequests(t *testing.T) {
@@ -55,7 +58,7 @@ func TestShutdownInFlightRequests(t *testing.T) {
 			}()
 
 			cqlClient := client2.NewCqlClient("127.0.0.1:14002", nil)
-			cqlConn, err := cqlClient.ConnectAndInit(context.Background(), primitive.ProtocolVersion4, 0)
+			cqlConn, err := cqlClient.ConnectAndInit(context.Background(), env.DefaultProtocolVersionSimulacron, 0)
 			if err != nil {
 				t.Fatalf("could not connect: %v", err)
 			}
@@ -88,15 +91,15 @@ func TestShutdownInFlightRequests(t *testing.T) {
 
 			beginTimestamp := time.Now()
 
-			reqFrame := frame.NewFrame(primitive.ProtocolVersion4, 2, queryMsg1)
+			reqFrame := frame.NewFrame(env.DefaultProtocolVersionSimulacron, 2, queryMsg1)
 			inflightRequest, err := cqlConn.Send(reqFrame)
 			require.Nil(t, err)
 
-			reqFrame2 := frame.NewFrame(primitive.ProtocolVersion4, 3, queryMsg2)
+			reqFrame2 := frame.NewFrame(env.DefaultProtocolVersionSimulacron, 3, queryMsg2)
 			inflightRequest2, err := cqlConn.Send(reqFrame2)
 			require.Nil(t, err)
 
-			reqFrame3 := frame.NewFrame(primitive.ProtocolVersion4, 4, queryMsg3)
+			reqFrame3 := frame.NewFrame(env.DefaultProtocolVersionSimulacron, 4, queryMsg3)
 			inflightRequest3, err := cqlConn.Send(reqFrame3)
 			require.Nil(t, err)
 
@@ -125,7 +128,7 @@ func TestShutdownInFlightRequests(t *testing.T) {
 			default:
 			}
 
-			reqFrame4 := frame.NewFrame(primitive.ProtocolVersion4, 5, queryMsg1)
+			reqFrame4 := frame.NewFrame(env.DefaultProtocolVersionSimulacron, 5, queryMsg1)
 			inflightRequest4, err := cqlConn.Send(reqFrame4)
 			require.Nil(t, err)
 
@@ -236,7 +239,7 @@ func TestStressShutdown(t *testing.T) {
 				require.Nil(t, err)
 				defer cqlConn.Shutdown()
 
-				err = cqlConn.PerformDefaultHandshake(context.Background(), primitive.ProtocolVersion4, false)
+				err = cqlConn.PerformDefaultHandshake(context.Background(), env.DefaultProtocolVersionSimulacron, false)
 				require.Nil(t, err)
 
 				// create a channel that will receive errors from goroutines that are sending requests,
@@ -284,7 +287,7 @@ func TestStressShutdown(t *testing.T) {
 											case <-defaultHandshakeDoneCh:
 												return
 											default:
-												rspFrame, _, err := tempCqlConn.SendMessage(context.Background(), primitive.ProtocolVersion4, &message.Options{})
+												rspFrame, _, err := tempCqlConn.SendMessage(context.Background(), env.DefaultProtocolVersionSimulacron, &message.Options{})
 												if err != nil {
 													if !shutdownProxyTriggered.Load().(bool) {
 														errChan <- fmt.Errorf("[%v] unexpected error in heartbeat: %w", id, err)
@@ -311,7 +314,7 @@ func TestStressShutdown(t *testing.T) {
 								case <-time.After(time.Duration(r) * time.Millisecond):
 								case <-globalCtx.Done():
 								}
-								err = tempCqlConn.PerformDefaultHandshake(context.Background(), primitive.ProtocolVersion4, false)
+								err = tempCqlConn.PerformDefaultHandshake(context.Background(), env.DefaultProtocolVersionSimulacron, false)
 								defaultHandshakeDoneCh <- true
 								optionsWg.Wait()
 								_ = tempCqlConn.Shutdown()
@@ -336,7 +339,7 @@ func TestStressShutdown(t *testing.T) {
 							Query:   "SELECT * FROM system.local",
 							Options: &message.QueryOptions{Consistency: primitive.ConsistencyLevelLocalOne},
 						}
-						rsp, _, err := cqlConn.SendMessage(context.Background(), primitive.ProtocolVersion4, queryMsg)
+						rsp, _, err := cqlConn.SendMessage(context.Background(), env.DefaultProtocolVersionSimulacron, queryMsg)
 
 						if err != nil {
 							if !shutdownProxyTriggered.Load().(bool) {

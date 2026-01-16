@@ -4,6 +4,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
+
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
@@ -11,7 +13,6 @@ import (
 	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
 	log "github.com/sirupsen/logrus"
-	"strings"
 )
 
 type forwardDecision string
@@ -300,7 +301,7 @@ func (recv *frameDecodeContext) GetOrDecodeFrame() (*frame.Frame, error) {
 		return recv.decodedFrame, nil
 	}
 
-	if codec, ok := codecs[recv.compression]; ok {
+	if codec, ok := frameCodecs[recv.compression]; ok {
 		decodedFrame, err := codec.ConvertFromRawFrame(recv.frame)
 		if err != nil {
 			return nil, fmt.Errorf("could not decode raw frame: %w", err)

@@ -1,17 +1,18 @@
 package zdmproxy
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"github.com/datastax/go-cassandra-native-protocol/frame"
-	"github.com/datastax/go-cassandra-native-protocol/message"
-	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/datastax/zdm-proxy/proxy/pkg/config"
-	log "github.com/sirupsen/logrus"
 	"net"
 	"sync"
 	"sync/atomic"
+
+	"github.com/datastax/go-cassandra-native-protocol/frame"
+	"github.com/datastax/go-cassandra-native-protocol/message"
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	log "github.com/sirupsen/logrus"
+
+	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 )
 
 const ClientConnectorLogPrefix = "CLIENT-CONNECTOR"
@@ -34,6 +35,9 @@ type ClientConnector struct {
 
 	// configuration object of the proxy
 	conf *config.Config
+
+	// protocol versions blocked through configuration
+	blockedProtoVersions []primitive.ProtocolVersion
 
 	// channel on which the ClientConnector sends requests as it receives them from the client
 	requestChannel chan<- *frame.RawFrame
@@ -58,12 +62,14 @@ type ClientConnector struct {
 	shutdownRequestCtx context.Context
 
 	minProtoVer primitive.ProtocolVersion
-	compression *atomic.Value
+
+	codecHelper *connCodecHelper
 }
 
 func NewClientConnector(
 	connection net.Conn,
 	conf *config.Config,
+	blockedProtoVersions []primitive.ProtocolVersion,
 	localClientHandlerWg *sync.WaitGroup,
 	requestsChan chan<- *frame.RawFrame,
 	clientHandlerContext context.Context,
@@ -78,9 +84,11 @@ func NewClientConnector(
 	minProtoVer primitive.ProtocolVersion,
 	compression *atomic.Value) *ClientConnector {
 
+	codecHelper := newConnCodecHelper(connection, connection.RemoteAddr().String(), conf.RequestReadBufferSizeBytes, conf.RequestWriteBufferSizeBytes, compression, clientHandlerContext)
 	return &ClientConnector{
 		connection:              connection,
 		conf:                    conf,
+		blockedProtoVersions:    blockedProtoVersions,
 		requestChannel:          requestsChan,
 		clientHandlerWg:         localClientHandlerWg,
 		clientHandlerContext:    clientHandlerContext,
@@ -94,7 +102,8 @@ func NewClientConnector(
 			ClientConnectorLogPrefix,
 			false,
 			false,
-			writeScheduler),
+			writeScheduler,
+			codecHelper),
 		responsesDoneChan:                    responsesDoneChan,
 		requestsDoneCtx:                      requestsDoneCtx,
 		eventsDoneChan:                       eventsDoneChan,
@@ -103,7 +112,7 @@ func NewClientConnector(
 		shutdownRequestCtx:                   shutdownRequestCtx,
 		clientHandlerShutdownRequestCancelFn: clientHandlerShutdownRequestCancelFn,
 		minProtoVer:                          minProtoVer,
-		compression:                          compression,
+		codecHelper:                          codecHelper,
 	}
 }
 
@@ -176,26 +185,26 @@ func (cc *ClientConnector) listenForRequests() {
 			setDrainModeNowFunc()
 		}()
 
-		bufferedReader := bufio.NewReaderSize(cc.connection, cc.conf.RequestWriteBufferSizeBytes)
 		connectionAddr := cc.connection.RemoteAddr().String()
 		protocolErrOccurred := false
 		var alreadySentProtocolErr *frame.RawFrame
 		for cc.clientHandlerContext.Err() == nil {
-			f, err := readRawFrame(bufferedReader, connectionAddr, cc.clientHandlerContext)
-
-			protocolErrResponseFrame, err, _ := checkProtocolError(f, cc.minProtoVer, cc.getCompression(), err, protocolErrOccurred, ClientConnectorLogPrefix)
+			f, _, err := cc.codecHelper.ReadRawFrame()
+			protocolErrResponseFrame, err, _ := checkProtocolError(
+				f, cc.minProtoVer, cc.blockedProtoVersions, cc.codecHelper.GetCompression(), err, protocolErrOccurred, ClientConnectorLogPrefix)
 			if err != nil {
 				handleConnectionError(
 					err, cc.clientHandlerContext, cc.clientHandlerCancelFunc, ClientConnectorLogPrefix, "reading", connectionAddr)
 				break
 			} else if protocolErrResponseFrame != nil {
+				protocolErrResponseFrame.Header.StreamId = 0
 				alreadySentProtocolErr = protocolErrResponseFrame
 				protocolErrOccurred = true
 				cc.sendResponseToClient(protocolErrResponseFrame)
 				continue
 			} else if alreadySentProtocolErr != nil {
 				clonedProtocolErr := alreadySentProtocolErr.DeepCopy()
-				clonedProtocolErr.Header.StreamId = f.Header.StreamId
+				clonedProtocolErr.Header.StreamId = 0
 				cc.sendResponseToClient(clonedProtocolErr)
 				continue
 			}
@@ -223,7 +232,7 @@ func (cc *ClientConnector) sendOverloadedToClient(request *frame.RawFrame) {
 		ErrorMessage: "Shutting down, please retry on next host.",
 	}
 	response := frame.NewFrame(request.Header.Version, request.Header.StreamId, msg)
-	rawResponse, err := codecs[cc.getCompression()].ConvertToRawFrame(response)
+	rawResponse, err := frameCodecs[cc.codecHelper.GetCompression()].ConvertToRawFrame(response)
 	if err != nil {
 		log.Errorf("[%s] Could not convert frame (%v) to raw frame: %v", ClientConnectorLogPrefix, response, err)
 	} else {
@@ -231,8 +240,10 @@ func (cc *ClientConnector) sendOverloadedToClient(request *frame.RawFrame) {
 	}
 }
 
-func checkProtocolError(f *frame.RawFrame, protoVer primitive.ProtocolVersion, compression primitive.Compression,
-	connErr error, protocolErrorOccurred bool, prefix string) (protocolErrResponse *frame.RawFrame, fatalErr error, errorCode int8) {
+func checkProtocolError(
+	f *frame.RawFrame, protoVer primitive.ProtocolVersion, blockedVersions []primitive.ProtocolVersion,
+	compression primitive.Compression, connErr error, protocolErrorOccurred bool, prefix string) (
+	protocolErrResponse *frame.RawFrame, fatalErr error, errorCode int8) {
 	var protocolErrMsg *message.ProtocolError
 	var streamId int16
 	var logMsg string
@@ -242,8 +253,8 @@ func checkProtocolError(f *frame.RawFrame, protoVer primitive.ProtocolVersion, c
 		streamId = 0
 		errorCode = ProtocolErrorDecodeError
 	} else {
-		protocolErrMsg = checkProtocolVersion(f.Header.Version)
-		logMsg = "Protocol v5 detected while decoding a frame."
+		protocolErrMsg = checkProtocolVersion(f.Header.Version, blockedVersions)
+		logMsg = fmt.Sprintf("Protocol %v detected while decoding a frame.", f.Header.Version)
 		streamId = f.Header.StreamId
 		errorCode = ProtocolErrorUnsupportedVersion
 	}
@@ -266,7 +277,7 @@ func checkProtocolError(f *frame.RawFrame, protoVer primitive.ProtocolVersion, c
 func generateProtocolErrorResponseFrame(streamId int16, protoVer primitive.ProtocolVersion, compression primitive.Compression,
 	protocolErrMsg *message.ProtocolError) (*frame.RawFrame, error) {
 	response := frame.NewFrame(protoVer, streamId, protocolErrMsg)
-	rawResponse, err := codecs[compression].ConvertToRawFrame(response)
+	rawResponse, err := frameCodecs[compression].ConvertToRawFrame(response)
 	if err != nil {
 		return nil, err
 	}
@@ -276,8 +287,4 @@ func generateProtocolErrorResponseFrame(streamId int16, protoVer primitive.Proto
 
 func (cc *ClientConnector) sendResponseToClient(frame *frame.RawFrame) {
 	cc.writeCoalescer.Enqueue(frame)
-}
-
-func (cc *ClientConnector) getCompression() primitive.Compression {
-	return cc.compression.Load().(primitive.Compression)
 }
