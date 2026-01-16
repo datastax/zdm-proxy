@@ -403,7 +403,8 @@ func TestInterceptedQueries(t *testing.T) {
 				originName = originSetup.(*ccm.Cluster).GetId()
 				targetSetup, err = setup.GetGlobalTestClusterTarget(t)
 				require.Nil(t, err)
-				if env.CompareServerVersion("3.0.0") < 0 {
+				if env.CompareServerVersion("4.0.0") < 0 {
+					// add thrift_version column
 					expectedLocalCols = []string{
 						"key", "bootstrapped", "broadcast_address", "cluster_name", "cql_version", "data_center",
 						"gossip_generation", "host_id", "listen_address", "native_protocol_version", "partitioner",
@@ -791,7 +792,6 @@ func TestInterceptedQueries(t *testing.T) {
 					}
 				}
 			}
-			log.SetLevel(log.TraceLevel)
 			for _, testVars := range tests {
 				t.Run(fmt.Sprintf("%s_proxy%d_%dtotalproxies", testVars.query, testVars.connectProxyIndex, testVars.proxyInstanceCount), func(t *testing.T) {
 					proxyAddresses := []string{"127.0.0.1", "127.0.0.2", "127.0.0.3"}
@@ -808,7 +808,7 @@ func TestInterceptedQueries(t *testing.T) {
 					defer proxy.Shutdown()
 
 					testClient := client.NewCqlClient(fmt.Sprintf("%v:14002", proxyAddressToConnect), nil)
-					testClient.ReadTimeout = 10 * time.Second
+					testClient.ReadTimeout = 1 * time.Second
 					cqlConnection, err := testClient.ConnectAndInit(context.Background(), v, 0)
 					require.Nil(t, err)
 					defer cqlConnection.Close()

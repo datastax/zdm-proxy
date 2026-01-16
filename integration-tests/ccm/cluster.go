@@ -89,7 +89,7 @@ func (ccmCluster *Cluster) Create(numberOfNodes int, start bool) error {
 	}
 
 	if start {
-		_, err = Start(ccmCluster.GetDelayMs())
+		_, err = Start(fmt.Sprintf("-Dcassandra.ring_delay_ms=%v", ccmCluster.GetDelayMs()))
 
 		if err != nil {
 			Remove(ccmCluster.name)
@@ -123,7 +123,7 @@ func (ccmCluster *Cluster) Start(jvmArgs ...string) error {
 	if err != nil {
 		return err
 	}
-	_, err = Start(ccmCluster.GetDelayMs(), jvmArgs...)
+	_, err = Start(append(jvmArgs, fmt.Sprintf("-Dcassandra.ring_delay_ms=%v", ccmCluster.GetDelayMs()))...)
 	return err
 }
 
@@ -167,7 +167,8 @@ func (ccmCluster *Cluster) AddNode(index int) error {
 func (ccmCluster *Cluster) StartNode(index int, jvmArgs ...string) error {
 	ccmCluster.SwitchToThis()
 	nodeIndex := ccmCluster.startNodeIndex + index
-	_, err := StartNode(ccmCluster.GetDelayMs(), fmt.Sprintf("node%d", nodeIndex), jvmArgs...)
+	_, err := StartNode(fmt.Sprintf("node%d", nodeIndex),
+		append(jvmArgs, fmt.Sprintf("-Dcassandra.ring_delay_ms=%v", ccmCluster.GetDelayMs()))...)
 	return err
 }
 

@@ -87,7 +87,7 @@ func UpdateConf(yamlChanges ...string) (string, error) {
 	return execCcm(append([]string{"updateconf"}, yamlChanges...)...)
 }
 
-func Start(delayms int, jvmArgs ...string) (string, error) {
+func Start(jvmArgs ...string) (string, error) {
 	newJvmArgs := make([]string, len(jvmArgs)*2)
 	for i := 0; i < len(newJvmArgs); i += 2 {
 		newJvmArgs[i] = "--jvm_arg"
@@ -95,13 +95,13 @@ func Start(delayms int, jvmArgs ...string) (string, error) {
 	}
 
 	if runtime.GOOS == "windows" {
-		return execCcm(append([]string{"start", "--quiet-windows", "--wait-for-binary-proto", "--jvm_arg", fmt.Sprintf("-Dcassandra.ring_delay_ms=%v", delayms)}, newJvmArgs...)...)
+		return execCcm(append([]string{"start", "--quiet-windows", "--wait-for-binary-proto"}, newJvmArgs...)...)
 	} else {
-		return execCcm(append([]string{"start", "--verbose", "--root", "--wait-for-binary-proto", "--jvm_arg", fmt.Sprintf("-Dcassandra.ring_delay_ms=%v", delayms)}, newJvmArgs...)...)
+		return execCcm(append([]string{"start", "--verbose", "--root", "--wait-for-binary-proto"}, newJvmArgs...)...)
 	}
 }
 
-func StartNode(delayms int, nodeName string, jvmArgs ...string) (string, error) {
+func StartNode(nodeName string, jvmArgs ...string) (string, error) {
 	newJvmArgs := make([]string, len(jvmArgs)*2)
 	for i := 0; i < len(newJvmArgs); i += 2 {
 		newJvmArgs[i] = "--jvm_arg"
@@ -109,9 +109,9 @@ func StartNode(delayms int, nodeName string, jvmArgs ...string) (string, error) 
 	}
 
 	if runtime.GOOS == "windows" {
-		return execCcm(append([]string{nodeName, "start", "--quiet-windows", "--wait-for-binary-proto", "--jvm_arg", fmt.Sprintf("-Dcassandra.ring_delay_ms=%v", delayms)}, newJvmArgs...)...)
+		return execCcm(append([]string{nodeName, "start", "--quiet-windows", "--wait-for-binary-proto"}, newJvmArgs...)...)
 	} else {
-		return execCcm(append([]string{nodeName, "start", "--verbose", "--root", "--wait-for-binary-proto", "--jvm_arg", fmt.Sprintf("-Dcassandra.ring_delay_ms=%v", delayms)}, newJvmArgs...)...)
+		return execCcm(append([]string{nodeName, "start", "--verbose", "--root", "--wait-for-binary-proto"}, newJvmArgs...)...)
 	}
 }
 
