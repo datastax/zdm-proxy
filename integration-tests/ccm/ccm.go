@@ -89,9 +89,9 @@ func UpdateConf(yamlChanges ...string) (string, error) {
 
 func Start(jvmArgs ...string) (string, error) {
 	newJvmArgs := make([]string, len(jvmArgs)*2)
-	for i := 0; i < len(newJvmArgs); i += 2 {
-		newJvmArgs[i] = "--jvm_arg"
-		newJvmArgs[i+1] = jvmArgs[i]
+	for i := 0; i < len(jvmArgs); i++ {
+		newJvmArgs[i*2] = "--jvm_arg"
+		newJvmArgs[i*2+1] = jvmArgs[i]
 	}
 
 	if runtime.GOOS == "windows" {
