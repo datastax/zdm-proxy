@@ -6,6 +6,14 @@ When cutting a new release, update the `unreleased` heading to the tag being gen
 
 ---
 
+## v2.4.1 - 2026-01-30
+
+### Bug Fixes
+
+* [#154](https://github.com/datastax/zdm-proxy/issues/154): Fix too small buffer for LZ4 decompression
+
+---
+
 ## v2.4.0 - 2026-01-16
 
 ### New Features
