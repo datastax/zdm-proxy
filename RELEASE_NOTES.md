@@ -6,6 +6,12 @@ Build artifacts are available at [Docker Hub](https://hub.docker.com/repository/
 
 For additional details on the changes included in a specific release, see the associated CHANGELOG-x.x.md file.
 
+## v2.4.1 - 2026-01-30
+
+Fix too small buffer for LZ4 decompression.
+
+[Changelog](CHANGELOG/CHANGELOG-2.4.md#v241---2026-01-30)
+
 ## v2.4.0 - 2026-01-16
 
 Support LZ4 and snappy compression.
