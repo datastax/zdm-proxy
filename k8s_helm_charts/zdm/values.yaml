@@ -27,6 +27,7 @@ proxy:
     tag: ""
 
 cdm:
+  enabled: "true"
   resources:
     limits:
       cpu: 16000m
@@ -40,6 +41,15 @@ cdm:
 
 nameOverride: ""
 fullnameOverride: ""
+
+# Enables connection via expected Secure Connect Bundle secret
+scb:
+  enabled: "true"
+
+# Overrides expected secret name "zdmproxy"
+secretNameOverride: ""
+# Overrides expected secret name "zdmproxy-scb"
+secretScbNameOverride: ""
 
 service:
   type: ClusterIP
