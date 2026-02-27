@@ -4,18 +4,21 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"regexp"
+	"testing"
+
 	"github.com/datastax/go-cassandra-native-protocol/client"
 	"github.com/datastax/go-cassandra-native-protocol/datacodec"
 	"github.com/datastax/go-cassandra-native-protocol/datatype"
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/datastax/zdm-proxy/integration-tests/setup"
-	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
-	"regexp"
-	"testing"
+
+	"github.com/datastax/zdm-proxy/integration-tests/env"
+	"github.com/datastax/zdm-proxy/integration-tests/setup"
+	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
 )
 
 type param struct {
@@ -153,7 +156,7 @@ func TestNowFunctionReplacementSimpleStatement(t *testing.T) {
 		defer simulacronSetup.Cleanup()
 
 		testClient := client.NewCqlClient("127.0.0.1:14002", nil)
-		cqlConn, err := testClient.ConnectAndInit(context.Background(), primitive.ProtocolVersion4, 1)
+		cqlConn, err := testClient.ConnectAndInit(context.Background(), env.DefaultProtocolVersionSimulacron, 1)
 		require.Nil(t, err, "testClient setup failed: %v", err)
 
 		defer cqlConn.Close()
@@ -165,7 +168,7 @@ func TestNowFunctionReplacementSimpleStatement(t *testing.T) {
 					Options: test.queryOpts,
 				}
 
-				f := frame.NewFrame(primitive.ProtocolVersion4, 2, queryMsg)
+				f := frame.NewFrame(env.DefaultProtocolVersionSimulacron, 2, queryMsg)
 				_, err := cqlConn.SendAndReceive(f)
 				require.Nil(tt, err)
 
@@ -1356,7 +1359,7 @@ func TestNowFunctionReplacementPreparedStatement(t *testing.T) {
 		defer simulacronSetup.Cleanup()
 
 		testClient := client.NewCqlClient("127.0.0.1:14002", nil)
-		cqlConn, err := testClient.ConnectAndInit(context.Background(), primitive.ProtocolVersion4, 1)
+		cqlConn, err := testClient.ConnectAndInit(context.Background(), env.DefaultProtocolVersionSimulacron, 1)
 		require.Nil(t, err, "testClient setup failed: %v", err)
 
 		defer cqlConn.Close()
@@ -1418,7 +1421,7 @@ func TestNowFunctionReplacementPreparedStatement(t *testing.T) {
 					Query: test.originalQuery,
 				}
 
-				f := frame.NewFrame(primitive.ProtocolVersion4, 0, queryMsg)
+				f := frame.NewFrame(env.DefaultProtocolVersionSimulacron, 0, queryMsg)
 				resp, err := cqlConn.SendAndReceive(f)
 				require.Nil(t, err)
 
@@ -1465,7 +1468,7 @@ func TestNowFunctionReplacementPreparedStatement(t *testing.T) {
 					ResultMetadataId: prepared.ResultMetadataId,
 					Options:          queryOpts,
 				}
-				f = frame.NewFrame(primitive.ProtocolVersion4, 0, executeMsg)
+				f = frame.NewFrame(env.DefaultProtocolVersionSimulacron, 0, executeMsg)
 				resp, err = cqlConn.SendAndReceive(f)
 				require.Nil(t, err)
 
@@ -1577,7 +1580,7 @@ func TestNowFunctionReplacementPreparedStatement(t *testing.T) {
 						ResultMetadataId: prepared.ResultMetadataId,
 						Options:          queryOptsNamed,
 					}
-					f = frame.NewFrame(primitive.ProtocolVersion4, 0, executeMsg)
+					f = frame.NewFrame(env.DefaultProtocolVersionSimulacron, 0, executeMsg)
 					_, err = cqlConn.SendAndReceive(f)
 					require.Nil(t, err)
 
@@ -2172,7 +2175,7 @@ func TestNowFunctionReplacementBatchStatement(t *testing.T) {
 		defer simulacronSetup.Cleanup()
 
 		testClient := client.NewCqlClient("127.0.0.1:14002", nil)
-		cqlConn, err := testClient.ConnectAndInit(context.Background(), primitive.ProtocolVersion4, 1)
+		cqlConn, err := testClient.ConnectAndInit(context.Background(), env.DefaultProtocolVersionSimulacron, 1)
 		require.Nil(t, err, "testClient setup failed: %v", err)
 
 		defer cqlConn.Close()
@@ -2254,7 +2257,7 @@ func TestNowFunctionReplacementBatchStatement(t *testing.T) {
 						if !p.isReplacedNow {
 							codec, err := datacodec.NewCodec(p.dataType)
 							require.Nil(t, err)
-							value, err := codec.Encode(p.value, primitive.ProtocolVersion4)
+							value, err := codec.Encode(p.value, env.DefaultProtocolVersionSimulacron)
 							require.Nil(t, err)
 							positionalValues = append(positionalValues, primitive.NewValue(value))
 						}
@@ -2280,7 +2283,7 @@ func TestNowFunctionReplacementBatchStatement(t *testing.T) {
 						prepareMsg := &message.Prepare{
 							Query: childStatement.originalQuery,
 						}
-						f := frame.NewFrame(primitive.ProtocolVersion4, 0, prepareMsg)
+						f := frame.NewFrame(env.DefaultProtocolVersionSimulacron, 0, prepareMsg)
 						resp, err := cqlConn.SendAndReceive(f)
 						require.Nil(t, err)
 						prepared, ok := resp.Body.Message.(*message.PreparedResult)
@@ -2306,7 +2309,7 @@ func TestNowFunctionReplacementBatchStatement(t *testing.T) {
 					Children: batchChildStatements,
 				}
 
-				f := frame.NewFrame(primitive.ProtocolVersion4, 0, batchMsg)
+				f := frame.NewFrame(env.DefaultProtocolVersionSimulacron, 0, batchMsg)
 				resp, err := cqlConn.SendAndReceive(f)
 				require.Nil(t, err)
 

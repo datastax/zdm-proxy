@@ -1,10 +1,10 @@
 package integration_tests
 
 import (
+	"github.com/apache/cassandra-gocql-driver/v2"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
 	"github.com/datastax/zdm-proxy/integration-tests/utils"
-	"github.com/gocql/gocql"
 	"github.com/stretchr/testify/require"
 	"testing"
 )

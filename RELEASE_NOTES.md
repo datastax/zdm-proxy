@@ -6,11 +6,40 @@ Build artifacts are available at [Docker Hub](https://hub.docker.com/repository/
 
 For additional details on the changes included in a specific release, see the associated CHANGELOG-x.x.md file.
 
+## v2.4.1 - 2026-02-09
+
+Fix too small buffer for LZ4 decompression.
+
+[Changelog](CHANGELOG/CHANGELOG-2.4.md#v241---2026-02-09)
+
+## v2.4.0 - 2026-01-16
+
+Support LZ4 and snappy compression.
+
+Support protocol v5.
+
+New configuration setting `ZDM_BLOCKED_PROTOCOL_VERSIONS` to block specific protocol versions at the proxy level.
+
+Send request id in the request payload (currently supported by Astra only).
+
+[Changelog](CHANGELOG/CHANGELOG-2.4.md#v240---2026-01-16)
+
+## v2.3.4 - 2025-05-29
+
+Fix CQL stream ID validation for internal heartbeat mechanism.
+
+Do not print misleading warning message when processing `SUPPORTED` response to internal heartbeat.
+
+Upgrade software dependencies to benefit from performance improvements:
+- ANTLR to 4.13.1
+
+[Changelog](CHANGELOG/CHANGELOG-2.3.md#v234---2025-05-29)
+
 ## v2.3.3 - 2025-04-29
 
 Fix race condition that caused a crash while reconnecting the control connection
 
-[Changelog](CHANGELOG/CHANGELOG-2.3.md#v233---2024-04-29)
+[Changelog](CHANGELOG/CHANGELOG-2.3.md#v233---2025-04-29)
 
 ## v2.3.2 - 2025-04-14
 
@@ -19,7 +48,7 @@ Ignore forwarding CQL requests for DSE Insights Client to target cluster
 Upgrade software dependencies to resolve vulnerabilities:
 - GoLang to 1.24.2
 
-[Changelog](CHANGELOG/CHANGELOG-2.3.md#v232---2024-04-14)
+[Changelog](CHANGELOG/CHANGELOG-2.3.md#v232---2025-04-14)
 
 ## v2.3.1 - 2024-11-08
 

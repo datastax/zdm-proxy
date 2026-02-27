@@ -4,10 +4,11 @@ import (
 	"crypto/md5"
 	"errors"
 	"fmt"
+	"strings"
+
 	"github.com/datastax/go-cassandra-native-protocol/datatype"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"strings"
 )
 
 type ParsedRow struct {
@@ -169,7 +170,8 @@ func EncodePreparedResult(
 	}
 	id := md5.Sum([]byte(query + keyspace))
 	return &message.PreparedResult{
-		PreparedQueryId: id[:],
+		PreparedQueryId:  id[:],
+		ResultMetadataId: id[:],
 		ResultMetadata: &message.RowsMetadata{
 			ColumnCount: int32(len(columns)),
 			Columns:     columns,

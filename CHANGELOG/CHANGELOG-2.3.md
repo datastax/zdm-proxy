@@ -4,9 +4,25 @@ Changelog for the ZDM Proxy, new PRs should update the `unreleased` section.
 
 When cutting a new release, update the `unreleased` heading to the tag being generated and date, like `## vX.Y.Z - YYYY-MM-DD` and create a new placeholder section for `unreleased` entries.
 
+---
+
+## v2.3.4 - 2025-05-29
+
+### Improvements
+
+* [#143](https://github.com/datastax/zdm-proxy/issues/143): Update ANTLR dependency
+
+### Bug Fixes
+
+* [#109](https://github.com/datastax/zdm-proxy/issues/109): Proxy heartbeat causes warning log message
+
+---
+
 ## v2.3.3 - 2025-04-29
 
 * [#142](https://github.com/datastax/zdm-proxy/pull/142): Handle nil control connection when reconnecting
+
+---
 
 ## v2.3.2 - 2025-04-14
 
@@ -25,6 +41,8 @@ When cutting a new release, update the `unreleased` heading to the tag being gen
 ### Improvements
 
 ### Bug Fixes
+
+---
 
 ## v2.3.0 - 2024-07-04
 

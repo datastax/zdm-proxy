@@ -3,24 +3,26 @@ package integration_tests
 import (
 	"context"
 	"fmt"
-	"github.com/datastax/go-cassandra-native-protocol/client"
-	"github.com/datastax/go-cassandra-native-protocol/frame"
-	"github.com/datastax/go-cassandra-native-protocol/message"
-	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/datastax/zdm-proxy/integration-tests/env"
-	"github.com/datastax/zdm-proxy/integration-tests/setup"
-	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
-	"github.com/datastax/zdm-proxy/integration-tests/utils"
-	"github.com/datastax/zdm-proxy/proxy/pkg/zdmproxy"
-	"github.com/google/uuid"
-	log "github.com/sirupsen/logrus"
-	"github.com/stretchr/testify/require"
 	"net"
 	"sort"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/datastax/go-cassandra-native-protocol/client"
+	"github.com/datastax/go-cassandra-native-protocol/frame"
+	"github.com/datastax/go-cassandra-native-protocol/message"
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/google/uuid"
+	log "github.com/sirupsen/logrus"
+	"github.com/stretchr/testify/require"
+
+	"github.com/datastax/zdm-proxy/integration-tests/env"
+	"github.com/datastax/zdm-proxy/integration-tests/setup"
+	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
+	"github.com/datastax/zdm-proxy/integration-tests/utils"
+	"github.com/datastax/zdm-proxy/proxy/pkg/zdmproxy"
 )
 
 func TestGetHosts(t *testing.T) {
@@ -465,7 +467,7 @@ func TestConnectionAssignment(t *testing.T) {
 			queryString := fmt.Sprintf("INSERT INTO testconnections_%d (a) VALUES ('a')", i)
 
 			openConnectionAndSendRequestFunc := func() {
-				cqlConn, err := testClient.ConnectAndInit(context.Background(), primitive.ProtocolVersion4, 1)
+				cqlConn, err := testClient.ConnectAndInit(context.Background(), env.DefaultProtocolVersionSimulacron, 1)
 				require.Nil(t, err, "testClient setup failed: %v", err)
 				defer cqlConn.Close()
 
@@ -474,7 +476,7 @@ func TestConnectionAssignment(t *testing.T) {
 					Options: nil,
 				}
 
-				queryFrame := frame.NewFrame(primitive.ProtocolVersion4, 5, queryMsg)
+				queryFrame := frame.NewFrame(env.DefaultProtocolVersionSimulacron, 5, queryMsg)
 				_, err = cqlConn.SendAndReceive(queryFrame)
 				require.Nil(t, err)
 			}
@@ -597,7 +599,7 @@ func TestRefreshTopologyEventHandler(t *testing.T) {
 				Port: 9042,
 			},
 		}
-		topologyEventFrame := frame.NewFrame(primitive.ProtocolVersion4, -1, topologyEvent)
+		topologyEventFrame := frame.NewFrame(env.DefaultProtocolVersion, -1, topologyEvent)
 		err = serverConn.Send(topologyEventFrame)
 		require.Nil(t, err)
 
@@ -759,7 +761,7 @@ func TestRefreshTopologyEventHandler(t *testing.T) {
 				newRegisterHandler(&originRegisterMessages, originRegisterLock), createMutableHandler(originHandler)}
 			testSetup.Target.CqlServer.RequestHandlers = []client.RequestHandler{
 				newRegisterHandler(&targetRegisterMessages, targetRegisterLock), createMutableHandler(targetHandler)}
-			err = testSetup.Start(conf, false, primitive.ProtocolVersion4)
+			err = testSetup.Start(conf, false, env.DefaultProtocolVersion)
 			require.Nil(t, err)
 			checkRegisterMessages(t, originRegisterMessages, originRegisterLock)
 			checkRegisterMessages(t, targetRegisterMessages, targetRegisterLock)

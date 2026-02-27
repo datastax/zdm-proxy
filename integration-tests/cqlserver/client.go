@@ -3,6 +3,7 @@ package cqlserver
 import (
 	"context"
 	"fmt"
+
 	"github.com/datastax/go-cassandra-native-protocol/client"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
 )

@@ -4,22 +4,25 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"sync"
+	"testing"
+	"time"
+
 	client2 "github.com/datastax/go-cassandra-native-protocol/client"
 	"github.com/datastax/go-cassandra-native-protocol/datatype"
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/rs/zerolog"
+	log "github.com/sirupsen/logrus"
+	"github.com/stretchr/testify/require"
+
 	"github.com/datastax/zdm-proxy/integration-tests/client"
+	"github.com/datastax/zdm-proxy/integration-tests/env"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
 	"github.com/datastax/zdm-proxy/integration-tests/utils"
 	"github.com/datastax/zdm-proxy/proxy/pkg/config"
-	"github.com/rs/zerolog"
-	log "github.com/sirupsen/logrus"
-	"github.com/stretchr/testify/require"
-	"sync"
-	"testing"
-	"time"
 )
 
 func TestPreparedIdProxyCacheMiss(t *testing.T) {
@@ -33,7 +36,7 @@ func TestPreparedIdProxyCacheMiss(t *testing.T) {
 
 	defer testClient.Shutdown()
 
-	err = testClient.PerformDefaultHandshake(context.Background(), primitive.ProtocolVersion4, false)
+	err = testClient.PerformDefaultHandshake(context.Background(), env.DefaultProtocolVersionSimulacron, false)
 	require.True(t, err == nil, "No-auth handshake failed: %s", err)
 
 	preparedId := []byte{143, 7, 36, 50, 225, 104, 157, 89, 199, 177, 239, 231, 82, 201, 142, 253}
@@ -42,7 +45,7 @@ func TestPreparedIdProxyCacheMiss(t *testing.T) {
 		QueryId:          preparedId,
 		ResultMetadataId: nil,
 	}
-	response, requestStreamId, err := testClient.SendMessage(context.Background(), primitive.ProtocolVersion4, executeMsg)
+	response, requestStreamId, err := testClient.SendMessage(context.Background(), env.DefaultProtocolVersionSimulacron, executeMsg)
 	require.True(t, err == nil, "execute request send failed: %s", err)
 	require.True(t, response != nil, "response received was null")
 
@@ -74,7 +77,7 @@ func TestPreparedIdPreparationMismatch(t *testing.T) {
 
 	defer testClient.Shutdown()
 
-	err = testClient.PerformDefaultHandshake(context.Background(), primitive.ProtocolVersion4, false)
+	err = testClient.PerformDefaultHandshake(context.Background(), env.DefaultProtocolVersionSimulacron, false)
 	require.True(t, err == nil, "No-auth handshake failed: %s", err)
 
 	tests := map[string]struct {
@@ -138,7 +141,7 @@ func TestPreparedIdPreparationMismatch(t *testing.T) {
 				Keyspace: "",
 			}
 
-			response, requestStreamId, err := testClient.SendMessage(context.Background(), primitive.ProtocolVersion4, prepareMsg)
+			response, requestStreamId, err := testClient.SendMessage(context.Background(), env.DefaultProtocolVersionSimulacron, prepareMsg)
 			require.True(t, err == nil, "prepare request send failed: %s", err)
 
 			preparedResponse, ok := response.Body.Message.(*message.PreparedResult)
@@ -153,7 +156,7 @@ func TestPreparedIdPreparationMismatch(t *testing.T) {
 				ResultMetadataId: preparedResponse.ResultMetadataId,
 			}
 
-			response, requestStreamId, err = testClient.SendMessage(context.Background(), primitive.ProtocolVersion4, executeMsg)
+			response, requestStreamId, err = testClient.SendMessage(context.Background(), env.DefaultProtocolVersionSimulacron, executeMsg)
 			require.True(t, err == nil, "execute request send failed: %s", err)
 
 			if test.expectedUnprepared {
@@ -329,7 +332,7 @@ func TestPreparedIdReplacement(t *testing.T) {
 					test.expectedBatchQuery, targetPreparedId, targetBatchPreparedId, targetKey, targetValue, map[string]interface{}{}, false,
 					test.expectedVariables, test.expectedBatchPreparedStmtVariables, dualReadsEnabled && test.read)}
 
-			err = testSetup.Start(conf, true, primitive.ProtocolVersion4)
+			err = testSetup.Start(conf, true, env.DefaultProtocolVersion)
 			require.Nil(t, err)
 
 			prepareMsg := &message.Prepare{
@@ -342,13 +345,15 @@ func TestPreparedIdReplacement(t *testing.T) {
 			}
 
 			prepareResp, err := testSetup.Client.CqlConnection.SendAndReceive(
-				frame.NewFrame(primitive.ProtocolVersion4, 10, prepareMsg))
+				frame.NewFrame(env.DefaultProtocolVersion, 10, prepareMsg))
 			require.Nil(t, err)
 
 			preparedResult, ok := prepareResp.Body.Message.(*message.PreparedResult)
 			require.True(t, ok, "prepared result was type %T", preparedResult)
 
 			require.Equal(t, originPreparedId, preparedResult.PreparedQueryId)
+
+			metadataId := preparedResult.ResultMetadataId
 
 			var batchPrepareMsg *message.Prepare
 			var expectedBatchPrepareMsg *message.Prepare
@@ -358,7 +363,7 @@ func TestPreparedIdReplacement(t *testing.T) {
 				expectedBatchPrepareMsg = batchPrepareMsg.DeepCopy()
 				expectedBatchPrepareMsg.Query = test.expectedBatchQuery
 				prepareResp, err = testSetup.Client.CqlConnection.SendAndReceive(
-					frame.NewFrame(primitive.ProtocolVersion4, 10, batchPrepareMsg))
+					frame.NewFrame(env.DefaultProtocolVersion, 10, batchPrepareMsg))
 				require.Nil(t, err)
 
 				preparedResult, ok = prepareResp.Body.Message.(*message.PreparedResult)
@@ -369,12 +374,12 @@ func TestPreparedIdReplacement(t *testing.T) {
 
 			executeMsg := &message.Execute{
 				QueryId:          originPreparedId,
-				ResultMetadataId: nil,
+				ResultMetadataId: metadataId,
 				Options:          &message.QueryOptions{},
 			}
 
 			executeResp, err := testSetup.Client.CqlConnection.SendAndReceive(
-				frame.NewFrame(primitive.ProtocolVersion4, 20, executeMsg))
+				frame.NewFrame(env.DefaultProtocolVersion, 20, executeMsg))
 			require.Nil(t, err)
 
 			rowsResult, ok := executeResp.Body.Message.(*message.RowsResult)
@@ -410,7 +415,7 @@ func TestPreparedIdReplacement(t *testing.T) {
 				}
 
 				batchResp, err := testSetup.Client.CqlConnection.SendAndReceive(
-					frame.NewFrame(primitive.ProtocolVersion4, 30, batchMsg))
+					frame.NewFrame(env.DefaultProtocolVersion, 30, batchMsg))
 				require.Nil(t, err)
 
 				batchResult, ok := batchResp.Body.Message.(*message.VoidResult)
@@ -695,7 +700,7 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 					test.batchQuery, targetPreparedId, targetBatchPreparedId, targetKey, targetValue, targetCtx, test.targetUnprepared,
 					nil, nil, dualReadsEnabled && test.read)}
 
-			err = testSetup.Start(conf, true, primitive.ProtocolVersion4)
+			err = testSetup.Start(conf, true, env.DefaultProtocolVersion)
 			require.Nil(t, err)
 
 			prepareMsg := &message.Prepare{
@@ -704,7 +709,7 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 			}
 
 			prepareResp, err := testSetup.Client.CqlConnection.SendAndReceive(
-				frame.NewFrame(primitive.ProtocolVersion4, 10, prepareMsg))
+				frame.NewFrame(env.DefaultProtocolVersion, 10, prepareMsg))
 			require.Nil(t, err)
 
 			preparedResult, ok := prepareResp.Body.Message.(*message.PreparedResult)
@@ -714,12 +719,12 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 
 			executeMsg := &message.Execute{
 				QueryId:          originPreparedId,
-				ResultMetadataId: nil,
+				ResultMetadataId: preparedResult.ResultMetadataId,
 				Options:          &message.QueryOptions{},
 			}
 
 			executeResp, err := testSetup.Client.CqlConnection.SendAndReceive(
-				frame.NewFrame(primitive.ProtocolVersion4, 20, executeMsg))
+				frame.NewFrame(env.DefaultProtocolVersion, 20, executeMsg))
 			require.Nil(t, err)
 
 			unPreparedResult, ok := executeResp.Body.Message.(*message.Unprepared)
@@ -728,7 +733,7 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 			require.Equal(t, originPreparedId, unPreparedResult.Id)
 
 			prepareResp, err = testSetup.Client.CqlConnection.SendAndReceive(
-				frame.NewFrame(primitive.ProtocolVersion4, 10, prepareMsg))
+				frame.NewFrame(env.DefaultProtocolVersion, 10, prepareMsg))
 			require.Nil(t, err)
 
 			preparedResult, ok = prepareResp.Body.Message.(*message.PreparedResult)
@@ -737,7 +742,7 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 			require.Equal(t, originPreparedId, preparedResult.PreparedQueryId)
 
 			executeResp, err = testSetup.Client.CqlConnection.SendAndReceive(
-				frame.NewFrame(primitive.ProtocolVersion4, 20, executeMsg))
+				frame.NewFrame(env.DefaultProtocolVersion, 20, executeMsg))
 			require.Nil(t, err)
 
 			rowsResult, ok := executeResp.Body.Message.(*message.RowsResult)
@@ -749,7 +754,7 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 				batchPrepareMsg = prepareMsg.DeepCopy()
 				batchPrepareMsg.Query = test.batchQuery
 				prepareResp, err = testSetup.Client.CqlConnection.SendAndReceive(
-					frame.NewFrame(primitive.ProtocolVersion4, 10, batchPrepareMsg))
+					frame.NewFrame(env.DefaultProtocolVersion, 10, batchPrepareMsg))
 				require.Nil(t, err)
 
 				preparedResult, ok = prepareResp.Body.Message.(*message.PreparedResult)
@@ -779,7 +784,7 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 				}
 
 				batchResp, err := testSetup.Client.CqlConnection.SendAndReceive(
-					frame.NewFrame(primitive.ProtocolVersion4, 30, batchMsg))
+					frame.NewFrame(env.DefaultProtocolVersion, 30, batchMsg))
 				require.Nil(t, err)
 
 				unPreparedResult, ok := batchResp.Body.Message.(*message.Unprepared)
@@ -788,7 +793,7 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 				require.Equal(t, originBatchPreparedId, unPreparedResult.Id)
 
 				prepareResp, err = testSetup.Client.CqlConnection.SendAndReceive(
-					frame.NewFrame(primitive.ProtocolVersion4, 10, batchPrepareMsg))
+					frame.NewFrame(env.DefaultProtocolVersion, 10, batchPrepareMsg))
 				require.Nil(t, err)
 
 				preparedResult, ok = prepareResp.Body.Message.(*message.PreparedResult)
@@ -797,7 +802,7 @@ func TestUnpreparedIdReplacement(t *testing.T) {
 				require.Equal(t, originBatchPreparedId, preparedResult.PreparedQueryId)
 
 				batchResp, err = testSetup.Client.CqlConnection.SendAndReceive(
-					frame.NewFrame(primitive.ProtocolVersion4, 30, batchMsg))
+					frame.NewFrame(env.DefaultProtocolVersion, 30, batchMsg))
 				require.Nil(t, err)
 
 				batchResult, ok := batchResp.Body.Message.(*message.VoidResult)
@@ -1034,7 +1039,7 @@ func NewPreparedTestHandler(
 			lock.Unlock()
 			return frame.NewFrame(request.Header.Version, request.Header.StreamId, &message.PreparedResult{
 				PreparedQueryId:   prepId,
-				ResultMetadataId:  nil,
+				ResultMetadataId:  prepId,
 				VariablesMetadata: variablesMetadata,
 				ResultMetadata:    rowsMetadata,
 			})

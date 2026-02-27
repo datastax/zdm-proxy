@@ -9,7 +9,42 @@ on:
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
+env:
+  SIMULACRON_VERSION: 0.10.0
+  GO_VERSION: 1.24.2
 jobs:
+  dependencies:
+    name: Fetch dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/cache@v4
+        id: restore-go
+        with:
+          path: ~/deps/godl
+          key: ${{ runner.os }}-deps-godl-${{ env.GO_VERSION }}
+          
+      - uses: actions/cache@v4
+        id: restore-simulacron
+        with:
+          path: ~/deps/simulacron
+          key: ${{ runner.os }}-deps-simulacron-${{ env.SIMULACRON_VERSION }}
+          
+      - if: ${{ steps.restore-go.outputs.cache-hit != 'true' }}
+        name: Download Go
+        continue-on-error: true
+        run: |
+          mkdir -p ~/deps/godl
+          cd ~/deps/godl
+          wget -O go.tar.gz https://go.dev/dl/go${{ env.GO_VERSION }}.linux-amd64.tar.gz
+          
+      - if: ${{ steps.restore-simulacron.outputs.cache-hit != 'true' }}
+        name: Download simulacron
+        continue-on-error: true
+        run: |
+          mkdir -p ~/deps/simulacron
+          cd ~/deps/simulacron
+          wget -O simulacron.jar https://github.com/datastax/simulacron/releases/download/${{ env.SIMULACRON_VERSION }}/simulacron-standalone-${{ env.SIMULACRON_VERSION }}.jar
+
   # Runs a NoSQLBench job in docker-compose with 3 proxy nodes
   # Verifies the written data matches in both ORIGIN and TARGET clusters
   nosqlbench-tests:
@@ -20,7 +55,7 @@ jobs:
       - name: Start docker-compose
         id: compose
         run: |
-          docker compose -f docker-compose-tests.yml up --abort-on-container-exit --exit-code-from=nosqlbench
+          docker compose -f docker-compose-tests.yml up --abort-on-container-exit --exit-code-from=nosqlbench4
       - name: Test Summary
         if: ${{ failure() }}
         run: |
@@ -29,15 +64,20 @@ jobs:
   # Runs all the unit tests under the proxy module (all the *_test.go files)
   unit-tests:
     name: Unit Tests
+    needs: dependencies
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
+      - uses: actions/cache@v4
+        id: restore-go
+        with:
+          path: ~/deps/godl
+          key: ${{ runner.os }}-deps-godl-${{ env.GO_VERSION }}
       - name: Run
         run: |
           sudo apt update
           sudo apt -y install default-jre gcc git wget
-          wget https://go.dev/dl/go1.24.2.linux-amd64.tar.gz
-          sudo tar -xzf go*.tar.gz -C /usr/local/
+          sudo tar -xzf ~/deps/godl/go.tar.gz -C /usr/local/
           export PATH=$PATH:/usr/local/go/bin
           export PATH=$PATH:`go env GOPATH`/bin
           go install github.com/jstemmer/go-junit-report/v2@latest
@@ -52,21 +92,35 @@ jobs:
   # These tests use Simulacron and in-memory CQLServer
   integration-tests-mock:
     name: Mock Tests
+    needs: dependencies
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
+
+      - uses: actions/cache@v4
+        id: restore-go
+        with:
+          path: ~/deps/godl
+          key: ${{ runner.os }}-deps-godl-${{ env.GO_VERSION }}
+
+      - uses: actions/cache@v4
+        id: restore-simulacron
+        with:
+          path: ~/deps/simulacron
+          key: ${{ runner.os }}-deps-simulacron-${{ env.SIMULACRON_VERSION }}
+
       - name: Run
         run: |
           sudo apt update
           sudo apt -y install openjdk-8-jdk gcc git wget
-          wget https://go.dev/dl/go1.24.2.linux-amd64.tar.gz
-          sudo tar -xzf go*.tar.gz -C /usr/local/
+          sudo tar -xzf ~/deps/godl/go.tar.gz -C /usr/local/
           export PATH=$PATH:/usr/local/go/bin
           export PATH=$PATH:`go env GOPATH`/bin
           go install github.com/jstemmer/go-junit-report/v2@latest
-          wget https://github.com/datastax/simulacron/releases/download/0.10.0/simulacron-standalone-0.10.0.jar
-          export SIMULACRON_PATH=`pwd`/simulacron-standalone-0.10.0.jar
+          cp ~/deps/simulacron/simulacron.jar .
+          export SIMULACRON_PATH=`pwd`/simulacron.jar
           go test -timeout 180m -v 2>&1 ./integration-tests | go-junit-report -set-exit-code -iocopy -out report-integration-mock.xml
+      
       - name: Test Summary
         uses: test-summary/action@v1
         if: always()
@@ -76,26 +130,63 @@ jobs:
   # Runs integration tests using CCM
   integration-tests-ccm:
     name: CCM Tests
+    needs: dependencies
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cassandra_version: [ '2.2.19', '3.11.19', '4.1.9', '5.0.6', 'dse-4.8.16', 'dse-5.1.48', 'dse-6.8.61' ]
     steps:
       - uses: actions/checkout@v2
+            
+      - uses: actions/cache@v4
+        id: restore-go
+        with:
+          path: ~/deps/godl
+          key: ${{ runner.os }}-deps-godl-${{ env.GO_VERSION }}
+
+      - uses: actions/cache@v4
+        id: restore-cache-ccm
+        with:
+          path: ~/.ccm/repository
+          key: ${{ runner.os }}-ccm-${{ matrix.cassandra_version }}
+
       - name: Run
         run: |
           sudo apt update
+          
           sudo apt -y install openjdk-8-jdk gcc git wget pip
-          wget https://go.dev/dl/go1.24.2.linux-amd64.tar.gz
-          sudo tar -xzf go*.tar.gz -C /usr/local/
-          export PATH=$PATH:/usr/local/go/bin
-          export PATH=$PATH:`go env GOPATH`/bin
+          sudo apt -y install openjdk-11-jdk gcc git wget pip
+
           export JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64
+          export JAVA8_HOME=/usr/lib/jvm/java-8-openjdk-amd64
+          export JAVA11_HOME=/usr/lib/jvm/java-11-openjdk-amd64
           export PATH=$JAVA_HOME/bin:$PATH
           java -version
+          
+          sudo tar -xzf ~/deps/godl/go.tar.gz -C /usr/local/
+          export PATH=$PATH:/usr/local/go/bin
+          export PATH=$PATH:`go env GOPATH`/bin
+
           go install github.com/jstemmer/go-junit-report/v2@latest
-          pip install ccm
+
+          CCM_VERSION="0e20102c1cad99104969239f1ac375b6fcaa7bbc"
+          export CCM_VERSION
+          echo "Install CCM ${CCM_VERSION}"
+          pip install "git+https://github.com/apache/cassandra-ccm.git@${CCM_VERSION}"
+
           which ccm
           sudo ln -s /home/runner/.local/bin/ccm /usr/local/bin/ccm
           /usr/local/bin/ccm list
-          go test -timeout 180m -v 2>&1 ./integration-tests -RUN_MOCKTESTS=false -RUN_CCMTESTS=true | go-junit-report -set-exit-code -iocopy -out report-integration-ccm.xml
+
+          go test -timeout 180m -v 2>&1 ./integration-tests -RUN_MOCKTESTS=false -RUN_CCMTESTS=true -CASSANDRA_VERSION=${{ matrix.cassandra_version }} | go-junit-report -set-exit-code -iocopy -out report-integration-ccm.xml
+
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: ~/.ccm/repository
+          key: ${{ runner.os }}-ccm-${{ matrix.cassandra_version }}
+      
       - name: Test Summary
         uses: test-summary/action@v1
         if: always()
@@ -105,21 +196,31 @@ jobs:
   # Runs the mock tests with go's race checker to spot potential data races
   race-checker:
     name: Race Checker
+    needs: dependencies
     runs-on: ubuntu-latest
     if: ${{ false }} # temporarily disabled
     steps:
       - uses: actions/checkout@v2
+      - uses: actions/cache@v4
+        id: restore-simulacron
+        with:
+          path: ~/deps/simulacron
+          key: ${{ runner.os }}-deps-simulacron-${{ env.SIMULACRON_VERSION }}
+      - uses: actions/cache@v4
+        id: restore-go
+        with:
+          path: ~/deps/godl
+          key: ${{ runner.os }}-deps-godl-${{ env.GO_VERSION }}
       - name: Run
         run: |
           sudo apt update
           sudo apt -y install openjdk-8-jdk gcc git pip wget
-          wget https://go.dev/dl/go1.24.2.linux-amd64.tar.gz
-          sudo tar -xzf go*.tar.gz -C /usr/local/
+          sudo tar -xzf ~/deps/godl/go.tar.gz -C /usr/local/
           export PATH=$PATH:/usr/local/go/bin
           export PATH=$PATH:`go env GOPATH`/bin
           go install github.com/jstemmer/go-junit-report/v2@latest
-          wget https://github.com/datastax/simulacron/releases/download/0.10.0/simulacron-standalone-0.10.0.jar
-          export SIMULACRON_PATH=`pwd`/simulacron-standalone-0.10.0.jar
+          cp ~/deps/simulacron/simulacron.jar .
+          export SIMULACRON_PATH=`pwd`/simulacron.jar
           go test -race -timeout 180m -v 2>&1 ./integration-tests | go-junit-report -set-exit-code -iocopy -out report-integration-race.xml
       - name: Test Summary
         uses: test-summary/action@v1
@@ -130,16 +231,21 @@ jobs:
   # Performs static analysis to check for things like context leaks
   go-vet:
     name: Go Vet
+    needs: dependencies
     runs-on: ubuntu-latest
     if: ${{ false }} # temporarily disabled
     steps:
       - uses: actions/checkout@v2
+      - uses: actions/cache@v4
+        id: restore-go
+        with:
+          path: ~/deps/godl
+          key: ${{ runner.os }}-deps-godl-${{ env.GO_VERSION }}
       - name: Run
         run: |
           sudo apt update
           sudo apt -y install openjdk-8-jdk gcc git pip wget
-          wget https://go.dev/dl/go1.24.2.linux-amd64.tar.gz
-          sudo tar -xzf go*.tar.gz -C /usr/local/
+          sudo tar -xzf ~/deps/godl/go.tar.gz -C /usr/local/
           export PATH=$PATH:/usr/local/go/bin
           export PATH=$PATH:`go env GOPATH`/bin
           go vet ./...

@@ -2,26 +2,25 @@ package integration_tests
 
 import (
 	"fmt"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+
 	"github.com/datastax/zdm-proxy/integration-tests/env"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/integration-tests/utils"
-	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestSaiSelect(t *testing.T) {
-	if !env.RunCcmTests {
-		t.Skip("Test requires CCM, set RUN_CCMTESTS env variable to TRUE")
-	}
 	if !(env.IsDse && env.CompareServerVersion("6.9") >= 0) {
 		t.Skip("Test requires DSE 6.9 cluster")
 	}
 
-	proxyInstance, err := NewProxyInstanceForGlobalCcmClusters()
+	proxyInstance, err := NewProxyInstanceForGlobalCcmClusters(t)
 	require.Nil(t, err)
 	defer proxyInstance.Shutdown()
 
-	originCluster, targetCluster, err := SetupOrGetGlobalCcmClusters()
+	originCluster, targetCluster, err := SetupOrGetGlobalCcmClusters(t)
 	require.Nil(t, err)
 
 	// Initialize test data

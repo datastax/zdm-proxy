@@ -2,17 +2,22 @@ package integration_tests
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
+	"slices"
+	"strings"
+	"testing"
+
 	"github.com/datastax/go-cassandra-native-protocol/client"
 	"github.com/datastax/go-cassandra-native-protocol/datatype"
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/datastax/zdm-proxy/integration-tests/setup"
+	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
-	"net"
-	"slices"
-	"testing"
+
+	"github.com/datastax/zdm-proxy/integration-tests/setup"
 )
 
 // Test that proxy can establish connectivity with ORIGIN and TARGET
@@ -32,7 +37,7 @@ func TestProtocolNegotiationDifferentClusters(t *testing.T) {
 	}{
 		{
 			name:                   "OriginV2_TargetV2_ClientV2",
-			proxyMaxProtoVer:       "2",
+			proxyMaxProtoVer:       "",
 			proxyOriginContConnVer: primitive.ProtocolVersion2,
 			proxyTargetContConnVer: primitive.ProtocolVersion2,
 			originProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion2},
@@ -40,8 +45,17 @@ func TestProtocolNegotiationDifferentClusters(t *testing.T) {
 			clientProtoVer:         primitive.ProtocolVersion2,
 		},
 		{
+			name:                   "OriginV23_TargetV345_ClientV3",
+			proxyMaxProtoVer:       "",
+			proxyOriginContConnVer: primitive.ProtocolVersion3,
+			proxyTargetContConnVer: primitive.ProtocolVersion5,
+			originProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion2, primitive.ProtocolVersion3},
+			targetProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion3, primitive.ProtocolVersion4, primitive.ProtocolVersion5},
+			clientProtoVer:         primitive.ProtocolVersion3,
+		},
+		{
 			name:                   "OriginV2_TargetV2_ClientV2_ProxyControlConnNegotiation",
-			proxyMaxProtoVer:       "4",
+			proxyMaxProtoVer:       "",
 			proxyOriginContConnVer: primitive.ProtocolVersion2,
 			proxyTargetContConnVer: primitive.ProtocolVersion2,
 			originProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion2},
@@ -50,7 +64,7 @@ func TestProtocolNegotiationDifferentClusters(t *testing.T) {
 		},
 		{
 			name:                   "OriginV2_TargetV23_ClientV2",
-			proxyMaxProtoVer:       "3",
+			proxyMaxProtoVer:       "",
 			proxyOriginContConnVer: primitive.ProtocolVersion2,
 			proxyTargetContConnVer: primitive.ProtocolVersion3,
 			originProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion2},
@@ -59,7 +73,7 @@ func TestProtocolNegotiationDifferentClusters(t *testing.T) {
 		},
 		{
 			name:                   "OriginV23_TargetV2_ClientV2",
-			proxyMaxProtoVer:       "3",
+			proxyMaxProtoVer:       "",
 			proxyOriginContConnVer: primitive.ProtocolVersion3,
 			proxyTargetContConnVer: primitive.ProtocolVersion2,
 			originProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion2, primitive.ProtocolVersion3},
@@ -69,42 +83,60 @@ func TestProtocolNegotiationDifferentClusters(t *testing.T) {
 		{
 			// most common setup with OSS Cassandra
 			name:                   "OriginV345_TargetV345_ClientV4",
-			proxyMaxProtoVer:       "DseV2",
-			proxyOriginContConnVer: primitive.ProtocolVersion4,
-			proxyTargetContConnVer: primitive.ProtocolVersion4,
+			proxyMaxProtoVer:       "",
+			proxyOriginContConnVer: primitive.ProtocolVersion5,
+			proxyTargetContConnVer: primitive.ProtocolVersion5,
 			originProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion3, primitive.ProtocolVersion4, primitive.ProtocolVersion5},
 			targetProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion3, primitive.ProtocolVersion4, primitive.ProtocolVersion5},
 			clientProtoVer:         primitive.ProtocolVersion4,
 		},
 		{
+			name:                   "OriginV345_TargetV345_ClientV5",
+			proxyMaxProtoVer:       "",
+			proxyOriginContConnVer: primitive.ProtocolVersion5,
+			proxyTargetContConnVer: primitive.ProtocolVersion5,
+			originProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion3, primitive.ProtocolVersion4, primitive.ProtocolVersion5},
+			targetProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion3, primitive.ProtocolVersion4, primitive.ProtocolVersion5},
+			clientProtoVer:         primitive.ProtocolVersion5,
+		},
+		{
 			// most common setup with DSE
 			name:                   "OriginV345_TargetV34Dse1Dse2_ClientV4",
-			proxyMaxProtoVer:       "DseV2",
-			proxyOriginContConnVer: primitive.ProtocolVersion4,
+			proxyMaxProtoVer:       "",
+			proxyOriginContConnVer: primitive.ProtocolVersion5,
 			proxyTargetContConnVer: primitive.ProtocolVersionDse2,
 			originProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion3, primitive.ProtocolVersion4, primitive.ProtocolVersion5},
 			targetProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion3, primitive.ProtocolVersion4, primitive.ProtocolVersionDse1, primitive.ProtocolVersionDse2},
 			clientProtoVer:         primitive.ProtocolVersion4,
 		},
 		{
-			name:                   "OriginV2_TargetV3_ClientV2",
-			proxyMaxProtoVer:       "3",
+			name:                   "OriginV234Dse1Dse2_TargetV345_ClientV4",
+			proxyMaxProtoVer:       "",
+			proxyOriginContConnVer: primitive.ProtocolVersionDse2,
+			proxyTargetContConnVer: primitive.ProtocolVersion5,
+			originProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion2, primitive.ProtocolVersion3, primitive.ProtocolVersion4, primitive.ProtocolVersionDse1, primitive.ProtocolVersionDse2},
+			targetProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion3, primitive.ProtocolVersion4, primitive.ProtocolVersion5},
+			clientProtoVer:         primitive.ProtocolVersion4,
+		},
+		{
+			name:                   "OriginV2_TargetV345_FailClient",
+			proxyMaxProtoVer:       "",
 			proxyOriginContConnVer: primitive.ProtocolVersion2,
-			proxyTargetContConnVer: primitive.ProtocolVersion3,
+			proxyTargetContConnVer: primitive.ProtocolVersion5,
 			originProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion2},
-			targetProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion3},
+			targetProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion3, primitive.ProtocolVersion4, primitive.ProtocolVersion5},
 			clientProtoVer:         primitive.ProtocolVersion2,
 			// client connection should fail as there is no common protocol version between origin and target
 			failClientConnect: true,
 		}, {
-			name:                   "OriginV3_TargetV3_ClientV3_Too_Low_Proto_Configured",
+			name:                   "OriginV3_TargetV3_Too_Low_Proto_Configured",
 			proxyMaxProtoVer:       "2",
 			proxyOriginContConnVer: primitive.ProtocolVersion3,
 			proxyTargetContConnVer: primitive.ProtocolVersion3,
 			originProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion3},
 			targetProtoVer:         []primitive.ProtocolVersion{primitive.ProtocolVersion3},
 			clientProtoVer:         primitive.ProtocolVersion2,
-			// client proxy startup, because configured protocol version is too low
+			// fail proxy control connection, because configured protocol version is too low
 			failProxyStartup: true,
 		},
 	}
@@ -113,6 +145,7 @@ func TestProtocolNegotiationDifferentClusters(t *testing.T) {
 	targetAddress := "127.0.1.2"
 	serverConf := setup.NewTestConfig(originAddress, targetAddress)
 	proxyConf := setup.NewTestConfig(originAddress, targetAddress)
+	log.SetLevel(log.TraceLevel)
 
 	queryInsert := &message.Query{
 		Query: "INSERT INTO test_ks.test(key, value) VALUES(1, '1')", // use INSERT to route request to both clusters
@@ -123,7 +156,9 @@ func TestProtocolNegotiationDifferentClusters(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			proxyConf.ControlConnMaxProtocolVersion = test.proxyMaxProtoVer
+			if test.proxyMaxProtoVer != "" {
+				proxyConf.ControlConnMaxProtocolVersion = test.proxyMaxProtoVer
+			}
 
 			testSetup, err := setup.NewCqlServerTestSetup(t, serverConf, false, false, false)
 			require.Nil(t, err)
@@ -178,6 +213,152 @@ func TestProtocolNegotiationDifferentClusters(t *testing.T) {
 			require.Equal(t, test.proxyTargetContConnVer, proxyCqlConn.GetProtocolVersion())
 		})
 	}
+}
+
+// Test that proxy blocks protocol versions when configured to do so
+func TestProtocolNegotiationBlockedVersions(t *testing.T) {
+	tests := []struct {
+		name              string
+		clusterProtoVers  []primitive.ProtocolVersion
+		blockedProtoVers  string
+		clientProtoVer    primitive.ProtocolVersion
+		failClientConnect bool
+	}{
+		{
+			name:              "ClusterV2_BlockedV2_ClientFail",
+			clusterProtoVers:  []primitive.ProtocolVersion{primitive.ProtocolVersion2},
+			blockedProtoVers:  "v2",
+			failClientConnect: true,
+		},
+		{
+			name:             "ClusterV2V3V4_BlockedV2_ClientV4",
+			clusterProtoVers: []primitive.ProtocolVersion{0x2, 0x3, 0x4},
+			blockedProtoVers: "v2",
+			clientProtoVer:   0x4,
+		},
+		{
+			name:             "ClusterV2V3V4V5_BlockedV5_ClientV4",
+			clusterProtoVers: []primitive.ProtocolVersion{0x2, 0x3, 0x4, 0x5},
+			blockedProtoVers: "v5",
+			clientProtoVer:   0x4,
+		},
+		{
+			name:             "ClusterV2V3V4V5_BlockedV4V5_ClientV3",
+			clusterProtoVers: []primitive.ProtocolVersion{0x2, 0x3, 0x4, 0x5},
+			blockedProtoVers: "v4,v5",
+			clientProtoVer:   0x3,
+		},
+		{
+			name:              "ClusterV2V3V4V5_BlockedV2V3V4V5_ClientFail",
+			clusterProtoVers:  []primitive.ProtocolVersion{0x2, 0x3, 0x4, 0x5},
+			blockedProtoVers:  "2,3,4,5",
+			failClientConnect: true,
+		},
+		{
+			name:             "ClusterV2V3V4DseV1DseV2_BlockedV4V5DseV1_ClientDseV2",
+			clusterProtoVers: []primitive.ProtocolVersion{0x2, 0x3, 0x4, primitive.ProtocolVersionDse1, primitive.ProtocolVersionDse2},
+			blockedProtoVers: "V4,V5,DseV1",
+			clientProtoVer:   primitive.ProtocolVersionDse2,
+		},
+		{
+			name:             "ClusterV2V3V4DseV1_BlockedV5_ClientDseV1",
+			clusterProtoVers: []primitive.ProtocolVersion{0x2, 0x3, 0x4, primitive.ProtocolVersionDse1},
+			blockedProtoVers: "V5",
+			clientProtoVer:   primitive.ProtocolVersionDse1,
+		},
+		{
+			name:             "ClusterV2V3V4DseV1_BlockedDseV1_ClientV4",
+			clusterProtoVers: []primitive.ProtocolVersion{0x2, 0x3, 0x4, primitive.ProtocolVersionDse1},
+			blockedProtoVers: "dsev1",
+			clientProtoVer:   0x4,
+		},
+	}
+
+	originAddress := "127.0.1.1"
+	targetAddress := "127.0.1.2"
+	serverConf := setup.NewTestConfig(originAddress, targetAddress)
+	proxyConf := setup.NewTestConfig(originAddress, targetAddress)
+	log.SetLevel(log.TraceLevel)
+
+	queryInsert := &message.Query{
+		Query: "INSERT INTO test_ks.test(key, value) VALUES(1, '1')", // use INSERT to route request to both clusters
+	}
+	querySelect := &message.Query{
+		Query: "SELECT * FROM test_ks.test",
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			proxyConf.BlockedProtocolVersions = test.blockedProtoVers
+
+			testSetup, err := setup.NewCqlServerTestSetup(t, serverConf, false, false, false)
+			require.Nil(t, err)
+			defer testSetup.Cleanup()
+
+			originRequestHandler := NewProtocolNegotiationRequestHandler("origin", "dc1", originAddress, test.clusterProtoVers)
+			targetRequestHandler := NewProtocolNegotiationRequestHandler("target", "dc1", targetAddress, test.clusterProtoVers)
+
+			testSetup.Origin.CqlServer.RequestHandlers = []client.RequestHandler{
+				originRequestHandler.HandleRequest,
+				client.NewDriverConnectionInitializationHandler("origin", "dc1", func(_ string) {}),
+			}
+			testSetup.Target.CqlServer.RequestHandlers = []client.RequestHandler{
+				targetRequestHandler.HandleRequest,
+				client.NewDriverConnectionInitializationHandler("target", "dc1", func(_ string) {}),
+			}
+
+			err = testSetup.Start(nil, false, 0)
+			require.Nil(t, err)
+
+			proxy, err := setup.NewProxyInstanceWithConfig(proxyConf) // starts the proxy
+			if proxy != nil {
+				defer proxy.Shutdown()
+			}
+			require.Nil(t, err)
+
+			cqlConn, clientProtoVer, err := connectWithNegotiation(testSetup.Client.CqlClient, context.Background())
+			if cqlConn != nil {
+				defer cqlConn.Close()
+			}
+			if test.failClientConnect {
+				require.NotNil(t, err)
+				return
+			}
+			require.Nil(t, err)
+
+			require.Equal(t, test.clientProtoVer, clientProtoVer)
+
+			response, err := cqlConn.SendAndReceive(frame.NewFrame(test.clientProtoVer, 0, queryInsert))
+			require.Nil(t, err)
+			require.IsType(t, &message.VoidResult{}, response.Body.Message)
+
+			response, err = cqlConn.SendAndReceive(frame.NewFrame(test.clientProtoVer, 0, querySelect))
+			require.Nil(t, err)
+			resultSet := response.Body.Message.(*message.RowsResult).Data
+			require.Equal(t, 1, len(resultSet))
+		})
+	}
+}
+
+func connectWithNegotiation(cqlClient *client.CqlClient, ctx context.Context) (*client.CqlClientConnection, primitive.ProtocolVersion, error) {
+	orderedProtoVersions := []primitive.ProtocolVersion{
+		primitive.ProtocolVersionDse2, primitive.ProtocolVersionDse1, primitive.ProtocolVersion5,
+		primitive.ProtocolVersion4, primitive.ProtocolVersion3, primitive.ProtocolVersion2}
+
+	for _, protoVersion := range orderedProtoVersions {
+		conn, err := cqlClient.ConnectAndInit(ctx, protoVersion, 0)
+		if err != nil {
+			if conn != nil {
+				conn.Close()
+			}
+			if strings.Contains(strings.ToLower(err.Error()), "handler closed") {
+				continue
+			}
+			return nil, 0, fmt.Errorf("negotiate error: %w", err)
+		}
+		return conn, protoVersion, nil
+	}
+	return nil, 0, errors.New("all protocol versions failed")
 }
 
 type ProtocolNegotiationRequestHandler struct {

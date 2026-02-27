@@ -3,19 +3,22 @@ package integration_tests
 import (
 	"context"
 	"fmt"
-	"github.com/datastax/go-cassandra-native-protocol/frame"
-	"github.com/datastax/go-cassandra-native-protocol/message"
-	"github.com/datastax/go-cassandra-native-protocol/primitive"
-	"github.com/datastax/zdm-proxy/integration-tests/client"
-	"github.com/datastax/zdm-proxy/integration-tests/setup"
-	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
-	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
-	"github.com/datastax/zdm-proxy/proxy/pkg/runner"
-	"github.com/stretchr/testify/require"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/datastax/go-cassandra-native-protocol/frame"
+	"github.com/datastax/go-cassandra-native-protocol/message"
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/stretchr/testify/require"
+
+	"github.com/datastax/zdm-proxy/integration-tests/client"
+	"github.com/datastax/zdm-proxy/integration-tests/env"
+	"github.com/datastax/zdm-proxy/integration-tests/setup"
+	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
+	"github.com/datastax/zdm-proxy/proxy/pkg/metrics"
+	"github.com/datastax/zdm-proxy/proxy/pkg/runner"
 )
 
 type resources struct {
@@ -101,7 +104,7 @@ func TestStreamIdsMetrics(t *testing.T) {
 				defer resources.close()
 
 				assertUsedStreamIds := initAsserts(resources.setup, metricsPrefix)
-				asyncQuery := asyncContextWrap(resources.testClient)
+				asyncQuery := asyncContextWrap(env.DefaultProtocolVersionSimulacron, resources.testClient)
 				for idx, query := range testCase.queries {
 					replacedQuery := fmt.Sprintf(query, formatName(t))
 					testCase.queries[idx] = replacedQuery
@@ -125,7 +128,7 @@ func TestStreamIdsMetrics(t *testing.T) {
 
 // asyncContextWrap is a higher-order function that holds a reference to the test client and returns a function that
 // actually executes the query in an asynchronous fashion and returns an WaitGroup for synchronization
-func asyncContextWrap(testClient *client.TestClient) func(t *testing.T, query string, repeat int) *sync.WaitGroup {
+func asyncContextWrap(version primitive.ProtocolVersion, testClient *client.TestClient) func(t *testing.T, query string, repeat int) *sync.WaitGroup {
 	run := func(t *testing.T, query string, repeat int) *sync.WaitGroup {
 		// WaitGroup for controlling the dispatched/sent queries
 		dispatchedWg := &sync.WaitGroup{}
@@ -137,7 +140,7 @@ func asyncContextWrap(testClient *client.TestClient) func(t *testing.T, query st
 			go func(testClient *client.TestClient, dispatched *sync.WaitGroup, returned *sync.WaitGroup) {
 				defer returnedWg.Done()
 				dispatchedWg.Done()
-				executeQuery(t, testClient, query)
+				executeQuery(t, version, testClient, query)
 			}(testClient, dispatchedWg, returnedWg)
 		}
 		dispatchedWg.Wait()
@@ -160,7 +163,7 @@ func setupResources(t *testing.T, testSetup *setup.SimulacronTestSetup, metricsP
 
 	testClient, err := client.NewTestClientWithRequestTimeout(context.Background(), fmt.Sprintf("127.0.0.1:%v", proxyPort), 10*time.Second)
 	require.Nil(t, err)
-	testClient.PerformDefaultHandshake(context.Background(), primitive.ProtocolVersion3, false)
+	testClient.PerformDefaultHandshake(context.Background(), env.DefaultProtocolVersionSimulacron, false)
 
 	return &resources{
 		setup: &setup.SimulacronTestSetup{
@@ -190,11 +193,11 @@ func primeClustersWithDelay(setup *setup.SimulacronTestSetup, query string) {
 
 // executeQuery sends the query string in a Frame message through the test client and handles any failures internally
 // by failing the tests, otherwise, returns the response to the caller
-func executeQuery(t *testing.T, client *client.TestClient, query string) *frame.Frame {
+func executeQuery(t *testing.T, version primitive.ProtocolVersion, client *client.TestClient, query string) *frame.Frame {
 	q := &message.Query{
 		Query: query,
 	}
-	response, _, err := client.SendMessage(context.Background(), primitive.ProtocolVersion4, q)
+	response, _, err := client.SendMessage(context.Background(), version, q)
 	if err != nil {
 		t.Fatal("query failed:", err)
 	}

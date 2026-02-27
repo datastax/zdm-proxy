@@ -3,9 +3,10 @@ package cqlserver
 import (
 	"context"
 	"fmt"
+	"time"
+
 	"github.com/datastax/go-cassandra-native-protocol/client"
 	log "github.com/sirupsen/logrus"
-	"time"
 )
 
 type Cluster struct {
@@ -43,7 +44,7 @@ func NewCqlServerCluster(listenAddr string, port int, username string, password 
 }
 
 func (recv *Cluster) Start() error {
-	ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, _ := context.WithTimeout(context.Background(), 100*time.Second)
 	return recv.CqlServer.Start(ctx)
 }
 

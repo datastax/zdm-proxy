@@ -1,22 +1,27 @@
 package integration_tests
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"sync/atomic"
+	"testing"
+	"time"
+
 	cqlClient "github.com/datastax/go-cassandra-native-protocol/client"
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	"github.com/rs/zerolog"
+	log "github.com/sirupsen/logrus"
+	"github.com/stretchr/testify/require"
+
 	"github.com/datastax/zdm-proxy/integration-tests/client"
+	"github.com/datastax/zdm-proxy/integration-tests/env"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/integration-tests/simulacron"
 	"github.com/datastax/zdm-proxy/integration-tests/utils"
 	"github.com/datastax/zdm-proxy/proxy/pkg/config"
-	"github.com/rs/zerolog"
-	log "github.com/sirupsen/logrus"
-	"github.com/stretchr/testify/require"
-	"sync/atomic"
-	"testing"
 )
 
 func TestGoCqlConnect(t *testing.T) {
@@ -65,7 +70,7 @@ func TestCannotConnectWithoutControlConnection(t *testing.T) {
 	for i := 0; i < 1000; i++ {
 		// connect to proxy as a "client"
 		client := cqlClient.NewCqlClient("127.0.0.1:14002", nil)
-		conn, err := client.ConnectAndInit(context.Background(), primitive.ProtocolVersion4, 0)
+		conn, err := client.ConnectAndInit(context.Background(), env.DefaultProtocolVersionSimulacron, 0)
 		require.Nil(t, err)
 		_ = conn.Close()
 	}
@@ -137,7 +142,7 @@ func TestControlConnectionProtocolVersionNegotiation(t *testing.T) {
 				Query:   "SELECT * FROM test",
 				Options: &message.QueryOptions{Consistency: primitive.ConsistencyLevelOne},
 			}
-			rsp, err := cqlClientConn.SendAndReceive(frame.NewFrame(primitive.ProtocolVersion3, 0, queryMsg))
+			rsp, err := cqlClientConn.SendAndReceive(frame.NewFrame(negotiatedProto, 0, queryMsg))
 			if err != nil {
 				t.Fatal("query failed:", err)
 			}
@@ -191,13 +196,6 @@ func TestRequestedProtocolVersionUnsupportedByProxy(t *testing.T) {
 		errExpected       string
 	}{
 		{
-			"request v5, response v4",
-			primitive.ProtocolVersion5,
-			"4",
-			primitive.ProtocolVersion4,
-			"Invalid or unsupported protocol version (5)",
-		},
-		{
 			"request v1, response v4",
 			primitive.ProtocolVersion(0x1),
 			"4",
@@ -226,7 +224,7 @@ func TestRequestedProtocolVersionUnsupportedByProxy(t *testing.T) {
 			testSetup.Origin.CqlServer.RequestHandlers = []cqlClient.RequestHandler{cqlClient.NewDriverConnectionInitializationHandler("origin", "dc1", func(_ string) {})}
 			testSetup.Target.CqlServer.RequestHandlers = []cqlClient.RequestHandler{cqlClient.NewDriverConnectionInitializationHandler("target", "dc1", func(_ string) {})}
 
-			err = testSetup.Start(cfg, false, primitive.ProtocolVersion3)
+			err = testSetup.Start(cfg, false, env.DefaultProtocolVersion)
 			require.Nil(t, err)
 
 			testClient, err := client.NewTestClient(context.Background(), "127.0.0.1:14002")
@@ -255,14 +253,6 @@ func TestReturnedProtocolVersionUnsupportedByProxy(t *testing.T) {
 		errExpected       string
 	}
 	tests := []*test{
-		{
-			"DSE_V2 request, v5 returned, v4 expected",
-			primitive.ProtocolVersionDse2,
-			"4",
-			primitive.ProtocolVersion5,
-			primitive.ProtocolVersion4,
-			"Invalid or unsupported protocol version (5)",
-		},
 		{
 			"DSE_V2 request, v1 returned, v4 expected",
 			primitive.ProtocolVersionDse2,
@@ -297,7 +287,7 @@ func TestReturnedProtocolVersionUnsupportedByProxy(t *testing.T) {
 		testSetup.Origin.CqlServer.RequestRawHandlers = []cqlClient.RawRequestHandler{rawHandler}
 		testSetup.Target.CqlServer.RequestRawHandlers = []cqlClient.RawRequestHandler{rawHandler}
 
-		err = testSetup.Start(cfg, false, primitive.ProtocolVersion4)
+		err = testSetup.Start(cfg, false, env.DefaultProtocolVersion)
 		require.Nil(t, err)
 
 		testClient, err := client.NewTestClient(context.Background(), "127.0.0.1:14002")
@@ -333,9 +323,7 @@ func TestReturnedProtocolVersionUnsupportedByProxy(t *testing.T) {
 
 func createFrameWithUnsupportedVersion(version primitive.ProtocolVersion, streamId int16, isResponse bool) ([]byte, error) {
 	mostSimilarVersion := version
-	if version > primitive.ProtocolVersionDse2 {
-		mostSimilarVersion = primitive.ProtocolVersionDse2
-	} else if version < primitive.ProtocolVersion2 {
+	if version < primitive.ProtocolVersion2 {
 		mostSimilarVersion = primitive.ProtocolVersion2
 	}
 
@@ -359,4 +347,69 @@ func createFrameWithUnsupportedVersion(version primitive.ProtocolVersion, stream
 	}
 	encoded[1] = 0
 	return encoded, nil
+}
+
+func TestHandlingOfInternalHeartbeat(t *testing.T) {
+	oldLevel := log.GetLevel()
+	log.SetLevel(log.TraceLevel)
+	defer log.SetLevel(oldLevel)
+
+	var buff bytes.Buffer
+	buffWriter := bufio.NewWriter(&buff)
+	log.SetOutput(buffWriter)
+
+	c := setup.NewTestConfig("", "")
+	c.HeartbeatIntervalMs = 500
+	testSetup, err := setup.NewSimulacronTestSetupWithSessionAndNodesAndConfig(t, true, false, 1, c, nil)
+	require.Nil(t, err)
+	defer testSetup.Cleanup()
+
+	query := "SELECT * FROM test"
+	expectedRows := simulacron.NewRowsResult(
+		map[string]simulacron.DataType{
+			"company": simulacron.DataTypeText,
+		}).WithRow(map[string]interface{}{
+		"company": "TBD",
+	})
+
+	err = testSetup.Origin.Prime(simulacron.WhenQuery(
+		query,
+		simulacron.NewWhenQueryOptions()).
+		ThenRowsSuccess(expectedRows))
+	require.Nil(t, err)
+
+	// Connect to proxy as a "client"
+	proxyClient := cqlClient.NewCqlClient("127.0.0.1:14002", nil)
+	cqlClientConn, err := proxyClient.ConnectAndInit(context.Background(), env.DefaultProtocolVersionSimulacron, 0)
+	require.Nil(t, err)
+	defer cqlClientConn.Close()
+
+	queryMsg := &message.Query{
+		Query:   query,
+		Options: nil,
+	}
+
+	_, err = cqlClientConn.SendAndReceive(frame.NewFrame(env.DefaultProtocolVersionSimulacron, 0, queryMsg))
+	require.Nil(t, err)
+
+	// sleep longer than heartbeat interval
+	time.Sleep(550 * time.Millisecond)
+
+	err = testSetup.Target.DeleteLogs()
+	require.Nil(t, err)
+
+	_, err = cqlClientConn.SendAndReceive(frame.NewFrame(env.DefaultProtocolVersionSimulacron, 0, queryMsg))
+	require.Nil(t, err)
+
+	err = buffWriter.Flush()
+	require.Nil(t, err)
+	allLogs := buff.String()
+	require.Contains(t, allLogs, "Sending heartbeat to cluster TARGET")
+	require.Contains(t, allLogs, "Received internal response from TARGET")
+	// below logs would indicate we have issues sending heartbeat messages or handling response
+	require.NotContains(t, allLogs, "negative stream id")
+	require.NotContains(t, allLogs, "Could not find request context for stream id")
+
+	targetQueryLog, _ := testSetup.Target.GetLogsByType(simulacron.QueryTypeOptions)
+	require.Equal(t, len(targetQueryLog.Datacenters[0].Nodes[0].Queries), 1)
 }

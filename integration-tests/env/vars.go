@@ -2,11 +2,15 @@ package env
 
 import (
 	"flag"
+	"fmt"
 	"math/rand"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
 )
 
 const (
@@ -18,17 +22,26 @@ var Rand = rand.New(rand.NewSource(time.Now().UTC().UnixNano()))
 var ServerVersion string
 var CassandraVersion string
 var DseVersion string
+var ServerVersionLogStr string
 var IsDse bool
 var RunCcmTests bool
 var RunMockTests bool
 var RunAllTlsTests bool
 var Debug bool
+var SupportedProtocolVersions []primitive.ProtocolVersion
+var AllProtocolVersions []primitive.ProtocolVersion = []primitive.ProtocolVersion{
+	primitive.ProtocolVersion2, primitive.ProtocolVersion3, primitive.ProtocolVersion4,
+	primitive.ProtocolVersion5, primitive.ProtocolVersionDse1, primitive.ProtocolVersionDse2,
+}
+var DefaultProtocolVersion primitive.ProtocolVersion
+var DefaultProtocolVersionSimulacron primitive.ProtocolVersion
+var DefaultProtocolVersionTestClient primitive.ProtocolVersion
 
 func InitGlobalVars() {
 	flags := map[string]interface{}{
 		"CASSANDRA_VERSION": flag.String(
 			"CASSANDRA_VERSION",
-			getEnvironmentVariableOrDefault("CASSANDRA_VERSION", "3.11.7"),
+			getEnvironmentVariableOrDefault("CASSANDRA_VERSION", "5.0.6"),
 			"CASSANDRA_VERSION"),
 
 		"DSE_VERSION": flag.String(
@@ -70,8 +83,36 @@ func InitGlobalVars() {
 		IsDse = true
 		ServerVersion = DseVersion
 	} else {
-		ServerVersion = CassandraVersion
-		IsDse = false
+		split := strings.SplitAfter(CassandraVersion, "dse-")
+		if len(split) == 2 {
+			IsDse = true
+			ServerVersion = split[1]
+			DseVersion = ServerVersion
+			CassandraVersion = ""
+		} else {
+			ServerVersion = CassandraVersion
+			IsDse = false
+		}
+	}
+
+	SupportedProtocolVersions = supportedProtocolVersions()
+
+	ServerVersionLogStr = serverVersionLogString()
+
+	DefaultProtocolVersion = ComputeDefaultProtocolVersion()
+
+	if DefaultProtocolVersion <= primitive.ProtocolVersion2 {
+		DefaultProtocolVersionSimulacron = primitive.ProtocolVersion3
+	} else if DefaultProtocolVersion >= primitive.ProtocolVersion5 {
+		DefaultProtocolVersionSimulacron = primitive.ProtocolVersion4
+	} else {
+		DefaultProtocolVersionSimulacron = DefaultProtocolVersion
+	}
+
+	if DefaultProtocolVersion.SupportsModernFramingLayout() {
+		DefaultProtocolVersionTestClient = primitive.ProtocolVersion4
+	} else {
+		DefaultProtocolVersionTestClient = DefaultProtocolVersion
 	}
 
 	if strings.ToLower(runCcmTests) == "true" {
@@ -142,4 +183,82 @@ func getEnvironmentVariableBoolOrDefault(key string, defaultValue bool) bool {
 	} else {
 		return defaultValue
 	}
+}
+
+func SupportsProtocolVersion(protoVersion primitive.ProtocolVersion) bool {
+	return slices.Contains(SupportedProtocolVersions, protoVersion)
+}
+
+func supportedProtocolVersions() []primitive.ProtocolVersion {
+	v := parseVersion(ServerVersion)
+	if IsDse {
+		if v[0] >= 6 {
+			return []primitive.ProtocolVersion{
+				primitive.ProtocolVersion3, primitive.ProtocolVersion4,
+				primitive.ProtocolVersionDse1, primitive.ProtocolVersionDse2}
+		}
+		if v[0] >= 5 {
+			return []primitive.ProtocolVersion{
+				primitive.ProtocolVersion3, primitive.ProtocolVersion4, primitive.ProtocolVersionDse1}
+		}
+
+		if v[0] >= 4 {
+			return []primitive.ProtocolVersion{primitive.ProtocolVersion2, primitive.ProtocolVersion3}
+		}
+	} else {
+		if v[0] >= 4 {
+			return []primitive.ProtocolVersion{
+				primitive.ProtocolVersion3, primitive.ProtocolVersion4, primitive.ProtocolVersion5}
+		}
+		if v[0] >= 3 {
+			return []primitive.ProtocolVersion{
+				primitive.ProtocolVersion3, primitive.ProtocolVersion4}
+		}
+		if v[0] >= 2 {
+			if v[1] >= 2 {
+				return []primitive.ProtocolVersion{
+					primitive.ProtocolVersion2, primitive.ProtocolVersion3, primitive.ProtocolVersion4}
+			}
+
+			if v[1] >= 1 {
+				return []primitive.ProtocolVersion{primitive.ProtocolVersion2, primitive.ProtocolVersion3}
+			}
+
+			if v[1] >= 0 {
+				return []primitive.ProtocolVersion{primitive.ProtocolVersion2}
+			}
+		}
+	}
+
+	panic(fmt.Sprintf("Unsupported server version IsDse=%v Version=%v", IsDse, ServerVersion))
+}
+
+func serverVersionLogString() string {
+	if IsDse {
+		return fmt.Sprintf("dse-%v", ServerVersion)
+	} else {
+		return ServerVersion
+	}
+}
+
+func ProtocolVersionStr(v primitive.ProtocolVersion) string {
+	switch v {
+	case primitive.ProtocolVersionDse1:
+		return "DSEv1"
+	case primitive.ProtocolVersionDse2:
+		return "DSEv2"
+	}
+	return strconv.Itoa(int(v))
+}
+
+func ComputeDefaultProtocolVersion() primitive.ProtocolVersion {
+	orderedProtocolVersions := []primitive.ProtocolVersion{
+		primitive.ProtocolVersionDse2, primitive.ProtocolVersionDse1, primitive.ProtocolVersion5,
+		primitive.ProtocolVersion4, primitive.ProtocolVersion3, primitive.ProtocolVersion2}
+	for _, v := range orderedProtocolVersions {
+		if SupportsProtocolVersion(v) {
+			return v
+		}
+	}
+	panic(fmt.Sprintf("Unable to compute protocol version for server version %v", ServerVersionLogStr))
 }

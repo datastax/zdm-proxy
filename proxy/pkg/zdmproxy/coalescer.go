@@ -1,13 +1,15 @@
 package zdmproxy
 
 import (
-	"bytes"
 	"context"
-	"github.com/datastax/go-cassandra-native-protocol/frame"
-	"github.com/datastax/zdm-proxy/proxy/pkg/config"
-	log "github.com/sirupsen/logrus"
 	"net"
 	"sync"
+
+	"github.com/datastax/go-cassandra-native-protocol/frame"
+	"github.com/datastax/go-cassandra-native-protocol/primitive"
+	log "github.com/sirupsen/logrus"
+
+	"github.com/datastax/zdm-proxy/proxy/pkg/config"
 )
 
 const (
@@ -32,6 +34,11 @@ type writeCoalescer struct {
 	writeBufferSizeBytes int
 
 	scheduler *Scheduler
+
+	codecHelper *connCodecHelper
+
+	isClusterConnector bool
+	isAsyncConnector   bool
 }
 
 func NewWriteCoalescer(
@@ -41,23 +48,24 @@ func NewWriteCoalescer(
 	shutdownContext context.Context,
 	clientHandlerCancelFunc context.CancelFunc,
 	logPrefix string,
-	isRequest bool,
-	isAsync bool,
-	scheduler *Scheduler) *writeCoalescer {
+	isClusterConnector bool,
+	isAsyncConnector bool,
+	scheduler *Scheduler,
+	codecHelper *connCodecHelper) *writeCoalescer {
 
 	writeQueueSizeFrames := conf.RequestWriteQueueSizeFrames
-	if !isRequest {
+	if !isClusterConnector {
 		writeQueueSizeFrames = conf.ResponseWriteQueueSizeFrames
 	}
-	if isAsync {
+	if isAsyncConnector {
 		writeQueueSizeFrames = conf.AsyncConnectorWriteQueueSizeFrames
 	}
 
 	writeBufferSizeBytes := conf.RequestWriteBufferSizeBytes
-	if !isRequest {
+	if !isClusterConnector {
 		writeBufferSizeBytes = conf.ResponseWriteBufferSizeBytes
 	}
-	if isAsync {
+	if isAsyncConnector {
 		writeBufferSizeBytes = conf.AsyncConnectorWriteBufferSizeBytes
 	}
 	return &writeCoalescer{
@@ -71,6 +79,9 @@ func NewWriteCoalescer(
 		waitGroup:              &sync.WaitGroup{},
 		writeBufferSizeBytes:   writeBufferSizeBytes,
 		scheduler:              scheduler,
+		isClusterConnector:     isClusterConnector,
+		isAsyncConnector:       isAsyncConnector,
+		codecHelper:            codecHelper,
 	}
 }
 
@@ -85,30 +96,49 @@ func (recv *writeCoalescer) RunWriteQueueLoop() {
 		defer recv.waitGroup.Done()
 
 		draining := false
-		bufferedWriter := bytes.NewBuffer(make([]byte, 0, initialBufferSize))
 		wg := &sync.WaitGroup{}
 		defer wg.Wait()
 
-		for {
-			var resultOk bool
-			var result *coalescerIterationResult
+		state := recv.codecHelper.GetState()
 
-			firstFrame, firstFrameOk := <-recv.writeQueue
+		var resultOk bool
+		var result coalescerIterationResult
+		for {
+			var firstFrame *frame.RawFrame
+			var firstFrameOk bool
+			if result.leftoverFrame != nil {
+				firstFrame = result.leftoverFrame
+				firstFrameOk = true
+			} else {
+				firstFrame, firstFrameOk = <-recv.writeQueue
+			}
 			if !firstFrameOk {
 				break
 			}
 
-			resultChannel := make(chan *coalescerIterationResult, 1)
-			tempDraining := draining
-			tempBuffer := bufferedWriter
+			result = coalescerIterationResult{}
+			resultOk = false
+
+			writeBuffer := recv.codecHelper.segWriter.GetWriteBuffer()
+			resultChannel := make(chan coalescerIterationResult, 1)
 			wg.Add(1)
 			recv.scheduler.Schedule(func() {
 				defer wg.Done()
 				firstFrameRead := false
+				state = recv.codecHelper.GetState()
 				for {
 					var f *frame.RawFrame
 					var ok bool
 					if firstFrameRead {
+						newState := recv.codecHelper.GetState()
+						if newState != state {
+							// state updated (compression or segments)
+							resultChannel <- coalescerIterationResult{}
+							close(resultChannel)
+							return
+						}
+						state = newState
+
 						select {
 						case f, ok = <-recv.writeQueue:
 						default:
@@ -116,41 +146,60 @@ func (recv *writeCoalescer) RunWriteQueueLoop() {
 						}
 
 						if !ok {
-							t := &coalescerIterationResult{
-								buffer:   tempBuffer,
-								draining: tempDraining,
-							}
-							resultChannel <- t
+							resultChannel <- coalescerIterationResult{}
 							close(resultChannel)
 							return
 						}
 
-						if tempDraining {
+						if draining {
 							// continue draining the write queue without writing on connection until it is closed
 							log.Tracef("[%v] Discarding frame from write queue because shutdown was requested: %v", recv.logPrefix, f.Header)
 							continue
 						}
 					} else {
+						writeBuffer.Reset()
 						firstFrameRead = true
 						f = firstFrame
 						ok = true
 					}
 
-					log.Tracef("[%v] Writing %v on %v", recv.logPrefix, f.Header, connectionAddr)
-					err := writeRawFrame(tempBuffer, connectionAddr, recv.shutdownContext, f)
-					if err != nil {
-						tempDraining = true
-						handleConnectionError(err, recv.shutdownContext, recv.cancelFunc, recv.logPrefix, "writing", connectionAddr)
-					} else {
-						if tempBuffer.Len() >= recv.writeBufferSizeBytes {
-							t := &coalescerIterationResult{
-								buffer:   tempBuffer,
-								draining: tempDraining,
+					if !state.useSegments {
+						log.Tracef("[%v] Writing %v on %v", recv.logPrefix, f.Header, connectionAddr)
+						err := writeRawFrame(writeBuffer, connectionAddr, recv.shutdownContext, f)
+						if err != nil {
+							draining = true
+							handleConnectionError(err, recv.shutdownContext, recv.cancelFunc, recv.logPrefix, "writing", connectionAddr)
+						} else {
+							if !recv.isClusterConnector {
+								// this is the write loop of a client connector so this loop is writing responses
+								// we need to switch to segments once READY/AUTHENTICATE response is sent (if v5+)
+
+								if (f.Header.OpCode == primitive.OpCodeReady || f.Header.OpCode == primitive.OpCodeAuthenticate) &&
+									f.Header.Version.SupportsModernFramingLayout() {
+									resultChannel <- coalescerIterationResult{switchToSegments: true}
+									close(resultChannel)
+									return
+								}
 							}
-							resultChannel <- t
+						}
+					} else {
+						log.Tracef("[%v] Writing %v to segment on %v", recv.logPrefix, f.Header, connectionAddr)
+						written, err := recv.codecHelper.segWriter.AppendFrameToSegmentPayload(f)
+						if err != nil {
+							draining = true
+							handleConnectionError(err, recv.shutdownContext, recv.cancelFunc, recv.logPrefix, "writing", connectionAddr)
+						} else if !written {
+							// need to write current payload before moving forward
+							resultChannel <- coalescerIterationResult{leftoverFrame: f}
 							close(resultChannel)
 							return
 						}
+					}
+
+					if writeBuffer.Len() >= recv.writeBufferSizeBytes {
+						resultChannel <- coalescerIterationResult{}
+						close(resultChannel)
+						return
 					}
 				}
 			})
@@ -159,15 +208,33 @@ func (recv *writeCoalescer) RunWriteQueueLoop() {
 			if !resultOk {
 				break
 			}
+			if draining {
+				continue
+			}
 
-			draining = result.draining
-			bufferedWriter = result.buffer
-			if bufferedWriter.Len() > 0 && !draining {
-				_, err := recv.connection.Write(bufferedWriter.Bytes())
-				bufferedWriter.Reset()
+			if result.switchToSegments {
+				err := recv.codecHelper.SetState(true) // don't update local state variable yet, so old state is used to write this buffer
 				if err != nil {
-					handleConnectionError(err, recv.shutdownContext, recv.cancelFunc, recv.logPrefix, "writing", connectionAddr)
+					handleConnectionError(err, recv.shutdownContext, recv.cancelFunc, recv.logPrefix, "switching to segments", connectionAddr)
 					draining = true
+				}
+			}
+
+			if writeBuffer.Len() > 0 {
+				if draining {
+					writeBuffer.Reset()
+				} else if !state.useSegments {
+					_, err := recv.connection.Write(writeBuffer.Bytes())
+					if err != nil {
+						handleConnectionError(err, recv.shutdownContext, recv.cancelFunc, recv.logPrefix, "writing", connectionAddr)
+						draining = true
+					}
+				} else {
+					err := recv.codecHelper.segWriter.WriteSegments(recv.connection, state)
+					if err != nil {
+						handleConnectionError(err, recv.shutdownContext, recv.cancelFunc, recv.logPrefix, "writing", connectionAddr)
+						draining = true
+					}
 				}
 			}
 		}
@@ -198,6 +265,6 @@ func (recv *writeCoalescer) Close() {
 }
 
 type coalescerIterationResult struct {
-	buffer   *bytes.Buffer
-	draining bool
+	switchToSegments bool
+	leftoverFrame    *frame.RawFrame
 }

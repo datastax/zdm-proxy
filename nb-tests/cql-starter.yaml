@@ -1,0 +1,96 @@
+description: |
+  A cql-starter workload.
+  * Cassandra: 3.x, 4.x.
+  * DataStax Enterprise: 6.8.x.
+  * DataStax Astra.
+
+scenarios:
+  default:
+    schema: run driver=cql tags==block:schema threads==1 cycles==UNDEF
+    rampup: run driver=cql tags==block:rampup cycles===TEMPLATE(rampup-cycles,1) threads=auto
+    main: run driver=cql tags==block:"main.*" cycles===TEMPLATE(main-cycles,10) threads=auto
+    # rampdown: run driver=cql tags==block:rampdown threads==1 cycles==UNDEF
+  astra:
+    schema: run driver=cql tags==block:schema_astra threads==1 cycles==UNDEF
+    rampup: run driver=cql tags==block:rampup cycles===TEMPLATE(rampup-cycles,10) threads=auto
+    main: run driver=cql tags==block:"main.*" cycles===TEMPLATE(main-cycles,10) threads=auto
+  basic_check:
+    schema: run driver=cql tags==block:schema threads==1 cycles==UNDEF
+    rampup: run driver=cql tags==block:rampup cycles===TEMPLATE(rampup-cycles,10) threads=auto
+    main: run driver=cql tags==block:"main.*" cycles===TEMPLATE(main-cycles,10) threads=auto
+
+params:
+  a_param: "value"
+
+bindings:
+  machine_id: ElapsedNanoTime(); ToHashedUUID() -> java.util.UUID
+  message: Discard(); FirstLines('data/cql-starter-message.txt');
+  rampup_message: ToString();
+  time: ElapsedNanoTime(); Mul(1000); ToJavaInstant();
+  ts: ElapsedNanoTime(); Mul(1000);
+
+
+blocks:
+  schema:
+    params:
+      prepared: false
+    ops:
+      create_keyspace: |
+        create keyspace if not exists TEMPLATE(keyspace,starter)
+        WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 'TEMPLATE(rf,1)'}
+        AND durable_writes = true;
+      create_table: |
+        create table if not exists TEMPLATE(keyspace,starter).TEMPLATE(table,cqlstarter) (
+        machine_id UUID,
+        message text,
+        time timestamp,
+        PRIMARY KEY ((machine_id), time)
+        ) WITH CLUSTERING ORDER BY (time DESC);
+
+  schema_astra:
+    params:
+      prepared: false
+    ops:
+      create_table_astra: |
+        create table if not exists TEMPLATE(keyspace,starter).TEMPLATE(table,cqlstarter) (
+        machine_id UUID,
+        message text,
+        time timestamp,
+        PRIMARY KEY ((machine_id), time)
+        ) WITH CLUSTERING ORDER BY (time DESC);
+
+  rampup:
+    params:
+      cl: TEMPLATE(write_cl,LOCAL_QUORUM)
+      idempotent: true
+      instrument: true
+    ops:
+      insert_rampup: |
+        insert into  TEMPLATE(keyspace,starter).TEMPLATE(table,cqlstarter) (machine_id, message, time)
+        values ({machine_id}, {rampup_message}, {time}) using timestamp {ts};
+
+  rampdown:
+    ops:
+      truncate_table: |
+        truncate table TEMPLATE(keyspace,starter).TEMPLATE(table,cqlstarter);
+
+  main_read:
+    params:
+      ratio: TEMPLATE(read_ratio,1)
+      cl: TEMPLATE(read_cl,LOCAL_QUORUM)
+      idempotent: true
+      instrument: true
+    ops:
+      select_read: |
+        select * from TEMPLATE(keyspace,starter).TEMPLATE(table,cqlstarter)
+        where machine_id={machine_id};
+  main_write:
+    params:
+      ratio: TEMPLATE(write_ratio,9)
+      cl: TEMPLATE(write_cl,LOCAL_QUORUM)
+      idempotent: true
+      instrument: true
+    ops:
+      insert_main: |
+        insert into TEMPLATE(keyspace,starter).TEMPLATE(table,cqlstarter)
+        (machine_id, message, time) values ({machine_id}, {message}, {time}) using timestamp {ts};

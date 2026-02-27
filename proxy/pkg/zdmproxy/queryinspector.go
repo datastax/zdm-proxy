@@ -2,7 +2,7 @@ package zdmproxy
 
 import (
 	"fmt"
-	"github.com/antlr/antlr4/runtime/Go/antlr"
+	"github.com/antlr4-go/antlr/v4"
 	parser "github.com/datastax/zdm-proxy/antlr"
 	log "github.com/sirupsen/logrus"
 	"strings"
