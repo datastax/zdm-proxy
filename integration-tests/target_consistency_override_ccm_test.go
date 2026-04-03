@@ -2,6 +2,7 @@ package integration_tests
 
 import (
 	"fmt"
+	"io"
 	"testing"
 	"time"
 
@@ -46,17 +47,33 @@ func TestTargetConsistencyOverrideCCM(t *testing.T) {
 	require.Nil(t, err)
 	defer proxy.Close()
 
+	// Diagnostic: verify tracing works directly against Cassandra (no proxy)
+	t.Run("direct_tracing_sanity_check", func(t *testing.T) {
+		originSession.Query("TRUNCATE system_traces.sessions").Exec()
+
+		q := originSession.Query(fmt.Sprintf(
+			"INSERT INTO %s.cl_test (id, val) VALUES (a0a0a0a0-8c20-11ea-9fc6-6d2c86545d91, 'direct_test')", setup.TestKeyspace))
+		q.Consistency(gocql.One)
+		q.Trace(gocql.NewTraceWriter(originSession, io.Discard))
+		err = q.Exec()
+		require.Nil(t, err, "direct write to origin failed: %v", err)
+
+		directCL := getTracedConsistencyLevel(t, originSession, "direct_test")
+		require.Equal(t, "ONE", directCL, "direct tracing sanity check failed — tracing not working on Cassandra")
+		t.Logf("Direct tracing works: CL=%s", directCL)
+	})
+
 	t.Run("inline_insert_cl_override", func(t *testing.T) {
 		q := proxy.Query(fmt.Sprintf(
 			"INSERT INTO %s.cl_test (id, val) VALUES (d1b05da0-8c20-11ea-9fc6-6d2c86545d91, 'cl_test')", setup.TestKeyspace))
-		q.Consistency(gocql.LocalQuorum)
-		q.Trace(gocql.NewTraceWriter(proxy, &nullWriter{}))
+		q.Consistency(gocql.Quorum)
+		q.Trace(gocql.NewTraceWriter(proxy, io.Discard))
 		err = q.Exec()
-		require.Nil(t, err)
+		require.Nil(t, err, "inline INSERT failed: %v", err)
 
 		// Check origin trace — should show LOCAL_QUORUM (client-requested, unchanged)
 		originCL := getTracedConsistencyLevel(t, originSession, "cl_test")
-		require.Equal(t, "LOCAL_QUORUM", originCL,
+		require.Equal(t, "QUORUM", originCL,
 			"origin should receive client-requested LOCAL_QUORUM")
 
 		// Check target trace — should show LOCAL_ONE (overridden by proxy)
@@ -73,13 +90,13 @@ func TestTargetConsistencyOverrideCCM(t *testing.T) {
 		q := proxy.Query(fmt.Sprintf(
 			"INSERT INTO %s.cl_test (id, val) VALUES (?, ?)", setup.TestKeyspace))
 		q.Bind("eed574b0-8c20-11ea-9fc6-6d2c86545d91", "cl_prepared_test")
-		q.Consistency(gocql.LocalQuorum)
-		q.Trace(gocql.NewTraceWriter(proxy, &nullWriter{}))
+		q.Consistency(gocql.Quorum)
+		q.Trace(gocql.NewTraceWriter(proxy, io.Discard))
 		err = q.Exec()
 		require.Nil(t, err)
 
 		originCL := getTracedConsistencyLevel(t, originSession, "cl_prepared_test")
-		require.Equal(t, "LOCAL_QUORUM", originCL,
+		require.Equal(t, "QUORUM", originCL,
 			"origin should receive client-requested LOCAL_QUORUM for prepared statement")
 
 		targetCL := getTracedConsistencyLevel(t, targetSession, "cl_prepared_test")
@@ -95,13 +112,14 @@ func TestTargetConsistencyOverrideCCM(t *testing.T) {
 		batch := proxy.NewBatch(gocql.LoggedBatch)
 		batch.Query(fmt.Sprintf(
 			"INSERT INTO %s.cl_test (id, val) VALUES (cf0f4cf0-8c20-11ea-9fc6-6d2c86545d91, 'cl_batch_test')", setup.TestKeyspace))
-		batch.SetConsistency(gocql.LocalQuorum)
+		batch.SetConsistency(gocql.Quorum)
+		batch.Trace(gocql.NewTraceWriter(proxy, io.Discard))
 		err = proxy.ExecuteBatch(batch)
 		require.Nil(t, err)
 
 		// Batches show CL in traces without the query text, so search for any trace with CL
 		originCL := getAnyTracedConsistencyLevel(t, originSession)
-		require.Equal(t, "LOCAL_QUORUM", originCL,
+		require.Equal(t, "QUORUM", originCL,
 			"origin batch should receive client-requested LOCAL_QUORUM")
 
 		targetCL := getAnyTracedConsistencyLevel(t, targetSession)
@@ -152,11 +170,6 @@ func getAnyTracedConsistencyLevel(t *testing.T, session *gocql.Session) string {
 	t.Fatalf("no trace sessions found after retries")
 	return ""
 }
-
-// nullWriter discards all output. Used to enable tracing without printing to stdout.
-type nullWriter struct{}
-
-func (nullWriter) Write(p []byte) (int, error) { return len(p), nil }
 
 func containsString(s string, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
