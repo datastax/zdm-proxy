@@ -180,3 +180,22 @@ proxy_listen_port: 14002
 # Control connection failure threshold. If threshold is exceeded,
 # readiness probe of ZDM will report failure and pod will be recreated.
 # heartbeat_failure_threshold: 1
+
+# Override the consistency level used for all requests forwarded to the target cluster.
+# When this property is set, the proxy replaces the client-requested consistency level with the
+# specified value on every request sent to the target cluster (reads and writes). The origin cluster
+# always receives the original client-requested consistency level, preserving the consistency
+# contract on the source of truth.
+#
+# This is useful during migration when the target cluster is being populated via dual writes. Using
+# a weaker consistency level such as LOCAL_ONE on the target reduces the risk of write failures
+# caused by target-side instability (e.g. node outages, streaming, or compaction pressure). Because
+# the target data can be repaired after migration is complete, temporary under-replication is
+# acceptable and preferable to failing writes that would otherwise succeed on origin.
+#
+# When this property is absent, empty, or not set, the proxy forwards requests to the target with the
+# original client-requested consistency level (default behavior, no override).
+#
+# Valid values: ANY, ONE, TWO, THREE, QUORUM, ALL, LOCAL_QUORUM, EACH_QUORUM, LOCAL_ONE
+# (case-insensitive). Serial consistency levels (SERIAL, LOCAL_SERIAL) are not valid here.
+# target_consistency_level: LOCAL_ONE
