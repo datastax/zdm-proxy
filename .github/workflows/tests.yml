@@ -12,6 +12,7 @@ concurrency:
 env:
   SIMULACRON_VERSION: 0.10.0
   GO_VERSION: 1.24.2
+  SKIP_DSE_TESTS: ${{ vars.SKIP_DSE_TESTS || 'false' }}
 jobs:
   dependencies:
     name: Fetch dependencies
@@ -128,6 +129,7 @@ jobs:
           paths: |
             report-integration-mock.xml
   # Runs integration tests using CCM
+  # Set repository variable SKIP_DSE_TESTS=true to skip DSE versions (e.g. when DSE binaries are not available)
   integration-tests-ccm:
     name: CCM Tests
     needs: dependencies
@@ -135,23 +137,36 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        cassandra_version: [ '2.2.19', '3.11.19', '4.1.9', '5.0.6', 'dse-4.8.16', 'dse-5.1.48', 'dse-6.8.61' ]
+        cassandra_version: [ '2.2.19', '3.11.19', '4.0.20', '4.1.11', '5.0.7', 'dse-4.8.16', 'dse-5.1.48', 'dse-6.8.61' ]
     steps:
+      - name: Check if DSE test should be skipped
+        id: dse_check
+        run: |
+          if [[ "${{ matrix.cassandra_version }}" == dse-* ]] && [[ "${{ env.SKIP_DSE_TESTS }}" == "true" ]]; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+            echo "Skipping DSE test ${{ matrix.cassandra_version }} (SKIP_DSE_TESTS is set)"
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
       - uses: actions/checkout@v2
+        if: steps.dse_check.outputs.skip != 'true'
             
       - uses: actions/cache@v4
+        if: steps.dse_check.outputs.skip != 'true'
         id: restore-go
         with:
           path: ~/deps/godl
           key: ${{ runner.os }}-deps-godl-${{ env.GO_VERSION }}
 
       - uses: actions/cache@v4
+        if: steps.dse_check.outputs.skip != 'true'
         id: restore-cache-ccm
         with:
           path: ~/.ccm/repository
           key: ${{ runner.os }}-ccm-${{ matrix.cassandra_version }}
 
       - name: Run
+        if: steps.dse_check.outputs.skip != 'true'
         run: |
           sudo apt update
           
@@ -182,14 +197,14 @@ jobs:
           go test -timeout 180m -v 2>&1 ./integration-tests -RUN_MOCKTESTS=false -RUN_CCMTESTS=true -CASSANDRA_VERSION=${{ matrix.cassandra_version }} | go-junit-report -set-exit-code -iocopy -out report-integration-ccm.xml
 
       - uses: actions/cache/save@v4
-        if: always()
+        if: always() && steps.dse_check.outputs.skip != 'true'
         with:
           path: ~/.ccm/repository
           key: ${{ runner.os }}-ccm-${{ matrix.cassandra_version }}
-      
+
       - name: Test Summary
         uses: test-summary/action@v1
-        if: always()
+        if: always() && steps.dse_check.outputs.skip != 'true'
         with:
           paths: |
             report-integration-ccm.xml
