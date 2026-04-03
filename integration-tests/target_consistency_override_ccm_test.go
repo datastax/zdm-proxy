@@ -2,7 +2,6 @@ package integration_tests
 
 import (
 	"fmt"
-	"io"
 	"testing"
 	"time"
 
@@ -48,27 +47,14 @@ func TestTargetConsistencyOverrideCCM(t *testing.T) {
 	require.Nil(t, err)
 	defer proxy.Close()
 
-	// Diagnostic: verify tracing works directly against Cassandra (no proxy)
-	t.Run("direct_tracing_sanity_check", func(t *testing.T) {
-		originSession.Query("TRUNCATE system_traces.sessions").Consistency(gocql.One).Exec()
-
-		q := originSession.Query(fmt.Sprintf(
-			"INSERT INTO %s.cl_test (id, val) VALUES (a0a0a0a0-8c20-11ea-9fc6-6d2c86545d91, 'direct_test')", setup.TestKeyspace))
-		q.Consistency(gocql.One)
-		q.Trace(gocql.NewTraceWriter(originSession, io.Discard))
-		err = q.Exec()
-		require.Nil(t, err, "direct write to origin failed: %v", err)
-
-		directCL := getTracedConsistencyLevel(t, originSession, "direct_test")
-		require.Equal(t, "ONE", directCL, "direct tracing sanity check failed — tracing not working on Cassandra")
-		t.Logf("Direct tracing works: CL=%s", directCL)
-	})
-
 	t.Run("inline_insert_cl_override", func(t *testing.T) {
+		// Clear traces before this test
+		originSession.Query("TRUNCATE system_traces.sessions").Consistency(gocql.One).Exec()
+		targetSession.Query("TRUNCATE system_traces.sessions").Consistency(gocql.One).Exec()
 		q := proxy.Query(fmt.Sprintf(
 			"INSERT INTO %s.cl_test (id, val) VALUES (d1b05da0-8c20-11ea-9fc6-6d2c86545d91, 'cl_test')", setup.TestKeyspace))
 		q.Consistency(gocql.Quorum)
-		q.Trace(gocql.NewTraceWriter(proxy, io.Discard))
+		q.Trace(noopTracer{})
 		err = q.Exec()
 		require.Nil(t, err, "inline INSERT failed: %v", err)
 
@@ -92,7 +78,7 @@ func TestTargetConsistencyOverrideCCM(t *testing.T) {
 			"INSERT INTO %s.cl_test (id, val) VALUES (?, ?)", setup.TestKeyspace))
 		q.Bind("eed574b0-8c20-11ea-9fc6-6d2c86545d91", "cl_prepared_test")
 		q.Consistency(gocql.Quorum)
-		q.Trace(gocql.NewTraceWriter(proxy, io.Discard))
+		q.Trace(noopTracer{})
 		err = q.Exec()
 		require.Nil(t, err)
 
@@ -114,7 +100,7 @@ func TestTargetConsistencyOverrideCCM(t *testing.T) {
 		batch.Query(fmt.Sprintf(
 			"INSERT INTO %s.cl_test (id, val) VALUES (cf0f4cf0-8c20-11ea-9fc6-6d2c86545d91, 'cl_batch_test')", setup.TestKeyspace))
 		batch.SetConsistency(gocql.Quorum)
-		batch.Trace(gocql.NewTraceWriter(proxy, io.Discard))
+		batch.Trace(noopTracer{})
 		err = proxy.ExecuteBatch(batch)
 		require.Nil(t, err)
 
@@ -175,6 +161,11 @@ func getAnyTracedConsistencyLevel(t *testing.T, session *gocql.Session) string {
 	t.Fatalf("no trace sessions found after retries")
 	return ""
 }
+
+// noopTracer enables the tracing flag on the CQL frame without fetching trace data.
+type noopTracer struct{}
+
+func (noopTracer) Trace(_ []byte) {}
 
 func containsString(s string, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
