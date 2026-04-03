@@ -37,10 +37,10 @@ func TestTargetConsistencyOverrideCCM(t *testing.T) {
 	}
 
 	// Clear traces on both clusters
-	originSession.Query("TRUNCATE system_traces.sessions").Exec()
-	originSession.Query("TRUNCATE system_traces.events").Exec()
-	targetSession.Query("TRUNCATE system_traces.sessions").Exec()
-	targetSession.Query("TRUNCATE system_traces.events").Exec()
+	originSession.Query("TRUNCATE system_traces.sessions").Consistency(gocql.One).Exec()
+	originSession.Query("TRUNCATE system_traces.events").Consistency(gocql.One).Exec()
+	targetSession.Query("TRUNCATE system_traces.sessions").Consistency(gocql.One).Exec()
+	targetSession.Query("TRUNCATE system_traces.events").Consistency(gocql.One).Exec()
 
 	// Connect to proxy and send a traced write at LOCAL_QUORUM
 	proxy, err := utils.ConnectToCluster("127.0.0.1", "", "", conf.ProxyListenPort)
@@ -49,7 +49,7 @@ func TestTargetConsistencyOverrideCCM(t *testing.T) {
 
 	// Diagnostic: verify tracing works directly against Cassandra (no proxy)
 	t.Run("direct_tracing_sanity_check", func(t *testing.T) {
-		originSession.Query("TRUNCATE system_traces.sessions").Exec()
+		originSession.Query("TRUNCATE system_traces.sessions").Consistency(gocql.One).Exec()
 
 		q := originSession.Query(fmt.Sprintf(
 			"INSERT INTO %s.cl_test (id, val) VALUES (a0a0a0a0-8c20-11ea-9fc6-6d2c86545d91, 'direct_test')", setup.TestKeyspace))
@@ -84,8 +84,8 @@ func TestTargetConsistencyOverrideCCM(t *testing.T) {
 
 	t.Run("prepared_insert_cl_override", func(t *testing.T) {
 		// Clear traces
-		originSession.Query("TRUNCATE system_traces.sessions").Exec()
-		targetSession.Query("TRUNCATE system_traces.sessions").Exec()
+		originSession.Query("TRUNCATE system_traces.sessions").Consistency(gocql.One).Exec()
+		targetSession.Query("TRUNCATE system_traces.sessions").Consistency(gocql.One).Exec()
 
 		q := proxy.Query(fmt.Sprintf(
 			"INSERT INTO %s.cl_test (id, val) VALUES (?, ?)", setup.TestKeyspace))
@@ -106,8 +106,8 @@ func TestTargetConsistencyOverrideCCM(t *testing.T) {
 
 	t.Run("batch_cl_override", func(t *testing.T) {
 		// Clear traces
-		originSession.Query("TRUNCATE system_traces.sessions").Exec()
-		targetSession.Query("TRUNCATE system_traces.sessions").Exec()
+		originSession.Query("TRUNCATE system_traces.sessions").Consistency(gocql.One).Exec()
+		targetSession.Query("TRUNCATE system_traces.sessions").Consistency(gocql.One).Exec()
 
 		batch := proxy.NewBatch(gocql.LoggedBatch)
 		batch.Query(fmt.Sprintf(
@@ -134,7 +134,9 @@ func TestTargetConsistencyOverrideCCM(t *testing.T) {
 func getTracedConsistencyLevel(t *testing.T, session *gocql.Session, marker string) string {
 	t.Helper()
 	for attempt := 0; attempt < 20; attempt++ {
-		iter := session.Query("SELECT parameters FROM system_traces.sessions").Iter()
+		q := session.Query("SELECT parameters FROM system_traces.sessions")
+		q.Consistency(gocql.One)
+		iter := q.Iter()
 		var params map[string]string
 		for iter.Scan(&params) {
 			if query, ok := params["query"]; ok && containsString(query, marker) {
@@ -156,7 +158,9 @@ func getTracedConsistencyLevel(t *testing.T, session *gocql.Session, marker stri
 func getAnyTracedConsistencyLevel(t *testing.T, session *gocql.Session) string {
 	t.Helper()
 	for attempt := 0; attempt < 20; attempt++ {
-		iter := session.Query("SELECT parameters FROM system_traces.sessions").Iter()
+		q := session.Query("SELECT parameters FROM system_traces.sessions")
+		q.Consistency(gocql.One)
+		iter := q.Iter()
 		var params map[string]string
 		for iter.Scan(&params) {
 			if cl, ok := params["consistency_level"]; ok {
