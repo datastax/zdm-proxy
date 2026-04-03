@@ -50,7 +50,7 @@ func TestTargetConsistencyOverrideCCM(t *testing.T) {
 		q := proxy.Query(fmt.Sprintf(
 			"INSERT INTO %s.cl_test (id, val) VALUES (d1b05da0-8c20-11ea-9fc6-6d2c86545d91, 'cl_test')", setup.TestKeyspace))
 		q.Consistency(gocql.LocalQuorum)
-		q.Trace(gocql.NewTraceWriter(proxy, nil))
+		q.Trace(gocql.NewTraceWriter(proxy, &nullWriter{}))
 		err = q.Exec()
 		require.Nil(t, err)
 
@@ -74,7 +74,7 @@ func TestTargetConsistencyOverrideCCM(t *testing.T) {
 			"INSERT INTO %s.cl_test (id, val) VALUES (?, ?)", setup.TestKeyspace))
 		q.Bind("eed574b0-8c20-11ea-9fc6-6d2c86545d91", "cl_prepared_test")
 		q.Consistency(gocql.LocalQuorum)
-		q.Trace(gocql.NewTraceWriter(proxy, nil))
+		q.Trace(gocql.NewTraceWriter(proxy, &nullWriter{}))
 		err = q.Exec()
 		require.Nil(t, err)
 
@@ -152,6 +152,11 @@ func getAnyTracedConsistencyLevel(t *testing.T, session *gocql.Session) string {
 	t.Fatalf("no trace sessions found after retries")
 	return ""
 }
+
+// nullWriter discards all output. Used to enable tracing without printing to stdout.
+type nullWriter struct{}
+
+func (nullWriter) Write(p []byte) (int, error) { return len(p), nil }
 
 func containsString(s string, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
