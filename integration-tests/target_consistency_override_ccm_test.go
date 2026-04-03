@@ -31,8 +31,9 @@ func TestTargetConsistencyOverrideCCM(t *testing.T) {
 	require.Nil(t, err)
 	defer proxyInstance.Shutdown()
 
-	// Ensure test table exists on both clusters
+	// Ensure test table exists and system_traces has RF=1 on both single-node CCM clusters
 	for _, s := range []*gocql.Session{originSession, targetSession} {
+		s.Query("ALTER KEYSPACE system_traces WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1}").Exec()
 		s.Query(fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s.cl_test (id uuid PRIMARY KEY, val text)", setup.TestKeyspace)).Exec()
 	}
 
