@@ -37,11 +37,15 @@ Environment variables (all optional, CLI args take precedence):
 import argparse
 import json
 import os
+import signal
 import sys
 import time
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone
+
+MAX_RESPONSE_BYTES = 1024 * 1024  # 1MB safety cap on metrics response
+SLACK_COOLDOWN_SECONDS = 300      # Don't send more than one Slack alert per 5 minutes
 
 
 # ---------------------------------------------------------------------------
@@ -67,7 +71,8 @@ def fetch_metrics(url):
     try:
         req = urllib.request.Request(url, headers={"Accept": "text/plain"})
         with urllib.request.urlopen(req, timeout=5) as resp:
-            return parse_prometheus_text(resp.read().decode("utf-8")), None
+            body = resp.read(MAX_RESPONSE_BYTES)
+            return parse_prometheus_text(body.decode("utf-8")), None
     except urllib.error.URLError as e:
         return None, f"Cannot reach metrics endpoint {url}: {e}"
     except Exception as e:
@@ -95,7 +100,11 @@ def check_health(metrics, prev_metrics, config):
         return [("critical", "Metrics endpoint is unreachable - proxy may be down")]
 
     def delta(current, previous):
-        return current - previous
+        d = current - previous
+        if d < 0:
+            # Counter reset (proxy restarted) — skip this interval
+            return 0
+        return d
 
     # Failed writes on target / both
     for label in ["target", "both"]:
@@ -137,8 +146,18 @@ def check_health(metrics, prev_metrics, config):
 # Alerting — Slack
 # ---------------------------------------------------------------------------
 
+_last_slack_alert_time = 0.0
+
+
 def send_slack(webhook_url, problems, metrics_url):
+    global _last_slack_alert_time
     if not webhook_url:
+        return
+
+    # Rate-limit Slack messages to avoid alert storms during sustained outages
+    elapsed = time.monotonic() - _last_slack_alert_time
+    if _last_slack_alert_time > 0 and elapsed < SLACK_COOLDOWN_SECONDS:
+        print(f"  Slack alert suppressed (cooldown, {int(SLACK_COOLDOWN_SECONDS - elapsed)}s remaining)")
         return
 
     worst = "critical" if any(s == "critical" for s, _ in problems) else "warning"
@@ -156,6 +175,8 @@ def send_slack(webhook_url, problems, metrics_url):
         with urllib.request.urlopen(req, timeout=10) as resp:
             if resp.status not in (200, 204):
                 print(f"  Slack webhook returned status {resp.status}", file=sys.stderr)
+            else:
+                _last_slack_alert_time = time.monotonic()
     except Exception as e:
         print(f"  Failed to send Slack alert: {e}", file=sys.stderr)
 
@@ -311,6 +332,14 @@ def main():
     if not has_alerting:
         print("Warning: no alerting configured. Set --slack-webhook-url and/or --pagerduty-routing-key for alerts.",
               file=sys.stderr)
+
+    # Clean shutdown on SIGINT/SIGTERM
+    def handle_signal(signum, frame):
+        print(f"\n[{now()}] Shutting down.")
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, handle_signal)
+    signal.signal(signal.SIGTERM, handle_signal)
 
     prev_metrics = None
     was_alerting = False
