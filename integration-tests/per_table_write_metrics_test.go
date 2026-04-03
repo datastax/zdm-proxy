@@ -174,7 +174,67 @@ func testPerTableWriteMetrics(t *testing.T, metricsHandler *httpzdmproxy.Handler
 	})
 
 	// ================================================================
-	// TEST 6: Prepared DELETE (PREPARE + EXECUTE)
+	// TEST 6: Prepared UPDATE (PREPARE + EXECUTE)
+	// ================================================================
+	t.Run("prepared_update", func(t *testing.T) {
+		prepareFrame := frame.NewFrame(env.DefaultProtocolVersion, client.ManagedStreamId,
+			&message.Prepare{Query: "UPDATE ks1.t3 SET name = ? WHERE id = ?"})
+		prepResp, err := clientConn.SendAndReceive(prepareFrame)
+		require.Nil(t, err)
+		prepared, ok := prepResp.Body.Message.(*message.PreparedResult)
+		require.True(t, ok)
+
+		executeFrame := frame.NewFrame(env.DefaultProtocolVersion, client.ManagedStreamId,
+			&message.Execute{
+				QueryId: prepared.PreparedQueryId,
+				Options: &message.QueryOptions{
+					PositionalValues: []*primitive.Value{
+						primitive.NewValue([]byte("updated")),
+						primitive.NewValue([]byte{0, 0, 0, 1}),
+					},
+				},
+			})
+		_, err = clientConn.SendAndReceive(executeFrame)
+		require.Nil(t, err)
+
+		lines := gatherMetricLines(t, conf)
+		// t3 had 1 from insert + 1 from update = 2
+		requireMetricLine(t, lines, `zdm_proxy_write_success_total{cluster="origin",keyspace="ks1",table="t3"}`, 2)
+		requireMetricLine(t, lines, `zdm_proxy_write_success_total{cluster="target",keyspace="ks1",table="t3"}`, 2)
+	})
+
+	// ================================================================
+	// TEST 7: Prepared counter UPDATE (PREPARE + EXECUTE)
+	// ================================================================
+	t.Run("prepared_counter_update", func(t *testing.T) {
+		prepareFrame := frame.NewFrame(env.DefaultProtocolVersion, client.ManagedStreamId,
+			&message.Prepare{Query: "UPDATE ks1.counters SET count = count + ? WHERE id = ?"})
+		prepResp, err := clientConn.SendAndReceive(prepareFrame)
+		require.Nil(t, err)
+		prepared, ok := prepResp.Body.Message.(*message.PreparedResult)
+		require.True(t, ok)
+
+		executeFrame := frame.NewFrame(env.DefaultProtocolVersion, client.ManagedStreamId,
+			&message.Execute{
+				QueryId: prepared.PreparedQueryId,
+				Options: &message.QueryOptions{
+					PositionalValues: []*primitive.Value{
+						primitive.NewValue([]byte{0, 0, 0, 0, 0, 0, 0, 5}), // counter value (bigint)
+						primitive.NewValue([]byte{0, 0, 0, 1}),
+					},
+				},
+			})
+		_, err = clientConn.SendAndReceive(executeFrame)
+		require.Nil(t, err)
+
+		lines := gatherMetricLines(t, conf)
+		// counters: 1 from inline + 1 from prepared = 2
+		requireMetricLine(t, lines, `zdm_proxy_write_success_total{cluster="origin",keyspace="ks1",table="counters"}`, 2)
+		requireMetricLine(t, lines, `zdm_proxy_write_success_total{cluster="target",keyspace="ks1",table="counters"}`, 2)
+	})
+
+	// ================================================================
+	// TEST 8: Prepared DELETE (PREPARE + EXECUTE)
 	// ================================================================
 	t.Run("prepared_delete", func(t *testing.T) {
 		prepareFrame := frame.NewFrame(env.DefaultProtocolVersion, client.ManagedStreamId,
@@ -195,9 +255,9 @@ func testPerTableWriteMetrics(t *testing.T, metricsHandler *httpzdmproxy.Handler
 		require.Nil(t, err)
 
 		lines := gatherMetricLines(t, conf)
-		// t3 had 1 from insert + 1 from delete = 2
-		requireMetricLine(t, lines, `zdm_proxy_write_success_total{cluster="origin",keyspace="ks1",table="t3"}`, 2)
-		requireMetricLine(t, lines, `zdm_proxy_write_success_total{cluster="target",keyspace="ks1",table="t3"}`, 2)
+		// t3: insert(1) + update(1) + delete(1) = 3
+		requireMetricLine(t, lines, `zdm_proxy_write_success_total{cluster="origin",keyspace="ks1",table="t3"}`, 3)
+		requireMetricLine(t, lines, `zdm_proxy_write_success_total{cluster="target",keyspace="ks1",table="t3"}`, 3)
 	})
 
 	// ================================================================
@@ -292,7 +352,65 @@ func testPerTableWriteMetrics(t *testing.T, metricsHandler *httpzdmproxy.Handler
 	})
 
 	// ================================================================
-	// TEST 10: Accumulation across multiple writes
+	// TEST 10: Batch inline with UPDATE and DELETE
+	// ================================================================
+	t.Run("batch_inline_update_and_delete", func(t *testing.T) {
+		batchFrame := frame.NewFrame(env.DefaultProtocolVersion, client.ManagedStreamId,
+			&message.Batch{
+				Type: primitive.BatchTypeLogged,
+				Children: []*message.BatchChild{
+					{Query: "UPDATE ks1.t4 SET name = 'updated' WHERE id = 1"},
+					{Query: "DELETE FROM ks1.t5 WHERE id = 2"},
+				},
+				Consistency: primitive.ConsistencyLevelOne,
+			})
+		_, err = clientConn.SendAndReceive(batchFrame)
+		require.Nil(t, err)
+
+		lines := gatherMetricLines(t, conf)
+		// t4: 1 (insert batch) + 1 (update batch) = 2
+		requireMetricLine(t, lines, `zdm_proxy_write_success_total{cluster="origin",keyspace="ks1",table="t4"}`, 2)
+		// t5: 1 (insert batch) + 1 (delete batch) = 2
+		requireMetricLine(t, lines, `zdm_proxy_write_success_total{cluster="origin",keyspace="ks1",table="t5"}`, 2)
+	})
+
+	// ================================================================
+	// TEST 11: Batch prepared with UPDATE and DELETE
+	// ================================================================
+	t.Run("batch_prepared_update_and_delete", func(t *testing.T) {
+		prepUpdateFrame := frame.NewFrame(env.DefaultProtocolVersion, client.ManagedStreamId,
+			&message.Prepare{Query: "UPDATE ks1.t6 SET name = ? WHERE id = ?"})
+		prepUpdateResp, err := clientConn.SendAndReceive(prepUpdateFrame)
+		require.Nil(t, err)
+		preparedUpdate := prepUpdateResp.Body.Message.(*message.PreparedResult)
+
+		prepDeleteFrame := frame.NewFrame(env.DefaultProtocolVersion, client.ManagedStreamId,
+			&message.Prepare{Query: "DELETE FROM ks1.t7 WHERE id = ?"})
+		prepDeleteResp, err := clientConn.SendAndReceive(prepDeleteFrame)
+		require.Nil(t, err)
+		preparedDelete := prepDeleteResp.Body.Message.(*message.PreparedResult)
+
+		batchFrame := frame.NewFrame(env.DefaultProtocolVersion, client.ManagedStreamId,
+			&message.Batch{
+				Type: primitive.BatchTypeLogged,
+				Children: []*message.BatchChild{
+					{Id: preparedUpdate.PreparedQueryId, Values: []*primitive.Value{primitive.NewValue([]byte("updated")), primitive.NewValue([]byte{0, 0, 0, 1})}},
+					{Id: preparedDelete.PreparedQueryId, Values: []*primitive.Value{primitive.NewValue([]byte{0, 0, 0, 2})}},
+				},
+				Consistency: primitive.ConsistencyLevelOne,
+			})
+		_, err = clientConn.SendAndReceive(batchFrame)
+		require.Nil(t, err)
+
+		lines := gatherMetricLines(t, conf)
+		// t6: 1 (insert batch) + 1 (update batch) = 2
+		requireMetricLine(t, lines, `zdm_proxy_write_success_total{cluster="origin",keyspace="ks1",table="t6"}`, 2)
+		// t7: 1 (insert batch) + 1 (delete batch) = 2
+		requireMetricLine(t, lines, `zdm_proxy_write_success_total{cluster="origin",keyspace="ks1",table="t7"}`, 2)
+	})
+
+	// ================================================================
+	// TEST 12: Accumulation across multiple writes
 	// ================================================================
 	t.Run("accumulation", func(t *testing.T) {
 		for i := 0; i < 3; i++ {
