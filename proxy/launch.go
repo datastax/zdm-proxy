@@ -56,6 +56,13 @@ func launchProxy(profilingSupported bool) {
 	}
 	log.SetLevel(logLevel)
 
+	targetCL, _ := conf.ParseTargetConsistencyLevel()
+	if targetCL != nil {
+		log.Warnf("Target consistency level override is ENABLED: all requests to the target cluster will use %v instead of the client-requested consistency level", *targetCL)
+	} else {
+		log.Infof("Target consistency level override: disabled")
+	}
+
 	if profilingSupported {
 		log.Debugf("Proxy built with profiling support")
 	} else {
