@@ -6,14 +6,59 @@ No external dependencies — runs on any system with Python 3.6+.
 
 ## What it monitors
 
-The script compares metrics between consecutive checks and alerts when:
+The script scrapes the ZDM proxy's Prometheus endpoint (`/metrics` on port 14001 by default) every interval, compares counter values against the previous check, and alerts when deltas exceed thresholds.
 
-- **Failed writes on target** increase by more than the threshold (default: 5 per interval)
-- **Target write timeouts / unavailable / overloaded errors** spike
-- **Any origin failures at all** — this is always critical, origin should never fail
-- **Connection failures** to either cluster (more than 3 per interval)
+When problems clear, PagerDuty incidents are automatically resolved. Slack alerts are rate-limited to one every 5 minutes to prevent alert storms during sustained outages.
 
-When problems clear, PagerDuty incidents are automatically resolved.
+### Monitored metrics and what they mean
+
+**1. Failed writes — `zdm_proxy_failed_writes_total`**
+
+This counter tracks writes that the proxy could not complete successfully. It has a `failed_on` label indicating which cluster caused the failure.
+
+- `failed_on="target"` — The write succeeded on origin but failed on target. **This is the most common alert during migration.** It means the target cluster is struggling (node down, overloaded, CL not met) but your source of truth (origin) is fine. Data will be inconsistent until repaired.
+- `failed_on="both"` — The write failed on both clusters. Usually means a query-level problem (bad schema, invalid CL for the topology) rather than a cluster health issue.
+- `failed_on="origin"` — The write failed on origin but succeeded on target. Rare. Monitored separately (see below).
+
+*Alert triggers when:* delta > `--failed-writes-threshold` (default: 5) per interval.
+
+**2. Target error breakdown — `zdm_target_requests_failed_total`**
+
+Per-node counters with an `error` label giving the specific Cassandra error type. The script monitors:
+
+- `error="write_timeout"` — Target node accepted the write but couldn't replicate to enough nodes within the timeout. Typically means nodes in the target cluster are slow or down.
+- `error="unavailable"` — Target coordinator knows there aren't enough live replicas to satisfy the consistency level before even attempting the write. Means nodes are down.
+- `error="overloaded"` — Target node is rejecting requests because it's overwhelmed (too many pending requests, compaction backlog, etc).
+
+*Alert triggers when:* delta > `--write-timeout-threshold` (default: 5) per interval.
+
+**3. Origin failures — `zdm_origin_requests_failed_total`** (CRITICAL)
+
+Same error types as target, but for origin. **Any origin failure is critical** because origin is the source of truth. The script alerts on any non-zero delta, with no threshold — even a single origin failure warrants investigation.
+
+- `error="write_timeout"` — Origin can't replicate writes. Your production database is degraded.
+- `error="unavailable"` — Origin doesn't have enough replicas. Active outage.
+
+*Alert triggers when:* any increase at all.
+
+**4. Connection failures — `zdm_{origin,target}_failed_connections_total`**
+
+Tracks failed TCP connection attempts from the proxy to cluster nodes. A spike means the proxy can't reach the cluster — network partition, node crash, or firewall issue. This is a per-node metric summed across all nodes.
+
+*Alert triggers when:* delta > 3 per interval.
+
+### Alert severity levels
+
+| Severity | When | What it means |
+|----------|------|---------------|
+| **critical** | Origin failures, metrics endpoint unreachable | Production is impacted right now |
+| **warning** | Target failures, connection problems | Migration data flow is degraded but origin (source of truth) is fine |
+
+### Why target failures matter even though origin is fine
+
+The ZDM proxy waits for **both** clusters to respond before returning a result to the client. If the target is slow or failing, the proxy either returns the target's error to the client or times out waiting. This means **a target outage can cause client-visible errors even though origin writes succeed**. Monitoring target health is essential to avoid this cascading into a perceived production outage.
+
+The `ZDM_TARGET_CONSISTENCY_LEVEL` config option (available in the AxonOps build) can reduce the impact by using a weaker CL on the target side, but it won't help if the target is completely unreachable.
 
 ## Quick start
 
