@@ -7,6 +7,9 @@ on:
       - 'v*.*.*'
       - 'v*.*.*-*'
 
+env:
+  BINARY_PREFIX: axonops-zdm-proxy
+
 jobs:
   build:
     name: Build and Upload Release Assets
@@ -24,8 +27,8 @@ jobs:
           export CGO_ENABLED=0
           export GOOS=linux
           export GOARCH=amd64
-          go build -o zdm-proxy-${{ github.ref_name }} ./proxy
-          tar cvfz zdm-proxy-linux-amd64-${{ github.ref_name }}.tgz zdm-proxy-${{ github.ref_name }} LICENSE
+          go build -o ${{ env.BINARY_PREFIX }}-${{ github.ref_name }} ./proxy
+          tar cvfz ${{ env.BINARY_PREFIX }}-linux-amd64-${{ github.ref_name }}.tgz ${{ env.BINARY_PREFIX }}-${{ github.ref_name }} LICENSE
       - name: Build Windows/amd64 binary
         run: |
           apt update
@@ -34,51 +37,51 @@ jobs:
           export CGO_ENABLED=0
           export GOOS=windows
           export GOARCH=amd64
-          go build -o zdm-proxy-${{ github.ref_name }}.exe ./proxy
-          zip -vr zdm-proxy-windows-amd64-${{ github.ref_name }}.zip zdm-proxy-${{ github.ref_name }}.exe LICENSE
+          go build -o ${{ env.BINARY_PREFIX }}-${{ github.ref_name }}.exe ./proxy
+          zip -vr ${{ env.BINARY_PREFIX }}-windows-amd64-${{ github.ref_name }}.zip ${{ env.BINARY_PREFIX }}-${{ github.ref_name }}.exe LICENSE
       - name: Build Darwin/amd64 binary
         run: |
           export GO111MODULE=on
           export CGO_ENABLED=0
           export GOOS=darwin
           export GOARCH=amd64
-          go build -o zdm-proxy-${{ github.ref_name }} ./proxy
-          tar cvfz zdm-proxy-darwin-amd64-${{ github.ref_name }}.tgz zdm-proxy-${{ github.ref_name }} LICENSE
+          go build -o ${{ env.BINARY_PREFIX }}-${{ github.ref_name }} ./proxy
+          tar cvfz ${{ env.BINARY_PREFIX }}-darwin-amd64-${{ github.ref_name }}.tgz ${{ env.BINARY_PREFIX }}-${{ github.ref_name }} LICENSE
       - name: Build Darwin/arm64 binary
         run: |
           export GO111MODULE=on
           export CGO_ENABLED=0
           export GOOS=darwin
           export GOARCH=arm64
-          go build -o zdm-proxy-${{ github.ref_name }} ./proxy
-          tar cvfz zdm-proxy-darwin-arm64-${{ github.ref_name }}.tgz zdm-proxy-${{ github.ref_name }} LICENSE
+          go build -o ${{ env.BINARY_PREFIX }}-${{ github.ref_name }} ./proxy
+          tar cvfz ${{ env.BINARY_PREFIX }}-darwin-arm64-${{ github.ref_name }}.tgz ${{ env.BINARY_PREFIX }}-${{ github.ref_name }} LICENSE
       - name: Build Linux/arm64 binary
         run: |
           export GO111MODULE=on
           export CGO_ENABLED=0
           export GOOS=linux
           export GOARCH=arm64
-          go build -o zdm-proxy-${{ github.ref_name }} ./proxy
-          tar cvfz zdm-proxy-linux-arm64-${{ github.ref_name }}.tgz zdm-proxy-${{ github.ref_name }} LICENSE
+          go build -o ${{ env.BINARY_PREFIX }}-${{ github.ref_name }} ./proxy
+          tar cvfz ${{ env.BINARY_PREFIX }}-linux-arm64-${{ github.ref_name }}.tgz ${{ env.BINARY_PREFIX }}-${{ github.ref_name }} LICENSE
       - name: Generate Checksums
         run: |
-          sha256sum zdm-proxy-linux-amd64-${{ github.ref_name }}.tgz | cut -d ' ' -f 1 > zdm-proxy-linux-amd64-${{ github.ref_name }}-sha256.txt
-          sha256sum zdm-proxy-windows-amd64-${{ github.ref_name }}.zip | cut -d ' ' -f 1 > zdm-proxy-windows-amd64-${{ github.ref_name }}-sha256.txt
-          sha256sum zdm-proxy-darwin-amd64-${{ github.ref_name }}.tgz | cut -d ' ' -f 1 > zdm-proxy-darwin-amd64-${{ github.ref_name }}-sha256.txt
-          sha256sum zdm-proxy-darwin-arm64-${{ github.ref_name }}.tgz | cut -d ' ' -f 1 > zdm-proxy-darwin-arm64-${{ github.ref_name }}-sha256.txt
-          sha256sum zdm-proxy-linux-arm64-${{ github.ref_name }}.tgz | cut -d ' ' -f 1 > zdm-proxy-linux-arm64-${{ github.ref_name }}-sha256.txt
+          sha256sum ${{ env.BINARY_PREFIX }}-linux-amd64-${{ github.ref_name }}.tgz | cut -d ' ' -f 1 > ${{ env.BINARY_PREFIX }}-linux-amd64-${{ github.ref_name }}-sha256.txt
+          sha256sum ${{ env.BINARY_PREFIX }}-windows-amd64-${{ github.ref_name }}.zip | cut -d ' ' -f 1 > ${{ env.BINARY_PREFIX }}-windows-amd64-${{ github.ref_name }}-sha256.txt
+          sha256sum ${{ env.BINARY_PREFIX }}-darwin-amd64-${{ github.ref_name }}.tgz | cut -d ' ' -f 1 > ${{ env.BINARY_PREFIX }}-darwin-amd64-${{ github.ref_name }}-sha256.txt
+          sha256sum ${{ env.BINARY_PREFIX }}-darwin-arm64-${{ github.ref_name }}.tgz | cut -d ' ' -f 1 > ${{ env.BINARY_PREFIX }}-darwin-arm64-${{ github.ref_name }}-sha256.txt
+          sha256sum ${{ env.BINARY_PREFIX }}-linux-arm64-${{ github.ref_name }}.tgz | cut -d ' ' -f 1 > ${{ env.BINARY_PREFIX }}-linux-arm64-${{ github.ref_name }}-sha256.txt
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          name: ZDM Proxy ${{ github.ref_name }}
+          name: AxonOps ZDM Proxy ${{ github.ref_name }}
           files: |
-            zdm-proxy-linux-amd64-${{ github.ref_name }}.tgz
-            zdm-proxy-linux-amd64-${{ github.ref_name }}-sha256.txt
-            zdm-proxy-windows-amd64-${{ github.ref_name }}.zip
-            zdm-proxy-windows-amd64-${{ github.ref_name }}-sha256.txt
-            zdm-proxy-darwin-amd64-${{ github.ref_name }}.tgz
-            zdm-proxy-darwin-amd64-${{ github.ref_name }}-sha256.txt
-            zdm-proxy-darwin-arm64-${{ github.ref_name }}.tgz
-            zdm-proxy-darwin-arm64-${{ github.ref_name }}-sha256.txt
-            zdm-proxy-linux-arm64-${{ github.ref_name }}.tgz
-            zdm-proxy-linux-arm64-${{ github.ref_name }}-sha256.txt
+            ${{ env.BINARY_PREFIX }}-linux-amd64-${{ github.ref_name }}.tgz
+            ${{ env.BINARY_PREFIX }}-linux-amd64-${{ github.ref_name }}-sha256.txt
+            ${{ env.BINARY_PREFIX }}-windows-amd64-${{ github.ref_name }}.zip
+            ${{ env.BINARY_PREFIX }}-windows-amd64-${{ github.ref_name }}-sha256.txt
+            ${{ env.BINARY_PREFIX }}-darwin-amd64-${{ github.ref_name }}.tgz
+            ${{ env.BINARY_PREFIX }}-darwin-amd64-${{ github.ref_name }}-sha256.txt
+            ${{ env.BINARY_PREFIX }}-darwin-arm64-${{ github.ref_name }}.tgz
+            ${{ env.BINARY_PREFIX }}-darwin-arm64-${{ github.ref_name }}-sha256.txt
+            ${{ env.BINARY_PREFIX }}-linux-arm64-${{ github.ref_name }}.tgz
+            ${{ env.BINARY_PREFIX }}-linux-arm64-${{ github.ref_name }}-sha256.txt
