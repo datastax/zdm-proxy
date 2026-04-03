@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	gocql "github.com/apache/cassandra-gocql-driver/v2"
+	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
 
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
@@ -30,6 +31,18 @@ func TestPerTableWriteMetricsCCM(t *testing.T) {
 	proxyInstance, err := NewProxyInstanceForGlobalCcmClusters(t)
 	require.Nil(t, err)
 	defer proxyInstance.Shutdown()
+
+	// Start a dedicated metrics HTTP server for this test
+	const metricsAddr = "localhost:14099"
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", proxyInstance.GetMetricHandler().GetHttpHandler())
+	metricsSrv := &http.Server{Addr: metricsAddr, Handler: mux}
+	go func() {
+		if err := metricsSrv.ListenAndServe(); err != http.ErrServerClosed {
+			log.Warnf("metrics server error: %v", err)
+		}
+	}()
+	defer metricsSrv.Close()
 
 	originCluster, targetCluster, err := SetupOrGetGlobalCcmClusters(t)
 	require.Nil(t, err)
@@ -249,7 +262,7 @@ func assertMetricOnBothClusters(t *testing.T, keyspace string, table string) {
 // gatherCCMMetricLines scrapes the metrics endpoint used by CCM tests.
 func gatherCCMMetricLines(t *testing.T) []string {
 	t.Helper()
-	statusCode, rspStr, err := utils.GetMetrics("localhost:14001")
+	statusCode, rspStr, err := utils.GetMetrics("localhost:14099")
 	require.Nil(t, err)
 	require.Equal(t, http.StatusOK, statusCode)
 
