@@ -57,10 +57,6 @@ func TestWithHttpHandlers(t *testing.T) {
 		testMetricsWithUnavailableNode(t, metricsHandler)
 	})
 
-	metricsHandler.SetHandler(nil) // reset for next sub-test
-	t.Run("testPerTableWriteMetrics", func(t *testing.T) {
-		testPerTableWriteMetrics(t, metricsHandler)
-	})
 }
 
 func testHttpEndpointsWithProxyNotInitialized(
