@@ -2,16 +2,27 @@ package zdmproxy
 
 import "fmt"
 
+// WriteTarget identifies a keyspace and table that a write operation targets.
+// Used for per-table write metrics tracking.
+type WriteTarget struct {
+	Keyspace string
+	Table    string
+}
+
 type RequestInfo interface {
 	GetForwardDecision() forwardDecision
 	ShouldAlsoBeSentAsync() bool
 	ShouldBeTrackedInMetrics() bool
+	// GetWriteTargets returns the keyspace/table pairs targeted by this write request.
+	// Returns nil for non-write requests (reads, PREPARE, intercepted queries).
+	GetWriteTargets() []WriteTarget
 }
 
 type baseRequestInfo struct {
 	forwardDecision       forwardDecision
 	shouldAlsoBeSentAsync bool
 	trackMetrics          bool
+	writeTargets          []WriteTarget
 }
 
 func newBaseRequestInfo(decision forwardDecision, shouldBeSentAsync bool, trackMetrics bool) *baseRequestInfo {
@@ -28,6 +39,10 @@ func (recv *baseRequestInfo) ShouldAlsoBeSentAsync() bool {
 
 func (recv *baseRequestInfo) ShouldBeTrackedInMetrics() bool {
 	return recv.trackMetrics
+}
+
+func (recv *baseRequestInfo) GetWriteTargets() []WriteTarget {
+	return recv.writeTargets
 }
 
 type GenericRequestInfo struct {
@@ -49,6 +64,7 @@ type PrepareRequestInfo struct {
 	containsPositionalMarkers bool
 	query                     string
 	keyspace                  string
+	tableName                 string
 }
 
 func NewPrepareRequestInfo(
@@ -56,13 +72,15 @@ func NewPrepareRequestInfo(
 	replacedTerms []*term,
 	containsPositionalMarkers bool,
 	query string,
-	keyspace string) *PrepareRequestInfo {
+	keyspace string,
+	tableName string) *PrepareRequestInfo {
 	return &PrepareRequestInfo{
 		baseRequestInfo:           baseRequestInfo,
 		replacedTerms:             replacedTerms,
 		containsPositionalMarkers: containsPositionalMarkers,
 		query:                     query,
-		keyspace:                  keyspace}
+		keyspace:                  keyspace,
+		tableName:                 tableName}
 }
 
 func (recv *PrepareRequestInfo) String() string {
@@ -76,6 +94,14 @@ func (recv *PrepareRequestInfo) ShouldAlsoBeSentAsync() bool {
 
 func (recv *PrepareRequestInfo) ShouldBeTrackedInMetrics() bool {
 	return false
+}
+
+func (recv *PrepareRequestInfo) GetWriteTargets() []WriteTarget {
+	return nil // PREPARE doesn't execute a write
+}
+
+func (recv *PrepareRequestInfo) GetTableName() string {
+	return recv.tableName
 }
 
 func (recv *PrepareRequestInfo) GetQuery() string {
@@ -133,6 +159,16 @@ func (recv *ExecuteRequestInfo) ShouldBeTrackedInMetrics() bool {
 	return recv.preparedData.GetPrepareRequestInfo().GetBaseRequestInfo().ShouldBeTrackedInMetrics()
 }
 
+func (recv *ExecuteRequestInfo) GetWriteTargets() []WriteTarget {
+	pri := recv.preparedData.GetPrepareRequestInfo()
+	// WriteTargets were set on the base RequestInfo during PREPARE parsing
+	baseTargets := pri.GetBaseRequestInfo().GetWriteTargets()
+	if baseTargets != nil {
+		return baseTargets
+	}
+	return nil
+}
+
 // InterceptedRequestInfo on its own means that this intercepted request is a QUERY request.
 // This can also be the base request field of a PrepareRequestInfo object in which case the intercepted request will be
 // a PREPARE (or EXECUTE if it's a ExecuteRequestInfo).
@@ -163,12 +199,17 @@ func (recv *InterceptedRequestInfo) GetParsedSelectClause() *selectClause {
 	return recv.parsedSelectClause
 }
 
-type BatchRequestInfo struct {
-	preparedDataByStmtIdx map[int]PreparedData
+func (recv *InterceptedRequestInfo) GetWriteTargets() []WriteTarget {
+	return nil
 }
 
-func NewBatchRequestInfo(preparedDataByStmtIdx map[int]PreparedData) *BatchRequestInfo {
-	return &BatchRequestInfo{preparedDataByStmtIdx: preparedDataByStmtIdx}
+type BatchRequestInfo struct {
+	preparedDataByStmtIdx map[int]PreparedData
+	writeTargets          []WriteTarget
+}
+
+func NewBatchRequestInfo(preparedDataByStmtIdx map[int]PreparedData, writeTargets []WriteTarget) *BatchRequestInfo {
+	return &BatchRequestInfo{preparedDataByStmtIdx: preparedDataByStmtIdx, writeTargets: writeTargets}
 }
 
 func (recv *BatchRequestInfo) String() string {
@@ -185,6 +226,10 @@ func (recv *BatchRequestInfo) ShouldAlsoBeSentAsync() bool {
 
 func (recv *BatchRequestInfo) ShouldBeTrackedInMetrics() bool {
 	return true
+}
+
+func (recv *BatchRequestInfo) GetWriteTargets() []WriteTarget {
+	return recv.writeTargets
 }
 
 func (recv *BatchRequestInfo) GetPreparedDataByStmtIdx() map[int]PreparedData {
