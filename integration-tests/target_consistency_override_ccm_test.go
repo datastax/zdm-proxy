@@ -2,6 +2,7 @@ package integration_tests
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +16,11 @@ import (
 // TestTargetConsistencyOverrideCCM verifies that the ZDM_TARGET_CONSISTENCY_LEVEL config
 // overrides the consistency level on the target cluster while preserving the original
 // client-requested CL on origin. Verified via Cassandra system_traces.
+//
+// Test matrix:
+//   - Inline INSERT at QUORUM → origin should see QUORUM, target should see LOCAL_ONE
+//   - Prepared INSERT at QUORUM → same verification via EXECUTE trace
+//   - Batch INSERT at QUORUM → same verification via BATCH trace
 func TestTargetConsistencyOverrideCCM(t *testing.T) {
 	originCluster, targetCluster, err := SetupOrGetGlobalCcmClusters(t)
 	require.Nil(t, err)
@@ -30,95 +36,102 @@ func TestTargetConsistencyOverrideCCM(t *testing.T) {
 	require.Nil(t, err)
 	defer proxyInstance.Shutdown()
 
-	// Ensure test table exists and system_traces has RF=1 on both single-node CCM clusters
+	// Ensure system_traces has RF=1 on both single-node CCM clusters
+	// and create the test table
 	for _, s := range []*gocql.Session{originSession, targetSession} {
 		s.Query("ALTER KEYSPACE system_traces WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1}").Exec()
 		s.Query(fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s.cl_test (id uuid PRIMARY KEY, val text)", setup.TestKeyspace)).Exec()
 	}
 
-	// Clear traces on both clusters
-	originSession.Query("TRUNCATE system_traces.sessions").Consistency(gocql.One).Exec()
-	originSession.Query("TRUNCATE system_traces.events").Consistency(gocql.One).Exec()
-	targetSession.Query("TRUNCATE system_traces.sessions").Consistency(gocql.One).Exec()
-	targetSession.Query("TRUNCATE system_traces.events").Consistency(gocql.One).Exec()
-
-	// Connect to proxy and send a traced write at LOCAL_QUORUM
+	// Connect through the proxy
 	proxy, err := utils.ConnectToCluster("127.0.0.1", "", "", conf.ProxyListenPort)
 	require.Nil(t, err)
 	defer proxy.Close()
 
-	t.Run("inline_insert_cl_override", func(t *testing.T) {
-		// Clear traces before this test
-		originSession.Query("TRUNCATE system_traces.sessions").Consistency(gocql.One).Exec()
-		targetSession.Query("TRUNCATE system_traces.sessions").Consistency(gocql.One).Exec()
+	// ================================================================
+	// TEST 1: Inline INSERT
+	// Client sends QUORUM, origin should see QUORUM, target should see LOCAL_ONE
+	// ================================================================
+	t.Run("inline_insert", func(t *testing.T) {
+		clearTraces(originSession, targetSession)
+
 		q := proxy.Query(fmt.Sprintf(
-			"INSERT INTO %s.cl_test (id, val) VALUES (d1b05da0-8c20-11ea-9fc6-6d2c86545d91, 'cl_test')", setup.TestKeyspace))
+			"INSERT INTO %s.cl_test (id, val) VALUES (d1b05da0-8c20-11ea-9fc6-6d2c86545d91, 'inline_cl_test')",
+			setup.TestKeyspace))
 		q.Consistency(gocql.Quorum)
 		q.Trace(noopTracer{})
 		err = q.Exec()
-		require.Nil(t, err, "inline INSERT failed: %v", err)
+		require.Nil(t, err, "inline INSERT through proxy failed")
 
-		// Check origin trace — should show LOCAL_QUORUM (client-requested, unchanged)
-		originCL := getTracedConsistencyLevel(t, originSession, "cl_test")
-		require.Equal(t, "QUORUM", originCL,
-			"origin should receive client-requested LOCAL_QUORUM")
+		originCL := findTraceCL(t, originSession, "inline_cl_test")
+		require.Equal(t, "QUORUM", originCL, "origin should receive client-requested QUORUM")
 
-		// Check target trace — should show LOCAL_ONE (overridden by proxy)
-		targetCL := getTracedConsistencyLevel(t, targetSession, "cl_test")
-		require.Equal(t, "LOCAL_ONE", targetCL,
-			"target should receive overridden LOCAL_ONE")
+		targetCL := findTraceCL(t, targetSession, "inline_cl_test")
+		require.Equal(t, "LOCAL_ONE", targetCL, "target should receive overridden LOCAL_ONE")
 	})
 
-	t.Run("prepared_insert_cl_override", func(t *testing.T) {
-		// Clear traces
-		originSession.Query("TRUNCATE system_traces.sessions").Consistency(gocql.One).Exec()
-		targetSession.Query("TRUNCATE system_traces.sessions").Consistency(gocql.One).Exec()
+	// ================================================================
+	// TEST 2: Prepared INSERT
+	// gocql auto-prepares when bind params are used. The EXECUTE trace
+	// contains the original query string (e.g. "INSERT INTO ks.cl_test (id, val) VALUES (?, ?)")
+	// so we search for the table name as the marker.
+	// ================================================================
+	t.Run("prepared_insert", func(t *testing.T) {
+		clearTraces(originSession, targetSession)
 
 		q := proxy.Query(fmt.Sprintf(
 			"INSERT INTO %s.cl_test (id, val) VALUES (?, ?)", setup.TestKeyspace))
-		q.Bind("eed574b0-8c20-11ea-9fc6-6d2c86545d91", "cl_prepared_test")
+		q.Bind("eed574b0-8c20-11ea-9fc6-6d2c86545d91", "prepared_cl_test")
 		q.Consistency(gocql.Quorum)
 		q.Trace(noopTracer{})
 		err = q.Exec()
-		require.Nil(t, err)
+		require.Nil(t, err, "prepared INSERT through proxy failed")
 
-		originCL := getTracedConsistencyLevel(t, originSession, "cl_prepared_test")
-		require.Equal(t, "QUORUM", originCL,
-			"origin should receive client-requested LOCAL_QUORUM for prepared statement")
+		// For prepared statements, the trace query field contains the CQL with ? markers,
+		// not the bound values. Search for the table name instead.
+		originCL := findTraceCL(t, originSession, "cl_test")
+		require.Equal(t, "QUORUM", originCL, "origin should receive client-requested QUORUM for prepared statement")
 
-		targetCL := getTracedConsistencyLevel(t, targetSession, "cl_prepared_test")
-		require.Equal(t, "LOCAL_ONE", targetCL,
-			"target should receive overridden LOCAL_ONE for prepared statement")
+		targetCL := findTraceCL(t, targetSession, "cl_test")
+		require.Equal(t, "LOCAL_ONE", targetCL, "target should receive overridden LOCAL_ONE for prepared statement")
 	})
 
-	t.Run("batch_cl_override", func(t *testing.T) {
-		// Clear traces
-		originSession.Query("TRUNCATE system_traces.sessions").Consistency(gocql.One).Exec()
-		targetSession.Query("TRUNCATE system_traces.sessions").Consistency(gocql.One).Exec()
+	// ================================================================
+	// TEST 3: Batch INSERT
+	// Batch traces don't include the query text in the parameters map,
+	// so we check the first trace found after clearing.
+	// ================================================================
+	t.Run("batch_insert", func(t *testing.T) {
+		clearTraces(originSession, targetSession)
 
 		batch := proxy.NewBatch(gocql.LoggedBatch)
 		batch.Query(fmt.Sprintf(
-			"INSERT INTO %s.cl_test (id, val) VALUES (cf0f4cf0-8c20-11ea-9fc6-6d2c86545d91, 'cl_batch_test')", setup.TestKeyspace))
+			"INSERT INTO %s.cl_test (id, val) VALUES (cf0f4cf0-8c20-11ea-9fc6-6d2c86545d91, 'batch_cl_test')",
+			setup.TestKeyspace))
 		batch.SetConsistency(gocql.Quorum)
 		batch.Trace(noopTracer{})
 		err = proxy.ExecuteBatch(batch)
-		require.Nil(t, err)
+		require.Nil(t, err, "batch INSERT through proxy failed")
 
-		// Batches show CL in traces without the query text, so search for any trace with CL
-		originCL := getAnyTracedConsistencyLevel(t, originSession)
-		require.Equal(t, "QUORUM", originCL,
-			"origin batch should receive client-requested LOCAL_QUORUM")
+		originCL := findAnyTraceCL(t, originSession)
+		require.Equal(t, "QUORUM", originCL, "origin should receive client-requested QUORUM for batch")
 
-		targetCL := getAnyTracedConsistencyLevel(t, targetSession)
-		require.Equal(t, "LOCAL_ONE", targetCL,
-			"target batch should receive overridden LOCAL_ONE")
+		targetCL := findAnyTraceCL(t, targetSession)
+		require.Equal(t, "LOCAL_ONE", targetCL, "target should receive overridden LOCAL_ONE for batch")
 	})
 }
 
-// getTracedConsistencyLevel finds a trace session containing the given marker text
-// and returns its consistency_level from the parameters map. Retries for up to 10 seconds
-// since Cassandra writes traces asynchronously.
-func getTracedConsistencyLevel(t *testing.T, session *gocql.Session, marker string) string {
+// clearTraces truncates system_traces.sessions on both clusters.
+func clearTraces(origin *gocql.Session, target *gocql.Session) {
+	origin.Query("TRUNCATE system_traces.sessions").Consistency(gocql.One).Exec()
+	origin.Query("TRUNCATE system_traces.events").Consistency(gocql.One).Exec()
+	target.Query("TRUNCATE system_traces.sessions").Consistency(gocql.One).Exec()
+	target.Query("TRUNCATE system_traces.events").Consistency(gocql.One).Exec()
+}
+
+// findTraceCL searches system_traces.sessions for a trace whose query parameter contains
+// the given marker, and returns the consistency_level. Retries for up to 10 seconds.
+func findTraceCL(t *testing.T, session *gocql.Session, marker string) string {
 	t.Helper()
 	for attempt := 0; attempt < 20; attempt++ {
 		q := session.Query("SELECT parameters FROM system_traces.sessions")
@@ -126,7 +139,7 @@ func getTracedConsistencyLevel(t *testing.T, session *gocql.Session, marker stri
 		iter := q.Iter()
 		var params map[string]string
 		for iter.Scan(&params) {
-			if query, ok := params["query"]; ok && containsString(query, marker) {
+			if query, ok := params["query"]; ok && strings.Contains(query, marker) {
 				if cl, ok := params["consistency_level"]; ok {
 					iter.Close()
 					return cl
@@ -136,13 +149,13 @@ func getTracedConsistencyLevel(t *testing.T, session *gocql.Session, marker stri
 		iter.Close()
 		time.Sleep(500 * time.Millisecond)
 	}
-	t.Fatalf("no trace found containing marker %q after retries", marker)
+	t.Fatalf("no trace found containing marker %q after 10s of retries", marker)
 	return ""
 }
 
-// getAnyTracedConsistencyLevel returns the consistency_level from the first trace session found.
-// Retries for up to 10 seconds since Cassandra writes traces asynchronously.
-func getAnyTracedConsistencyLevel(t *testing.T, session *gocql.Session) string {
+// findAnyTraceCL returns the consistency_level from the first trace session found.
+// Retries for up to 10 seconds.
+func findAnyTraceCL(t *testing.T, session *gocql.Session) string {
 	t.Helper()
 	for attempt := 0; attempt < 20; attempt++ {
 		q := session.Query("SELECT parameters FROM system_traces.sessions")
@@ -158,25 +171,13 @@ func getAnyTracedConsistencyLevel(t *testing.T, session *gocql.Session) string {
 		iter.Close()
 		time.Sleep(500 * time.Millisecond)
 	}
-	t.Fatalf("no trace sessions found after retries")
+	t.Fatalf("no trace sessions found after 10s of retries")
 	return ""
 }
 
-// noopTracer enables the tracing flag on the CQL frame without fetching trace data.
+// noopTracer enables the tracing flag on the CQL protocol frame without
+// fetching trace results. This avoids trace-fetch queries going through
+// the proxy and interfering with the test.
 type noopTracer struct{}
 
 func (noopTracer) Trace(_ []byte) {}
-
-func containsString(s string, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
-		(len(s) > 0 && len(substr) > 0 && searchString(s, substr)))
-}
-
-func searchString(s string, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}
