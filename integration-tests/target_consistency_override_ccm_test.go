@@ -54,9 +54,6 @@ func TestTargetConsistencyOverrideCCM(t *testing.T) {
 		err = q.Exec()
 		require.Nil(t, err)
 
-		// Wait for traces to persist
-		time.Sleep(5 * time.Second)
-
 		// Check origin trace — should show LOCAL_QUORUM (client-requested, unchanged)
 		originCL := getTracedConsistencyLevel(t, originSession, "cl_test")
 		require.Equal(t, "LOCAL_QUORUM", originCL,
@@ -81,8 +78,6 @@ func TestTargetConsistencyOverrideCCM(t *testing.T) {
 		err = q.Exec()
 		require.Nil(t, err)
 
-		time.Sleep(5 * time.Second)
-
 		originCL := getTracedConsistencyLevel(t, originSession, "cl_prepared_test")
 		require.Equal(t, "LOCAL_QUORUM", originCL,
 			"origin should receive client-requested LOCAL_QUORUM for prepared statement")
@@ -104,8 +99,6 @@ func TestTargetConsistencyOverrideCCM(t *testing.T) {
 		err = proxy.ExecuteBatch(batch)
 		require.Nil(t, err)
 
-		time.Sleep(5 * time.Second)
-
 		// Batches show CL in traces without the query text, so search for any trace with CL
 		originCL := getAnyTracedConsistencyLevel(t, originSession)
 		require.Equal(t, "LOCAL_QUORUM", originCL,
@@ -118,39 +111,45 @@ func TestTargetConsistencyOverrideCCM(t *testing.T) {
 }
 
 // getTracedConsistencyLevel finds a trace session containing the given marker text
-// and returns its consistency_level from the parameters map.
+// and returns its consistency_level from the parameters map. Retries for up to 10 seconds
+// since Cassandra writes traces asynchronously.
 func getTracedConsistencyLevel(t *testing.T, session *gocql.Session, marker string) string {
 	t.Helper()
-	iter := session.Query("SELECT parameters FROM system_traces.sessions").Iter()
-	var params map[string]string
-	for iter.Scan(&params) {
-		if query, ok := params["query"]; ok && containsString(query, marker) {
-			if cl, ok := params["consistency_level"]; ok {
-				return cl
+	for attempt := 0; attempt < 20; attempt++ {
+		iter := session.Query("SELECT parameters FROM system_traces.sessions").Iter()
+		var params map[string]string
+		for iter.Scan(&params) {
+			if query, ok := params["query"]; ok && containsString(query, marker) {
+				if cl, ok := params["consistency_level"]; ok {
+					iter.Close()
+					return cl
+				}
 			}
 		}
+		iter.Close()
+		time.Sleep(500 * time.Millisecond)
 	}
-	if err := iter.Close(); err != nil {
-		t.Fatalf("error querying traces: %v", err)
-	}
-	t.Fatalf("no trace found containing marker %q", marker)
+	t.Fatalf("no trace found containing marker %q after retries", marker)
 	return ""
 }
 
 // getAnyTracedConsistencyLevel returns the consistency_level from the first trace session found.
+// Retries for up to 10 seconds since Cassandra writes traces asynchronously.
 func getAnyTracedConsistencyLevel(t *testing.T, session *gocql.Session) string {
 	t.Helper()
-	iter := session.Query("SELECT parameters FROM system_traces.sessions").Iter()
-	var params map[string]string
-	for iter.Scan(&params) {
-		if cl, ok := params["consistency_level"]; ok {
-			return cl
+	for attempt := 0; attempt < 20; attempt++ {
+		iter := session.Query("SELECT parameters FROM system_traces.sessions").Iter()
+		var params map[string]string
+		for iter.Scan(&params) {
+			if cl, ok := params["consistency_level"]; ok {
+				iter.Close()
+				return cl
+			}
 		}
+		iter.Close()
+		time.Sleep(500 * time.Millisecond)
 	}
-	if err := iter.Close(); err != nil {
-		t.Fatalf("error querying traces: %v", err)
-	}
-	t.Fatalf("no trace sessions found")
+	t.Fatalf("no trace sessions found after retries")
 	return ""
 }
 
