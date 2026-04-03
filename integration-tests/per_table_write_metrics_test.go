@@ -410,7 +410,64 @@ func testPerTableWriteMetrics(t *testing.T, metricsHandler *httpzdmproxy.Handler
 	})
 
 	// ================================================================
-	// TEST 12: Accumulation across multiple writes
+	// TEST 12: Counter BATCH (inline)
+	// ================================================================
+	t.Run("batch_counter_inline", func(t *testing.T) {
+		batchFrame := frame.NewFrame(env.DefaultProtocolVersion, client.ManagedStreamId,
+			&message.Batch{
+				Type: primitive.BatchTypeCounter,
+				Children: []*message.BatchChild{
+					{Query: "UPDATE ks1.counters SET count = count + 1 WHERE id = 1"},
+					{Query: "UPDATE ks1.counters2 SET count = count + 1 WHERE id = 1"},
+				},
+				Consistency: primitive.ConsistencyLevelOne,
+			})
+		_, err = clientConn.SendAndReceive(batchFrame)
+		require.Nil(t, err)
+
+		lines := gatherMetricLines(t, conf)
+		// counters: 1 (inline) + 1 (prepared) + 1 (counter batch) = 3
+		requireMetricLine(t, lines, `zdm_proxy_write_success_total{cluster="origin",keyspace="ks1",table="counters"}`, 3)
+		requireMetricLine(t, lines, `zdm_proxy_write_success_total{cluster="origin",keyspace="ks1",table="counters2"}`, 1)
+	})
+
+	// ================================================================
+	// TEST 13: Counter BATCH (prepared)
+	// ================================================================
+	t.Run("batch_counter_prepared", func(t *testing.T) {
+		prep1Frame := frame.NewFrame(env.DefaultProtocolVersion, client.ManagedStreamId,
+			&message.Prepare{Query: "UPDATE ks1.counters SET count = count + ? WHERE id = ?"})
+		prep1Resp, err := clientConn.SendAndReceive(prep1Frame)
+		require.Nil(t, err)
+		prepared1 := prep1Resp.Body.Message.(*message.PreparedResult)
+
+		prep2Frame := frame.NewFrame(env.DefaultProtocolVersion, client.ManagedStreamId,
+			&message.Prepare{Query: "UPDATE ks1.counters2 SET count = count + ? WHERE id = ?"})
+		prep2Resp, err := clientConn.SendAndReceive(prep2Frame)
+		require.Nil(t, err)
+		prepared2 := prep2Resp.Body.Message.(*message.PreparedResult)
+
+		batchFrame := frame.NewFrame(env.DefaultProtocolVersion, client.ManagedStreamId,
+			&message.Batch{
+				Type: primitive.BatchTypeCounter,
+				Children: []*message.BatchChild{
+					{Id: prepared1.PreparedQueryId, Values: []*primitive.Value{primitive.NewValue([]byte{0, 0, 0, 0, 0, 0, 0, 1}), primitive.NewValue([]byte{0, 0, 0, 1})}},
+					{Id: prepared2.PreparedQueryId, Values: []*primitive.Value{primitive.NewValue([]byte{0, 0, 0, 0, 0, 0, 0, 1}), primitive.NewValue([]byte{0, 0, 0, 1})}},
+				},
+				Consistency: primitive.ConsistencyLevelOne,
+			})
+		_, err = clientConn.SendAndReceive(batchFrame)
+		require.Nil(t, err)
+
+		lines := gatherMetricLines(t, conf)
+		// counters: 1 (inline) + 1 (prepared) + 1 (counter batch inline) + 1 (counter batch prepared) = 4
+		requireMetricLine(t, lines, `zdm_proxy_write_success_total{cluster="origin",keyspace="ks1",table="counters"}`, 4)
+		// counters2: 1 (counter batch inline) + 1 (counter batch prepared) = 2
+		requireMetricLine(t, lines, `zdm_proxy_write_success_total{cluster="origin",keyspace="ks1",table="counters2"}`, 2)
+	})
+
+	// ================================================================
+	// TEST 14: Accumulation across multiple writes
 	// ================================================================
 	t.Run("accumulation", func(t *testing.T) {
 		for i := 0; i < 3; i++ {

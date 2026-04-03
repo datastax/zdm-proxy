@@ -15,6 +15,7 @@ import (
 
 const metricsTable = "metrics_test_data"
 const countersTable = "metrics_test_counters"
+const countersTable2 = "metrics_test_counters2"
 const batchTableA = "metrics_test_batch_a"
 const batchTableB = "metrics_test_batch_b"
 
@@ -39,6 +40,7 @@ func TestPerTableWriteMetricsCCM(t *testing.T) {
 	createTables := func(s *gocql.Session) {
 		s.Query(fmt.Sprintf("DROP TABLE IF EXISTS %s.%s", setup.TestKeyspace, metricsTable)).Exec()
 		s.Query(fmt.Sprintf("DROP TABLE IF EXISTS %s.%s", setup.TestKeyspace, countersTable)).Exec()
+		s.Query(fmt.Sprintf("DROP TABLE IF EXISTS %s.%s", setup.TestKeyspace, countersTable2)).Exec()
 		s.Query(fmt.Sprintf("DROP TABLE IF EXISTS %s.%s", setup.TestKeyspace, batchTableA)).Exec()
 		s.Query(fmt.Sprintf("DROP TABLE IF EXISTS %s.%s", setup.TestKeyspace, batchTableB)).Exec()
 
@@ -46,6 +48,8 @@ func TestPerTableWriteMetricsCCM(t *testing.T) {
 			"CREATE TABLE IF NOT EXISTS %s.%s (id uuid PRIMARY KEY, name text)", setup.TestKeyspace, metricsTable)).Exec())
 		require.Nil(t, s.Query(fmt.Sprintf(
 			"CREATE TABLE IF NOT EXISTS %s.%s (id uuid PRIMARY KEY, count counter)", setup.TestKeyspace, countersTable)).Exec())
+		require.Nil(t, s.Query(fmt.Sprintf(
+			"CREATE TABLE IF NOT EXISTS %s.%s (id uuid PRIMARY KEY, count counter)", setup.TestKeyspace, countersTable2)).Exec())
 		require.Nil(t, s.Query(fmt.Sprintf(
 			"CREATE TABLE IF NOT EXISTS %s.%s (id uuid PRIMARY KEY, val text)", setup.TestKeyspace, batchTableA)).Exec())
 		require.Nil(t, s.Query(fmt.Sprintf(
@@ -185,6 +189,32 @@ func TestPerTableWriteMetricsCCM(t *testing.T) {
 		require.Nil(t, proxy.ExecuteBatch(batch))
 		assertMetricOnBothClusters(t, ks, batchTableA)
 		assertMetricOnBothClusters(t, ks, batchTableB)
+	})
+
+	// ================================================================
+	// COUNTER BATCH (inline)
+	// ================================================================
+
+	t.Run("batch_counter_inline", func(t *testing.T) {
+		batch := proxy.NewBatch(gocql.CounterBatch)
+		batch.Query(fmt.Sprintf("UPDATE %s.%s SET count = count + 1 WHERE id = d1b05da0-8c20-11ea-9fc6-6d2c86545d91", ks, countersTable))
+		batch.Query(fmt.Sprintf("UPDATE %s.%s SET count = count + 1 WHERE id = d1b05da0-8c20-11ea-9fc6-6d2c86545d91", ks, countersTable2))
+		require.Nil(t, proxy.ExecuteBatch(batch))
+		assertMetricOnBothClusters(t, ks, countersTable)
+		assertMetricOnBothClusters(t, ks, countersTable2)
+	})
+
+	// ================================================================
+	// COUNTER BATCH (prepared — gocql prepares when bind params are used)
+	// ================================================================
+
+	t.Run("batch_counter_prepared", func(t *testing.T) {
+		batch := proxy.NewBatch(gocql.CounterBatch)
+		batch.Query(fmt.Sprintf("UPDATE %s.%s SET count = count + ? WHERE id = ?", ks, countersTable), int64(3), "eed574b0-8c20-11ea-9fc6-6d2c86545d91")
+		batch.Query(fmt.Sprintf("UPDATE %s.%s SET count = count + ? WHERE id = ?", ks, countersTable2), int64(3), "eed574b0-8c20-11ea-9fc6-6d2c86545d91")
+		require.Nil(t, proxy.ExecuteBatch(batch))
+		assertMetricOnBothClusters(t, ks, countersTable)
+		assertMetricOnBothClusters(t, ks, countersTable2)
 	})
 
 	// ================================================================
