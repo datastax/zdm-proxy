@@ -55,7 +55,10 @@ origin_port: 9042
 # Local data center for origin cluster.
 # origin_local_datacenter:
 
-# Origin cluster username.
+# Origin cluster username. Avoid using a superuser account for application workloads.
+# Superuser authentication in Cassandra requires QUORUM consistency internally, which
+# increases the risk of auth failures during node instability. The proxy will log a
+# warning at startup if the configured user is a superuser.
 origin_username: user1
 
 # Origin cluster password.
@@ -89,7 +92,10 @@ target_contact_points: 127.0.0.2
 # Port used when connecting to nodes from target cluster.
 target_port: 9042
 
-# Target cluster username.
+# Target cluster username. Avoid using a superuser account for application workloads.
+# Superuser authentication in Cassandra requires QUORUM consistency internally, which
+# increases the risk of auth failures during node instability. The proxy will log a
+# warning at startup if the configured user is a superuser.
 target_username: user2
 
 # Target cluster password.
