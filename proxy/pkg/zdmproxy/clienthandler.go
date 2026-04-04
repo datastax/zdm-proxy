@@ -670,6 +670,10 @@ func (ch *ClientHandler) responseLoop() {
 					if reqCtx.GetRequestInfo().ShouldBeTrackedInMetrics() {
 						trackClusterErrorMetrics(response.responseFrame, ch.getCompression(), response.connectorType, ch.nodeMetrics)
 					}
+					// Track per-table successful writes immediately when each cluster responds
+					if isResponseSuccessful(response.responseFrame) && response.connectorType != ClusterConnectorTypeAsync {
+						ch.trackPerTableWriteSuccess(reqCtx.GetRequestInfo(), response.connectorType)
+					}
 				}
 
 				if finished {
@@ -2261,6 +2265,35 @@ func decodeErrorResult(frame *frame.RawFrame, compression primitive.Compression)
 	}
 
 	return errorResult, nil
+}
+
+func (ch *ClientHandler) trackPerTableWriteSuccess(requestInfo RequestInfo, connectorType ClusterConnectorType) {
+	if requestInfo.GetForwardDecision() != forwardToBoth {
+		return // only track writes (forwardToBoth)
+	}
+	targets := requestInfo.GetWriteTargets()
+	if len(targets) == 0 {
+		return
+	}
+
+	var cluster string
+	switch connectorType {
+	case ClusterConnectorTypeOrigin:
+		cluster = "origin"
+	case ClusterConnectorTypeTarget:
+		cluster = "target"
+	default:
+		return
+	}
+
+	for _, wt := range targets {
+		counter, err := ch.metricHandler.GetOrCreateWriteSuccessCounter(cluster, wt.Keyspace, wt.Table)
+		if err != nil {
+			log.Warnf("Could not create write success metric for %s.%s on %s: %v", wt.Keyspace, wt.Table, cluster, err)
+			continue
+		}
+		counter.Add(1)
+	}
 }
 
 func isResponseSuccessful(response *frame.RawFrame) bool {

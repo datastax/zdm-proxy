@@ -56,6 +56,7 @@ func TestWithHttpHandlers(t *testing.T) {
 	t.Run("testMetricsWithUnavailableNode", func(t *testing.T) {
 		testMetricsWithUnavailableNode(t, metricsHandler)
 	})
+
 }
 
 func testHttpEndpointsWithProxyNotInitialized(

@@ -109,7 +109,8 @@ func buildRequestInfo(
 		} else if len(stmtsReplacedTerms) == 1 {
 			replacedTerms = stmtsReplacedTerms[0].replacedTerms
 		}
-		return NewPrepareRequestInfo(baseRequestInfo, replacedTerms, stmtQueryData.queryData.hasPositionalBindMarkers(), prepareMsg.Query, prepareMsg.Keyspace), nil
+		tableName := stmtQueryData.queryData.getTableName()
+		return NewPrepareRequestInfo(baseRequestInfo, replacedTerms, stmtQueryData.queryData.hasPositionalBindMarkers(), prepareMsg.Query, prepareMsg.Keyspace, tableName), nil
 	case primitive.OpCodeBatch:
 		decodedFrame, err := frameContext.GetOrDecodeFrame()
 		if err != nil {
@@ -120,17 +121,35 @@ func buildRequestInfo(
 			return nil, fmt.Errorf("could not convert message with batch op code to batch type, got %v instead", decodedFrame.Body.Message)
 		}
 		preparedDataByStmtIdxMap := make(map[int]PreparedData)
+		var writeTargets []WriteTarget
+		seen := map[string]bool{} // deduplicate targets within the batch
 		for childIdx, child := range batchMsg.Children {
 			if child.Id != nil {
 				preparedData, err := getPreparedData(psCache, mh, child.Id, primitive.OpCodeBatch, decodedFrame)
 				if err != nil {
 					return nil, err
-				} else {
-					preparedDataByStmtIdxMap[childIdx] = preparedData
+				}
+				preparedDataByStmtIdxMap[childIdx] = preparedData
+				pri := preparedData.GetPrepareRequestInfo()
+				ks := pri.GetKeyspace()
+				tbl := pri.GetTableName()
+				key := ks + "." + tbl
+				if (ks != "" || tbl != "") && !seen[key] {
+					writeTargets = append(writeTargets, WriteTarget{Keyspace: ks, Table: tbl})
+					seen[key] = true
+				}
+			} else if child.Query != "" {
+				qi := inspectCqlQuery(child.Query, currentKeyspaceName, timeUuidGenerator)
+				ks := qi.getApplicableKeyspace()
+				tbl := qi.getTableName()
+				key := ks + "." + tbl
+				if (ks != "" || tbl != "") && !seen[key] {
+					writeTargets = append(writeTargets, WriteTarget{Keyspace: ks, Table: tbl})
+					seen[key] = true
 				}
 			}
 		}
-		return NewBatchRequestInfo(preparedDataByStmtIdxMap), nil
+		return NewBatchRequestInfo(preparedDataByStmtIdxMap, writeTargets), nil
 	case primitive.OpCodeExecute:
 		decodedFrame, err := frameContext.GetOrDecodeFrame()
 		if err != nil {
@@ -233,7 +252,15 @@ func getRequestInfoFromQueryInfo(
 
 	log.Tracef("Forward decision: %s", forwardDecision)
 
-	return NewGenericRequestInfo(forwardDecision, sendAlsoToAsync, trackMetrics)
+	info := NewGenericRequestInfo(forwardDecision, sendAlsoToAsync, trackMetrics)
+	if forwardDecision == forwardToBoth {
+		ks := queryInfo.getApplicableKeyspace()
+		tbl := queryInfo.getTableName()
+		if ks != "" || tbl != "" {
+			info.writeTargets = []WriteTarget{{Keyspace: ks, Table: tbl}}
+		}
+	}
+	return info
 }
 
 func isSystemQuery(info QueryInfo) bool {
