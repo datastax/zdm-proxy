@@ -47,12 +47,23 @@ Tracks failed TCP connection attempts from the proxy to cluster nodes. A spike m
 
 *Alert triggers when:* delta > 3 per interval.
 
+**5. Per-table write divergence — `zdm_proxy_write_success_total`**
+
+This counter tracks successful writes per cluster, keyspace, and table with labels `{cluster="origin|target", keyspace="...", table="..."}`. The script compares origin and target counts for each table.
+
+- If origin has writes but target has zero for a table, the target may be completely down for that table — this is **critical**.
+- If origin and target counts differ by more than the threshold, writes are succeeding on origin but failing on target for that table — data is diverging and will need repair after migration.
+
+During normal dual-write operation, origin and target counts should be identical. Any divergence means the target is missing writes.
+
+*Alert triggers when:* origin and target counts differ by more than `--write-divergence-threshold` (default: 0).
+
 ### Alert severity levels
 
 | Severity | When | What it means |
 |----------|------|---------------|
-| **critical** | Origin failures, metrics endpoint unreachable | Production is impacted right now |
-| **warning** | Target failures, connection problems | Migration data flow is degraded but origin (source of truth) is fine |
+| **critical** | Origin failures, metrics endpoint unreachable, target has zero writes for a table that origin is writing to | Production is impacted right now |
+| **warning** | Target failures, connection problems, origin/target write count divergence | Migration data flow is degraded but origin (source of truth) is fine |
 
 ### Why target failures matter even though origin is fine
 
@@ -96,6 +107,7 @@ Everything can be set via CLI flags or environment variables. CLI flags take pre
 | `--interval` | `ZDM_CHECK_INTERVAL` | `0` (one-shot) | Seconds between checks |
 | `--failed-writes-threshold` | `ZDM_FAILED_WRITES_THRESHOLD` | `5` | Alert if failed writes increase by more than this per interval |
 | `--write-timeout-threshold` | `ZDM_WRITE_TIMEOUT_THRESHOLD` | `5` | Alert if target timeouts increase by more than this per interval |
+| `--write-divergence-threshold` | `ZDM_WRITE_DIVERGENCE_THRESHOLD` | `0` | Alert if origin/target per-table write counts differ by more than this |
 | `--slack-webhook-url` | `ZDM_SLACK_WEBHOOK_URL` | *(none)* | Slack incoming webhook URL |
 | `--pagerduty-routing-key` | `ZDM_PAGERDUTY_ROUTING_KEY` | *(none)* | PagerDuty Events API v2 integration/routing key |
 | `--pagerduty-source` | `ZDM_PAGERDUTY_SOURCE` | `zdm-proxy` | Source field in PagerDuty events |

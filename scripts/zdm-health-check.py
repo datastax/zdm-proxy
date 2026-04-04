@@ -29,6 +29,7 @@ Environment variables (all optional, CLI args take precedence):
     ZDM_CHECK_INTERVAL             - seconds between checks when running in loop mode
     ZDM_FAILED_WRITES_THRESHOLD    - alert if failed writes increase by more than this per interval (default: 5)
     ZDM_WRITE_TIMEOUT_THRESHOLD    - alert if target write timeouts increase by more than this per interval (default: 5)
+    ZDM_WRITE_DIVERGENCE_THRESHOLD - alert if origin/target per-table write counts differ by more than this (default: 0)
     ZDM_SLACK_WEBHOOK_URL          - Slack incoming webhook URL
     ZDM_PAGERDUTY_ROUTING_KEY      - PagerDuty Events API v2 integration/routing key
     ZDM_PAGERDUTY_SOURCE           - source field for PagerDuty events (default: zdm-proxy)
@@ -139,7 +140,47 @@ def check_health(metrics, prev_metrics, config):
         if d > 3:
             problems.append(("warning", f"{cluster.title()} connection failures: +{int(d)} in last interval"))
 
+    # Per-table write divergence: compare origin vs target successful writes
+    # If origin and target counts differ for a table, data may be diverging
+    write_counts = parse_per_table_writes(metrics)
+    for table_key, counts in write_counts.items():
+        origin_count = counts.get("origin", 0)
+        target_count = counts.get("target", 0)
+        if origin_count > 0 and target_count == 0:
+            problems.append(("critical",
+                f"Write divergence on {table_key}: origin={int(origin_count)} target=0 — target may be down"))
+        elif origin_count != target_count:
+            diff = abs(origin_count - target_count)
+            if diff > config["write_divergence_threshold"]:
+                problems.append(("warning",
+                    f"Write divergence on {table_key}: origin={int(origin_count)} target={int(target_count)} (diff={int(diff)})"))
+
     return problems
+
+
+def parse_per_table_writes(metrics):
+    """Parse zdm_proxy_write_success_total metrics into {keyspace.table: {origin: N, target: N}}."""
+    result = {}
+    prefix = "zdm_proxy_write_success_total{"
+    for key, value in metrics.items():
+        if not key.startswith(prefix):
+            continue
+        # Extract labels from key like: zdm_proxy_write_success_total{cluster="origin",keyspace="ks",table="t"}
+        labels_str = key[len(prefix):-1]  # strip prefix and trailing }
+        labels = {}
+        for part in labels_str.split(","):
+            if "=" in part:
+                k, v = part.split("=", 1)
+                labels[k.strip()] = v.strip().strip('"')
+        cluster = labels.get("cluster", "")
+        keyspace = labels.get("keyspace", "")
+        table = labels.get("table", "")
+        if cluster and (keyspace or table):
+            table_key = f"{keyspace}.{table}" if keyspace else table
+            if table_key not in result:
+                result[table_key] = {}
+            result[table_key][cluster] = value
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -307,6 +348,9 @@ def main():
     parser.add_argument("--write-timeout-threshold", type=int,
                         default=int(os.environ.get("ZDM_WRITE_TIMEOUT_THRESHOLD", "5")),
                         help="Alert if target timeouts increase by more than this per interval")
+    parser.add_argument("--write-divergence-threshold", type=int,
+                        default=int(os.environ.get("ZDM_WRITE_DIVERGENCE_THRESHOLD", "0")),
+                        help="Alert if origin/target per-table write counts differ by more than this")
 
     # Slack
     parser.add_argument("--slack-webhook-url",
@@ -326,6 +370,7 @@ def main():
     config = {
         "failed_writes_threshold": args.failed_writes_threshold,
         "write_timeout_threshold": args.write_timeout_threshold,
+        "write_divergence_threshold": args.write_divergence_threshold,
     }
 
     has_alerting = bool(args.slack_webhook_url or args.pagerduty_routing_key)
