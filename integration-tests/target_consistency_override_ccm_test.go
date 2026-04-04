@@ -9,6 +9,7 @@ import (
 	gocql "github.com/apache/cassandra-gocql-driver/v2"
 	"github.com/stretchr/testify/require"
 
+	"github.com/datastax/zdm-proxy/integration-tests/env"
 	"github.com/datastax/zdm-proxy/integration-tests/setup"
 	"github.com/datastax/zdm-proxy/integration-tests/utils"
 )
@@ -22,6 +23,10 @@ import (
 //   - Prepared INSERT at QUORUM → same verification via EXECUTE trace
 //   - Batch INSERT at QUORUM → same verification via BATCH trace
 func TestTargetConsistencyOverrideCCM(t *testing.T) {
+	if env.CompareServerVersion("3.0.0") < 0 {
+		t.Skip("Skipping consistency override trace test: system_traces.sessions parameters map not available before Cassandra 3.0")
+	}
+
 	originCluster, targetCluster, err := SetupOrGetGlobalCcmClusters(t)
 	require.Nil(t, err)
 
