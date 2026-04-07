@@ -101,20 +101,26 @@ type requestContextImpl struct {
 	lock                  *sync.Mutex
 	startTime             time.Time
 	customResponseChannel chan *customResponse
+
+	// effectiveForwardDecision may differ from requestInfo.GetForwardDecision() when
+	// target is disabled at runtime. Used for completion tracking, response
+	// aggregation, and proxy-level metrics.
+	effectiveForwardDecision forwardDecision
 }
 
-func NewRequestContext(reqId []byte, req *frame.RawFrame, requestInfo RequestInfo, startTime time.Time, customResponseChannel chan *customResponse) *requestContextImpl {
+func NewRequestContext(reqId []byte, req *frame.RawFrame, requestInfo RequestInfo, effectiveFwdDecision forwardDecision, startTime time.Time, customResponseChannel chan *customResponse) *requestContextImpl {
 	return &requestContextImpl{
-		requestId:             reqId,
-		request:               req,
-		requestInfo:           requestInfo,
-		originResponse:        nil,
-		targetResponse:        nil,
-		state:                 RequestPending,
-		timer:                 nil,
-		lock:                  &sync.Mutex{},
-		startTime:             startTime,
-		customResponseChannel: customResponseChannel,
+		requestId:                reqId,
+		request:                  req,
+		requestInfo:              requestInfo,
+		originResponse:           nil,
+		targetResponse:           nil,
+		state:                    RequestPending,
+		timer:                    nil,
+		lock:                     &sync.Mutex{},
+		startTime:                startTime,
+		customResponseChannel:    customResponseChannel,
+		effectiveForwardDecision: effectiveFwdDecision,
 	}
 }
 
@@ -141,7 +147,7 @@ func (recv *requestContextImpl) SetTimeout(nodeMetrics *metrics.NodeMetrics, req
 		if recv.requestInfo.ShouldBeTrackedInMetrics() {
 			sentOrigin := false
 			sentTarget := false
-			switch recv.requestInfo.GetForwardDecision() {
+			switch recv.effectiveForwardDecision {
 			case forwardToBoth:
 				sentOrigin = true
 				sentTarget = true
@@ -243,7 +249,7 @@ func (recv *requestContextImpl) updateInternalState(f *frame.RawFrame, cluster c
 	}
 
 	done := false
-	switch recv.requestInfo.GetForwardDecision() {
+	switch recv.effectiveForwardDecision {
 	case forwardToTarget:
 		done = recv.targetResponse != nil
 	case forwardToOrigin:
@@ -255,7 +261,7 @@ func (recv *requestContextImpl) updateInternalState(f *frame.RawFrame, cluster c
 	case forwardToAsyncOnly:
 		done = true
 	default:
-		log.Errorf("unrecognized decision %v", recv.requestInfo.GetForwardDecision())
+		log.Errorf("unrecognized decision %v", recv.effectiveForwardDecision)
 	}
 
 	if done {

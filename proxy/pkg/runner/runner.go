@@ -17,30 +17,35 @@ import (
 )
 
 var (
-	metricsHandler   = httpzdmproxy.NewHandlerWithFallback(metrics.DefaultHttpHandler())
-	readinessHandler = httpzdmproxy.NewHandlerWithFallback(health.DefaultReadinessHandler())
-	registerHandler  = &sync.Mutex{}
-	registered       = false
+	metricsHandler      = httpzdmproxy.NewHandlerWithFallback(metrics.DefaultHttpHandler())
+	readinessHandler    = httpzdmproxy.NewHandlerWithFallback(health.DefaultReadinessHandler())
+	targetHandler = httpzdmproxy.NewHandlerWithFallback(httpzdmproxy.DefaultTargetHandler())
+	registerHandler     = &sync.Mutex{}
+	registered          = false
 )
 
-func SetupHandlers() (*httpzdmproxy.HandlerWithFallback, *httpzdmproxy.HandlerWithFallback) {
+func SetupHandlers() (*httpzdmproxy.HandlerWithFallback, *httpzdmproxy.HandlerWithFallback, *httpzdmproxy.HandlerWithFallback) {
 	registerHandler.Lock()
 	defer registerHandler.Unlock()
 	if registered {
-		return metricsHandler, readinessHandler
+		return metricsHandler, readinessHandler, targetHandler
 	}
 	registered = true
 	http.Handle("/metrics", metricsHandler.Handler())
 	http.Handle("/health/readiness", readinessHandler.Handler())
 	http.Handle("/health/liveness", health.LivenessHandler())
-	return metricsHandler, readinessHandler
+	http.Handle("/api/v1/target", targetHandler.Handler())
+	http.Handle("/api/v1/target/enable", targetHandler.Handler())
+	http.Handle("/api/v1/target/disable", targetHandler.Handler())
+	return metricsHandler, readinessHandler, targetHandler
 }
 
 func RunMain(
 	conf *config.Config,
 	ctx context.Context,
 	metricsHandler *httpzdmproxy.HandlerWithFallback,
-	readinessHandler *httpzdmproxy.HandlerWithFallback) {
+	readinessHandler *httpzdmproxy.HandlerWithFallback,
+	targetHandler *httpzdmproxy.HandlerWithFallback) {
 
 	log.Infof("Starting http server (metrics and health checks) on %v:%d", conf.MetricsAddress, conf.MetricsPort)
 	wg := &sync.WaitGroup{}
@@ -58,6 +63,7 @@ func RunMain(
 	if err == nil {
 		metricsHandler.SetHandler(zdmProxy.GetMetricHandler().GetHttpHandler())
 		readinessHandler.SetHandler(health.ReadinessHandler(zdmProxy))
+		targetHandler.SetHandler(httpzdmproxy.TargetHandler(zdmProxy))
 
 		log.Info("Proxy started. Waiting for SIGINT/SIGTERM to shutdown.")
 		<-ctx.Done()
@@ -65,6 +71,7 @@ func RunMain(
 		zdmProxy.Shutdown()
 		metricsHandler.ClearHandler()
 		readinessHandler.ClearHandler()
+		targetHandler.ClearHandler()
 	} else if !errors.Is(err, zdmproxy.ShutdownErr) {
 		log.Errorf("Error launching proxy: %v", err)
 	}

@@ -33,7 +33,7 @@ they are registered separately on the parent test.
 */
 
 func TestWithHttpHandlers(t *testing.T) {
-	metricsHandler, readinessHandler := runner.SetupHandlers()
+	metricsHandler, readinessHandler, _ := runner.SetupHandlers()
 
 	t.Run("testMetrics", func(t *testing.T) {
 		testMetrics(t, metricsHandler)
@@ -84,7 +84,7 @@ func testHttpEndpointsWithProxyNotInitialized(
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		runner.RunMain(conf, ctx, metricsHandler, healthHandler)
+		runner.RunMain(conf, ctx, metricsHandler, healthHandler, httpzdmproxy.NewHandlerWithFallback(httpzdmproxy.DefaultTargetHandler()))
 	}()
 
 	time.Sleep(500 * time.Millisecond)
@@ -121,7 +121,7 @@ func testHttpEndpointsWithProxyInitialized(
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		runner.RunMain(conf, ctx, metricsHandler, healthHandler)
+		runner.RunMain(conf, ctx, metricsHandler, healthHandler, httpzdmproxy.NewHandlerWithFallback(httpzdmproxy.DefaultTargetHandler()))
 	}()
 
 	httpAddr := fmt.Sprintf("%s:%d", conf.MetricsAddress, conf.MetricsPort)
@@ -258,7 +258,7 @@ func testHttpEndpointsWithUnavailableNode(
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		runner.RunMain(conf, ctx, metricsHandler, healthHandler)
+		runner.RunMain(conf, ctx, metricsHandler, healthHandler, httpzdmproxy.NewHandlerWithFallback(httpzdmproxy.DefaultTargetHandler()))
 	}()
 
 	httpAddr := fmt.Sprintf("%s:%d", conf.MetricsAddress, conf.MetricsPort)

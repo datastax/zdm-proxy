@@ -73,6 +73,6 @@ func launchProxy(profilingSupported bool) {
 	runSignalListener(cancelFunc)
 	log.Info("SIGINT/SIGTERM listener started.")
 
-	metricsHandler, readinessHandler := runner.SetupHandlers()
-	runner.RunMain(conf, ctx, metricsHandler, readinessHandler)
+	metricsHandler, readinessHandler, targetHandler := runner.SetupHandlers()
+	runner.RunMain(conf, ctx, metricsHandler, readinessHandler, targetHandler)
 }

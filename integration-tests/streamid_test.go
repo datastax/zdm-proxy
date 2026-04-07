@@ -78,7 +78,7 @@ func TestStreamIdsMetrics(t *testing.T) {
 	require.Nil(t, err)
 	defer testSetup.Cleanup()
 
-	metricsHandler, _ := runner.SetupHandlers()
+	metricsHandler, _, _ := runner.SetupHandlers()
 	wg := &sync.WaitGroup{}
 	defaultConf := setup.NewTestConfig("", "")
 	srv := startMetricsHandler(t, defaultConf, wg, metricsHandler)

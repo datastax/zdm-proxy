@@ -83,17 +83,26 @@ type ZdmProxy struct {
 	globalClientHandlersWg                *sync.WaitGroup
 
 	metricHandler *metrics.MetricHandler
+
+	// targetEnabled controls whether any requests are forwarded to the target cluster.
+	// When false, all forwardToBoth requests are sent only to origin and no heartbeats
+	// are sent to target. Toggled at runtime via the REST API.
+	targetEnabled *atomic.Bool
 }
 
 func NewZdmProxy(conf *config.Config) (*ZdmProxy, error) {
+	targetEnabled := &atomic.Bool{}
+	targetEnabled.Store(true)
 	zdmProxy := &ZdmProxy{
-		Conf: conf,
+		Conf:                conf,
+		targetEnabled: targetEnabled,
 	}
 	err := zdmProxy.initializeGlobalStructures()
 	if err != nil {
 		zdmProxy.Shutdown()
 		return nil, err
 	}
+	log.Info("Target cluster: enabled")
 	return zdmProxy, nil
 }
 
@@ -588,7 +597,8 @@ func (p *ZdmProxy) handleNewConnection(clientConn net.Conn) {
 		p.rateLimiters,
 		p.readMode,
 		p.primaryCluster,
-		p.systemQueriesMode)
+		p.systemQueriesMode,
+		p.targetEnabled)
 
 	if err != nil {
 		errFunc(err)
@@ -656,6 +666,21 @@ func (p *ZdmProxy) GetTargetControlConn() *ControlConn {
 	defer p.lock.RUnlock()
 
 	return p.targetControlConn
+}
+
+func (p *ZdmProxy) SetTargetEnabled(enabled bool) {
+	old := p.targetEnabled.Swap(enabled)
+	if old != enabled {
+		if enabled {
+			log.Warn("Target cluster ENABLED via API — requests will be forwarded to target")
+		} else {
+			log.Warn("Target cluster DISABLED via API — no requests will be forwarded to target")
+		}
+	}
+}
+
+func (p *ZdmProxy) IsTargetEnabled() bool {
+	return p.targetEnabled.Load()
 }
 
 func Run(conf *config.Config, ctx context.Context) (*ZdmProxy, error) {
@@ -790,6 +815,16 @@ func (p *ZdmProxy) CreateProxyMetrics(metricFactory metrics.MetricFactory) (*met
 		return nil, err
 	}
 
+	targetEnabledGauge, err := metricFactory.GetOrCreateGaugeFunc(metrics.TargetEnabled, func() float64 {
+		if p.targetEnabled.Load() {
+			return 1
+		}
+		return 0
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	proxyMetrics := &metrics.ProxyMetrics{
 		FailedConnectionsOrigin:  failedConnectionsOrigin,
 		FailedConnectionsTarget:  failedConnectionsTarget,
@@ -807,6 +842,7 @@ func (p *ZdmProxy) CreateProxyMetrics(metricFactory metrics.MetricFactory) (*met
 		InFlightReadsTarget:      inFlightReadsTarget,
 		InFlightWrites:           inFlightWrites,
 		OpenClientConnections:    openClientConnections,
+		TargetEnabled:            targetEnabledGauge,
 	}
 
 	return proxyMetrics, nil

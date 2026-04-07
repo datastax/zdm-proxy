@@ -124,6 +124,11 @@ type ClientHandler struct {
 	// nil means disabled (default). When non-nil, all requests to the target cluster use this CL.
 	targetConsistencyLevel *primitive.ConsistencyLevel
 
+	// targetEnabled is a shared flag from ZdmProxy. When false, all forwardToBoth
+	// requests are sent only to origin and nothing is sent to target.
+	// Checked on every request via atomic load.
+	targetEnabled *atomic.Bool
+
 	// not used atm but should be used when a protocol error occurs after #68 has been addressed
 	clientHandlerShutdownRequestCancelFn context.CancelFunc
 
@@ -157,7 +162,8 @@ func NewClientHandler(
 	rateLimiters *RateLimiters,
 	readMode common.ReadMode,
 	primaryCluster common.ClusterType,
-	systemQueriesMode common.SystemQueriesMode) (*ClientHandler, error) {
+	systemQueriesMode common.SystemQueriesMode,
+	targetEnabled *atomic.Bool) (*ClientHandler, error) {
 
 	originEndpointId := originCassandraConnInfo.endpoint.GetEndpointIdentifier()
 	targetEndpointId := targetCassandraConnInfo.endpoint.GetEndpointIdentifier()
@@ -357,6 +363,7 @@ func NewClientHandler(
 		clientHandlerShutdownRequestContext:  clientHandlerShutdownRequestContext,
 		compression:                          compression,
 		targetConsistencyLevel:          targetWriteCL,
+		targetEnabled:             targetEnabled,
 	}, nil
 }
 
@@ -754,7 +761,7 @@ func (ch *ClientHandler) finishRequest(holder *requestContextHolder, reqCtx *req
 
 	if reqCtx.requestInfo.ShouldBeTrackedInMetrics() {
 		proxyMetrics := ch.metricHandler.GetProxyMetrics()
-		switch reqCtx.requestInfo.GetForwardDecision() {
+		switch reqCtx.effectiveForwardDecision {
 		case forwardToBoth:
 			proxyMetrics.ProxyWritesDuration.Track(reqCtx.startTime)
 			proxyMetrics.InFlightWrites.Subtract(1)
@@ -766,13 +773,13 @@ func (ch *ClientHandler) finishRequest(holder *requestContextHolder, reqCtx *req
 			proxyMetrics.InFlightReadsTarget.Subtract(1)
 		case forwardToAsyncOnly, forwardToNone:
 		default:
-			log.Errorf("unexpected forwardDecision %v, unable to track proxy level metrics", reqCtx.requestInfo.GetForwardDecision())
+			log.Errorf("unexpected forwardDecision %v, unable to track proxy level metrics", reqCtx.effectiveForwardDecision)
 		}
 	}
 
 	aggregatedResponse, responseClusterType, err := ch.computeClientResponse(reqCtx)
 	finalResponse := aggregatedResponse
-	if err == nil && reqCtx.requestInfo.GetForwardDecision() != forwardToAsyncOnly {
+	if err == nil && reqCtx.effectiveForwardDecision != forwardToAsyncOnly {
 		// async only requests can't have "PREPARED", "SETKEYSPACE" or "UNPREPARED" responses so skip this
 		finalResponse, err = ch.processClientResponse(aggregatedResponse, responseClusterType, reqCtx)
 	}
@@ -835,7 +842,7 @@ func (ch *ClientHandler) cancelRequest(holder *requestContextHolder, reqCtx *req
 
 // Computes the response to be sent to the client based on the forward decision of the request.
 func (ch *ClientHandler) computeClientResponse(requestContext *requestContextImpl) (*frame.RawFrame, common.ClusterType, error) {
-	fwdDecision := requestContext.requestInfo.GetForwardDecision()
+	fwdDecision := requestContext.effectiveForwardDecision
 	switch fwdDecision {
 	case forwardToOrigin:
 		if requestContext.originResponse == nil {
@@ -1521,6 +1528,15 @@ func (ch *ClientHandler) executeRequest(
 	frameContext *frameDecodeContext, requestInfo RequestInfo, currentKeyspace string,
 	overallRequestStartTime time.Time, customResponseChannel chan *customResponse, requestTimeout time.Duration) error {
 	fwdDecision := requestInfo.GetForwardDecision()
+
+	// When target is disabled, nothing goes to target.
+	if !ch.targetEnabled.Load() {
+		if fwdDecision == forwardToBoth || fwdDecision == forwardToTarget {
+			fwdDecision = forwardToOrigin
+			log.Tracef("Target disabled, redirecting to origin for opcode %v", frameContext.GetRawFrame().Header.OpCode)
+		}
+	}
+
 	log.Tracef("Opcode: %v, Forward decision: %v", frameContext.GetRawFrame().Header.OpCode, fwdDecision)
 
 	f := frameContext.GetRawFrame()
@@ -1568,7 +1584,7 @@ func (ch *ClientHandler) executeRequest(
 		return nil
 	}
 
-	reqCtx := NewRequestContext(frameContext.GetRequestId(ch.conf), f, requestInfo, overallRequestStartTime, customResponseChannel)
+	reqCtx := NewRequestContext(frameContext.GetRequestId(ch.conf), f, requestInfo, fwdDecision, overallRequestStartTime, customResponseChannel)
 	var contextHoldersMap *sync.Map
 	if fwdDecision == forwardToAsyncOnly {
 		contextHoldersMap = ch.asyncRequestContextHolders // different map because of stream id collision
@@ -1637,7 +1653,9 @@ func (ch *ClientHandler) executeRequest(
 		if sendErr != nil {
 			ch.handleRequestSendFailure(sendErr, frameContext)
 		}
-		ch.targetCassandraConnector.sendHeartbeat(startupFrameVersion, ch.conf.HeartbeatIntervalMs)
+		if ch.targetEnabled.Load() {
+			ch.targetCassandraConnector.sendHeartbeat(startupFrameVersion, ch.conf.HeartbeatIntervalMs)
+		}
 	case forwardToTarget:
 		log.Tracef("Forwarding request with opcode %v for stream %v to %v",
 			f.Header.OpCode, f.Header.StreamId, common.ClusterTypeTarget)

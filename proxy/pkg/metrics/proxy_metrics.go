@@ -139,6 +139,11 @@ var (
 		"client_connections_total",
 		"Number of client connections currently open",
 	)
+
+	TargetEnabled = NewMetric(
+		"target_enabled",
+		"Whether the target cluster is enabled (1) or disabled (0)",
+	)
 )
 
 type ProxyMetrics struct {
@@ -162,4 +167,6 @@ type ProxyMetrics struct {
 	InFlightWrites      Gauge
 
 	OpenClientConnections GaugeFunc
+
+	TargetEnabled GaugeFunc
 }

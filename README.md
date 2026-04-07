@@ -94,6 +94,44 @@ If you don't have test clusters readily available to try with, check the [altern
 [Contributor's guide](./CONTRIBUTING.md), which will set up all the dependencies, including two test clusters and a proxy instance, in a
 containerized sandbox environment.
 
+## Runtime Target Toggle API
+
+The proxy exposes a REST API on the metrics HTTP port (default `14001`) to dynamically enable or disable the target cluster at runtime. When the target is disabled, **no requests are forwarded to the target cluster** — all reads and writes go to origin only.
+
+This is intended for emergency use when the target cluster is down or unhealthy. Without this toggle, a failing target causes all client requests to error or timeout because the proxy waits for both clusters to respond.
+
+### Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/target` | Returns current target status: `{"enabled": true}` or `{"enabled": false}` |
+| `POST` | `/api/v1/target/enable` | Enables the target cluster. All requests resume flowing to both clusters. |
+| `POST` | `/api/v1/target/disable` | Disables the target cluster. No requests are sent to target. |
+
+### Usage
+
+```bash
+# Check current status
+curl http://localhost:14001/api/v1/target
+
+# Disable target (emergency — target is down)
+curl -X POST http://localhost:14001/api/v1/target/disable
+
+# Re-enable target (target has recovered)
+curl -X POST http://localhost:14001/api/v1/target/enable
+```
+
+### Behaviour
+
+- **Default**: Target is enabled. The proxy behaves normally.
+- **When disabled**: All `forwardToBoth` and `forwardToTarget` requests are redirected to origin only. No heartbeats are sent to target. Prepared statement caches on the target become stale.
+- **When re-enabled**: Requests resume flowing to both clusters. If prepared statements are stale on the target, the client driver's standard UNPREPARED recovery mechanism handles re-preparation automatically.
+- **Not persisted**: If the proxy restarts, the target defaults back to enabled.
+
+### Monitoring
+
+A Prometheus gauge `zdm_target_enabled` is exposed on the `/metrics` endpoint. Value is `1` when enabled, `0` when disabled. Use this for alerting on unintended state.
+
 ## Supported Protocol Versions
 
 **ZDM Proxy supports protocol versions v2, v3, v4, DSE_V1 and DSE_V2.**
