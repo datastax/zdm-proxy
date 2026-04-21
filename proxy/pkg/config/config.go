@@ -74,11 +74,12 @@ type Config struct {
 
 	// Proxy bucket
 
-	ProxyListenAddress        string `default:"localhost" split_words:"true" yaml:"proxy_listen_address"`
-	ProxyListenPort           int    `default:"14002" split_words:"true" yaml:"proxy_listen_port"`
-	ProxyRequestTimeoutMs     int    `default:"10000" split_words:"true" yaml:"proxy_request_timeout_ms"`
-	ProxyMaxClientConnections int    `default:"1000" split_words:"true" yaml:"proxy_max_client_connections"`
-	ProxyMaxStreamIds         int    `default:"2048" split_words:"true" yaml:"proxy_max_stream_ids"`
+	ProxyListenAddress                 string `default:"localhost" split_words:"true" yaml:"proxy_listen_address"`
+	ProxyListenPort                    int    `default:"14002" split_words:"true" yaml:"proxy_listen_port"`
+	ProxyRequestTimeoutMs              int    `default:"10000" split_words:"true" yaml:"proxy_request_timeout_ms"`
+	ProxyMaxClientConnections          int    `default:"1000" split_words:"true" yaml:"proxy_max_client_connections"`
+	ProxyMaxStreamIds                  int    `default:"2048" split_words:"true" yaml:"proxy_max_stream_ids"`
+	ProxyMaxPreparedStatementCacheSize int    `default:"5000" split_words:"true" yaml:"proxy_max_prepared_statement_cache_size"`
 
 	ProxyTlsCaPath            string `split_words:"true" yaml:"proxy_tls_ca_path"`
 	ProxyTlsCertPath          string `split_words:"true" yaml:"proxy_tls_cert_path"`

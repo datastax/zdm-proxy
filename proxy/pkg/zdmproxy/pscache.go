@@ -4,33 +4,49 @@ import (
 	"encoding/hex"
 	"fmt"
 	"github.com/datastax/go-cassandra-native-protocol/message"
+	lru "github.com/hashicorp/golang-lru"
 	log "github.com/sirupsen/logrus"
 	"sync"
 )
 
 type PreparedStatementCache struct {
-	cache map[string]PreparedData // Map containing the prepared queries (raw bytes) keyed on prepareId
-	index map[string]string       // Map that can be used as an index to look up origin prepareIds by target prepareId
+	cache *lru.Cache // Map containing the prepared queries (raw bytes) keyed on prepareId
+	index *lru.Cache // Map that can be used as an index to look up origin prepareIds by target prepareId
 
-	interceptedCache map[string]PreparedData // Map containing the prepared queries for intercepted requests
+	interceptedCache *lru.Cache // Map containing the prepared queries for intercepted requests
 
 	lock *sync.RWMutex
 }
 
-func NewPreparedStatementCache() *PreparedStatementCache {
-	return &PreparedStatementCache{
-		cache:            make(map[string]PreparedData),
-		index:            make(map[string]string),
-		interceptedCache: make(map[string]PreparedData),
-		lock:             &sync.RWMutex{},
+func NewPreparedStatementCache(maxSize int) (*PreparedStatementCache, error) {
+	cache, err := lru.New(maxSize)
+	if err != nil {
+		return nil, fmt.Errorf("error initializing the PreparedStatementCache cache map: %v", err)
 	}
+
+	index, err := lru.New(maxSize)
+	if err != nil {
+		return nil, fmt.Errorf("error initializing the PreparedStatementCache index map: %v", err)
+	}
+
+	interceptedCache, err := lru.New(maxSize)
+	if err != nil {
+		return nil, fmt.Errorf("error initializing the PreparedStatementCache interceptedCache map: %v", err)
+	}
+
+	return &PreparedStatementCache{
+		cache:            cache,
+		index:            index,
+		interceptedCache: interceptedCache,
+		lock:             &sync.RWMutex{},
+	}, nil
 }
 
 func (psc PreparedStatementCache) GetPreparedStatementCacheSize() float64 {
 	psc.lock.RLock()
 	defer psc.lock.RUnlock()
 
-	return float64(len(psc.cache) + len(psc.interceptedCache))
+	return float64(psc.cache.Len() + psc.interceptedCache.Len())
 }
 
 func (psc *PreparedStatementCache) Store(
@@ -42,8 +58,8 @@ func (psc *PreparedStatementCache) Store(
 	psc.lock.Lock()
 	defer psc.lock.Unlock()
 
-	psc.cache[originPrepareIdStr] = NewPreparedData(originPreparedResult, targetPreparedResult, prepareRequestInfo)
-	psc.index[targetPrepareIdStr] = originPrepareIdStr
+	psc.cache.Add(originPrepareIdStr, NewPreparedData(originPreparedResult, targetPreparedResult, prepareRequestInfo))
+	psc.index.Add(targetPrepareIdStr, originPrepareIdStr)
 
 	log.Debugf("Storing PS cache entry: {OriginPreparedId=%v, TargetPreparedId: %v, RequestInfo: %v}",
 		hex.EncodeToString(originPreparedResult.PreparedQueryId), hex.EncodeToString(targetPreparedResult.PreparedQueryId), prepareRequestInfo)
@@ -55,7 +71,7 @@ func (psc *PreparedStatementCache) StoreIntercepted(preparedResult *message.Prep
 	defer psc.lock.Unlock()
 
 	preparedData := NewPreparedData(preparedResult, preparedResult, prepareRequestInfo)
-	psc.interceptedCache[prepareIdStr] = preparedData
+	psc.interceptedCache.Add(prepareIdStr, preparedData)
 
 	log.Debugf("Storing intercepted PS cache entry: {PreparedId=%v, RequestInfo: %v}",
 		hex.EncodeToString(preparedResult.PreparedQueryId), prepareRequestInfo)
@@ -64,31 +80,37 @@ func (psc *PreparedStatementCache) StoreIntercepted(preparedResult *message.Prep
 func (psc *PreparedStatementCache) Get(originPreparedId []byte) (PreparedData, bool) {
 	psc.lock.RLock()
 	defer psc.lock.RUnlock()
-	data, ok := psc.cache[string(originPreparedId)]
-	if !ok {
-		data, ok = psc.interceptedCache[string(originPreparedId)]
+	data, ok := psc.cache.Get(string(originPreparedId))
+	if ok {
+		return data.(PreparedData), true
 	}
-	return data, ok
+
+	data, ok = psc.interceptedCache.Get(string(originPreparedId))
+	if ok {
+		return data.(PreparedData), true
+	}
+
+	return nil, false
 }
 
 func (psc *PreparedStatementCache) GetByTargetPreparedId(targetPreparedId []byte) (PreparedData, bool) {
 	psc.lock.RLock()
 	defer psc.lock.RUnlock()
 
-	originPreparedId, ok := psc.index[string(targetPreparedId)]
+	originPreparedId, ok := psc.index.Get(string(targetPreparedId))
 	if !ok {
 		// Don't bother attempting a lookup on the intercepted cache because this method should only be used to handle UNPREPARED responses
 		return nil, false
 	}
 
-	data, ok := psc.cache[originPreparedId]
+	data, ok := psc.cache.Get(originPreparedId)
 	if !ok {
 		log.Errorf("Could not get prepared data by target id even though there is an entry on the index map. "+
 			"This is most likely a bug. OriginPreparedId = %v, TargetPreparedId = %v", originPreparedId, targetPreparedId)
 		return nil, false
 	}
 
-	return data, true
+	return data.(PreparedData), true
 }
 
 type PreparedData interface {

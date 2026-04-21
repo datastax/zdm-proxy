@@ -448,6 +448,7 @@ func NewTestConfig(originHost string, targetHost string) *config.Config {
 
 	conf.ProxyMaxClientConnections = 1000
 	conf.ProxyMaxStreamIds = 2048
+	conf.ProxyMaxPreparedStatementCacheSize = 5000
 
 	conf.RequestResponseMaxWorkers = -1
 	conf.WriteMaxWorkers = -1
