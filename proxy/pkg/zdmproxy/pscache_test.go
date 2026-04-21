@@ -187,7 +187,8 @@ func checkIfElementIsInInterceptedMap(psCache *PreparedStatementCache, elementSu
 	return foundInterceptedId
 }
 
-/**
+/*
+*
 This test focuses on ensuring that Get and GetByTargetPreparedId work correctly.
 It inserts elements directly into the cache maps to avoid coupling this test to the logic in the PS Cache's store methods.
 It uses dummy, non-realistic data.
