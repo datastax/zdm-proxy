@@ -3,7 +3,7 @@
 # $ docker build . -f ./Dockerfile -t zdm-proxy
 ##########
 
-FROM golang:1.24.2-bullseye AS builder
+FROM golang:1.26.2-bookworm AS builder
 
 ENV GO111MODULE=on \
     CGO_ENABLED=0 \

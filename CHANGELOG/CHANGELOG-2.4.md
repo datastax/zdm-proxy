@@ -6,6 +6,13 @@ When cutting a new release, update the `unreleased` heading to the tag being gen
 
 ---
 
+## v2.4.2 - 2026-04-24
+
+### Improvements
+
+* [#161](https://github.com/datastax/zdm-proxy/issues/161): Update Go to 1.26.2 to fix a number of CVEs related to TLS and X509
+* [#162](https://github.com/datastax/zdm-proxy/issues/162): Update logrus to 1.9.4 to fix CVE-2025-65637
+
 ## v2.4.1 - 2026-02-09
 
 ### Bug Fixes

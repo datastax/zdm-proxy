@@ -1499,7 +1499,7 @@ func TestNowFunctionReplacementPreparedStatement(t *testing.T) {
 					} else {
 						require.True(t,
 							matching[0].Options == nil ||
-								(len(matching[0].Options.PositionalValues) == 0 && len(matching[0].Options.PositionalValues) == 0))
+								(len(matching[0].Options.PositionalValues) == 0 && len(matching[0].Options.NamedValues) == 0))
 					}
 
 					assertGeneratedValues := true
