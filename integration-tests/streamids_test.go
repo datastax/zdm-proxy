@@ -3,6 +3,12 @@ package integration_tests
 import (
 	"context"
 	"fmt"
+	"net"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
 	"github.com/datastax/go-cassandra-native-protocol/client"
 	"github.com/datastax/go-cassandra-native-protocol/frame"
 	"github.com/datastax/go-cassandra-native-protocol/message"
@@ -11,11 +17,6 @@ import (
 	"github.com/datastax/zdm-proxy/integration-tests/utils"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
-	"net"
-	"strings"
-	"sync"
-	"testing"
-	"time"
 )
 
 // Test sending more concurrent, async request than allowed stream IDs.
@@ -243,7 +244,7 @@ func (recv *MaxStreamIdsRequestHandler) HandleRequest(
 			usedStreamIdsMap[request.Header.StreamId] = true
 			recv.lock.Unlock()
 
-			time.Sleep(5 * time.Millisecond) // introduce some delay so that stream IDs are not released immediately
+			time.Sleep(1 * time.Second) // introduce some delay so that stream IDs are not released immediately
 
 			if len(usedStreamIdsMap) > recv.maxStreamIds {
 				return frame.NewFrame(request.Header.Version, request.Header.StreamId, &message.ProtocolError{
