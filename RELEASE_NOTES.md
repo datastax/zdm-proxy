@@ -13,7 +13,7 @@ Upgrade software dependencies to resolve vulnerabilities:
 - Go to 1.26.2
 - Logrus to 1.9.4
 
-[Changelog](CHANGELOG/CHANGELOG-2.4.md#v242---2026-04-24)
+[Changelog](CHANGELOG/CHANGELOG-2.4.md#v242---2026-04-27)
 
 ## v2.4.1 - 2026-02-09
 
