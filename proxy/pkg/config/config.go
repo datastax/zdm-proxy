@@ -105,6 +105,13 @@ type Config struct {
 	HeartbeatRetryBackoffFactor float64 `default:"2" split_words:"true" yaml:"heartbeat_retry_backoff_factor"`
 	HeartbeatFailureThreshold   int     `default:"1" split_words:"true" yaml:"heartbeat_failure_threshold"`
 
+	// Target consistency level override.
+	// When set, overrides the consistency level for ALL requests (reads and writes) sent to the target cluster.
+	// The origin/source cluster always uses the client-requested consistency level.
+	// Valid values: ANY, ONE, TWO, THREE, QUORUM, ALL, LOCAL_QUORUM, EACH_QUORUM, LOCAL_ONE (case-insensitive).
+	// Empty or unset means disabled (default behavior, no override).
+	TargetConsistencyLevel string `default:"" split_words:"true" yaml:"target_consistency_level"`
+
 	//////////////////////////////////////////////////////////////////////
 	/// THE SETTINGS BELOW AREN'T SUPPORTED AND MAY CHANGE AT ANY TIME ///
 	//////////////////////////////////////////////////////////////////////
@@ -338,6 +345,11 @@ func (c *Config) Validate() error {
 		return err
 	}
 
+	_, err = c.ParseTargetConsistencyLevel()
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -390,6 +402,45 @@ func (c *Config) ParseReadMode() (common.ReadMode, error) {
 		return common.ReadModeUndefined, fmt.Errorf("invalid value for ZDM_READ_MODE; possible values are: %v and %v",
 			ReadModePrimaryOnly, ReadModeDualAsyncOnSecondary)
 	}
+}
+
+// consistencyLevelMap maps uppercase consistency level names to primitive.ConsistencyLevel values.
+// Only non-serial consistency levels are valid for write CL override.
+var consistencyLevelMap = map[string]primitive.ConsistencyLevel{
+	"ANY":          primitive.ConsistencyLevelAny,
+	"ONE":          primitive.ConsistencyLevelOne,
+	"TWO":          primitive.ConsistencyLevelTwo,
+	"THREE":        primitive.ConsistencyLevelThree,
+	"QUORUM":       primitive.ConsistencyLevelQuorum,
+	"ALL":          primitive.ConsistencyLevelAll,
+	"LOCAL_QUORUM": primitive.ConsistencyLevelLocalQuorum,
+	"EACH_QUORUM":  primitive.ConsistencyLevelEachQuorum,
+	"LOCAL_ONE":    primitive.ConsistencyLevelLocalOne,
+}
+
+// ParseTargetConsistencyLevel parses the target consistency level override.
+// Returns nil if the feature is disabled (empty/unset config value).
+// Returns a non-nil pointer to the parsed consistency level if valid.
+// Returns an error if the value is set but invalid.
+func (c *Config) ParseTargetConsistencyLevel() (*primitive.ConsistencyLevel, error) {
+	trimmed := strings.TrimSpace(c.TargetConsistencyLevel)
+	if trimmed == "" {
+		return nil, nil
+	}
+
+	upper := strings.ToUpper(trimmed)
+	if cl, ok := consistencyLevelMap[upper]; ok {
+		return &cl, nil
+	}
+
+	validValues := make([]string, 0, len(consistencyLevelMap))
+	for k := range consistencyLevelMap {
+		validValues = append(validValues, k)
+	}
+	slices.Sort(validValues)
+	return nil, fmt.Errorf(
+		"invalid value for ZDM_TARGET_CONSISTENCY_LEVEL: %q; valid values are: %v",
+		trimmed, strings.Join(validValues, ", "))
 }
 
 func (c *Config) ParseControlConnMaxProtocolVersion() (primitive.ProtocolVersion, error) {

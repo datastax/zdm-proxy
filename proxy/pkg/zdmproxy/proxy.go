@@ -264,6 +264,7 @@ func (p *ZdmProxy) initializeControlConnections(ctx context.Context) error {
 	if err := originControlConn.Start(p.controlConnShutdownWg, ctx); err != nil {
 		return fmt.Errorf("failed to initialize origin control connection: %w", err)
 	}
+	originControlConn.CheckSuperUserAndWarn()
 
 	p.lock.Lock()
 	p.originControlConn = originControlConn
@@ -276,6 +277,7 @@ func (p *ZdmProxy) initializeControlConnections(ctx context.Context) error {
 	if err := targetControlConn.Start(p.controlConnShutdownWg, ctx); err != nil {
 		return fmt.Errorf("failed to initialize target control connection: %w", err)
 	}
+	targetControlConn.CheckSuperUserAndWarn()
 
 	p.lock.Lock()
 	p.targetControlConn = targetControlConn

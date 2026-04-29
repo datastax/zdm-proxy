@@ -35,6 +35,7 @@ ZDM_PROXY_LISTEN_ADDRESS=127.0.0.1
 ZDM_PRIMARY_CLUSTER=ORIGIN
 ZDM_READ_MODE=PRIMARY_ONLY
 ZDM_LOG_LEVEL=INFO
+# ZDM_TARGET_CONSISTENCY_LEVEL=LOCAL_ONE  #optional, overrides CL on target during migration
 ```
 
 The environment variables (or YAM configuration file) must be set for the proxy to work.
