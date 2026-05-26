@@ -53,7 +53,7 @@ func (psc PreparedStatementCache) GetPreparedStatementCacheSize() float64 {
 	log.Debugf("PS Cache Size: %v, PS Intercepted Size: %v, PS Index Size: %v.",
 		cacheLen, interceptedCacheLen, len(psc.index))
 
-	return float64(psc.cache.Len() + psc.interceptedCache.Len())
+	return float64(cacheLen + interceptedCacheLen)
 }
 
 func (psc *PreparedStatementCache) Store(
@@ -89,12 +89,12 @@ func (psc *PreparedStatementCache) Get(originPreparedId []byte) (PreparedData, b
 	defer psc.lock.Unlock()
 	data, ok := psc.cache.Get(string(originPreparedId))
 	if ok {
-		return data.(PreparedData), true
+		return data, true
 	}
 
 	data, ok = psc.interceptedCache.Get(string(originPreparedId))
 	if ok {
-		return data.(PreparedData), true
+		return data, true
 	}
 
 	return nil, false
@@ -117,7 +117,7 @@ func (psc *PreparedStatementCache) GetByTargetPreparedId(targetPreparedId []byte
 		return nil, false
 	}
 
-	return data.(PreparedData), true
+	return data, true
 }
 
 type PreparedData interface {
