@@ -2,9 +2,10 @@ package zdmproxy
 
 import (
 	"fmt"
+	"testing"
+
 	"github.com/datastax/go-cassandra-native-protocol/message"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 const MaxPSCacheSizeForTests = 10
@@ -148,7 +149,7 @@ func TestPreparedStatementCache_StoreIntoAllCacheMaps(t *testing.T) {
 			}
 
 			require.Equal(tt, test.expectedCacheMapSize, psCache.cache.Len())
-			require.Equal(tt, test.expectedCacheMapSize, psCache.index.Len())
+			require.Equal(tt, test.expectedCacheMapSize, len(psCache.index))
 			require.Equal(tt, test.expectedCacheMapSize, psCache.interceptedCache.Len())
 			require.Equal(tt, float64(test.expectedCacheMapSize*2), psCache.GetPreparedStatementCacheSize())
 
@@ -176,7 +177,7 @@ func checkIfElementIsInOriginMap(psCache *PreparedStatementCache, elementSuffix 
 func checkIfElementIsInTargetMap(psCache *PreparedStatementCache, elementSuffix int) bool {
 	targetId := fmt.Sprint(TargetIdPrefix, elementSuffix)
 	// not using psCache.GetByTargetPreparedId, which is tested separately
-	_, foundTargetId := psCache.index.Get(targetId)
+	_, foundTargetId := psCache.index[targetId]
 	return foundTargetId
 }
 
@@ -242,7 +243,7 @@ func TestPreparedStatementCache_GetFromCache(t *testing.T) {
 				_, foundByGetByTargetPreparedId := psCache.GetByTargetPreparedId([]byte(test.elementId))
 				require.False(tt, foundByGetByTargetPreparedId)
 			case CacheMapTypeTarget:
-				psCache.index.Add(test.elementId, "origin_"+test.elementId)
+				psCache.index[test.elementId] = "origin_" + test.elementId
 				psCache.cache.Add("origin_"+test.elementId, dummyPreparedData)
 
 				_, foundByGet := psCache.Get([]byte(test.elementId))
