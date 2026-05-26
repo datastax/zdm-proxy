@@ -135,7 +135,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        cassandra_version: [ '2.2.19', '3.11.19', '4.1.9', '5.0.6', 'dse-4.8.16', 'dse-5.1.48', 'dse-6.8.61' ]
+        cassandra_version: [ '2.2.19', '3.11.19', '4.1.9', '5.0.6', 'dse-5.1.48', 'dse-6.8.61', 'dse-6.9.9' ]
     steps:
       - uses: actions/checkout@v2
             
@@ -151,6 +151,36 @@ jobs:
           path: ~/.ccm/repository
           key: ${{ runner.os }}-ccm-${{ matrix.cassandra_version }}
 
+      - name: Prepare DSE artifacts for CCM
+        if: ${{ startsWith(matrix.cassandra_version, 'dse-') }}
+        env:
+          DSE_DOWNLOAD_BASE_URL: ${{ secrets.DSE_DOWNLOAD_BASE_URL }}
+          DSE_DOWNLOAD_USERNAME: ${{ secrets.DSE_DOWNLOAD_USERNAME }}
+          DSE_DOWNLOAD_PASSWORD: ${{ secrets.DSE_DOWNLOAD_PASSWORD }}
+        run: |
+          DSE_VERSION="${{ matrix.cassandra_version }}"
+          DSE_VERSION="${DSE_VERSION#dse-}"
+          DSE_TARBALL_URL="${DSE_DOWNLOAD_BASE_URL}/${{ matrix.cassandra_version }}-bin.tar.gz"
+          DSE_VERSION_DIR="${HOME}/.ccm/repository/${DSE_VERSION}"
+          DSE_TARBALL_PATH="${RUNNER_TEMP}/dse-${DSE_VERSION}.tar.gz"
+
+          mkdir -p ~/.ccm/repository
+
+          if [[ -d "${DSE_VERSION_DIR}" ]]; then
+            echo "Reusing existing extracted DSE directory at ${DSE_VERSION_DIR}"
+          else
+            if [[ -z "${DSE_DOWNLOAD_USERNAME}" || -z "${DSE_DOWNLOAD_PASSWORD}" ]]; then
+              echo "DSE_DOWNLOAD_USERNAME and DSE_DOWNLOAD_PASSWORD must both be set to download DSE artifacts"
+              exit 1
+            fi
+
+            wget --user "${DSE_DOWNLOAD_USERNAME}" --password "${DSE_DOWNLOAD_PASSWORD}" -O "${DSE_TARBALL_PATH}" "${DSE_TARBALL_URL}"
+
+            mkdir -p "${DSE_VERSION_DIR}"
+            tar -xzf "${DSE_TARBALL_PATH}" -C "${DSE_VERSION_DIR}" --strip-components=1
+            rm -f "${DSE_TARBALL_PATH}"
+          fi
+
       - name: Run
         run: |
           sudo apt update
@@ -158,9 +188,12 @@ jobs:
           sudo apt -y install openjdk-8-jdk gcc git wget pip
           sudo apt -y install openjdk-11-jdk gcc git wget pip
 
-          export JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64
           export JAVA8_HOME=/usr/lib/jvm/java-8-openjdk-amd64
           export JAVA11_HOME=/usr/lib/jvm/java-11-openjdk-amd64
+          export JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64
+          if [[ "${{ matrix.cassandra_version }}" == dse-6.9* ]]; then
+            export JAVA_HOME=$JAVA11_HOME
+          fi
           export PATH=$JAVA_HOME/bin:$PATH
           java -version
           
