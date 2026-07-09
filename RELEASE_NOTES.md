@@ -12,6 +12,9 @@ Cap the prepared statement cache size using an LRU eviction policy.
 
 New configuration setting `ZDM_PROXY_MAX_PREPARED_STATEMENT_CACHE_SIZE` to limit the number of prepared statement cache entries (default: 10000).
 
+Upgrade software dependencies to resolve vulnerabilities:
+- Go to 1.26.5
+
 [Changelog](CHANGELOG/CHANGELOG-2.5.md#v250---unreleased)
 
 ## v2.4.2 - 2026-04-27
