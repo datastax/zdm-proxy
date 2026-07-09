@@ -27,7 +27,7 @@ func getGeneralParamsForTests(t *testing.T) params {
 	require.Nil(t, err)
 
 	return params{
-		psCache:                      NewPreparedStatementCache(),
+		psCache:                      createPSCacheForTests(t),
 		mh:                           newFakeMetricHandler(),
 		kn:                           "",
 		primaryCluster:               common.ClusterTypeOrigin,
@@ -36,6 +36,12 @@ func getGeneralParamsForTests(t *testing.T) params {
 		virtualizationEnabled:        false,
 		timeUuidGenerator:            timeUuidGen,
 	}
+}
+
+func createPSCacheForTests(t *testing.T) *PreparedStatementCache {
+	psCache, err := NewPreparedStatementCache(1000)
+	require.Nil(t, err)
+	return psCache
 }
 
 func buildQueryMessageForTests(queryString string) *message.Query {
