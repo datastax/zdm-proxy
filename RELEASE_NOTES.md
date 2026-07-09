@@ -6,6 +6,14 @@ Build artifacts are available at [Docker Hub](https://hub.docker.com/repository/
 
 For additional details on the changes included in a specific release, see the associated CHANGELOG-x.x.md file.
 
+## v2.5.0 - unreleased
+
+Cap the prepared statement cache size using an LRU eviction policy.
+
+New configuration setting `ZDM_PROXY_MAX_PREPARED_STATEMENT_CACHE_SIZE` to limit the number of prepared statement cache entries (default: 10000).
+
+[Changelog](CHANGELOG/CHANGELOG-2.5.md#v250---unreleased)
+
 ## v2.4.2 - 2026-04-27
 
 Upgrade software dependencies to resolve vulnerabilities:
