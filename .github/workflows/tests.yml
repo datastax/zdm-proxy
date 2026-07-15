@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 env:
   SIMULACRON_VERSION: 0.10.0
-  GO_VERSION: 1.26.2
+  GO_VERSION: 1.26.5
 jobs:
   dependencies:
     name: Fetch dependencies

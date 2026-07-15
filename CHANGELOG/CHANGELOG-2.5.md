@@ -8,6 +8,10 @@ When cutting a new release, update the `unreleased` heading to the tag being gen
 
 ## v2.5.0 - unreleased
 
+### Improvements
+
+* [#172](https://github.com/datastax/zdm-proxy/issues/172): Upgrade Go to 1.26.5
+
 ### New Features
 
-* [#98](https://github.com/datastax/zdm-proxy/issues/98): Add a size limit to the proxy's prepared statement cache 
+* [#98](https://github.com/datastax/zdm-proxy/issues/98): Add a size limit to the proxy's prepared statement cache
