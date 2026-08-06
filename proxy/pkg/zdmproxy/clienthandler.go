@@ -120,6 +120,10 @@ type ClientHandler struct {
 	timeUuidGenerator TimeUuidGenerator
 	rateLimiters      *RateLimiters
 
+	// targetConsistencyLevel is the optional override for target-side consistency.
+	// nil means disabled (default). When non-nil, all requests to the target cluster use this CL.
+	targetConsistencyLevel *primitive.ConsistencyLevel
+
 	// not used atm but should be used when a protocol error occurs after #68 has been addressed
 	clientHandlerShutdownRequestCancelFn context.CancelFunc
 
@@ -278,6 +282,13 @@ func NewClientHandler(
 	forwardAuthToTarget, targetCredsOnClientRequest := forwardAuthToTarget(
 		originControlConn, targetControlConn, conf.ForwardClientCredentialsToOrigin)
 
+	// Parse target consistency level override (nil = disabled)
+	targetWriteCL, err := conf.ParseTargetConsistencyLevel()
+	if err != nil {
+		clientHandlerCancelFunc()
+		return nil, fmt.Errorf("failed to parse target consistency level: %w", err)
+	}
+
 	return &ClientHandler{
 		clientConnector: NewClientConnector(
 			clientTcpConn,
@@ -345,6 +356,7 @@ func NewClientHandler(
 		clientHandlerShutdownRequestCancelFn: clientHandlerShutdownRequestCancelFn,
 		clientHandlerShutdownRequestContext:  clientHandlerShutdownRequestContext,
 		compression:                          compression,
+		targetConsistencyLevel:          targetWriteCL,
 	}, nil
 }
 
@@ -1528,6 +1540,16 @@ func (ch *ClientHandler) executeRequest(
 		return err
 	}
 
+	// Override target consistency level for requests where origin and target share the same frame.
+	// EXECUTE and BATCH are handled in their respective handlers where the deep copy already exists.
+	targetReceivesRequest := fwdDecision == forwardToBoth || fwdDecision == forwardToTarget
+	if ch.targetConsistencyLevel != nil && targetReceivesRequest && originRequest == targetRequest {
+		targetRequest, err = ch.overrideTargetConsistency(frameContext)
+		if err != nil {
+			return fmt.Errorf("could not override target consistency: %w", err)
+		}
+	}
+
 	if fwdDecision == forwardToNone {
 		if clientResponse == nil {
 			return fmt.Errorf("forwardDecision is NONE but client response is nil")
@@ -1652,6 +1674,35 @@ func (ch *ClientHandler) handleRequestSendFailure(err error, frameContext *frame
 			ch.clientConnector.sendResponseToClient(responseFrame)
 		}
 	}
+}
+
+// overrideTargetConsistency creates a deep copy of the frame with the consistency level overridden
+// for target-side requests. This is called for generic Query messages (non-prepared, non-batch) where
+// the origin and target requests share the same raw frame pointer.
+func (ch *ClientHandler) overrideTargetConsistency(frameContext *frameDecodeContext) (*frame.RawFrame, error) {
+	decodedFrame, err := frameContext.GetOrDecodeFrame()
+	if err != nil {
+		return nil, fmt.Errorf("could not decode frame for target write CL override: %w", err)
+	}
+
+	targetFrame := decodedFrame.DeepCopy()
+
+	switch typedMsg := targetFrame.Body.Message.(type) {
+	case *message.Query:
+		if typedMsg.Options == nil {
+			typedMsg.Options = &message.QueryOptions{}
+		}
+		typedMsg.Options.Consistency = *ch.targetConsistencyLevel
+	default:
+		// For messages without a consistency field (e.g., PREPARE, STARTUP), return unchanged.
+		return frameContext.GetRawFrame(), nil
+	}
+
+	rawFrame, err := ch.getCodec().ConvertToRawFrame(targetFrame)
+	if err != nil {
+		return nil, fmt.Errorf("could not re-encode frame after target write CL override: %w", err)
+	}
+	return rawFrame, nil
 }
 
 func (ch *ClientHandler) handleInterceptedRequest(
@@ -1842,6 +1893,13 @@ func (ch *ClientHandler) handleExecuteRequest(
 		log.Tracef("Replacing prepared ID %s with %s for target cluster.",
 			hex.EncodeToString(originalQueryId), hex.EncodeToString(newTargetExecuteMsg.QueryId))
 
+		if ch.targetConsistencyLevel != nil {
+			if newTargetExecuteMsg.Options == nil {
+				newTargetExecuteMsg.Options = &message.QueryOptions{}
+			}
+			newTargetExecuteMsg.Options.Consistency = *ch.targetConsistencyLevel
+		}
+
 		newTargetRequestRaw, err := ch.getCodec().ConvertToRawFrame(newTargetRequest)
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("could not convert target EXECUTE response to raw frame: %w", err)
@@ -1899,6 +1957,10 @@ func (ch *ClientHandler) handleBatchRequest(
 		newTargetBatchMsg.Children[stmtIdx].Id = preparedData.GetTargetPreparedId()
 		log.Tracef("Replacing prepared ID %s within a BATCH with %s for target cluster.",
 			hex.EncodeToString(originalQueryId), hex.EncodeToString(preparedData.GetTargetPreparedId()))
+	}
+
+	if ch.targetConsistencyLevel != nil {
+		newTargetBatchMsg.Consistency = *ch.targetConsistencyLevel
 	}
 
 	if newOriginRequest != nil {

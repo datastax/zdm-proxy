@@ -24,3 +24,6 @@ __debug_bin
 .vscode
 /proxy/proxy
 /proxy/*.prof
+
+# Claude Code
+CLAUDE.md

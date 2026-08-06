@@ -235,6 +235,53 @@ func (cc *ControlConn) IsAuthEnabled() (bool, error) {
 		"the control connection has not been initialized")
 }
 
+// CheckSuperUserAndWarn queries system_auth.roles to determine if the configured user is a superuser.
+// If the user is a superuser, a warning is logged advising against this practice.
+// Any errors (e.g. table doesn't exist, permission denied, Astra-specific behavior) are silently
+// ignored — the check is best-effort only.
+func (cc *ControlConn) CheckSuperUserAndWarn() {
+	conn, _ := cc.GetConnAndContactPoint()
+	if conn == nil {
+		return
+	}
+
+	authEnabled, err := cc.IsAuthEnabled()
+	if err != nil || !authEnabled {
+		return
+	}
+
+	clusterType := cc.connConfig.GetClusterType()
+	query := fmt.Sprintf("SELECT is_superuser FROM system_auth.roles WHERE role = '%s'", cc.username)
+	result, err := conn.Query(query, GetDefaultGenericTypeCodec(), cc.context)
+	if err != nil {
+		log.Debugf("[%v] Could not query system_auth.roles to check superuser status (this is expected on some platforms): %v",
+			clusterType, err)
+		return
+	}
+
+	if result == nil || len(result.Rows) == 0 {
+		return
+	}
+
+	val, exists := result.Rows[0].GetByColumn("is_superuser")
+	if !exists || val == nil {
+		return
+	}
+
+	isSuperUser, ok := val.(bool)
+	if !ok {
+		return
+	}
+
+	if isSuperUser {
+		log.Warnf("[%v] The configured user '%s' is a superuser. This is not recommended for application "+
+			"workloads because superuser authentication requires QUORUM consistency internally in Cassandra, "+
+			"which increases the risk of authentication failures during node instability. Consider using a "+
+			"regular user with only the necessary permissions for the keyspaces being migrated.",
+			clusterType, cc.username)
+	}
+}
+
 func (cc *ControlConn) IncrementFailureCounter() {
 	cc.counterLock.Lock()
 	defer cc.counterLock.Unlock()
