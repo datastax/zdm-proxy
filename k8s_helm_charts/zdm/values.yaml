@@ -21,7 +21,7 @@ proxy:
       cpu: 4000m
       memory: 2048Mi
   image:
-    repository: datastax/zdm-proxy
+    repository: quay.io/datastax/zdm-proxy
     pullPolicy: IfNotPresent
     # Overrides the image tag whose default is the chart appVersion.
     tag: ""
@@ -35,7 +35,7 @@ cdm:
       cpu: 16000m
       memory: 32768Mi
   image:
-    repository: datastax/cassandra-data-migrator
+    repository: quay.io/datastax/cassandra-data-migrator
     tag: 2.10.3
 
 nameOverride: ""

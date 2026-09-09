@@ -2,9 +2,15 @@
 
 General release notes for the ZDM Proxy.
 
-Build artifacts are available at [Docker Hub](https://hub.docker.com/repository/docker/datastax/zdm-proxy).
+Build artifacts are available at [Quay](https://quay.io/repository/datastax/zdm-proxy).
 
 For additional details on the changes included in a specific release, see the associated CHANGELOG-x.x.md file.
+
+## v2.6.0 - TBD
+
+Migrate container registry from Docker Hub to Quay.io.
+
+[Changelog](CHANGELOG/CHANGELOG-2.6.md#v260---tbd)
 
 ## v2.5.0 - 2026-07-21
 
