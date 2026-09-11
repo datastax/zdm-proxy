@@ -2,7 +2,7 @@
 {{ $zdm_fullname := include "zdm.fullname" . -}}
 {{- $zdm_labels := include "zdm.labels" . -}}
 {{- $zdm_selectorLabels := include "zdm.selectorLabels" . -}}
-{{- range $index := until (.Values.proxy.count | int) -}}
+{{- range $index := until (.Values.count | int) -}}
 apiVersion: v1
 kind: Service
 metadata:
@@ -13,14 +13,14 @@ metadata:
     app: {{ $zdm_fullname }}-{{ $index }}
     role: zdmproxy
 spec:
-  type: {{ $.Values.service.type }}
+  type: {{ $.Values.serviceType }}
   ports:
-    - port: {{ $.Values.service.port | int }}
+    - port: {{ $.Values.servicePort | int }}
       targetPort: 9042
       protocol: TCP
       name: cql
   selector:
     {{- $zdm_selectorLabels | nindent 4 }}
-    app: {{ $zdm_fullname }}-{{ $index }}
+    statefulset.kubernetes.io/pod-name: {{ $zdm_fullname }}-{{ $index }}
 ---
 {{- end -}}
