@@ -3,12 +3,13 @@
 # $ docker build . -f ./Dockerfile -t zdm-proxy
 ##########
 
-FROM golang:1.26.5-bookworm AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26.5-bookworm AS builder
+
+ARG TARGETOS
+ARG TARGETARCH
 
 ENV GO111MODULE=on \
-    CGO_ENABLED=0 \
-    GOOS=linux \
-    GOARCH=amd64
+    CGO_ENABLED=0
 
 # Move to working directory /build
 WORKDIR /build
@@ -20,7 +21,7 @@ COPY antlr ./antlr
 RUN ls
 
 # Build the application
-RUN go build -o main ./proxy
+RUN GOOS=$TARGETOS GOARCH=$TARGETARCH go build -o main ./proxy
 
 # Move to /dist directory as the place for resulting binary folder
 WORKDIR /dist

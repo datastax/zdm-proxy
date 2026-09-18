@@ -1,8 +1,15 @@
 # Changelog
 
-Changelog for the ZDM Proxy, new PRs should update the `unreleased` section.
+When adding a change, add it under an `## unreleased` section at the top (create one if it doesn't exist). When cutting a new release, rename that section to `## vX.Y.Z - YYYY-MM-DD`.
 
-When cutting a new release, update the `unreleased` heading to the tag being generated and date, like `## vX.Y.Z - YYYY-MM-DD` and create a new placeholder section for `unreleased` entries.
+---
+
+## v2.5.1 - 2026-09-18
+
+### Improvements
+
+* [#175](https://github.com/datastax/zdm-proxy/issues/175): Migrate container registry from Docker Hub to Quay.io
+* [#177](https://github.com/datastax/zdm-proxy/issues/177): Publish multi-arch (`linux/amd64`, `linux/arm64`) Docker images
 
 ---
 
