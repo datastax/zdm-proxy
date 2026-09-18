@@ -145,6 +145,7 @@ various C* versions:
 | 2.2              | V2, V3, V4       |
 | 3.x              | V3, V4           |
 | 4.x              | V3, V4, V5       |
+| 5.x              | V3, V4, V5       |
 
 ---
 :warning: **Thrift is not supported by ZDM Proxy.** If you are using a very old driver or cluster version that only supports Thrift
@@ -155,7 +156,7 @@ migration process.
 
 In practice this means that ZDM Proxy supports the following cluster versions (as Origin and / or Target):
 
-- Apache Cassandra from 2.0+ up to (and including) Apache Cassandra 4.x. (although both clusters have to support a common protocol version as mentioned above).
+- Apache Cassandra from 2.0+ up to (and including) Apache Cassandra 5.x (although both clusters have to support a common protocol version as mentioned above).
 - DataStax Enterprise 4.8+. DataStax Enterprise 4.6 and 4.7 support will be introduced when protocol version v2 is supported.
 - DataStax Astra DB (both Serverless and Classic)
 
