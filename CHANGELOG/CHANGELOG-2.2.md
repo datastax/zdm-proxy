@@ -1,8 +1,6 @@
 # Changelog
 
-Changelog for the ZDM Proxy, new PRs should update the `unreleased` section.
-
-When cutting a new release, update the `unreleased` heading to the tag being generated and date, like `## vX.Y.Z - YYYY-MM-DD` and create a new placeholder section for `unreleased` entries.
+When adding a change, add it under an `## unreleased` section at the top (create one if it doesn't exist). When cutting a new release, rename that section to `## vX.Y.Z - YYYY-MM-DD`.
 
 ## Unreleased
 

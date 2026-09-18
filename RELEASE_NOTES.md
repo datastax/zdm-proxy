@@ -6,11 +6,13 @@ Build artifacts are available at [Quay.io](https://quay.io/repository/datastax/z
 
 For additional details on the changes included in a specific release, see the associated CHANGELOG-x.x.md file.
 
-## v2.6.0 - unreleased
+## v2.5.1 - 2026-09-18
 
 Migrate container registry from Docker Hub to Quay.io.
 
-[Changelog](CHANGELOG/CHANGELOG-2.6.md#v260---unreleased)
+Publish multi-arch (`linux/amd64`, `linux/arm64`) Docker images.
+
+[Changelog](CHANGELOG/CHANGELOG-2.5.md#v251---2026-09-18)
 
 ## v2.5.0 - 2026-07-21
 

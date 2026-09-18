@@ -2,9 +2,9 @@
 
 ## Overview
 
-The ZDM Proxy is client-server component written in Go that enables users to migrate with zero downtime from an Apache
-Cassandra&reg; cluster to another (which may be an [Astra](https://astra.datastax.com/) cluster) and not requiring code
-changes in the application client.
+The ZDM Proxy is a client-server component written in Go that enables zero-downtime migration between any two
+CQL-compatible clusters, without requiring code changes in the application client. Supported cluster types include
+Apache Cassandra&reg;, DataStax Enterprise (DSE), HCD, and [Astra DB](https://astra.datastax.com/).
 
 The only change to the client is pointing it to the proxy rather than directly to the original cluster (Origin). In turn,
 the proxy connects to both Origin and Target clusters.
@@ -12,7 +12,40 @@ the proxy connects to both Origin and Target clusters.
 By default, the proxy will forward read requests only to the Origin cluster, though you can optionally configure it to
 forward reads to both clusters asynchronously, while writes will always be sent to both clusters concurrently.
 
-An overview of the proxy architecture and logical flow can be viewed [here](https://docs.datastax.com/en/data-migration/introduction.html#migration-phases).
+Full documentation — including architecture, configuration reference, production deployment, and FAQs — is available
+on the **[DataStax documentation site](https://docs.datastax.com/en/data-migration/introduction.html)**.
+
+> **Note:** The official documentation focuses on migration to Astra DB, but the proxy works equally well between
+> any two supported cluster types (OSS Cassandra, DSE, HCD, or Astra DB) in any combination.
+> The documentation also assumes use of [zdm-proxy-automation](https://github.com/datastax/zdm-proxy-automation)
+> for deployment, but the automation tooling is not a requirement — the proxy can be deployed independently via
+> the [release binaries](https://github.com/datastax/zdm-proxy/releases), [Docker image](#docker-image), Kubernetes, or any other method.
+
+## Docker Image
+
+> **Note:** ZDM Proxy images are published to **[Quay.io](https://quay.io/repository/datastax/zdm-proxy)**, not Docker Hub.
+
+Multi-arch images (`linux/amd64` and `linux/arm64`) are available for every release:
+
+```shell
+docker pull quay.io/datastax/zdm-proxy:<version>
+# e.g.
+docker pull quay.io/datastax/zdm-proxy:v2.5.1
+```
+
+Configuration is passed via environment variables (see [Quick Start](#quick-start) for the full list):
+
+```shell
+docker run --rm \
+  -e ZDM_ORIGIN_CONTACT_POINTS=10.0.0.1 \
+  -e ZDM_ORIGIN_USERNAME=cassandra \
+  -e ZDM_ORIGIN_PASSWORD=cassandra \
+  -e ZDM_TARGET_CONTACT_POINTS=10.0.0.2 \
+  -e ZDM_TARGET_USERNAME=cassandra \
+  -e ZDM_TARGET_PASSWORD=cassandra \
+  -p 14002:14002 \
+  quay.io/datastax/zdm-proxy:v2.5.1
+```
 
 ## Quick Start
 
@@ -37,17 +70,17 @@ ZDM_READ_MODE=PRIMARY_ONLY
 ZDM_LOG_LEVEL=INFO
 ```
 
-The environment variables (or YAM configuration file) must be set for the proxy to work.
+The environment variables (or YAML configuration file) must be set for the proxy to work.
 
 In order to get started quickly, in your local environment, grab a copy of the binary distribution in the
-[Releases](https://github.com/datastax/zdm-proxy/releases) page. For the recommended installation in a production
-environment, check the [Production Setup](#production-setup) section below. 
+[Releases](https://github.com/datastax/zdm-proxy/releases) page, or use the [Docker image](#docker-image) above.
+For the recommended installation in a production environment, check the [Production Setup](#production-setup) section below.
 
 Now, suppose you have two clusters running at `10.0.0.1` and `10.0.0.2` with `cassandra/cassandra` credentials
 and the same key-value [schema](nb-tests/schema.cql). You can start the proxy and connect it to these clusters like this:
 
 ```shell
-$ export ZDM_ORIGIN_CONTACT_POINTS=10.0.0.1 \ 
+$ export ZDM_ORIGIN_CONTACT_POINTS=10.0.0.1 \
 export ZDM_TARGET_CONTACT_POINTS=10.0.0.2 \
 export ZDM_ORIGIN_USERNAME=cassandra \
 export ZDM_ORIGIN_PASSWORD=cassandra \
@@ -56,7 +89,7 @@ export ZDM_TARGET_PASSWORD=cassandra \
 ./zdm-proxy-v2.0.0 # run the ZDM proxy executable
 ```
 
-If you prefer to use YAML configuration file, an equivalent setup would look like:
+If you prefer to use a YAML configuration file, an equivalent setup would look like:
 
 ```shell
 $ cat zdm-config.yml
@@ -112,6 +145,7 @@ various C* versions:
 | 2.2              | V2, V3, V4       |
 | 3.x              | V3, V4           |
 | 4.x              | V3, V4, V5       |
+| 5.x              | V3, V4, V5       |
 
 ---
 :warning: **Thrift is not supported by ZDM Proxy.** If you are using a very old driver or cluster version that only supports Thrift
@@ -122,7 +156,7 @@ migration process.
 
 In practice this means that ZDM Proxy supports the following cluster versions (as Origin and / or Target):
 
-- Apache Cassandra from 2.0+ up to (and including) Apache Cassandra 4.x. (although both clusters have to support a common protocol version as mentioned above).
+- Apache Cassandra from 2.0+ up to (and including) Apache Cassandra 5.x (although both clusters have to support a common protocol version as mentioned above).
 - DataStax Enterprise 4.8+. DataStax Enterprise 4.6 and 4.7 support will be introduced when protocol version v2 is supported.
 - DataStax Astra DB (both Serverless and Classic)
 

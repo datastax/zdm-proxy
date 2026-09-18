@@ -15,13 +15,16 @@ env:
 jobs:
   dependencies:
     name: Fetch dependencies
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        runner: [ ubuntu-latest, ubuntu-24.04-arm ]
     steps:
       - uses: actions/cache@v4
         id: restore-go
         with:
           path: ~/deps/godl
-          key: ${{ runner.os }}-deps-godl-${{ env.GO_VERSION }}
+          key: ${{ runner.os }}-${{ runner.arch }}-deps-godl-${{ env.GO_VERSION }}
           
       - uses: actions/cache@v4
         id: restore-simulacron
@@ -35,7 +38,8 @@ jobs:
         run: |
           mkdir -p ~/deps/godl
           cd ~/deps/godl
-          wget -O go.tar.gz https://go.dev/dl/go${{ env.GO_VERSION }}.linux-amd64.tar.gz
+          GO_ARCH=$(dpkg --print-architecture)
+          wget -O go.tar.gz https://go.dev/dl/go${{ env.GO_VERSION }}.linux-${GO_ARCH}.tar.gz
           
       - if: ${{ steps.restore-simulacron.outputs.cache-hit != 'true' }}
         name: Download simulacron
@@ -65,14 +69,17 @@ jobs:
   unit-tests:
     name: Unit Tests
     needs: dependencies
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        runner: [ ubuntu-latest, ubuntu-24.04-arm ]
     steps:
       - uses: actions/checkout@v2
       - uses: actions/cache@v4
         id: restore-go
         with:
           path: ~/deps/godl
-          key: ${{ runner.os }}-deps-godl-${{ env.GO_VERSION }}
+          key: ${{ runner.os }}-${{ runner.arch }}-deps-godl-${{ env.GO_VERSION }}
       - name: Run
         run: |
           sudo apt update
@@ -93,7 +100,10 @@ jobs:
   integration-tests-mock:
     name: Mock Tests
     needs: dependencies
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        runner: [ ubuntu-latest, ubuntu-24.04-arm ]
     steps:
       - uses: actions/checkout@v2
 
@@ -101,7 +111,7 @@ jobs:
         id: restore-go
         with:
           path: ~/deps/godl
-          key: ${{ runner.os }}-deps-godl-${{ env.GO_VERSION }}
+          key: ${{ runner.os }}-${{ runner.arch }}-deps-godl-${{ env.GO_VERSION }}
 
       - uses: actions/cache@v4
         id: restore-simulacron
@@ -131,11 +141,15 @@ jobs:
   integration-tests-ccm:
     name: CCM Tests
     needs: dependencies
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         cassandra_version: [ '2.2.19', '3.11.19', '4.1.9', '5.0.6', 'dse-5.1.48', 'dse-6.8.61', 'dse-6.9.9' ]
+        runner: [ ubuntu-latest ]
+        include:
+          - cassandra_version: '5.0.6'
+            runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v2
             
@@ -143,7 +157,7 @@ jobs:
         id: restore-go
         with:
           path: ~/deps/godl
-          key: ${{ runner.os }}-deps-godl-${{ env.GO_VERSION }}
+          key: ${{ runner.os }}-${{ runner.arch }}-deps-godl-${{ env.GO_VERSION }}
 
       - uses: actions/cache@v4
         id: restore-cache-ccm
@@ -152,7 +166,7 @@ jobs:
           key: ${{ runner.os }}-ccm-${{ matrix.cassandra_version }}
 
       - name: Prepare DSE artifacts for CCM
-        if: ${{ startsWith(matrix.cassandra_version, 'dse-') }}
+        if: ${{ startsWith(matrix.cassandra_version, 'dse-') && !github.event.pull_request.head.repo.fork }}
         env:
           DSE_DOWNLOAD_BASE_URL: ${{ secrets.DSE_DOWNLOAD_BASE_URL }}
           DSE_DOWNLOAD_USERNAME: ${{ secrets.DSE_DOWNLOAD_USERNAME }}
@@ -182,15 +196,18 @@ jobs:
           fi
 
       - name: Run
+        id: run
+        if: ${{ !startsWith(matrix.cassandra_version, 'dse-') || !github.event.pull_request.head.repo.fork }}
         run: |
           sudo apt update
           
           sudo apt -y install openjdk-8-jdk gcc git wget pip
           sudo apt -y install openjdk-11-jdk gcc git wget pip
 
-          export JAVA8_HOME=/usr/lib/jvm/java-8-openjdk-amd64
-          export JAVA11_HOME=/usr/lib/jvm/java-11-openjdk-amd64
-          export JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64
+          JVM_ARCH=$(dpkg --print-architecture)
+          export JAVA8_HOME=/usr/lib/jvm/java-8-openjdk-${JVM_ARCH}
+          export JAVA11_HOME=/usr/lib/jvm/java-11-openjdk-${JVM_ARCH}
+          export JAVA_HOME=/usr/lib/jvm/java-8-openjdk-${JVM_ARCH}
           if [[ "${{ matrix.cassandra_version }}" == dse-6.9* ]]; then
             export JAVA_HOME=$JAVA11_HOME
           fi
@@ -222,7 +239,7 @@ jobs:
       
       - name: Test Summary
         uses: test-summary/action@v1
-        if: always()
+        if: steps.run.conclusion != 'skipped'
         with:
           paths: |
             report-integration-ccm.xml
@@ -243,7 +260,7 @@ jobs:
         id: restore-go
         with:
           path: ~/deps/godl
-          key: ${{ runner.os }}-deps-godl-${{ env.GO_VERSION }}
+          key: ${{ runner.os }}-${{ runner.arch }}-deps-godl-${{ env.GO_VERSION }}
       - name: Run
         run: |
           sudo apt update
@@ -273,7 +290,7 @@ jobs:
         id: restore-go
         with:
           path: ~/deps/godl
-          key: ${{ runner.os }}-deps-godl-${{ env.GO_VERSION }}
+          key: ${{ runner.os }}-${{ runner.arch }}-deps-godl-${{ env.GO_VERSION }}
       - name: Run
         run: |
           sudo apt update

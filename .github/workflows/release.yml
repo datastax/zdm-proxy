@@ -53,4 +53,4 @@ jobs:
           context: .
           push: true
           tags: ${{ steps.meta.outputs.tags }}
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64
