@@ -31,6 +31,10 @@ type MetricHandler struct {
 	originBuckets []float64
 	targetBuckets []float64
 	asyncBuckets  []float64
+
+	// Per-table write success counters, keyed by "cluster:keyspace.table"
+	writeSuccessCounters map[string]Counter
+	writeSuccessRwLock   *sync.RWMutex
 }
 
 func NewMetricHandler(
@@ -57,6 +61,8 @@ func NewMetricHandler(
 		originBuckets:        originBuckets,
 		targetBuckets:        targetBuckets,
 		asyncBuckets:         asyncBuckets,
+		writeSuccessCounters: make(map[string]Counter),
+		writeSuccessRwLock:   &sync.RWMutex{},
 	}
 }
 
@@ -178,6 +184,49 @@ func (recv *MetricHandler) GetNodeMetrics(
 	}
 
 	return &NodeMetrics{OriginMetrics: originMetrics, TargetMetrics: targetMetrics, AsyncMetrics: asyncMetrics}, nil
+}
+
+const (
+	writeSuccessName        = "proxy_write_success_total"
+	writeSuccessDescription = "Running total of successful writes per cluster, keyspace and table"
+	writeSuccessCluster     = "cluster"
+	writeSuccessKeyspace    = "keyspace"
+	writeSuccessTable       = "table"
+)
+
+// GetOrCreateWriteSuccessCounter returns a Counter for tracking successful writes to a specific
+// cluster/keyspace/table combination. Counters are cached and reused for the same combination.
+func (recv *MetricHandler) GetOrCreateWriteSuccessCounter(cluster string, keyspace string, table string) (Counter, error) {
+	key := cluster + ":" + keyspace + "." + table
+
+	recv.writeSuccessRwLock.RLock()
+	counter, ok := recv.writeSuccessCounters[key]
+	recv.writeSuccessRwLock.RUnlock()
+	if ok {
+		return counter, nil
+	}
+
+	recv.writeSuccessRwLock.Lock()
+	counter, ok = recv.writeSuccessCounters[key]
+	if ok {
+		recv.writeSuccessRwLock.Unlock()
+		return counter, nil
+	}
+
+	mn := NewMetricWithLabels(writeSuccessName, writeSuccessDescription, map[string]string{
+		writeSuccessCluster:  cluster,
+		writeSuccessKeyspace: keyspace,
+		writeSuccessTable:    table,
+	})
+	counter, err := recv.metricFactory.GetOrCreateCounter(mn)
+	if err != nil {
+		recv.writeSuccessRwLock.Unlock()
+		return nil, fmt.Errorf("failed to create write success counter for %s: %w", key, err)
+	}
+
+	recv.writeSuccessCounters[key] = counter
+	recv.writeSuccessRwLock.Unlock()
+	return counter, nil
 }
 
 func (recv *MetricHandler) UnregisterAllMetrics() error {
